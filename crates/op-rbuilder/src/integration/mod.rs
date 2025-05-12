@@ -276,7 +276,7 @@ impl TestHarness {
 
         let url = format!("http://localhost:{}", self.builder_http_port);
         let provider =
-            ProviderBuilder::<Identity, Identity, Optimism>::default().on_http(url.parse()?);
+            ProviderBuilder::<Identity, Identity, Optimism>::default().connect_http(url.parse()?);
 
         // Get current nonce includeing the ones from the txpool
         let nonce = provider

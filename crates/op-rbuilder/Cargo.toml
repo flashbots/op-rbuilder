@@ -90,7 +90,7 @@ rand = "0.9.0"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter", "json"] }
 
 # `flashblocks` branch
-rollup-boost = { git = "http://github.com/flashbots/rollup-boost", rev = "60885346d4cf7f241de82790478195747433d472" }
+rollup-boost = { git = "http://github.com/flashbots/rollup-boost", rev = "269f2b1da7dd8e00a7ee8944a3e7516b4232dfed" }
 
 [target.'cfg(unix)'.dependencies]
 tikv-jemallocator = { version = "0.6", optional = true }
@@ -116,7 +116,9 @@ min-info-logs = ["tracing/release_max_level_info"]
 min-debug-logs = ["tracing/release_max_level_debug"]
 min-trace-logs = ["tracing/release_max_level_trace"]
 
-integration = []
+integration = [
+	"alloy-provider/txpool-api"
+]
 flashblocks = []
 
 [[bin]]
