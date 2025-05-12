@@ -17,6 +17,7 @@ reth-optimism-evm.workspace = true
 reth-optimism-consensus.workspace = true
 reth-optimism-primitives.workspace = true
 reth-optimism-txpool.workspace = true
+reth-optimism-rpc.workspace = true
 reth-cli-util.workspace = true
 reth-payload-primitives.workspace = true
 reth-evm.workspace = true

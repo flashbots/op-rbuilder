@@ -3,17 +3,19 @@ use monitoring::Monitoring;
 use reth::providers::CanonStateSubscriptions;
 use reth_optimism_cli::{chainspec::OpChainSpecParser, Cli};
 use reth_optimism_node::node::OpAddOnsBuilder;
-use reth_optimism_node::OpNode;
+use reth_optimism_node::{OpEngineTypes, OpNode};
 
 #[cfg(feature = "flashblocks")]
 use payload_builder::CustomOpPayloadBuilder;
 #[cfg(not(feature = "flashblocks"))]
 use payload_builder_vanilla::CustomOpPayloadBuilder;
+use reth::rpc::api::IntoEngineApiRpcModule;
 use reth_transaction_pool::TransactionPool;
 
 /// CLI argument parsing.
 pub mod args;
 pub mod generator;
+mod ha;
 #[cfg(test)]
 mod integration;
 mod metrics;
@@ -27,6 +29,7 @@ mod primitives;
 #[cfg(test)]
 mod tester;
 mod tx_signer;
+use ha::Ha;
 use monitor_tx_pool::monitor_tx_pool;
 
 // Prefer jemalloc for performance reasons.
@@ -54,6 +57,18 @@ fn main() {
                         .with_enable_tx_conditional(rollup_args.enable_tx_conditional)
                         .build(),
                 )
+                .extend_rpc_modules(move |ctx| {
+                    let _x = 1;
+
+                    // ctx.auth_module.replace_auth_methods(other);
+
+                    let ha = Ha::<OpEngineTypes>::new();
+                    ctx.auth_module
+                        .replace_auth_methods(ha.into_rpc_module())
+                        .unwrap();
+
+                    Ok(())
+                })
                 .on_node_started(move |ctx| {
                     let new_canonical_blocks = ctx.provider().canonical_state_stream();
                     let builder_signer = builder_args.builder_signer;
