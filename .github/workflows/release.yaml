@@ -171,6 +171,9 @@ jobs:
       - name: checkout sources
         uses: actions/checkout@v4
 
+      - name: docker qemu
+        uses: docker/setup-qemu-action@v3
+
       - name: docker buildx
         uses: docker/setup-buildx-action@v3
 
@@ -204,7 +207,7 @@ jobs:
           file: Dockerfile
           context: .
           labels: ${{ steps.meta.outputs.labels }}
-          platforms: linux/amd64,linux/arm64
+          platforms: ${{ matrix.configs.target }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           build-args: |
