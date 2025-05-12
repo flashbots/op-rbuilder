@@ -38,6 +38,7 @@ use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
 use reth_optimism_forks::OpHardforks;
 use reth_optimism_node::OpEngineTypes;
 use reth_optimism_payload_builder::{
+    config::{OpBuilderConfig, OpDAConfig},
     error::OpPayloadBuilderError,
     payload::{OpBuiltPayload, OpPayloadBuilderAttributes},
 };
@@ -96,6 +97,7 @@ struct FlashblocksMetadata<N: NodePrimitives> {
 pub struct CustomOpPayloadBuilder {
     #[expect(dead_code)]
     builder_signer: Option<Signer>,
+    builder_config: OpBuilderConfig,
     flashblocks_ws_url: String,
     chain_block_time: u64,
     flashblock_block_time: u64,
@@ -112,8 +114,29 @@ impl CustomOpPayloadBuilder {
         chain_block_time: u64,
         flashblock_block_time: u64,
     ) -> Self {
+        Self::with_builder_config(
+            builder_signer,
+            extra_block_deadline,
+            enable_revert_protection,
+            flashblocks_ws_url,
+            chain_block_time,
+            flashblock_block_time,
+            Default::default(),
+        )
+    }
+
+    pub fn with_builder_config(
+        builder_signer: Option<Signer>,
+        extra_block_deadline: std::time::Duration,
+        enable_revert_protection: bool,
+        flashblocks_ws_url: String,
+        chain_block_time: u64,
+        flashblock_block_time: u64,
+        builder_config: OpBuilderConfig,
+    ) -> Self {
         Self {
             builder_signer,
+            builder_config,
             flashblocks_ws_url,
             chain_block_time,
             flashblock_block_time,
@@ -145,6 +168,7 @@ where
     ) -> eyre::Result<Self::PayloadBuilder> {
         Ok(OpPayloadBuilder::new(
             OpEvmConfig::optimism(ctx.chain_spec()),
+            self.builder_config,
             pool,
             ctx.provider().clone(),
             self.flashblocks_ws_url.clone(),
@@ -236,6 +260,8 @@ pub struct OpPayloadBuilder<Pool, Client> {
     pub pool: Pool,
     /// Node client
     pub client: Client,
+    /// Settings for the builder, e.g. DA settings.
+    pub config: OpBuilderConfig,
     /// Channel sender for publishing messages
     pub tx: mpsc::UnboundedSender<String>,
     /// chain block time
@@ -252,6 +278,7 @@ impl<Pool, Client> OpPayloadBuilder<Pool, Client> {
     /// `OpPayloadBuilder` constructor.
     pub fn new(
         evm_config: OpEvmConfig,
+        builder_config: OpBuilderConfig,
         pool: Pool,
         client: Client,
         flashblocks_ws_url: String,
@@ -269,6 +296,7 @@ impl<Pool, Client> OpPayloadBuilder<Pool, Client> {
 
         Self {
             evm_config,
+            config: builder_config,
             pool,
             client,
             tx,
@@ -390,6 +418,7 @@ where
         let ctx = OpPayloadBuilderCtx {
             evm_config: self.evm_config.clone(),
             chain_spec: self.client.chain_spec(),
+            da_config: self.config.da_config.clone(),
             config,
             evm_env,
             block_env_attributes,
@@ -437,8 +466,14 @@ where
         }
 
         let gas_per_batch = ctx.block_gas_limit() / self.flashblocks_per_block;
-
         let mut total_gas_per_batch = gas_per_batch;
+
+        let da_per_batch = if let Some(da_limit) = ctx.da_config.max_da_block_size() {
+            Some(da_limit / self.flashblocks_per_block)
+        } else {
+            None
+        };
+        let mut total_da_per_batch = da_per_batch;
 
         let mut flashblock_count = 0;
         // Create a channel to coordinate flashblock building
@@ -505,12 +540,12 @@ where
                         continue;
                     }
 
-                    // Continue with flashblock building
                     tracing::info!(
                         target: "payload_builder",
-                        "Building flashblock {} {}",
+                        "Building flashblock idx={} target_gas={} taget_da={}",
                         flashblock_count,
                         total_gas_per_batch,
+                        total_da_per_batch.unwrap_or(0),
                     );
 
                     let flashblock_build_start_time = Instant::now();
@@ -537,6 +572,7 @@ where
                         &mut db,
                         best_txs,
                         total_gas_per_batch.min(ctx.block_gas_limit()),
+                        total_da_per_batch,
                     )?;
                     ctx.metrics
                         .payload_tx_simulation_duration
@@ -587,12 +623,23 @@ where
                                 .payload_num_tx
                                 .record(info.executed_transactions.len() as f64);
 
+                            tracing::info!(
+                                target: "payload_builder",
+                                "Built flashblock idx={} target_gas={} gas_used={} taget_da={} da_used={}", flashblock_count,
+                                total_gas_per_batch,
+                                info.cumulative_gas_used,
+                                total_da_per_batch.unwrap_or(0),
+                                info.cumulative_da_bytes_used
+                            );
+
                             best_payload.set(new_payload.clone());
                             // Update bundle_state for next iteration
                             bundle_state = new_bundle_state;
                             total_gas_per_batch += gas_per_batch;
+                            if let Some(da_limit) = da_per_batch {
+                                total_da_per_batch = Some(total_da_per_batch.unwrap() + da_limit);
+                            }
                             flashblock_count += 1;
-                            tracing::info!(target: "payload_builder", "Flashblock {} built", flashblock_count);
                         }
                     }
                 }
@@ -883,6 +930,8 @@ impl<T: PoolTransaction> OpPayloadTransactions<T> for () {
 pub struct OpPayloadBuilderCtx<ChainSpec> {
     /// The type that knows how to perform system calls and configure the evm.
     pub evm_config: OpEvmConfig,
+    /// The DA config for the payload builder
+    pub da_config: OpDAConfig,
     /// The chainspec
     pub chain_spec: Arc<ChainSpec>,
     /// How to build the payload.
@@ -1142,6 +1191,7 @@ where
             Transaction: PoolTransaction<Consensus = OpTransactionSigned>,
         >,
         batch_gas_limit: u64,
+        block_da_limit: Option<u64>,
     ) -> Result<Option<()>, PayloadBuilderError>
     where
         DB: Database<Error = ProviderError>,
@@ -1151,7 +1201,7 @@ where
         let mut num_txs_simulated = 0;
         let mut num_txs_simulated_success = 0;
         let mut num_txs_simulated_fail = 0;
-
+        let tx_da_limit = self.da_config.max_da_tx_size();
         let mut evm = self.evm_config.evm_with_env(&mut *db, self.evm_env.clone());
 
         while let Some(tx) = best_txs.next(()) {
@@ -1164,7 +1214,7 @@ where
             }
 
             // ensure we still have capacity for this transaction
-            if info.is_tx_over_limits(tx.inner(), batch_gas_limit, None, None) {
+            if info.is_tx_over_limits(tx.inner(), batch_gas_limit, tx_da_limit, block_da_limit) {
                 // we can't fit this transaction into the block, so we need to mark it as
                 // invalid which also removes all dependent transaction from
                 // the iterator before we can continue

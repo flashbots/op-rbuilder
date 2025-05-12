@@ -6,6 +6,7 @@ use reth_optimism_node::{node::OpAddOnsBuilder, OpNode};
 use payload_builder::CustomOpPayloadBuilder;
 #[cfg(not(feature = "flashblocks"))]
 use payload_builder_vanilla::CustomOpPayloadBuilder;
+use reth_optimism_payload_builder::config::{OpBuilderConfig, OpDAConfig};
 use reth_transaction_pool::TransactionPool;
 
 /// CLI argument parsing.
@@ -36,20 +37,26 @@ fn main() {
             let rollup_args = builder_args.rollup_args;
 
             let op_node = OpNode::new(rollup_args.clone());
+            let builder_config = OpBuilderConfig::new(OpDAConfig::default());
+
             let handle = builder
                 .with_types::<OpNode>()
-                .with_components(op_node.components().payload(CustomOpPayloadBuilder::new(
-                    builder_args.builder_signer,
-                    std::time::Duration::from_secs(builder_args.extra_block_deadline_secs),
-                    builder_args.enable_revert_protection,
-                    builder_args.flashblocks_ws_url,
-                    builder_args.chain_block_time,
-                    builder_args.flashblock_block_time,
-                )))
+                .with_components(op_node.components().payload(
+                    CustomOpPayloadBuilder::with_builder_config(
+                        builder_args.builder_signer,
+                        std::time::Duration::from_secs(builder_args.extra_block_deadline_secs),
+                        builder_args.enable_revert_protection,
+                        builder_args.flashblocks_ws_url,
+                        builder_args.chain_block_time,
+                        builder_args.flashblock_block_time,
+                        builder_config.clone(),
+                    ),
+                ))
                 .with_add_ons(
                     OpAddOnsBuilder::default()
                         .with_sequencer(rollup_args.sequencer.clone())
                         .with_enable_tx_conditional(rollup_args.enable_tx_conditional)
+                        .with_da_config(builder_config.da_config)
                         .build(),
                 )
                 .on_node_started(move |ctx| {
