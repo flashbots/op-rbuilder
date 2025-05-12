@@ -7,10 +7,10 @@
 # Based on https://depot.dev/blog/rust-dockerfile-best-practices
 #
 ARG FEATURES
-ARG RBUILDER_BIN="rbuilder"
-ARG TARGETPLATFORM
+ARG RBUILDER_BIN="op-rbuilder"
 
-FROM --platform=$TARGETPLATFORM rust:1.85 AS base
+FROM rust:1.85 AS base
+ARG TARGETPLATFORM
 
 RUN apt-get update \
     && apt-get install -y clang libclang-dev
