@@ -3,6 +3,7 @@
 //! Copied from OptimismNode to allow easy extension.
 
 //! clap [Args](clap::Args) for optimism rollup configuration
+
 use reth_optimism_node::args::RollupArgs;
 
 use crate::tx_signer::Signer;
