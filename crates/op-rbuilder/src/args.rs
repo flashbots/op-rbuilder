@@ -41,4 +41,11 @@ pub struct OpRbuilderArgs {
     /// Signals whether to log pool transaction events
     #[arg(long = "builder.log-pool-transactions", default_value = "false")]
     pub log_pool_transactions: bool,
+
+    /// List of builder addresses to use
+    #[arg(
+        long = "builder.builder-list",
+        default_value = "0x0000000000000000000000000000000000000000"
+    )]
+    pub builder_list: Vec<String>,
 }

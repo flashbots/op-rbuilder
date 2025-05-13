@@ -62,7 +62,7 @@ fn main() {
 
                     // ctx.auth_module.replace_auth_methods(other);
 
-                    let ha = Ha::<OpEngineTypes>::new();
+                    let ha = Ha::<OpEngineTypes>::new(builder_args.builder_list);
                     ctx.auth_module
                         .replace_auth_methods(ha.into_rpc_module())
                         .unwrap();

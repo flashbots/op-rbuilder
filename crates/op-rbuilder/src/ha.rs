@@ -14,12 +14,14 @@ use reth_optimism_rpc::OpEngineApiServer;
 use reth_payload_builder::PayloadId;
 
 pub struct Ha<EngineT> {
+    builder_list: Vec<String>,
     _marker: std::marker::PhantomData<EngineT>,
 }
 
 impl<EngineT> Ha<EngineT> {
-    pub fn new() -> Self {
+    pub fn new(builder_list: Vec<String>) -> Self {
         Self {
+            builder_list,
             _marker: std::marker::PhantomData,
         }
     }
