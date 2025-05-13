@@ -159,12 +159,13 @@ where
         // When batcher's max channel duration is big enough (e.g. 10m), the
         // sequencer would send an avalanche of FCUs/getBlockByNumber on
         // each batcher update (with 10m channel it's ~800 FCUs at once).
-        // At such moment it can happen that the time b/w FCU and ensuing
-        // getPayload would be on the scale of ~2.5s. Therefore we should
-        // "remember" the payloads long enough to accommodate this corner-case
-        // (without it we are losing blocks). Postponing the deadline for 5s
-        // (not just 0.5s) because of that.
-        let deadline = job_deadline(attributes.timestamp()) + Duration::from_millis(5000);
+        //
+        // With 20ms RTT latency b/w sequencer and builder the time it would
+        // take to process the FCU spam is on the scale of 15s, Therefore we
+        // should "remember" the payloads long enough to accommodate this
+        // corner-case (without it we are losing blocks). Postponing the
+        // deadline for 30s because of that.
+        let deadline = job_deadline(attributes.timestamp()) + Duration::from_millis(30000);
 
         let deadline = Box::pin(tokio::time::sleep(deadline));
         let config = PayloadConfig::new(Arc::new(parent_header.clone()), attributes);
