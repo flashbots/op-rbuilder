@@ -17,6 +17,7 @@ reth-optimism-evm.workspace = true
 reth-optimism-consensus.workspace = true
 reth-optimism-primitives.workspace = true
 reth-optimism-txpool.workspace = true
+reth-cli-commands.workspace = true
 reth-cli-util.workspace = true
 reth-payload-primitives.workspace = true
 reth-evm.workspace = true
@@ -33,6 +34,7 @@ reth-execution-types.workspace = true
 reth-metrics.workspace = true
 reth-provider.workspace = true
 reth-revm.workspace = true
+reth-tracing.workspace = true
 reth-trie.workspace = true
 reth-rpc-layer.workspace = true
 reth-payload-builder-primitives.workspace = true
@@ -91,6 +93,10 @@ tracing-subscriber = { version = "0.3.18", features = ["env-filter", "json"] }
 
 # `flashblocks` branch
 rollup-boost = { git = "http://github.com/flashbots/rollup-boost", rev = "269f2b1da7dd8e00a7ee8944a3e7516b4232dfed" }
+opentelemetry_sdk = "0.29.0"
+tracing-opentelemetry = "0.30.0"
+opentelemetry = "0.29.1"
+opentelemetry-otlp = "0.29.0"
 
 [target.'cfg(unix)'.dependencies]
 tikv-jemallocator = { version = "0.6", optional = true }

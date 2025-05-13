@@ -1,9 +1,14 @@
 use clap::Parser;
 use monitoring::Monitoring;
+use opentelemetry::trace::TracerProvider;
+use opentelemetry_otlp::SpanExporter;
+use opentelemetry_sdk::trace::SdkTracerProvider;
 use reth::providers::CanonStateSubscriptions;
+use reth_cli_commands::launcher::FnLauncher;
 use reth_optimism_cli::{chainspec::OpChainSpecParser, Cli};
 use reth_optimism_node::node::OpAddOnsBuilder;
 use reth_optimism_node::OpNode;
+use reth_tracing::Layers;
 
 #[cfg(feature = "flashblocks")]
 use payload_builder::CustomOpPayloadBuilder;
@@ -35,8 +40,17 @@ use monitor_tx_pool::monitor_tx_pool;
 static ALLOC: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
 fn main() {
-    Cli::<OpChainSpecParser, args::OpRbuilderArgs>::parse()
-        .run(|builder, builder_args| async move {
+    let mut cli = Cli::<OpChainSpecParser, args::OpRbuilderArgs>::parse().configure();
+
+    let mut layers = Layers::new();
+    let provider = init_tracer_provider();
+    let tracer = provider.tracer("readme_example");
+    let telemetry = tracing_opentelemetry::layer().with_tracer(tracer);
+    layers.add_layer(telemetry);
+    cli.set_layers(layers);
+
+    cli.run(FnLauncher::new::<OpChainSpecParser, args::OpRbuilderArgs>(
+        |builder, builder_args| async move {
             let rollup_args = builder_args.rollup_args;
 
             let op_node = OpNode::new(rollup_args.clone());
@@ -82,6 +96,15 @@ fn main() {
                 .await?;
 
             handle.node_exit_future.await
-        })
-        .unwrap();
+        },
+    ))
+    .unwrap();
+}
+
+fn init_tracer_provider() -> SdkTracerProvider {
+    let exporter = SpanExporter::builder().with_http().build().unwrap();
+
+    SdkTracerProvider::builder()
+        .with_batch_exporter(exporter)
+        .build()
 }

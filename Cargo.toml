@@ -42,6 +42,7 @@ incremental = false
 [workspace.dependencies]
 reth = { git = "https://github.com/paradigmxyz/reth", rev = "bc9722d9e2b880bda36eba367a05e6abc7f8cc9e" }
 reth-chain-state = { git = "https://github.com/paradigmxyz/reth", rev = "bc9722d9e2b880bda36eba367a05e6abc7f8cc9e" }
+reth-cli-commands = { git = "https://github.com/paradigmxyz/reth", rev = "bc9722d9e2b880bda36eba367a05e6abc7f8cc9e" }
 reth-cli-util = { git = "https://github.com/paradigmxyz/reth", rev = "bc9722d9e2b880bda36eba367a05e6abc7f8cc9e" }
 reth-db = { git = "https://github.com/paradigmxyz/reth", rev = "bc9722d9e2b880bda36eba367a05e6abc7f8cc9e" }
 reth-db-common = { git = "https://github.com/paradigmxyz/reth", rev = "bc9722d9e2b880bda36eba367a05e6abc7f8cc9e" }
@@ -49,6 +50,7 @@ reth-errors = { git = "https://github.com/paradigmxyz/reth", rev = "bc9722d9e2b8
 reth-payload-builder = { git = "https://github.com/paradigmxyz/reth", rev = "bc9722d9e2b880bda36eba367a05e6abc7f8cc9e" }
 reth-node-api = { git = "https://github.com/paradigmxyz/reth", rev = "bc9722d9e2b880bda36eba367a05e6abc7f8cc9e" }
 reth-node-ethereum = { git = "https://github.com/paradigmxyz/reth", rev = "bc9722d9e2b880bda36eba367a05e6abc7f8cc9e" }
+reth-tracing = { git = "https://github.com/paradigmxyz/reth", rev = "bc9722d9e2b880bda36eba367a05e6abc7f8cc9e" }
 reth-trie = { git = "https://github.com/paradigmxyz/reth", rev = "bc9722d9e2b880bda36eba367a05e6abc7f8cc9e" }
 reth-trie-parallel = { git = "https://github.com/paradigmxyz/reth", rev = "bc9722d9e2b880bda36eba367a05e6abc7f8cc9e" }
 reth-basic-payload-builder = { git = "https://github.com/paradigmxyz/reth", rev = "bc9722d9e2b880bda36eba367a05e6abc7f8cc9e" }
