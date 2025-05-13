@@ -78,6 +78,7 @@ pub struct CustomOpPayloadBuilder {
     builder_signer: Option<Signer>,
     extra_block_deadline: std::time::Duration,
     enable_revert_protection: bool,
+    builder_config: OpBuilderConfig,
     #[cfg(feature = "flashblocks")]
     flashblocks_ws_url: String,
     #[cfg(feature = "flashblocks")]
@@ -90,12 +91,14 @@ impl CustomOpPayloadBuilder {
     #[cfg(feature = "flashblocks")]
     pub fn new(
         builder_signer: Option<Signer>,
+        config: OpBuilderConfig,
         flashblocks_ws_url: String,
         chain_block_time: u64,
         flashblock_block_time: u64,
     ) -> Self {
         Self {
             builder_signer,
+            config,
             flashblocks_ws_url,
             chain_block_time,
             flashblock_block_time,
@@ -103,18 +106,40 @@ impl CustomOpPayloadBuilder {
     }
 
     #[cfg(not(feature = "flashblocks"))]
+    #[allow(dead_code)]
     pub fn new(
+        builder_signer: Option<Signer>,
+        extra_block_deadline: std::time::Duration,
+        enable_revert_protection: bool,
+        flashblocks_ws_url: String,
+        chain_block_time: u64,
+        flashblock_block_time: u64,
+    ) -> Self {
+        Self::with_builder_config(
+            builder_signer,
+            extra_block_deadline,
+            enable_revert_protection,
+            flashblocks_ws_url,
+            chain_block_time,
+            flashblock_block_time,
+            Default::default(),
+        )
+    }
+
+    pub fn with_builder_config(
         builder_signer: Option<Signer>,
         extra_block_deadline: std::time::Duration,
         enable_revert_protection: bool,
         _flashblocks_ws_url: String,
         _chain_block_time: u64,
         _flashblock_block_time: u64,
+        builder_config: OpBuilderConfig,
     ) -> Self {
         Self {
             builder_signer,
             extra_block_deadline,
             enable_revert_protection,
+            builder_config,
         }
     }
 }
@@ -143,6 +168,7 @@ where
         Ok(OpPayloadBuilderVanilla::new(
             OpEvmConfig::optimism(ctx.chain_spec()),
             self.builder_signer,
+            self.builder_config,
             pool,
             ctx.provider().clone(),
         ))
@@ -249,18 +275,9 @@ impl<Pool, Client> OpPayloadBuilderVanilla<Pool, Client> {
     pub fn new(
         evm_config: OpEvmConfig,
         builder_signer: Option<Signer>,
-        pool: Pool,
-        client: Client,
-    ) -> Self {
-        Self::with_builder_config(evm_config, builder_signer, pool, client, Default::default())
-    }
-
-    pub fn with_builder_config(
-        evm_config: OpEvmConfig,
-        builder_signer: Option<Signer>,
-        pool: Pool,
-        client: Client,
         config: OpBuilderConfig,
+        pool: Pool,
+        client: Client,
     ) -> Self {
         Self {
             pool,
