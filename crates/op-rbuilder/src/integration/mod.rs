@@ -1,6 +1,6 @@
 use alloy_consensus::TxEip1559;
 use alloy_eips::{eip1559::MIN_PROTOCOL_BASE_FEE, eip2718::Encodable2718, BlockNumberOrTag};
-use alloy_primitives::hex;
+use alloy_primitives::{hex, Address};
 use alloy_provider::{
     Identity, PendingTransactionBuilder, Provider, ProviderBuilder, RootProvider,
 };
@@ -9,6 +9,7 @@ use op_alloy_network::Optimism;
 use op_rbuilder::OpRbuilderConfig;
 use op_reth::OpRethConfig;
 use parking_lot::Mutex;
+use serde_json::Value;
 use std::{
     cmp::max,
     collections::HashSet,
@@ -240,10 +241,12 @@ impl TestHarnessBuilder {
     pub async fn build(self) -> eyre::Result<TestHarness> {
         let mut framework = IntegrationFramework::new(&self.name).unwrap();
 
-        // we are going to use a genesis file pre-generated before the test
-        let mut genesis_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        genesis_path.push("../../genesis.json");
-        assert!(genesis_path.exists());
+        // we are going to use the fixture genesis and copy it to each test folder
+        let genesis = include_str!("../tester/fixtures/genesis.json.tmpl");
+
+        let mut genesis_path = PathBuf::from(framework.test_dir.clone());
+        genesis_path.push("genesis.json");
+        std::fs::write(&genesis_path, genesis)?;
 
         // create the builder
         let builder_data_dir = std::env::temp_dir().join(Uuid::new_v4().to_string());
