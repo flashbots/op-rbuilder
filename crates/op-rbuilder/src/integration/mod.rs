@@ -1,32 +1,35 @@
 use alloy_consensus::TxEip1559;
-use alloy_eips::BlockNumberOrTag;
-use alloy_eips::{eip1559::MIN_PROTOCOL_BASE_FEE, eip2718::Encodable2718};
-use alloy_provider::{Identity, Provider, ProviderBuilder};
+use alloy_eips::{eip1559::MIN_PROTOCOL_BASE_FEE, eip2718::Encodable2718, BlockNumberOrTag};
+use alloy_primitives::hex;
+use alloy_provider::{
+    Identity, PendingTransactionBuilder, Provider, ProviderBuilder, RootProvider,
+};
 use op_alloy_consensus::OpTypedTransaction;
 use op_alloy_network::Optimism;
 use op_rbuilder::OpRbuilderConfig;
 use op_reth::OpRethConfig;
 use parking_lot::Mutex;
-use std::cmp::max;
-use std::collections::HashSet;
-use std::future::Future;
-use std::net::TcpListener;
-use std::path::Path;
-use std::sync::LazyLock;
 use std::{
+    cmp::max,
+    collections::HashSet,
     fs::{File, OpenOptions},
+    future::Future,
     io,
     io::prelude::*,
-    path::PathBuf,
+    net::TcpListener,
+    path::{Path, PathBuf},
     process::{Child, Command},
+    sync::LazyLock,
     time::{Duration, SystemTime},
 };
 use time::{format_description, OffsetDateTime};
 use tokio::time::sleep;
 use uuid::Uuid;
 
-use crate::tester::{BlockGenerator, EngineApi};
-use crate::tx_signer::Signer;
+use crate::{
+    tester::{BlockGenerator, EngineApi},
+    tx_signer::Signer,
+};
 
 /// Default JWT token for testing purposes
 pub const DEFAULT_JWT_TOKEN: &str =
@@ -92,7 +95,7 @@ pub async fn poll_logs(
 
 impl ServiceInstance {
     pub fn new(name: String, test_dir: PathBuf) -> Self {
-        let log_path = test_dir.join(format!("{}.log", name));
+        let log_path = test_dir.join(format!("{name}.log"));
         Self {
             process: None,
             log_path,
@@ -167,7 +170,7 @@ impl IntegrationFramework {
 
         let mut test_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         test_dir.push("../../integration_logs");
-        test_dir.push(format!("{}_{}", date_format, test_name));
+        test_dir.push(format!("{date_format}_{test_name}"));
 
         std::fs::create_dir_all(&test_dir).map_err(|_| IntegrationError::SetupError)?;
 
@@ -216,16 +219,26 @@ impl Drop for IntegrationFramework {
 const BUILDER_PRIVATE_KEY: &str =
     "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d";
 
-pub struct TestHarness {
-    _framework: IntegrationFramework,
-    builder_auth_rpc_port: u16,
-    builder_http_port: u16,
-    validator_auth_rpc_port: u16,
+pub struct TestHarnessBuilder {
+    name: String,
+    use_revert_protection: bool,
 }
 
-impl TestHarness {
-    pub async fn new(name: &str) -> Self {
-        let mut framework = IntegrationFramework::new(name).unwrap();
+impl TestHarnessBuilder {
+    pub fn new(name: &str) -> Self {
+        Self {
+            name: name.to_string(),
+            use_revert_protection: false,
+        }
+    }
+
+    pub fn with_revert_protection(mut self) -> Self {
+        self.use_revert_protection = true;
+        self
+    }
+
+    pub async fn build(self) -> eyre::Result<TestHarness> {
+        let mut framework = IntegrationFramework::new(&self.name).unwrap();
 
         // we are going to use a genesis file pre-generated before the test
         let mut genesis_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -242,7 +255,8 @@ impl TestHarness {
             .auth_rpc_port(builder_auth_rpc_port)
             .network_port(get_available_port())
             .http_port(builder_http_port)
-            .with_builder_private_key(BUILDER_PRIVATE_KEY);
+            .with_builder_private_key(BUILDER_PRIVATE_KEY)
+            .with_revert_protection(self.use_revert_protection);
 
         // create the validation reth node
 
@@ -256,20 +270,36 @@ impl TestHarness {
 
         framework.start("op-reth", &reth).await.unwrap();
 
-        let _ = framework
+        let builder = framework
             .start("op-rbuilder", &op_rbuilder_config)
             .await
             .unwrap();
 
-        Self {
+        let builder_log_path = builder.log_path.clone();
+
+        Ok(TestHarness {
             _framework: framework,
             builder_auth_rpc_port,
             builder_http_port,
             validator_auth_rpc_port,
-        }
+            builder_log_path,
+        })
     }
+}
 
-    pub async fn send_valid_transaction(&self) -> eyre::Result<()> {
+pub struct TestHarness {
+    _framework: IntegrationFramework,
+    builder_auth_rpc_port: u16,
+    builder_http_port: u16,
+    validator_auth_rpc_port: u16,
+    #[allow(dead_code)] // I think this is due to some feature flag conflicts
+    builder_log_path: PathBuf,
+}
+
+impl TestHarness {
+    pub async fn send_valid_transaction(
+        &self,
+    ) -> eyre::Result<PendingTransactionBuilder<Optimism>> {
         // Get builder's address
         let known_wallet = Signer::try_from_secret(BUILDER_PRIVATE_KEY.parse()?)?;
         let builder_address = known_wallet.address;
@@ -303,11 +333,64 @@ impl TestHarness {
             ..Default::default()
         });
         let signed_tx = known_wallet.sign_tx(tx_request)?;
-        let _ = provider
+        let pending_tx = provider
             .send_raw_transaction(signed_tx.encoded_2718().as_slice())
             .await?;
 
-        Ok(())
+        Ok(pending_tx)
+    }
+
+    pub async fn send_revert_transaction(
+        &self,
+    ) -> eyre::Result<PendingTransactionBuilder<Optimism>> {
+        // TODO: Merge this with send_valid_transaction
+        // Get builder's address
+        let known_wallet = Signer::try_from_secret(BUILDER_PRIVATE_KEY.parse()?)?;
+        let builder_address = known_wallet.address;
+
+        let url = format!("http://localhost:{}", self.builder_http_port);
+        let provider =
+            ProviderBuilder::<Identity, Identity, Optimism>::default().on_http(url.parse()?);
+
+        // Get current nonce includeing the ones from the txpool
+        let nonce = provider
+            .get_transaction_count(builder_address)
+            .pending()
+            .await?;
+
+        let latest_block = provider
+            .get_block_by_number(BlockNumberOrTag::Latest)
+            .await?
+            .unwrap();
+
+        let base_fee = max(
+            latest_block.header.base_fee_per_gas.unwrap(),
+            MIN_PROTOCOL_BASE_FEE,
+        );
+
+        // Transaction from builder should succeed
+        let tx_request = OpTypedTransaction::Eip1559(TxEip1559 {
+            chain_id: 901,
+            nonce,
+            gas_limit: 210000,
+            max_fee_per_gas: base_fee.into(),
+            input: hex!("60006000fd").into(), // PUSH1 0x00 PUSH1 0x00 REVERT
+            ..Default::default()
+        });
+        let signed_tx = known_wallet.sign_tx(tx_request)?;
+        let pending_tx = provider
+            .send_raw_transaction(signed_tx.encoded_2718().as_slice())
+            .await?;
+
+        Ok(pending_tx)
+    }
+
+    pub fn provider(&self) -> eyre::Result<RootProvider<Optimism>> {
+        let url = format!("http://localhost:{}", self.builder_http_port);
+        let provider =
+            ProviderBuilder::<Identity, Identity, Optimism>::default().on_http(url.parse()?);
+
+        Ok(provider)
     }
 
     pub async fn block_generator(&self) -> eyre::Result<BlockGenerator> {

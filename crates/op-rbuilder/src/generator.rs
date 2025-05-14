@@ -1,23 +1,24 @@
-use futures_util::Future;
-use futures_util::FutureExt;
-use reth::providers::BlockReaderIdExt;
-use reth::{providers::StateProviderFactory, tasks::TaskSpawner};
-use reth_basic_payload_builder::HeaderForPayload;
-use reth_basic_payload_builder::{BasicPayloadJobGeneratorConfig, PayloadConfig};
-use reth_node_api::PayloadBuilderAttributes;
-use reth_node_api::PayloadKind;
-use reth_payload_builder::PayloadJobGenerator;
-use reth_payload_builder::{KeepPayloadJobAlive, PayloadBuilderError, PayloadJob};
+use futures_util::{Future, FutureExt};
+use reth::{
+    providers::{BlockReaderIdExt, StateProviderFactory},
+    tasks::TaskSpawner,
+};
+use reth_basic_payload_builder::{BasicPayloadJobGeneratorConfig, HeaderForPayload, PayloadConfig};
+use reth_node_api::{PayloadBuilderAttributes, PayloadKind};
+use reth_payload_builder::{
+    KeepPayloadJobAlive, PayloadBuilderError, PayloadJob, PayloadJobGenerator,
+};
 use reth_payload_primitives::BuiltPayload;
 use reth_primitives_traits::HeaderTy;
 use reth_revm::cached::CachedReads;
-use std::sync::{Arc, Mutex};
-use std::time::SystemTime;
-use std::time::UNIX_EPOCH;
-use tokio::sync::oneshot;
-use tokio::sync::Notify;
-use tokio::time::Duration;
-use tokio::time::Sleep;
+use std::{
+    sync::{Arc, Mutex},
+    time::{SystemTime, UNIX_EPOCH},
+};
+use tokio::{
+    sync::{oneshot, Notify},
+    time::{Duration, Sleep},
+};
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 
@@ -71,6 +72,10 @@ pub struct BlockPayloadJobGenerator<Client, Tasks, Builder> {
     ensure_only_one_payload: bool,
     /// The last payload being processed
     last_payload: Arc<Mutex<CancellationToken>>,
+    /// The extra block deadline in seconds
+    extra_block_deadline: std::time::Duration,
+    /// Whether to enable revert protection
+    enable_revert_protection: bool,
 }
 
 // === impl EmptyBlockPayloadJobGenerator ===
@@ -84,6 +89,8 @@ impl<Client, Tasks, Builder> BlockPayloadJobGenerator<Client, Tasks, Builder> {
         config: BasicPayloadJobGeneratorConfig,
         builder: Builder,
         ensure_only_one_payload: bool,
+        extra_block_deadline: std::time::Duration,
+        enable_revert_protection: bool,
     ) -> Self {
         Self {
             client,
@@ -92,6 +99,8 @@ impl<Client, Tasks, Builder> BlockPayloadJobGenerator<Client, Tasks, Builder> {
             builder,
             ensure_only_one_payload,
             last_payload: Arc::new(Mutex::new(CancellationToken::new())),
+            extra_block_deadline,
+            enable_revert_protection,
         }
     }
 }
@@ -164,7 +173,7 @@ where
         // "remember" the payloads long enough to accommodate this corner-case
         // (without it we are losing blocks). Postponing the deadline for 5s
         // (not just 0.5s) because of that.
-        let deadline = job_deadline(attributes.timestamp()) + Duration::from_millis(5000);
+        let deadline = job_deadline(attributes.timestamp()) + self.extra_block_deadline;
 
         let deadline = Box::pin(tokio::time::sleep(deadline));
         let config = PayloadConfig::new(Arc::new(parent_header.clone()), attributes);
@@ -177,6 +186,7 @@ where
             cancel: cancel_token,
             deadline,
             build_complete: None,
+            enable_revert_protection: self.enable_revert_protection,
         };
 
         job.spawn_build_job();
@@ -209,6 +219,8 @@ where
     pub(crate) cancel: CancellationToken,
     pub(crate) deadline: Pin<Box<Sleep>>, // Add deadline
     pub(crate) build_complete: Option<oneshot::Receiver<Result<(), PayloadBuilderError>>>,
+    /// Block building options
+    pub(crate) enable_revert_protection: bool,
 }
 
 impl<Tasks, Builder> PayloadJob for BlockPayloadJob<Tasks, Builder>
@@ -251,6 +263,8 @@ pub struct BuildArguments<Attributes, Payload: BuiltPayload> {
     pub config: PayloadConfig<Attributes, HeaderTy<Payload::Primitives>>,
     /// A marker that can be used to cancel the job.
     pub cancel: CancellationToken,
+    /// Whether to enable revert protection
+    pub enable_revert_protection: bool,
 }
 
 /// A [PayloadJob] is a future that's being polled by the `PayloadBuilderService`
@@ -266,6 +280,7 @@ where
         let payload_config = self.config.clone();
         let cell = self.cell.clone();
         let cancel = self.cancel.clone();
+        let enable_revert_protection = self.enable_revert_protection;
 
         let (tx, rx) = oneshot::channel();
         self.build_complete = Some(rx);
@@ -275,6 +290,7 @@ where
                 cached_reads: Default::default(),
                 config: payload_config,
                 cancel,
+                enable_revert_protection,
             };
 
             let result = builder.try_build(args, cell);
@@ -424,14 +440,15 @@ mod tests {
     use reth::tasks::TokioTaskExecutor;
     use reth_chain_state::ExecutedBlockWithTrieUpdates;
     use reth_node_api::NodePrimitives;
-    use reth_optimism_payload_builder::payload::OpPayloadBuilderAttributes;
-    use reth_optimism_payload_builder::OpPayloadPrimitives;
+    use reth_optimism_payload_builder::{payload::OpPayloadBuilderAttributes, OpPayloadPrimitives};
     use reth_optimism_primitives::OpPrimitives;
     use reth_primitives::SealedBlock;
     use reth_provider::test_utils::MockEthProvider;
     use reth_testing_utils::generators::{random_block_range, BlockRangeParams};
-    use tokio::task;
-    use tokio::time::{sleep, Duration};
+    use tokio::{
+        task,
+        time::{sleep, Duration},
+    };
 
     #[tokio::test]
     async fn test_block_cell_wait_for_value() {
@@ -631,6 +648,8 @@ mod tests {
             executor,
             config,
             builder.clone(),
+            false,
+            std::time::Duration::from_secs(1),
             false,
         );
 

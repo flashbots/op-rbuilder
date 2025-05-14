@@ -1,8 +1,7 @@
 use args::CliExt;
 use clap::Parser;
 use reth_optimism_cli::{chainspec::OpChainSpecParser, Cli};
-use reth_optimism_node::node::OpAddOnsBuilder;
-use reth_optimism_node::OpNode;
+use reth_optimism_node::{node::OpAddOnsBuilder, OpNode};
 
 #[cfg(feature = "flashblocks")]
 use payload_builder::CustomOpPayloadBuilder;
@@ -43,6 +42,8 @@ fn main() {
                 .with_types::<OpNode>()
                 .with_components(op_node.components().payload(CustomOpPayloadBuilder::new(
                     builder_args.builder_signer,
+                    std::time::Duration::from_secs(builder_args.extra_block_deadline_secs),
+                    builder_args.enable_revert_protection,
                     builder_args.flashblocks_ws_url,
                     builder_args.chain_block_time,
                     builder_args.flashblock_block_time,

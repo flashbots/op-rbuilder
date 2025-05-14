@@ -83,6 +83,8 @@ pub struct ExecutedPayload<N: NodePrimitives> {
 #[non_exhaustive]
 pub struct CustomOpPayloadBuilder {
     builder_signer: Option<Signer>,
+    extra_block_deadline: std::time::Duration,
+    enable_revert_protection: bool,
     #[cfg(feature = "flashblocks")]
     flashblocks_ws_url: String,
     #[cfg(feature = "flashblocks")]
@@ -110,11 +112,17 @@ impl CustomOpPayloadBuilder {
     #[cfg(not(feature = "flashblocks"))]
     pub fn new(
         builder_signer: Option<Signer>,
+        extra_block_deadline: std::time::Duration,
+        enable_revert_protection: bool,
         _flashblocks_ws_url: String,
         _chain_block_time: u64,
         _flashblock_block_time: u64,
     ) -> Self {
-        Self { builder_signer }
+        Self {
+            builder_signer,
+            extra_block_deadline,
+            enable_revert_protection,
+        }
     }
 }
 
@@ -168,6 +176,8 @@ where
         pool: Pool,
     ) -> eyre::Result<PayloadBuilderHandle<<Node::Types as NodeTypes>::Payload>> {
         tracing::info!("Spawning a custom payload builder");
+        let extra_block_deadline = self.extra_block_deadline;
+        let enable_revert_protection = self.enable_revert_protection;
         let payload_builder = self.build_payload_builder(ctx, pool).await?;
         let payload_job_config = BasicPayloadJobGeneratorConfig::default();
 
@@ -177,6 +187,8 @@ where
             payload_job_config,
             payload_builder,
             false,
+            extra_block_deadline,
+            enable_revert_protection,
         );
 
         let (payload_service, payload_builder) =
@@ -351,6 +363,7 @@ where
             mut cached_reads,
             config,
             cancel,
+            enable_revert_protection,
         } = args;
 
         let chain_spec = self.client.chain_spec();
@@ -392,6 +405,7 @@ where
             cancel,
             builder_signer: self.builder_signer,
             metrics: Default::default(),
+            enable_revert_protection,
         };
 
         let builder = OpBuilder::new(best, remove_reverted);
@@ -771,6 +785,8 @@ pub struct OpPayloadBuilderCtx<ChainSpec, N: NodePrimitives> {
     pub builder_signer: Option<Signer>,
     /// The metrics for the builder
     pub metrics: OpRBuilderMetrics,
+    /// Whether we enabled revert protection
+    pub enable_revert_protection: bool,
 }
 
 impl<ChainSpec, N> OpPayloadBuilderCtx<ChainSpec, N>
@@ -1103,10 +1119,12 @@ where
                 num_txs_simulated_success += 1;
             } else {
                 num_txs_simulated_fail += 1;
-                info!(target: "payload_builder", tx_hash = ?tx.tx_hash(), "skipping reverted transaction");
-                best_txs.mark_invalid(tx.signer(), tx.nonce());
-                info.invalid_tx_hashes.insert(tx.tx_hash());
-                continue;
+                if self.enable_revert_protection {
+                    info!(target: "payload_builder", tx_hash = ?tx.tx_hash(), "skipping reverted transaction");
+                    best_txs.mark_invalid(tx.signer(), tx.nonce());
+                    info.invalid_tx_hashes.insert(tx.tx_hash());
+                    continue;
+                }
             }
 
             // add gas used by the transaction to cumulative gas used, before creating the

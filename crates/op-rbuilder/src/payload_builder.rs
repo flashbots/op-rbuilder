@@ -99,11 +99,15 @@ pub struct CustomOpPayloadBuilder {
     flashblocks_ws_url: String,
     chain_block_time: u64,
     flashblock_block_time: u64,
+    extra_block_deadline: std::time::Duration,
+    enable_revert_protection: bool,
 }
 
 impl CustomOpPayloadBuilder {
     pub fn new(
         builder_signer: Option<Signer>,
+        extra_block_deadline: std::time::Duration,
+        enable_revert_protection: bool,
         flashblocks_ws_url: String,
         chain_block_time: u64,
         flashblock_block_time: u64,
@@ -113,6 +117,8 @@ impl CustomOpPayloadBuilder {
             flashblocks_ws_url,
             chain_block_time,
             flashblock_block_time,
+            extra_block_deadline,
+            enable_revert_protection,
         }
     }
 }
@@ -168,6 +174,8 @@ where
         pool: Pool,
     ) -> eyre::Result<PayloadBuilderHandle<<Node::Types as NodeTypes>::Payload>> {
         tracing::info!("Spawning a custom payload builder");
+        let extra_block_deadline = self.extra_block_deadline;
+        let enable_revert_protection = self.enable_revert_protection;
         let payload_builder = self.build_payload_builder(ctx, pool).await?;
         let payload_job_config = BasicPayloadJobGeneratorConfig::default();
 
@@ -177,6 +185,8 @@ where
             payload_job_config,
             payload_builder,
             true,
+            extra_block_deadline,
+            enable_revert_protection,
         );
 
         let (payload_service, payload_builder) =
@@ -1164,7 +1174,6 @@ where
 
             // A sequencer's block should never contain blob or deposit transactions from the pool.
             if tx.is_eip4844() || tx.is_deposit() {
-                println!("B");
                 best_txs.mark_invalid(tx.signer(), tx.nonce());
                 continue;
             }

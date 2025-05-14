@@ -27,6 +27,7 @@ pub struct OpRbuilderConfig {
     flashblocks_ws_url: Option<String>,
     chain_block_time: Option<u64>,
     flashbots_block_time: Option<u64>,
+    with_revert_protection: Option<bool>,
 }
 
 impl OpRbuilderConfig {
@@ -61,6 +62,11 @@ impl OpRbuilderConfig {
 
     pub fn with_builder_private_key(mut self, private_key: &str) -> Self {
         self.builder_private_key = Some(private_key.to_string());
+        self
+    }
+
+    pub fn with_revert_protection(mut self, revert_protection: bool) -> Self {
+        self.with_revert_protection = Some(revert_protection);
         self
     }
 
@@ -110,9 +116,18 @@ impl Service for OpRbuilderConfig {
             .arg("--datadir")
             .arg(self.data_dir.as_ref().expect("data_dir not set"))
             .arg("--disable-discovery")
+            .arg("--color")
+            .arg("never")
+            .arg("--builder.log-pool-transactions")
             .arg("--port")
             .arg(self.network_port.expect("network_port not set").to_string())
             .arg("--ipcdisable");
+
+        if let Some(revert_protection) = self.with_revert_protection {
+            if revert_protection {
+                cmd.arg("--builder.enable-revert-protection");
+            }
+        }
 
         if let Some(builder_private_key) = &self.builder_private_key {
             cmd.arg("--rollup.builder-secret-key")
