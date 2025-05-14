@@ -42,6 +42,7 @@ incremental = false
 [workspace.dependencies]
 reth = { git = "https://github.com/paradigmxyz/reth", tag = "v1.3.12" }
 reth-chain-state = { git = "https://github.com/paradigmxyz/reth", tag = "v1.3.12" }
+reth-cli = { git = "https://github.com/paradigmxyz/reth", tag = "v1.3.12" }
 reth-cli-util = { git = "https://github.com/paradigmxyz/reth", tag = "v1.3.12" }
 reth-db = { git = "https://github.com/paradigmxyz/reth", tag = "v1.3.12" }
 reth-db-common = { git = "https://github.com/paradigmxyz/reth", tag = "v1.3.12" }
@@ -72,6 +73,7 @@ reth-revm = { git = "https://github.com/paradigmxyz/reth", tag = "v1.3.12" }
 reth-payload-builder-primitives = { git = "https://github.com/paradigmxyz/reth", tag = "v1.3.12" }
 reth-payload-util = { git = "https://github.com/paradigmxyz/reth", tag = "v1.3.12" }
 reth-rpc-layer = { git = "https://github.com/paradigmxyz/reth", tag = "v1.3.12" }
+reth-network-peers = { git = "https://github.com/paradigmxyz/reth", tag = "v1.3.12" }
 reth-testing-utils = { git = "https://github.com/paradigmxyz/reth", tag = "v1.3.12" }
 
 # reth optimism
