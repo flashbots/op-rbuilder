@@ -5,9 +5,7 @@
 //!
 //! To setup the playground, checkout this repository:
 //!
-//!   https://github.com/SozinM/builder-playground/
-//!
-//! and then switch to the `msozin/feat/flashblocks` branch.
+//!   https://github.com/flashbots/builder-playground
 //!
 //! Then run the following command:
 //!
@@ -16,7 +14,7 @@
 //! Wait until the playground is up and running, then run the following command to build
 //! op-rbuilder with flashblocks support:
 //!
-//!   cargo build --features flashblocks --bin op-rbuilder -p op-rbuilder
+//!   cargo build --bin op-rbuilder -p op-rbuilder
 //!
 //! then run the following command to start op-rbuilder against the playground:
 //!
@@ -33,7 +31,7 @@ use super::OpRbuilderArgs;
 use alloy_primitives::hex;
 use clap::{parser::ValueSource, CommandFactory};
 use core::{
-    net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4},
+    net::{IpAddr, Ipv4Addr, SocketAddr},
     ops::Range,
     time::Duration,
 };
@@ -113,9 +111,6 @@ struct PlaygroundOptions {
     /// Sets the node.network.trusted_peers in NodeCommand
     pub trusted_peer: TrustedPeer,
 
-    /// Sets node.ext.flashblocks_ws_url in NodeCommand
-    pub flashblocks_ws_addr: SocketAddr,
-
     /// Sets node.ext.flashblock_block_time in NodeCommand
     pub chain_block_time: Duration,
 }
@@ -137,7 +132,6 @@ impl PlaygroundOptions {
         let authrpc_jwtsecret = existing_path(path, "jwtsecret")?.into();
         let port = pick_preferred_port(30333, 30000..65535);
         let chain_block_time = extract_chain_block_time(path)?;
-        let flashblocks_ws_addr = extract_flashblocks_ws_addr(path)?;
         let authrpc_port = extract_authrpc_port(path)?;
         let trusted_peer = TrustedPeer::from_secret_key(
             Host::Ipv4(Ipv4Addr::LOCALHOST),
@@ -153,7 +147,6 @@ impl PlaygroundOptions {
             authrpc_jwtsecret,
             port,
             trusted_peer,
-            flashblocks_ws_addr,
             chain_block_time,
         })
     }
@@ -207,10 +200,6 @@ impl PlaygroundOptions {
 
         if matches.value_source("disable_discovery").is_default() {
             node.network.discovery.disable_discovery = true;
-        }
-
-        if matches.value_source("flashblocks_ws_url").is_default() {
-            node.ext.flashblocks_ws_url = self.flashblocks_ws_addr.to_string();
         }
 
         if matches.value_source("chain_block_time").is_default() {
@@ -279,7 +268,7 @@ fn extract_chain_block_time(basepath: &Path) -> Result<Duration> {
 }
 
 fn extract_deterministic_p2p_key(basepath: &Path) -> Result<SecretKey> {
-    let key = read_to_string(existing_path(basepath, "deterministic_p2p_key.txt")?)?;
+    let key = read_to_string(existing_path(basepath, "enode-key-1.txt")?)?;
     Ok(SecretKey::from_slice(
         &hex::decode(key).map_err(|e| eyre!("Invalid hex key: {e}"))?,
     )?)
@@ -316,16 +305,6 @@ fn extract_service_command_flag(basepath: &Path, service: &str, flag: &str) -> R
         .ok_or_else(|| eyre!("docker_compose: {flag} value not found"))?;
 
     Ok(value.to_string())
-}
-
-fn extract_flashblocks_ws_addr(basepath: &Path) -> Result<SocketAddr> {
-    extract_service_command_flag(basepath, "rollup-boost", "--flashblocks-url")
-        .and_then(|url_str| Url::parse(&url_str).map_err(|e| eyre!("Invalid flashblocks-url: {e}")))
-        .and_then(|url| {
-            url.port()
-                .ok_or_else(|| eyre!("Invalid flashblocks-url: missing port"))
-        })
-        .map(|port| SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, port)))
 }
 
 fn extract_authrpc_port(basepath: &Path) -> Result<u16> {
