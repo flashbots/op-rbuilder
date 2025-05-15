@@ -109,3 +109,40 @@ cargo run -- spam ./scenarios/simple.toml http://localhost:2222 --tpb 10 --durat
 ```
 
 And you should start to see blocks being built and landed on-chain with `contender` transactions.
+
+
+## Builder playground
+
+You can quickly spin up an op-stack devnet using [builder-playground](https://github.com/flashbots/builder-playground). The quickest workflow to get op-stack running against your local `op-rbuilder` instance is:
+
+1. Check out the builder playground repo
+
+```
+git clone git@github.com:flashbots/builder-playground.git
+```
+
+2. In the builder-playgound spin up an l2 opstack setup specifying that it should use an external block builder:
+
+```
+go run main.go cook opstack --external-builder http://host.docker.internal:4444
+```
+
+3. Run rbuilder in playground mode:
+
+```
+cargo run --bin op-rbuilder -- node --builder.playground
+```
+
+You could also run it using:
+
+```
+just run-playground
+```
+
+
+This will automatically try to detect all settings and ports from the currently running playground. Sometimes you might need to clean up the builder-playground state between runs. This can be done using:
+
+```
+rm -rf ~/.local/share/reth
+sudo rm -rf ~/.playground
+```
