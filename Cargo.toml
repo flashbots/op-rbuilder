@@ -74,6 +74,8 @@ reth-payload-util = { git = "https://github.com/paradigmxyz/reth", tag = "v1.3.1
 reth-rpc-layer = { git = "https://github.com/paradigmxyz/reth", tag = "v1.3.12" }
 reth-testing-utils = { git = "https://github.com/paradigmxyz/reth", tag = "v1.3.12" }
 reth-node-builder = { git = "https://github.com/paradigmxyz/reth", tag = "v1.3.12" }
+reth-rpc-eth-api = { git = "https://github.com/paradigmxyz/reth", tag = "v1.3.12" }
+reth-rpc-eth-types = { git = "https://github.com/paradigmxyz/reth", tag = "v1.3.12" }
 
 # reth optimism
 reth-optimism-primitives = { git = "https://github.com/paradigmxyz/reth", tag = "v1.3.12" }
