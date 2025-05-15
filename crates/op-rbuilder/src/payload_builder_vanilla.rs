@@ -1082,9 +1082,7 @@ where
                 }
             };
 
-            // add gas used by the transaction to cumulative gas used, before creating the receipt
-            let gas_used = result.gas_used();
-            info.cumulative_gas_used += gas_used;
+            info.track_transaction_resource_usage(sequencer_tx.inner(), &result);
 
             let ctx = ReceiptBuilderCtx {
                 tx: sequencer_tx.inner(),
@@ -1193,10 +1191,8 @@ where
                 }
             }
 
-            // add gas used by the transaction to cumulative gas used, before creating the
-            // receipt
+            info.track_transaction_resource_usage(tx.inner(), &result);
             let gas_used = result.gas_used();
-            info.cumulative_gas_used += gas_used;
 
             // Push transaction changeset and calculate header bloom filter for receipt.
             let ctx = ReceiptBuilderCtx {
@@ -1265,9 +1261,7 @@ where
                     .transact(&builder_tx)
                     .map_err(|err| PayloadBuilderError::EvmExecutionError(Box::new(err)))?;
 
-                // Add gas used by the transaction to cumulative gas used, before creating the receipt
-                let gas_used = result.gas_used();
-                info.cumulative_gas_used += gas_used;
+                info.track_transaction_resource_usage(builder_tx.inner(), &result);
 
                 let ctx = ReceiptBuilderCtx {
                     tx: builder_tx.inner(),
