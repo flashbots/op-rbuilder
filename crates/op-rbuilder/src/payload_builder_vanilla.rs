@@ -2,6 +2,7 @@ use crate::{
     generator::{BlockCell, BlockPayloadJobGenerator, BuildArguments, PayloadBuilder},
     metrics::OpRBuilderMetrics,
     primitives::reth::{ExecutedPayload, ExecutionInfo},
+    tx::{FBPoolTransaction, FBPooledTransaction},
     tx_signer::Signer,
 };
 use alloy_consensus::{
@@ -130,10 +131,10 @@ where
             Primitives = OpPrimitives,
         >,
     >,
-    Pool: TransactionPool<Transaction: PoolTransaction<Consensus = TxTy<Node::Types>>>
+    Pool: TransactionPool<Transaction: FBPoolTransaction<Consensus = OpTransactionSigned>>
         + Unpin
         + 'static,
-    <Pool as TransactionPool>::Transaction: OpPooledTx,
+    <Pool as TransactionPool>::Transaction: FBPoolTransaction,
 {
     type PayloadBuilder = OpPayloadBuilderVanilla<Pool, Node::Provider>;
 
@@ -152,59 +153,12 @@ where
     }
 }
 
-impl<Node, Pool> PayloadServiceBuilder<Node, Pool> for CustomOpPayloadBuilder
-where
-    Node: FullNodeTypes<
-        Types: NodeTypes<
-            Payload = OpEngineTypes,
-            ChainSpec = OpChainSpec,
-            Primitives = OpPrimitives,
-        >,
-    >,
-    Pool: TransactionPool<Transaction: PoolTransaction<Consensus = TxTy<Node::Types>>>
-        + Unpin
-        + 'static,
-    <Pool as TransactionPool>::Transaction: OpPooledTx,
-{
-    async fn spawn_payload_builder_service(
-        self,
-        ctx: &BuilderContext<Node>,
-        pool: Pool,
-    ) -> eyre::Result<PayloadBuilderHandle<<Node::Types as NodeTypes>::Payload>> {
-        tracing::info!("Spawning a custom payload builder");
-        let extra_block_deadline = self.extra_block_deadline;
-        let enable_revert_protection = self.enable_revert_protection;
-        let payload_builder = self.build_payload_builder(ctx, pool).await?;
-        let payload_job_config = BasicPayloadJobGeneratorConfig::default();
-
-        let payload_generator = BlockPayloadJobGenerator::with_builder(
-            ctx.provider().clone(),
-            ctx.task_executor().clone(),
-            payload_job_config,
-            payload_builder,
-            false,
-            extra_block_deadline,
-            enable_revert_protection,
-        );
-
-        let (payload_service, payload_builder) =
-            PayloadBuilderService::new(payload_generator, ctx.provider().canonical_state_stream());
-
-        ctx.task_executor()
-            .spawn_critical("custom payload builder service", Box::pin(payload_service));
-
-        tracing::info!("Custom payload service started");
-
-        Ok(payload_builder)
-    }
-}
-
 impl<Pool, Client, Txs> reth_basic_payload_builder::PayloadBuilder
     for OpPayloadBuilderVanilla<Pool, Client, Txs>
 where
-    Pool: TransactionPool<Transaction: PoolTransaction<Consensus = OpTransactionSigned>>,
+    Pool: TransactionPool<Transaction: FBPoolTransaction<Consensus = OpTransactionSigned>>,
     Client: StateProviderFactory + ChainSpecProvider<ChainSpec: EthChainSpec + OpHardforks> + Clone,
-    Txs: OpPayloadTransactions<Pool::Transaction>,
+    Txs: OpPayloadTransactions<FBPooledTransaction>,
 {
     type Attributes = OpPayloadBuilderAttributes<OpTransactionSigned>;
     type BuiltPayload = OpBuiltPayload;
@@ -335,65 +289,9 @@ impl<Pool, Client> OpPayloadBuilderVanilla<Pool, Client> {
     }
 }
 
-impl<Pool, Client, Txs> PayloadBuilder for OpPayloadBuilderVanilla<Pool, Client, Txs>
-where
-    Client: StateProviderFactory + ChainSpecProvider<ChainSpec: EthChainSpec + OpHardforks> + Clone,
-    Pool: TransactionPool<Transaction: PoolTransaction<Consensus = OpTransactionSigned>>,
-    Txs: OpPayloadTransactions<Pool::Transaction>,
-{
-    type Attributes = OpPayloadBuilderAttributes<OpTransactionSigned>;
-    type BuiltPayload = OpBuiltPayload;
-
-    fn try_build(
-        &self,
-        args: BuildArguments<Self::Attributes, Self::BuiltPayload>,
-        best_payload: BlockCell<Self::BuiltPayload>,
-    ) -> Result<(), PayloadBuilderError> {
-        let pool = self.pool.clone();
-        let block_build_start_time = Instant::now();
-
-        match self.build_payload(
-            args,
-            |attrs| {
-                #[allow(clippy::unit_arg)]
-                self.best_transactions
-                    .best_transactions(pool.clone(), attrs)
-            },
-            |hashes| {
-                #[allow(clippy::unit_arg)]
-                self.best_transactions.remove_invalid(pool.clone(), hashes)
-            },
-        )? {
-            BuildOutcome::Better { payload, .. } => {
-                best_payload.set(payload);
-                self.metrics
-                    .total_block_built_duration
-                    .record(block_build_start_time.elapsed());
-                self.metrics.block_built_success.increment(1);
-                Ok(())
-            }
-            BuildOutcome::Freeze(payload) => {
-                best_payload.set(payload);
-                self.metrics
-                    .total_block_built_duration
-                    .record(block_build_start_time.elapsed());
-                Ok(())
-            }
-            BuildOutcome::Cancelled => {
-                tracing::warn!("Payload build cancelled");
-                Err(PayloadBuilderError::MissingPayload)
-            }
-            _ => {
-                tracing::warn!("No better payload found");
-                Err(PayloadBuilderError::MissingPayload)
-            }
-        }
-    }
-}
-
 impl<Pool, Client, T> OpPayloadBuilderVanilla<Pool, Client, T>
 where
-    Pool: TransactionPool<Transaction: PoolTransaction<Consensus = OpTransactionSigned>>,
+    Pool: TransactionPool<Transaction: FBPoolTransaction<Consensus = OpTransactionSigned>>,
     Client: StateProviderFactory + ChainSpecProvider<ChainSpec: EthChainSpec + OpHardforks>,
 {
     /// Constructs an Optimism payload from the transactions sent via the
@@ -411,7 +309,7 @@ where
         remove_reverted: impl FnOnce(Vec<TxHash>),
     ) -> Result<BuildOutcome<OpBuiltPayload>, PayloadBuilderError>
     where
-        Txs: PayloadTransactions<Transaction: PoolTransaction<Consensus = OpTransactionSigned>>,
+        Txs: PayloadTransactions<Transaction: FBPoolTransaction<Consensus = OpTransactionSigned>>,
     {
         let BuildArguments {
             mut cached_reads,
@@ -530,7 +428,7 @@ impl<Txs> OpBuilder<'_, Txs> {
     ) -> Result<BuildOutcomeKind<ExecutedPayload<N>>, PayloadBuilderError>
     where
         N: OpPayloadPrimitives<_TX = OpTransactionSigned>,
-        Txs: PayloadTransactions<Transaction: PoolTransaction<Consensus = N::SignedTx>>,
+        Txs: PayloadTransactions<Transaction: FBPoolTransaction<Consensus = OpTransactionSigned>>,
         ChainSpec: EthChainSpec + OpHardforks,
         DB: Database<Error = ProviderError> + AsRef<P>,
         P: StorageRootProvider,
@@ -634,7 +532,7 @@ impl<Txs> OpBuilder<'_, Txs> {
     ) -> Result<BuildOutcomeKind<OpBuiltPayload>, PayloadBuilderError>
     where
         ChainSpec: EthChainSpec + OpHardforks,
-        Txs: PayloadTransactions<Transaction: PoolTransaction<Consensus = OpTransactionSigned>>,
+        Txs: PayloadTransactions<Transaction: FBPoolTransaction<Consensus = OpTransactionSigned>>,
         DB: Database<Error = ProviderError> + AsRef<P>,
         P: StateRootProvider + HashedPostStateProvider + StorageRootProvider,
     {
@@ -1107,7 +1005,7 @@ where
         info: &mut ExecutionInfo<N>,
         db: &mut State<DB>,
         mut best_txs: impl PayloadTransactions<
-            Transaction: PoolTransaction<Consensus = OpTransactionSigned>,
+            Transaction: FBPoolTransaction<Consensus = OpTransactionSigned>,
         >,
         block_gas_limit: u64,
         block_da_limit: Option<u64>,

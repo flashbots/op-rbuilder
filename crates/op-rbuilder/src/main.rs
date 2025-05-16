@@ -23,8 +23,10 @@ mod primitives;
 mod revert_protection;
 #[cfg(test)]
 mod tester;
+mod tx;
 mod tx_signer;
 use monitor_tx_pool::monitor_tx_pool;
+mod example;
 
 // Prefer jemalloc for performance reasons.
 #[cfg(all(feature = "jemalloc", unix))]

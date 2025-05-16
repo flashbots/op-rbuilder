@@ -1,5 +1,6 @@
 use std::num::NonZero;
 
+/*
 use alloy_primitives::{Bytes, B256};
 use jsonrpsee::{
     core::{async_trait, RpcResult},
@@ -18,7 +19,32 @@ pub trait EthApiOverride {
     async fn send_raw_transaction_revert(&self, tx: Bytes) -> RpcResult<B256>;
 }
 
-struct RevertProtectionService<Pool> {
+#[derive(Default)]
+pub struct RevertsState {
+    pub can_revert: bool, // false
+    pub attempts: usize,
+    pub reverts: usize,
+    pub last_attempted_block: B256
+}
+
+pub struct TransactionPooledWithRevertOptions {
+    pub tx: OpPooledTransaction,
+    pub reverts: RevertState
+}
+
+impl TransactionPooledWithRevertOptions {
+    pub fn can_revert(&self) {
+        self.reverts.can_revert
+    }
+}
+
+impl Deref for TransactionPooledWithRevertOptions {
+    fn deref(&self) -> &OpPooledTransaction {
+        &self.0
+    }
+}
+
+pub struct RevertProtectionService<Pool> {
     reverted_transactions: LruCache<B256, ()>,
     pool: Pool,
 }
@@ -52,10 +78,13 @@ where
         // Since this transactions should not be executed or exist on the normal pool.
         let hash = self
             .pool
-            .add_transaction(TransactionOrigin::Local, pool_transaction)
+            .add_transaction(TransactionOrigin::Local, TransactionWithRevertOptions { tx: pool_transaction, can_revert: true }))
             .await
             .unwrap(); // TODO: handle error
+
+        self.reverted_transactions.put(hash, ());
 
         Ok(hash)
     }
 }
+*/
