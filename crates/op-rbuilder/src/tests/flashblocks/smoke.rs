@@ -11,7 +11,6 @@ use crate::tests::TestHarnessBuilder;
 #[tokio::test]
 #[ignore = "Flashblocks tests need more work"]
 async fn chain_produces_blocks() -> eyre::Result<()> {
-  println!("Starting test: flashbots_chain_produces_blocks");
     let harness = TestHarnessBuilder::new("flashbots_chain_produces_blocks")
         .with_flashblocks_ws_url("ws://localhost:1239")
         .with_chain_block_time(2000)
@@ -33,14 +32,14 @@ async fn chain_produces_blocks() -> eyre::Result<()> {
         let (_, mut read) = ws_stream.split();
 
         loop {
-          tokio::select! {
-            _ = cancellation_token_clone.cancelled() => {
-                break Ok(());
+            tokio::select! {
+              _ = cancellation_token_clone.cancelled() => {
+                  break Ok(());
+              }
+              Some(Ok(Message::Text(text))) = read.next() => {
+                messages_clone.lock().push(text);
+              }
             }
-            Some(Ok(Message::Text(text))) = read.next() => {
-              messages_clone.lock().push(text);
-            }
-          }
         }
     });
 
@@ -49,22 +48,22 @@ async fn chain_produces_blocks() -> eyre::Result<()> {
     for _ in 0..10 {
         for _ in 0..5 {
             // send a valid transaction
-            let tx = harness.send_valid_transaction().await?;
-            println!("Sent transaction: {}", tx.tx_hash());
+            harness.send_valid_transaction().await?;
         }
 
         generator.generate_block().await?;
-        println!("Generated a new block");
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     }
 
-    cancellation_token.cancel();    
+    cancellation_token.cancel();
     assert!(ws_handle.await.is_ok(), "WebSocket listener task failed");
     assert!(
-        !received_messages.lock().iter().any(|msg| msg.contains("Building flashblock")),
+        !received_messages
+            .lock()
+            .iter()
+            .any(|msg| msg.contains("Building flashblock")),
         "No messages received from WebSocket"
     );
-    
 
     Ok(())
 }
