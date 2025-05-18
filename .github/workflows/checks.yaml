@@ -60,8 +60,10 @@ jobs:
       - name: Compile op-rbuilder
         run: cargo build -p op-rbuilder --bin op-rbuilder
 
-      - name: Install Op-Reth
-        run: git clone https://github.com/paradigmxyz/reth.git && cd reth && make install-op
+      - name: Download op-reth
+        run: |
+          ./scripts/ci/download-op-reth.sh
+          echo "$(pwd)" >> $GITHUB_PATH
 
 
       - name: Lint
