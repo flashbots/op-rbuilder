@@ -5342,6 +5342,7 @@ dependencies = [
  "clap_builder",
  "derive_more",
  "eyre",
+ "futures",
  "futures-util",
  "jsonrpsee",
  "metrics",
