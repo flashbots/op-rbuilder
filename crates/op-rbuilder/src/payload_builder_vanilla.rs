@@ -1024,6 +1024,7 @@ where
 
         while let Some(tx) = best_txs.next(()) {
             println!("tx: {:?}", tx);
+            let can_revert = tx.can_revert();
 
             let tx = tx.into_consensus();
             num_txs_considered += 1;
