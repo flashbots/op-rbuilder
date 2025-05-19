@@ -84,7 +84,7 @@ thiserror.workspace = true
 parking_lot.workspace = true
 url.workspace = true
 
-tower = "0.4"
+tower = "0.5"
 futures = "0.3"
 futures-util = "0.3.31"
 time = { version = "0.3.36", features = ["macros", "formatting", "parsing"] }
@@ -98,7 +98,7 @@ serde_yaml = { version = "0.9" }
 
 
 # `flashblocks` branch
-rollup-boost = { git = "http://github.com/flashbots/rollup-boost", rev = "6945842487ac0b0021800589d1660ec9c20cf254" }
+rollup-boost = { git = "http://github.com/flashbots/rollup-boost", rev = "6f994a2092967108e7dda0ade57625ba10940310" }
 
 [target.'cfg(unix)'.dependencies]
 tikv-jemallocator = { version = "0.6", optional = true }
