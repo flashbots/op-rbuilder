@@ -129,7 +129,6 @@ min-debug-logs = ["tracing/release_max_level_debug"]
 min-trace-logs = ["tracing/release_max_level_trace"]
 
 tests = []
-integration = []
 flashblocks = []
 
 [[bin]]

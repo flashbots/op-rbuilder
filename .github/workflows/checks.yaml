@@ -65,7 +65,6 @@ jobs:
           ./scripts/ci/download-op-reth.sh
           echo "$(pwd)" >> $GITHUB_PATH
 
-
       - name: Lint
         run: make lint
 

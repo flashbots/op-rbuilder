@@ -48,7 +48,7 @@ async fn chain_produces_blocks() -> eyre::Result<()> {
     for _ in 0..10 {
         for _ in 0..5 {
             // send a valid transaction
-            harness.send_valid_transaction().await?;
+            let _ = harness.send_valid_transaction().await?;
         }
 
         generator.generate_block().await?;

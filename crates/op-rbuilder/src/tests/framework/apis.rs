@@ -1,3 +1,4 @@
+use super::DEFAULT_JWT_TOKEN;
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::B256;
 use alloy_rpc_types_engine::{ExecutionPayloadV3, ForkchoiceUpdated, PayloadStatus};
@@ -34,10 +35,8 @@ impl Default for EngineApiBuilder {
 impl EngineApiBuilder {
     pub fn new() -> Self {
         Self {
-            url: String::from("http://localhost:8551"), // default value
-            jwt_secret: String::from(
-                "688f5d737bad920bdfb2fc2f488d6b6209eebda1dae949a8de91398d932c517a",
-            ), // default value
+            url: String::from("http://localhost:8551"),
+            jwt_secret: String::from(DEFAULT_JWT_TOKEN),
         }
     }
 
