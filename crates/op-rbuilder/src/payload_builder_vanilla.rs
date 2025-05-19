@@ -158,7 +158,7 @@ impl<Pool, Client, Txs> reth_basic_payload_builder::PayloadBuilder
 where
     Pool: TransactionPool<Transaction: FBPoolTransaction<Consensus = OpTransactionSigned>>,
     Client: StateProviderFactory + ChainSpecProvider<ChainSpec: EthChainSpec + OpHardforks> + Clone,
-    Txs: OpPayloadTransactions<FBPooledTransaction>,
+    Txs: OpPayloadTransactions<Pool::Transaction>,
 {
     type Attributes = OpPayloadBuilderAttributes<OpTransactionSigned>;
     type BuiltPayload = OpBuiltPayload;

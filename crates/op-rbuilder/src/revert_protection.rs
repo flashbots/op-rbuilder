@@ -1,15 +1,13 @@
-use std::num::NonZero;
-
-/*
 use alloy_primitives::{Bytes, B256};
 use jsonrpsee::{
     core::{async_trait, RpcResult},
     proc_macros::rpc,
 };
-use lru::LruCache;
 use reth_optimism_txpool::OpPooledTransaction;
 use reth_rpc_eth_types::utils::recover_raw_transaction;
 use reth_transaction_pool::{PoolTransaction, TransactionOrigin, TransactionPool};
+
+use crate::tx::FBPooledTransaction;
 
 // Namespace overrides for revert protection support
 #[cfg_attr(not(test), rpc(server, namespace = "eth"))]
@@ -19,72 +17,33 @@ pub trait EthApiOverride {
     async fn send_raw_transaction_revert(&self, tx: Bytes) -> RpcResult<B256>;
 }
 
-#[derive(Default)]
-pub struct RevertsState {
-    pub can_revert: bool, // false
-    pub attempts: usize,
-    pub reverts: usize,
-    pub last_attempted_block: B256
-}
-
-pub struct TransactionPooledWithRevertOptions {
-    pub tx: OpPooledTransaction,
-    pub reverts: RevertState
-}
-
-impl TransactionPooledWithRevertOptions {
-    pub fn can_revert(&self) {
-        self.reverts.can_revert
-    }
-}
-
-impl Deref for TransactionPooledWithRevertOptions {
-    fn deref(&self) -> &OpPooledTransaction {
-        &self.0
-    }
-}
-
-pub struct RevertProtectionService<Pool> {
-    reverted_transactions: LruCache<B256, ()>,
+pub struct RevertProtectionExt<Pool> {
     pool: Pool,
 }
 
-impl<Pool> RevertProtectionService<Pool> {
-    fn new(pool: Pool) -> Self {
-        Self {
-            reverted_transactions: LruCache::new(NonZero::new(1000).unwrap()),
-            pool,
-        }
-    }
-}
-
-impl<Pool> RevertProtectionService<Pool> {
-    pub async fn is_reverted(&self, hash: B256) -> bool {
-        self.reverted_transactions.contains(&hash)
+impl<Pool> RevertProtectionExt<Pool> {
+    pub fn new(pool: Pool) -> Self {
+        Self { pool }
     }
 }
 
 #[async_trait]
-impl<Pool> EthApiOverrideServer for RevertProtectionService<Pool>
+impl<Pool> EthApiOverrideServer for RevertProtectionExt<Pool>
 where
-    Pool: TransactionPool<Transaction = OpPooledTransaction> + Clone + 'static,
+    Pool: TransactionPool<Transaction = FBPooledTransaction> + Clone + 'static,
 {
     async fn send_raw_transaction_revert(&self, tx: Bytes) -> RpcResult<B256> {
         let recovered = recover_raw_transaction(&tx)?;
-        let pool_transaction = OpPooledTransaction::from_pooled(recovered);
+        let pool_transaction: FBPooledTransaction =
+            OpPooledTransaction::from_pooled(recovered).into();
 
-        // we cannot delegate on the send_raw_transaction implementation because that one will
-        // send the transactions to the sequencer if enabled, I want to avoid that footgun.
-        // Since this transactions should not be executed or exist on the normal pool.
+        // TODO: Fix unwrap
         let hash = self
             .pool
-            .add_transaction(TransactionOrigin::Local, TransactionWithRevertOptions { tx: pool_transaction, can_revert: true }))
+            .add_transaction(TransactionOrigin::Local, pool_transaction)
             .await
-            .unwrap(); // TODO: handle error
-
-        self.reverted_transactions.put(hash, ());
+            .unwrap();
 
         Ok(hash)
     }
 }
-*/

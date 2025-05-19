@@ -1,16 +1,23 @@
 use std::sync::Arc;
 
-use alloy_consensus::{BlobTransactionSidecar, BlobTransactionValidationError};
+use alloy_consensus::{
+    conditional::BlockConditionalAttributes, BlobTransactionSidecar, BlobTransactionValidationError,
+};
 use alloy_eips::{eip7702::SignedAuthorization, Typed2718};
 use alloy_primitives::{Address, Bytes, TxHash, TxKind, B256, U256};
-use alloy_rpc_types_eth::AccessList;
+use alloy_rpc_types_eth::{erc4337::TransactionConditional, AccessList};
 use reth_optimism_primitives::OpTransactionSigned;
-use reth_optimism_txpool::{interop::MaybeInteropTransaction, OpPooledTransaction};
+use reth_optimism_txpool::{
+    conditional::MaybeConditionalTransaction, interop::MaybeInteropTransaction, OpPooledTransaction,
+};
 use reth_primitives::{kzg::KzgSettings, Recovered};
 use reth_primitives_traits::InMemorySize;
 use reth_transaction_pool::{EthBlobTransactionSidecar, EthPoolTransaction, PoolTransaction};
 
-pub trait FBPoolTransaction: EthPoolTransaction + MaybeInteropTransaction {}
+pub trait FBPoolTransaction:
+    EthPoolTransaction + MaybeInteropTransaction + MaybeConditionalTransaction
+{
+}
 
 #[derive(Clone, Debug)]
 pub struct FBPooledTransaction {
@@ -197,6 +204,30 @@ impl From<OpPooledTransaction> for FBPooledTransaction {
         Self {
             inner: tx,
             can_revert: false,
+        }
+    }
+}
+
+impl MaybeConditionalTransaction for FBPooledTransaction {
+    fn set_conditional(&mut self, conditional: TransactionConditional) {
+        self.inner.set_conditional(conditional);
+    }
+
+    fn conditional(&self) -> Option<&TransactionConditional> {
+        self.inner.conditional()
+    }
+
+    fn has_exceeded_block_attributes(&self, block_attr: &BlockConditionalAttributes) -> bool {
+        self.inner.has_exceeded_block_attributes(block_attr)
+    }
+
+    fn with_conditional(mut self, conditional: TransactionConditional) -> Self
+    where
+        Self: Sized,
+    {
+        FBPooledTransaction {
+            inner: self.inner.with_conditional(conditional),
+            can_revert: self.can_revert,
         }
     }
 }
