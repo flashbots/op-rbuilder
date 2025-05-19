@@ -189,6 +189,24 @@ mod tests {
 
     #[tokio::test]
     #[cfg(not(feature = "flashblocks"))]
+    async fn integration_test_revert_protection_two() -> eyre::Result<()> {
+        let harness = TestHarnessBuilder::new("integration_test_revert_protection_two")
+            .build()
+            .await?;
+
+        let mut generator = harness.block_generator().await?;
+
+        // TODO: Redo this
+        let txn1 = harness.send_valid_transaction().await?;
+        let txn2 = harness.send_revert_transaction_two().await?;
+
+        generator.generate_block().await?;
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[cfg(not(feature = "flashblocks"))]
     async fn integration_test_revert_protection() -> eyre::Result<()> {
         // This is a simple test using the integration framework to test that the chain
         // produces blocks.

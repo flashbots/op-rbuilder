@@ -1023,6 +1023,8 @@ where
         let mut evm = self.evm_config.evm_with_env(&mut *db, self.evm_env.clone());
 
         while let Some(tx) = best_txs.next(()) {
+            println!("tx: {:?}", tx);
+
             let tx = tx.into_consensus();
             num_txs_considered += 1;
             // ensure we still have capacity for this transaction
@@ -1076,6 +1078,9 @@ where
                 num_txs_simulated_success += 1;
             } else {
                 num_txs_simulated_fail += 1;
+                println!("XXXXXXXXX");
+                println!("xxxx {}", can_revert);
+
                 if self.enable_revert_protection {
                     info!(target: "payload_builder", tx_hash = ?tx.tx_hash(), "skipping reverted transaction");
                     best_txs.mark_invalid(tx.signer(), tx.nonce());

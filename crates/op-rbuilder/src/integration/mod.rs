@@ -1,6 +1,10 @@
+use crate::{
+    tester::{BlockGenerator, EngineApi},
+    tx_signer::Signer,
+};
 use alloy_consensus::TxEip1559;
 use alloy_eips::{eip1559::MIN_PROTOCOL_BASE_FEE, eip2718::Encodable2718, BlockNumberOrTag};
-use alloy_primitives::hex;
+use alloy_primitives::{hex, Bytes, B256};
 use alloy_provider::{
     Identity, PendingTransactionBuilder, Provider, ProviderBuilder, RootProvider,
 };
@@ -25,11 +29,6 @@ use std::{
 use time::{format_description, OffsetDateTime};
 use tokio::time::sleep;
 use uuid::Uuid;
-
-use crate::{
-    tester::{BlockGenerator, EngineApi},
-    tx_signer::Signer,
-};
 
 /// Default JWT token for testing purposes
 pub const DEFAULT_JWT_TOKEN: &str =
@@ -338,6 +337,57 @@ impl TestHarness {
             .await?;
 
         Ok(pending_tx)
+    }
+
+    pub async fn send_revert_transaction_two(
+        &self,
+    ) -> eyre::Result<PendingTransactionBuilder<Optimism>> {
+        // TODO: Merge this with send_valid_transaction
+        // Get builder's address
+        let known_wallet = Signer::try_from_secret(BUILDER_PRIVATE_KEY.parse()?)?;
+        let builder_address = known_wallet.address;
+
+        let url = format!("http://localhost:{}", self.builder_http_port);
+        let provider =
+            ProviderBuilder::<Identity, Identity, Optimism>::default().on_http(url.parse()?);
+
+        // Get current nonce includeing the ones from the txpool
+        let nonce = provider
+            .get_transaction_count(builder_address)
+            .pending()
+            .await?;
+
+        let latest_block = provider
+            .get_block_by_number(BlockNumberOrTag::Latest)
+            .await?
+            .unwrap();
+
+        let base_fee = max(
+            latest_block.header.base_fee_per_gas.unwrap(),
+            MIN_PROTOCOL_BASE_FEE,
+        );
+
+        // Transaction from builder should succeed
+        let tx_request = OpTypedTransaction::Eip1559(TxEip1559 {
+            chain_id: 901,
+            nonce,
+            gas_limit: 210000,
+            max_fee_per_gas: base_fee.into(),
+            input: hex!("60006000fd").into(), // PUSH1 0x00 PUSH1 0x00 REVERT
+            ..Default::default()
+        });
+        let signed_tx = known_wallet.sign_tx(tx_request)?;
+
+        let encoded_tx = signed_tx.encoded_2718();
+        let rlp_hex = hex::encode_prefixed(encoded_tx.as_slice());
+        let tx_hash = provider
+            .client()
+            .request("eth_sendRawTransactionRevert", (rlp_hex,))
+            .await?;
+        Ok(PendingTransactionBuilder::new(
+            provider.root().clone(),
+            tx_hash,
+        ))
     }
 
     pub async fn send_revert_transaction(

@@ -3,11 +3,12 @@ use jsonrpsee::{
     core::{async_trait, RpcResult},
     proc_macros::rpc,
 };
+use reth::tasks::pool;
 use reth_optimism_txpool::OpPooledTransaction;
 use reth_rpc_eth_types::utils::recover_raw_transaction;
 use reth_transaction_pool::{PoolTransaction, TransactionOrigin, TransactionPool};
 
-use crate::tx::FBPooledTransaction;
+use crate::tx::{FBPoolTransaction, FBPooledTransaction};
 
 // Namespace overrides for revert protection support
 #[cfg_attr(not(test), rpc(server, namespace = "eth"))]
@@ -33,9 +34,17 @@ where
     Pool: TransactionPool<Transaction = FBPooledTransaction> + Clone + 'static,
 {
     async fn send_raw_transaction_revert(&self, tx: Bytes) -> RpcResult<B256> {
+        println!("send_raw_transaction_revert called");
+
         let recovered = recover_raw_transaction(&tx)?;
-        let pool_transaction: FBPooledTransaction =
+        let mut pool_transaction: FBPooledTransaction =
             OpPooledTransaction::from_pooled(recovered).into();
+
+        pool_transaction.can_revert = true;
+
+        println!("pool_transaction: {:?}", pool_transaction);
+
+        // pool_transaction.set_can_revert(true);
 
         // TODO: Fix unwrap
         let hash = self

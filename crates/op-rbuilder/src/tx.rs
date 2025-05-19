@@ -17,6 +17,7 @@ use reth_transaction_pool::{EthBlobTransactionSidecar, EthPoolTransaction, PoolT
 pub trait FBPoolTransaction:
     EthPoolTransaction + MaybeInteropTransaction + MaybeConditionalTransaction
 {
+    fn can_revert(&self) -> bool;
 }
 
 #[derive(Clone, Debug)]
@@ -25,7 +26,11 @@ pub struct FBPooledTransaction {
     pub can_revert: bool,
 }
 
-impl FBPoolTransaction for FBPooledTransaction {}
+impl FBPoolTransaction for FBPooledTransaction {
+    fn can_revert(&self) -> bool {
+        self.can_revert
+    }
+}
 
 impl InMemorySize for FBPooledTransaction {
     fn size(&self) -> usize {
