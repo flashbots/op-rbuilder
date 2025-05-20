@@ -198,8 +198,37 @@ mod tests {
 
         // TODO: Redo this
         let txn1 = harness.send_valid_transaction().await?;
-        let txn2 = harness.send_revert_transaction_two().await?;
+        let txn2 = harness.send_revert_transaction_two(None, None).await?;
 
+        generator.generate_block().await?;
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[cfg(not(feature = "flashblocks"))]
+    async fn integration_test_revert_protection_three() -> eyre::Result<()> {
+        let harness = TestHarnessBuilder::new("integration_test_revert_protection_three")
+            .build()
+            .await?;
+
+        let mut generator = harness.block_generator().await?;
+        let provider = harness.provider()?;
+
+        // TODO: Redo this
+        let txn1 = harness.send_valid_transaction().await?;
+        let txn2 = harness.send_revert_transaction_two(None, Some(3)).await?;
+
+        println!("txn1: {:?}", txn1.tx_hash());
+        println!("txn2: {:?}", txn2.tx_hash());
+
+        let block = generator.generate_block().await?;
+        let block = provider.get_block_by_hash(block).await?.expect("block");
+        let block_txs = block.transactions.hashes();
+        println!("block_txs: {:?}", block_txs);
+
+        generator.generate_block().await?;
+        generator.generate_block().await?;
         generator.generate_block().await?;
 
         Ok(())

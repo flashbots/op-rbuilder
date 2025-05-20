@@ -1,7 +1,8 @@
 use std::sync::Arc;
 
 use alloy_consensus::{
-    conditional::BlockConditionalAttributes, BlobTransactionSidecar, BlobTransactionValidationError,
+    conditional::{self, BlockConditionalAttributes},
+    BlobTransactionSidecar, BlobTransactionValidationError,
 };
 use alloy_eips::{eip7702::SignedAuthorization, Typed2718};
 use alloy_primitives::{Address, Bytes, TxHash, TxKind, B256, U256};
@@ -17,18 +18,36 @@ use reth_transaction_pool::{EthBlobTransactionSidecar, EthPoolTransaction, PoolT
 pub trait FBPoolTransaction:
     EthPoolTransaction + MaybeInteropTransaction + MaybeConditionalTransaction
 {
-    fn can_revert(&self) -> bool;
+    fn exclude_reverting_txs(&self) -> bool;
+}
+
+#[derive(Clone, Debug, Copy)]
+pub struct RevertOptions {
+    pub block_number_min: Option<u64>,
+    pub block_number_max: Option<u64>,
+}
+
+impl RevertOptions {
+    pub fn conditional(&self) -> TransactionConditional {
+        TransactionConditional {
+            block_number_min: self.block_number_min,
+            block_number_max: self.block_number_max,
+            known_accounts: Default::default(),
+            timestamp_max: None,
+            timestamp_min: None,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
 pub struct FBPooledTransaction {
     pub inner: OpPooledTransaction,
-    pub can_revert: bool,
+    pub exclude_reverting_txs: Option<RevertOptions>,
 }
 
 impl FBPoolTransaction for FBPooledTransaction {
-    fn can_revert(&self) -> bool {
-        self.can_revert
+    fn exclude_reverting_txs(&self) -> bool {
+        self.exclude_reverting_txs.is_some()
     }
 }
 
@@ -56,7 +75,7 @@ impl PoolTransaction for FBPooledTransaction {
         let inner = OpPooledTransaction::from_pooled(tx);
         Self {
             inner,
-            can_revert: false,
+            exclude_reverting_txs: None,
         }
     }
 
@@ -208,7 +227,7 @@ impl From<OpPooledTransaction> for FBPooledTransaction {
     fn from(tx: OpPooledTransaction) -> Self {
         Self {
             inner: tx,
-            can_revert: false,
+            exclude_reverting_txs: None,
         }
     }
 }
@@ -232,7 +251,7 @@ impl MaybeConditionalTransaction for FBPooledTransaction {
     {
         FBPooledTransaction {
             inner: self.inner.with_conditional(conditional),
-            can_revert: self.can_revert,
+            exclude_reverting_txs: self.exclude_reverting_txs,
         }
     }
 }

@@ -60,6 +60,7 @@ alloy-serde.workspace = true
 # op
 alloy-op-evm.workspace = true
 op-alloy-consensus.workspace = true
+op-alloy-rpc-types.workspace = true
 op-alloy-rpc-types-engine.workspace = true
 op-alloy-network.workspace = true
 

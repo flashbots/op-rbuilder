@@ -50,7 +50,7 @@ fn main() {
                         .components()
                         .pool(
                             OpPoolBuilder::<FBPooledTransaction>::default()
-                                .with_enable_tx_conditional(rollup_args.enable_tx_conditional)
+                                .with_enable_tx_conditional(true)
                                 .with_supervisor(
                                     rollup_args.supervisor_http.clone(),
                                     rollup_args.supervisor_safety_level,
@@ -68,12 +68,14 @@ fn main() {
                 .with_add_ons(
                     OpAddOnsBuilder::default()
                         .with_sequencer(rollup_args.sequencer.clone())
-                        .with_enable_tx_conditional(rollup_args.enable_tx_conditional)
+                        .with_enable_tx_conditional(true)
                         .build(),
                 )
                 .extend_rpc_modules(move |ctx| {
                     let pool = ctx.pool().clone();
-                    let revert_protection_ext = RevertProtectionExt::new(pool);
+                    let eth_api = ctx.registry.eth_api().clone();
+                    let revert_protection_ext = RevertProtectionExt::new(pool, eth_api);
+
                     ctx.modules
                         .merge_configured(revert_protection_ext.into_rpc())?;
 

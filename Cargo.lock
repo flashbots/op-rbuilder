@@ -5357,6 +5357,7 @@ dependencies = [
  "metrics",
  "op-alloy-consensus",
  "op-alloy-network",
+ "op-alloy-rpc-types",
  "op-alloy-rpc-types-engine",
  "op-revm",
  "parking_lot",

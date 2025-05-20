@@ -517,7 +517,8 @@ impl<Txs> OpBuilder<'_, Txs> {
             .payload_num_tx
             .record(info.executed_transactions.len() as f64);
 
-        remove_invalid(info.invalid_tx_hashes.iter().copied().collect());
+        // TODO: Remove this?
+        // remove_invalid(info.invalid_tx_hashes.iter().copied().collect());
 
         let payload = ExecutedPayload { info };
 
@@ -1023,10 +1024,11 @@ where
         let mut evm = self.evm_config.evm_with_env(&mut *db, self.evm_env.clone());
 
         while let Some(tx) = best_txs.next(()) {
-            println!("tx: {:?}", tx);
-            let can_revert = tx.can_revert();
+            println!("tx {:?}", tx);
+            let exclude_reverting_txs = tx.exclude_reverting_txs();
 
             let tx = tx.into_consensus();
+
             num_txs_considered += 1;
             // ensure we still have capacity for this transaction
             if info.is_tx_over_limits(tx.inner(), block_gas_limit, tx_da_limit, block_da_limit) {
@@ -1074,18 +1076,20 @@ where
                 .tx_simulation_duration
                 .record(tx_simulation_start_time.elapsed());
             self.metrics.tx_byte_size.record(tx.inner().size() as f64);
+
+            println!("XXXXXXXXX");
+            println!("xxxx {}", exclude_reverting_txs);
+
             num_txs_simulated += 1;
             if result.is_success() {
                 num_txs_simulated_success += 1;
             } else {
                 num_txs_simulated_fail += 1;
-                println!("XXXXXXXXX");
-                println!("xxxx {}", can_revert);
-
-                if self.enable_revert_protection {
+                if exclude_reverting_txs {
+                    // The transaction was reverted and we are not adding it to the block
                     info!(target: "payload_builder", tx_hash = ?tx.tx_hash(), "skipping reverted transaction");
                     best_txs.mark_invalid(tx.signer(), tx.nonce());
-                    info.invalid_tx_hashes.insert(tx.tx_hash());
+                    // info.invalid_tx_hashes.insert(tx.tx_hash());
                     continue;
                 }
             }

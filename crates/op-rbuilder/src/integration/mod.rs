@@ -13,6 +13,7 @@ use op_alloy_network::Optimism;
 use op_rbuilder::OpRbuilderConfig;
 use op_reth::OpRethConfig;
 use parking_lot::Mutex;
+use serde::{Deserialize, Serialize};
 use std::{
     cmp::max,
     collections::HashSet,
@@ -29,6 +30,14 @@ use std::{
 use time::{format_description, OffsetDateTime};
 use tokio::time::sleep;
 use uuid::Uuid;
+
+// TODO: Not ideal, in two places right now because hard to import, fix before mergin
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct Bundle {
+    pub transaction: Bytes,
+    pub block_number_min: Option<u64>,
+    pub block_number_max: Option<u64>,
+}
 
 /// Default JWT token for testing purposes
 pub const DEFAULT_JWT_TOKEN: &str =
@@ -218,6 +227,8 @@ impl Drop for IntegrationFramework {
 const BUILDER_PRIVATE_KEY: &str =
     "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d";
 
+const FUNDED_KEY_2: &str = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+
 pub struct TestHarnessBuilder {
     name: String,
     use_revert_protection: bool,
@@ -300,7 +311,7 @@ impl TestHarness {
         &self,
     ) -> eyre::Result<PendingTransactionBuilder<Optimism>> {
         // Get builder's address
-        let known_wallet = Signer::try_from_secret(BUILDER_PRIVATE_KEY.parse()?)?;
+        let known_wallet = Signer::try_from_secret(FUNDED_KEY_2.parse()?)?;
         let builder_address = known_wallet.address;
 
         let url = format!("http://localhost:{}", self.builder_http_port);
@@ -341,10 +352,12 @@ impl TestHarness {
 
     pub async fn send_revert_transaction_two(
         &self,
+        min_block: Option<u64>,
+        max_block: Option<u64>,
     ) -> eyre::Result<PendingTransactionBuilder<Optimism>> {
         // TODO: Merge this with send_valid_transaction
         // Get builder's address
-        let known_wallet = Signer::try_from_secret(BUILDER_PRIVATE_KEY.parse()?)?;
+        let known_wallet = Signer::try_from_secret(FUNDED_KEY_2.parse()?)?;
         let builder_address = known_wallet.address;
 
         let url = format!("http://localhost:{}", self.builder_http_port);
@@ -379,10 +392,17 @@ impl TestHarness {
         let signed_tx = known_wallet.sign_tx(tx_request)?;
 
         let encoded_tx = signed_tx.encoded_2718();
-        let rlp_hex = hex::encode_prefixed(encoded_tx.as_slice());
+        let encoded_tx_2 = encoded_tx.clone();
+
+        let bundle = Bundle {
+            transaction: encoded_tx_2.into(),
+            block_number_min: min_block,
+            block_number_max: max_block,
+        };
+
         let tx_hash = provider
             .client()
-            .request("eth_sendRawTransactionRevert", (rlp_hex,))
+            .request("eth_sendRawTransactionRevert", (bundle,))
             .await?;
         Ok(PendingTransactionBuilder::new(
             provider.root().clone(),
@@ -395,7 +415,7 @@ impl TestHarness {
     ) -> eyre::Result<PendingTransactionBuilder<Optimism>> {
         // TODO: Merge this with send_valid_transaction
         // Get builder's address
-        let known_wallet = Signer::try_from_secret(BUILDER_PRIVATE_KEY.parse()?)?;
+        let known_wallet = Signer::try_from_secret(FUNDED_KEY_2.parse()?)?;
         let builder_address = known_wallet.address;
 
         let url = format!("http://localhost:{}", self.builder_http_port);
