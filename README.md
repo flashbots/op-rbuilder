@@ -146,3 +146,17 @@ This will automatically try to detect all settings and ports from the currently 
 rm -rf ~/.local/share/reth
 sudo rm -rf ~/.playground
 ```
+
+## Running GitHub actions locally
+
+To verify that CI will allow your PR to be merged before sending it please make sure that our GitHub `checks.yaml` action passes locall by calling:
+
+```
+act -W .github/workflows/checks.yaml
+```
+
+More instructions on installing and configuring `act` can be found on [their website](https://nektosact.com). 
+
+### Known issues
+- Running actions locally require a Github Token. You can generate one by following instructions on [Github Docs](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens). After generating a token you will need to pass it to `act` either through the command line using `-s GITHUB_TOKEN=<your token>` or by adding it to the `~/.config/act/actrc` file.
+- You might get an error about missing or incompatible `warp-ubuntu-latest-x64-32x` platform. This can be mitigated by adding `-P warp-ubuntu-latest-x64-32x=ghcr.io/catthehacker/ubuntu:act-latest` on the command line when calling `act` or appending this flag to `~/.config/act/actrc`

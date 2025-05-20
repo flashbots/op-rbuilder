@@ -23,8 +23,6 @@ async fn chain_produces_blocks() -> eyre::Result<()> {
     let messages_clone = received_messages.clone();
     let cancellation_token = CancellationToken::new();
 
-    println!("here1");
-
     // Spawn WebSocket listener task
     let cancellation_token_clone = cancellation_token.clone();
     let ws_handle: JoinHandle<eyre::Result<()>> = tokio::spawn(async move {

@@ -36,15 +36,18 @@ jobs:
 
       # https://github.com/swatinem/rust-cache
       - name: Run Swatinem/rust-cache@v2
+        if: ${{ !env.ACT }}
         uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
 
       # https://github.com/Mozilla-Actions/sccache-action
       - name: Run sccache-action
+        if: ${{ !env.ACT }}
         uses: mozilla-actions/sccache-action@v0.0.9
 
       - name: Set sccache env vars
+        if: ${{ !env.ACT }}
         run: |
           echo "SCCACHE_GHA_ENABLED=true" >> $GITHUB_ENV
           echo "RUSTC_WRAPPER=sccache" >> $GITHUB_ENV
@@ -55,7 +58,10 @@ jobs:
           version: nightly
 
       - name: Install native dependencies
-        run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
+        run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev clang libclang-dev llvm build-essential pkg-config
+
+      - name: Compile tester
+        run: make tester
 
       - name: Compile op-rbuilder
         run: cargo build -p op-rbuilder --bin op-rbuilder
@@ -92,15 +98,18 @@ jobs:
 
       # https://github.com/swatinem/rust-cache
       - name: Run Swatinem/rust-cache@v2
+        if: ${{ !env.ACT }}
         uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
 
       # https://github.com/Mozilla-Actions/sccache-action
       - name: Run sccache-action
+        if: ${{ !env.ACT }}
         uses: mozilla-actions/sccache-action@v0.0.9
 
       - name: Set sccache env vars
+        if: ${{ !env.ACT }}
         run: |
           echo "SCCACHE_GHA_ENABLED=true" >> $GITHUB_ENV
           echo "RUSTC_WRAPPER=sccache" >> $GITHUB_ENV
@@ -110,11 +119,18 @@ jobs:
           ./scripts/ci/download-op-reth.sh
           echo "$(pwd)" >> $GITHUB_PATH
 
+      - name: Install native dependencies
+        if: ${{ env.ACT }}
+        run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev clang libclang-dev llvm build-essential pkg-config
+
+      - name: Compile tester
+        run: make tester
+
       - name: Build the rbuilder
         run: cargo build -p op-rbuilder --bin op-rbuilder
 
       - name: Generate test genesis file
-        run: cargo run -p op-rbuilder --bin tester --features=tests -- genesis --output genesis.json
+        run: cargo run -p op-rbuilder --bin tester --features=testing -- genesis --output genesis.json
 
       - name: Run integration tests
         run: cargo test --package op-rbuilder --lib
