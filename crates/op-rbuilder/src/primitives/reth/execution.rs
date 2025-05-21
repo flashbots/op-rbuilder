@@ -1,6 +1,5 @@
 //! Heavily influenced by [reth](https://github.com/paradigmxyz/reth/blob/1e965caf5fa176f244a31c0d2662ba1b590938db/crates/optimism/payload/src/builder.rs#L570)
-use alloy_consensus::Transaction;
-use alloy_primitives::{private::alloy_rlp::Encodable, Address, TxHash, U256};
+use alloy_primitives::{Address, TxHash, U256};
 use reth_node_api::NodePrimitives;
 use reth_optimism_primitives::OpReceipt;
 use std::collections::HashSet;
@@ -50,21 +49,22 @@ impl<N: NodePrimitives> ExecutionInfo<N> {
     ///   maximum allowed DA limit per block.
     pub fn is_tx_over_limits(
         &self,
-        tx: &N::SignedTx,
+        tx_da_size: u64,
         block_gas_limit: u64,
         tx_data_limit: Option<u64>,
         block_data_limit: Option<u64>,
+        tx_gas_limit: u64,
     ) -> bool {
-        if tx_data_limit.is_some_and(|da_limit| tx.length() as u64 > da_limit) {
+        if tx_data_limit.is_some_and(|da_limit| tx_da_size > da_limit) {
             return true;
         }
 
         if block_data_limit
-            .is_some_and(|da_limit| self.cumulative_da_bytes_used + (tx.length() as u64) > da_limit)
+            .is_some_and(|da_limit| self.cumulative_da_bytes_used + tx_da_size > da_limit)
         {
             return true;
         }
 
-        self.cumulative_gas_used + tx.gas_limit() > block_gas_limit
+        self.cumulative_gas_used + tx_gas_limit > block_gas_limit
     }
 }
