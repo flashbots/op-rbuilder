@@ -43,7 +43,7 @@ use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
 use reth_optimism_forks::OpHardforks;
 use reth_optimism_node::OpEngineTypes;
 use reth_optimism_payload_builder::{
-    config::{OpBuilderConfig, OpDAConfig},
+    config::OpDAConfig,
     error::OpPayloadBuilderError,
     payload::{OpBuiltPayload, OpPayloadBuilderAttributes},
     OpPayloadPrimitives,
@@ -87,6 +87,7 @@ pub struct CustomOpPayloadBuilder {
     builder_signer: Option<Signer>,
     extra_block_deadline: std::time::Duration,
     enable_revert_protection: bool,
+    da_config: OpDAConfig,
     #[cfg(feature = "flashblocks")]
     flashblocks_ws_url: String,
     #[cfg(feature = "flashblocks")]
@@ -116,6 +117,7 @@ impl CustomOpPayloadBuilder {
         builder_signer: Option<Signer>,
         extra_block_deadline: std::time::Duration,
         enable_revert_protection: bool,
+        da_config: OpDAConfig,
         _flashblocks_ws_url: String,
         _chain_block_time: u64,
         _flashblock_block_time: u64,
@@ -124,6 +126,7 @@ impl CustomOpPayloadBuilder {
             builder_signer,
             extra_block_deadline,
             enable_revert_protection,
+            da_config,
         })
     }
 }
@@ -159,6 +162,7 @@ where
             self.builder_signer,
             pool,
             ctx.provider().clone(),
+            self.da_config,
             self.enable_revert_protection,
         ))
     }
@@ -302,8 +306,8 @@ pub struct OpPayloadBuilderVanilla<Pool, Client, Txs = ()> {
     pub pool: Pool,
     /// Node client
     pub client: Client,
-    /// Settings for the builder, e.g. DA settings.
-    pub config: OpBuilderConfig,
+    /// DA settings.
+    pub da_config: OpDAConfig,
     /// The type responsible for yielding the best transactions for the payload if mempool
     /// transactions are allowed.
     pub best_transactions: Txs,
@@ -320,30 +324,13 @@ impl<Pool, Client> OpPayloadBuilderVanilla<Pool, Client> {
         builder_signer: Option<Signer>,
         pool: Pool,
         client: Client,
-        enable_revert_protection: bool,
-    ) -> Self {
-        Self::with_builder_config(
-            evm_config,
-            builder_signer,
-            pool,
-            client,
-            Default::default(),
-            enable_revert_protection,
-        )
-    }
-
-    pub fn with_builder_config(
-        evm_config: OpEvmConfig,
-        builder_signer: Option<Signer>,
-        pool: Pool,
-        client: Client,
-        config: OpBuilderConfig,
+        da_config: OpDAConfig,
         enable_revert_protection: bool,
     ) -> Self {
         Self {
             pool,
             client,
-            config,
+            da_config,
             evm_config,
             best_transactions: (),
             metrics: Default::default(),
@@ -472,7 +459,7 @@ where
 
         let ctx = OpPayloadBuilderCtx {
             evm_config: self.evm_config.clone(),
-            da_config: self.config.da_config.clone(),
+            da_config: self.da_config.clone(),
             chain_spec,
             config,
             evm_env,

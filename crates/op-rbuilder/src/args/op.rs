@@ -5,9 +5,8 @@
 //! clap [Args](clap::Args) for optimism rollup configuration
 use std::path::PathBuf;
 
-use reth_optimism_node::args::RollupArgs;
-
 use crate::tx_signer::Signer;
+use reth_optimism_node::args::RollupArgs;
 
 /// Parameters for rollup configuration
 #[derive(Debug, Clone, Default, PartialEq, Eq, clap::Args)]
@@ -59,6 +58,10 @@ pub struct OpRbuilderArgs {
         env = "PLAYGROUND_DIR",
     )]
     pub playground: Option<PathBuf>,
+    #[arg(long = "builder.max-da-tx-size", default_value = "0")]
+    pub max_da_tx_size: u64,
+    #[arg(long = "builder.max-da-block-size", default_value = "0")]
+    pub max_da_block_size: u64,
 }
 
 fn expand_path(s: &str) -> Result<PathBuf, String> {
