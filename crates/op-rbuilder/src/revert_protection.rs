@@ -79,8 +79,6 @@ where
         let mut pool_transaction: FBPooledTransaction =
             OpPooledTransaction::from_pooled(recovered).into();
 
-        println!("conditional: {:?}", bundle.conditional());
-
         pool_transaction.set_exclude_reverting_txs(true);
         pool_transaction.set_conditional(bundle.conditional());
 
