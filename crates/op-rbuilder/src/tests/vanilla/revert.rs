@@ -223,7 +223,7 @@ async fn revert_protection_allow_reverted_transactions_without_bundle() -> eyre:
         let block_generated = generator.generate_block().await?;
 
         assert!(block_generated.includes(*valid_tx.tx_hash()));
-        assert!(block_generated.not_includes(*reverting_tx.tx_hash()));
+        assert!(block_generated.includes(*reverting_tx.tx_hash()));
     }
 
     Ok(())
