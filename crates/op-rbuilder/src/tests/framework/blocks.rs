@@ -291,7 +291,7 @@ impl BlockGenerator {
 
         let block = self
             .engine_api
-            .get_block_by_number(BlockNumberOrTag::Latest, true)
+            .get_block_by_number(BlockNumberOrTag::Latest, false)
             .await?
             .expect("block not found");
 
