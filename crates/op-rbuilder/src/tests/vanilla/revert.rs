@@ -1,5 +1,6 @@
-use crate::tests::TestHarnessBuilder;
+use crate::tests::{BundleOpts, TestHarnessBuilder};
 use alloy_provider::Provider;
+use alloy_rpc_types_eth::Bundle;
 
 /// This test ensures that the transactions that get reverted an not included in the block
 /// are emitted as a log on the builder.
@@ -87,11 +88,87 @@ async fn revert_protection_disabled() -> eyre::Result<()> {
 }
 
 #[tokio::test]
-async fn revert_protection() -> eyre::Result<()> {
-    let harness = TestHarnessBuilder::new("revert_protection")
+async fn revert_protection_disabled_bundle_endpoint_error() -> eyre::Result<()> {
+    // If revert protection is disabled, it should not be possible to send a revert bundle
+    // since the revert RPC endpoint is not available.
+    let harness = TestHarnessBuilder::new("revert_protection_disabled_bundle_endpoint_error")
+        .build()
+        .await?;
+
+    let res = harness
+        .create_transaction()
+        .with_bundle(BundleOpts::default())
+        .send()
+        .await;
+
+    assert!(
+        res.is_err(),
+        "Expected error because method is not available"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn revert_protection_bundle() -> eyre::Result<()> {
+    // Test the behaviour of the revert protection bundle, if the bundle **does not** revert
+    // the transaction is included in the block. If the bundle reverts, the transaction
+    // is not included in the block and tried again for the next bundle range blocks
+    // when it will be dropped from the pool.
+    let harness = TestHarnessBuilder::new("revert_protection_bundle")
         .with_revert_protection()
         .build()
         .await?;
+
+    let mut generator = harness.block_generator().await?;
+
+    // Test 1: Bundle does not revert
+    {
+        let valid_bundle = harness
+            .create_transaction()
+            .with_bundle(BundleOpts::default())
+            .send()
+            .await?;
+
+        let block_hash = generator.generate_block().await?;
+        let block = harness
+            .provider()?
+            .get_block_by_hash(block_hash)
+            .await?
+            .expect("block");
+
+        assert!(
+            block
+                .transactions
+                .hashes()
+                .any(|hash| hash == *valid_bundle.tx_hash()),
+            "successful bundle transaction missing from block"
+        );
+    }
+
+    // Test 2: Bundle reverts. It is not included in the block
+    {}
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn revert_protection_bundle_range_limits() -> eyre::Result<()> {
+    // Test the range limits for the revert protection bundle.
+    // - It cannot have as a max block number a past block number
+    // TODO: We have not decided on the limits yet.
+    Ok(())
+}
+
+#[tokio::test]
+async fn revert_protection_allow_reverted_transactions_without_bundle() -> eyre::Result<()> {
+    // If a transaction reverts and was sent as a normal transaction through the eth_sendRawTransaction
+    // bundle, the transaction should be included in the block.
+    // This behaviour is the same as the 'revert_protection_disabled' test.
+    let harness =
+        TestHarnessBuilder::new("revert_protection_allow_reverted_transactions_without_bundle")
+            .with_revert_protection()
+            .build()
+            .await?;
 
     let mut generator = harness.block_generator().await?;
 
@@ -115,11 +192,11 @@ async fn revert_protection() -> eyre::Result<()> {
         );
 
         assert!(
-            !block
+            block
                 .transactions
                 .hashes()
                 .any(|hash| hash == *reverting_tx.tx_hash()),
-            "reverted transaction unexpectedly included in block"
+            "reverted transaction missing from block"
         );
     }
 

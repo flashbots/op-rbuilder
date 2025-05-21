@@ -1,3 +1,4 @@
+use crate::primitives::bundle::Bundle;
 use crate::tx_signer::Signer;
 use alloy_consensus::TxEip1559;
 use alloy_eips::{eip2718::Encodable2718, BlockNumberOrTag};
@@ -12,10 +13,10 @@ use alloy_eips::eip1559::MIN_PROTOCOL_BASE_FEE;
 
 use super::FUNDED_PRIVATE_KEYS;
 
-#[derive(Clone)]
+#[derive(Clone, Copy, Default)]
 pub struct BundleOpts {
-    pub from_block: Option<u64>,
-    pub to_block: Option<u64>,
+    pub block_number_min: Option<u64>,
+    pub block_number_max: Option<u64>,
 }
 
 #[derive(Clone)]
@@ -143,10 +144,32 @@ impl TransactionBuilder {
     }
 
     pub async fn send(self) -> eyre::Result<PendingTransactionBuilder<Optimism>> {
+        let bundle_opts = self.bundle_opts.clone();
         let provider = self.provider.clone();
         let transaction = self.build().await;
+        let transaction_encoded = transaction.encoded_2718();
+
+        if let Some(bundle_opts) = bundle_opts {
+            // Send the transaction as a bundle with the bundle options
+            let bundle = Bundle {
+                transaction: transaction_encoded.into(),
+                block_number_min: bundle_opts.block_number_min,
+                block_number_max: bundle_opts.block_number_max,
+            };
+
+            let tx_hash = provider
+                .client()
+                .request("eth_sendRawTransactionRevert", (bundle,))
+                .await?;
+
+            return Ok(PendingTransactionBuilder::new(
+                provider.root().clone(),
+                tx_hash,
+            ));
+        }
+
         Ok(provider
-            .send_raw_transaction(transaction.encoded_2718().as_slice())
+            .send_raw_transaction(transaction_encoded.as_slice())
             .await?)
     }
 }

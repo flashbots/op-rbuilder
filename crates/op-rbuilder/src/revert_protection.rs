@@ -1,5 +1,6 @@
+use crate::primitives::bundle::Bundle;
 use crate::tx::{FBPoolTransaction, FBPooledTransaction};
-use alloy_primitives::{Bytes, B256};
+use alloy_primitives::B256;
 use alloy_rpc_types_eth::erc4337::TransactionConditional;
 use jsonrpsee::{
     core::{async_trait, RpcResult},
@@ -8,7 +9,6 @@ use jsonrpsee::{
 use reth_optimism_txpool::{conditional::MaybeConditionalTransaction, OpPooledTransaction};
 use reth_rpc_eth_types::utils::recover_raw_transaction;
 use reth_transaction_pool::{PoolTransaction, TransactionOrigin, TransactionPool};
-use serde::{Deserialize, Serialize};
 
 // Namespace overrides for revert protection support
 #[cfg_attr(not(test), rpc(server, namespace = "eth"))]
@@ -26,13 +26,6 @@ impl<Pool> RevertProtectionExt<Pool> {
     pub fn new(pool: Pool) -> Self {
         Self { pool }
     }
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct Bundle {
-    pub transaction: Bytes,
-    pub block_number_min: Option<u64>,
-    pub block_number_max: Option<u64>,
 }
 
 impl Bundle {
