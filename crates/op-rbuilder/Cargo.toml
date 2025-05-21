@@ -97,8 +97,8 @@ shellexpand = "3.1"
 serde_yaml = { version = "0.9" }
 
 
-# `flashblocks` branch
-rollup-boost = { git = "http://github.com/flashbots/rollup-boost", rev = "6f994a2092967108e7dda0ade57625ba10940310" }
+# `msozin/flashblocks-v1.4.1` branch based on `flashblocks-rebase`
+rollup-boost = { git = "http://github.com/flashbots/rollup-boost", rev = "8506dfb7d84c65746f7c88d250983658438f59e8" }
 
 [target.'cfg(unix)'.dependencies]
 tikv-jemallocator = { version = "0.6", optional = true }
