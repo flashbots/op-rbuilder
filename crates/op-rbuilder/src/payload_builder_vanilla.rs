@@ -27,7 +27,7 @@ use reth_evm::{
     Database, Evm, EvmError, InvalidTxError,
 };
 use reth_execution_types::ExecutionOutcome;
-use reth_node_api::{NodePrimitives, NodeTypes, PrimitivesTy, TxTy};
+use reth_node_api::{NodePrimitives, NodeTypes, PrimitivesTy};
 use reth_node_builder::components::BasicPayloadServiceBuilder;
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_consensus::{calculate_receipt_root_no_memo_optimism, isthmus};
@@ -148,58 +148,6 @@ where
             pool,
             ctx.provider().clone(),
         ))
-    }
-}
-
-impl<Node, Pool, Evm> PayloadServiceBuilder<Node, Pool, Evm> for CustomOpPayloadBuilder
-where
-    Node: FullNodeTypes<
-        Types: NodeTypes<
-            Payload = OpEngineTypes,
-            ChainSpec = OpChainSpec,
-            Primitives = OpPrimitives,
-        >,
-    >,
-    Pool: TransactionPool<Transaction: PoolTransaction<Consensus = TxTy<Node::Types>>>
-        + Unpin
-        + 'static,
-    <Pool as TransactionPool>::Transaction: OpPooledTx,
-    Evm: ConfigureEvm<
-            Primitives = PrimitivesTy<Node::Types>,
-            NextBlockEnvCtx = OpNextBlockEnvAttributes,
-        > + 'static,
-{
-    async fn spawn_payload_builder_service(
-        self,
-        ctx: &BuilderContext<Node>,
-        pool: Pool,
-        evm_config: Evm,
-    ) -> eyre::Result<PayloadBuilderHandle<<Node::Types as NodeTypes>::Payload>> {
-        tracing::info!("Spawning a custom payload builder");
-        let extra_block_deadline = self.extra_block_deadline;
-        let enable_revert_protection = self.enable_revert_protection;
-        let payload_builder = self.build_payload_builder(ctx, pool, evm_config).await?;
-        let payload_job_config = BasicPayloadJobGeneratorConfig::default();
-
-        let payload_generator = BlockPayloadJobGenerator::with_builder(
-            ctx.provider().clone(),
-            ctx.task_executor().clone(),
-            payload_job_config,
-            payload_builder,
-            false,
-            extra_block_deadline,
-            enable_revert_protection,
-        );
-
-        let (payload_service, payload_builder) =
-            PayloadBuilderService::new(payload_generator, ctx.provider().canonical_state_stream());
-
-        ctx.task_executor()
-            .spawn_critical("custom payload builder service", Box::pin(payload_service));
-
-        tracing::info!("Custom payload service started");
-
-        Ok(payload_builder)
     }
 }
 

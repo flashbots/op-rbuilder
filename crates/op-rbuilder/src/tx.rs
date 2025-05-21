@@ -8,14 +8,15 @@ use alloy_primitives::{Address, Bytes, TxHash, TxKind, B256, U256};
 use alloy_rpc_types_eth::{erc4337::TransactionConditional, AccessList};
 use reth_optimism_primitives::OpTransactionSigned;
 use reth_optimism_txpool::{
-    conditional::MaybeConditionalTransaction, interop::MaybeInteropTransaction, OpPooledTransaction,
+    conditional::MaybeConditionalTransaction, estimated_da_size::DataAvailabilitySized,
+    interop::MaybeInteropTransaction, OpPooledTransaction,
 };
 use reth_primitives::{kzg::KzgSettings, Recovered};
 use reth_primitives_traits::InMemorySize;
 use reth_transaction_pool::{EthBlobTransactionSidecar, EthPoolTransaction, PoolTransaction};
 
 pub trait FBPoolTransaction:
-    EthPoolTransaction + MaybeInteropTransaction + MaybeConditionalTransaction
+    EthPoolTransaction + MaybeInteropTransaction + MaybeConditionalTransaction + DataAvailabilitySized
 {
     fn set_exclude_reverting_txs(&mut self, exclude: bool);
     fn exclude_reverting_txs(&self) -> bool;
@@ -206,6 +207,12 @@ impl MaybeInteropTransaction for FBPooledTransaction {
         Self: Sized,
     {
         self.inner.with_interop_deadline(interop).into()
+    }
+}
+
+impl DataAvailabilitySized for FBPooledTransaction {
+    fn estimated_da_size(&self) -> u64 {
+        self.inner.estimated_da_size()
     }
 }
 

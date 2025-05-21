@@ -1,6 +1,5 @@
 use crate::tests::{BundleOpts, TestHarnessBuilder};
 use alloy_provider::Provider;
-use alloy_rpc_types_eth::Bundle;
 
 /// This test ensures that the transactions that get reverted an not included in the block
 /// are emitted as a log on the builder.
