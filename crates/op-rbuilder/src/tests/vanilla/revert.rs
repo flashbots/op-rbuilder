@@ -145,7 +145,29 @@ async fn revert_protection_bundle() -> eyre::Result<()> {
     }
 
     // Test 2: Bundle reverts. It is not included in the block
-    {}
+    {
+        let reverted_bundle = harness
+            .create_transaction()
+            .with_revert()
+            .with_bundle(BundleOpts::default())
+            .send()
+            .await?;
+
+        let block_hash = generator.generate_block().await?;
+        let block = harness
+            .provider()?
+            .get_block_by_hash(block_hash)
+            .await?
+            .expect("block");
+
+        assert!(
+            !block
+                .transactions
+                .hashes()
+                .any(|hash| hash == *reverted_bundle.tx_hash()),
+            "reverted bundle transaction included in block"
+        );
+    }
 
     Ok(())
 }
