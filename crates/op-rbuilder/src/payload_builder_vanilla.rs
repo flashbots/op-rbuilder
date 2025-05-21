@@ -8,7 +8,7 @@ use alloy_consensus::{
 };
 use alloy_eips::{eip7685::EMPTY_REQUESTS_HASH, merge::BEACON_NONCE};
 use alloy_op_evm::block::receipt_builder::OpReceiptBuilder;
-use alloy_primitives::{private::alloy_rlp::Encodable, Address, Bytes, TxHash, TxKind, U256};
+use alloy_primitives::{private::alloy_rlp::Encodable, Address, Bytes, TxKind, U256};
 use alloy_rpc_types_engine::PayloadId;
 use alloy_rpc_types_eth::Withdrawals;
 use op_alloy_consensus::{OpDepositReceipt, OpTypedTransaction};
@@ -180,18 +180,11 @@ where
             cancel: CancellationToken::new(),
         };
 
-        self.build_payload(
-            args,
-            |attrs| {
-                #[allow(clippy::unit_arg)]
-                self.best_transactions
-                    .best_transactions(pool.clone(), attrs)
-            },
-            |hashes| {
-                #[allow(clippy::unit_arg)]
-                self.best_transactions.remove_invalid(pool.clone(), hashes)
-            },
-        )
+        self.build_payload(args, |attrs| {
+            #[allow(clippy::unit_arg)]
+            self.best_transactions
+                .best_transactions(pool.clone(), attrs)
+        })
     }
 
     fn on_missing_payload(
@@ -213,11 +206,9 @@ where
             cached_reads: Default::default(),
             cancel: Default::default(),
         };
-        self.build_payload(
-            args,
-            |_| NoopPayloadTransactions::<Pool::Transaction>::default(),
-            |_| {},
-        )?
+        self.build_payload(args, |_| {
+            NoopPayloadTransactions::<Pool::Transaction>::default()
+        })?
         .into_payload()
         .ok_or_else(|| PayloadBuilderError::MissingPayload)
     }
@@ -290,7 +281,6 @@ where
         &self,
         args: BuildArguments<OpPayloadBuilderAttributes<OpTransactionSigned>, OpBuiltPayload>,
         best: impl FnOnce(BestTransactionsAttributes) -> Txs + Send + Sync + 'a,
-        remove_reverted: impl FnOnce(Vec<TxHash>),
     ) -> Result<BuildOutcome<OpBuiltPayload>, PayloadBuilderError>
     where
         Txs: PayloadTransactions<Transaction: FBPoolTransaction<Consensus = OpTransactionSigned>>,
@@ -342,7 +332,7 @@ where
             metrics: self.metrics.clone(),
         };
 
-        let builder = OpBuilder::new(best, remove_reverted);
+        let builder = OpBuilder::new(best);
 
         let state_provider = self.client.state_by_block_hash(ctx.parent().hash())?;
         let state = StateProviderDatabase::new(state_provider);
@@ -384,19 +374,12 @@ where
 pub struct OpBuilder<'a, Txs> {
     /// Yields the best transaction to include if transactions from the mempool are allowed.
     best: Box<dyn FnOnce(BestTransactionsAttributes) -> Txs + 'a>,
-    /// Removes reverted transactions from the tx pool
-    #[debug(skip)]
-    remove_invalid: Box<dyn FnOnce(Vec<TxHash>) + 'a>,
 }
 
 impl<'a, Txs> OpBuilder<'a, Txs> {
-    fn new(
-        best: impl FnOnce(BestTransactionsAttributes) -> Txs + Send + Sync + 'a,
-        remove_reverted: impl FnOnce(Vec<TxHash>) + 'a,
-    ) -> Self {
+    fn new(best: impl FnOnce(BestTransactionsAttributes) -> Txs + Send + Sync + 'a) -> Self {
         Self {
             best: Box::new(best),
-            remove_invalid: Box::new(remove_reverted),
         }
     }
 }
@@ -415,10 +398,7 @@ impl<Txs> OpBuilder<'_, Txs> {
         DB: Database<Error = ProviderError> + AsRef<P>,
         P: StorageRootProvider,
     {
-        let Self {
-            best,
-            remove_invalid,
-        } = self;
+        let Self { best } = self;
         info!(target: "payload_builder", id=%ctx.payload_id(), parent_header = ?ctx.parent().hash(), parent_number = ctx.parent().number, "building new payload");
 
         // 1. apply pre-execution changes
@@ -498,8 +478,6 @@ impl<Txs> OpBuilder<'_, Txs> {
         ctx.metrics
             .payload_num_tx
             .record(info.executed_transactions.len() as f64);
-
-        remove_invalid(info.invalid_tx_hashes.iter().copied().collect());
 
         let payload = ExecutedPayload { info };
 
@@ -676,13 +654,6 @@ pub trait OpPayloadTransactions<Transaction>: Clone + Send + Sync + Unpin + 'sta
         pool: Pool,
         attr: BestTransactionsAttributes,
     ) -> impl PayloadTransactions<Transaction = Transaction>;
-
-    /// Removes invalid transactions from the tx pool
-    fn remove_invalid<Pool: TransactionPool<Transaction = Transaction>>(
-        &self,
-        pool: Pool,
-        hashes: Vec<TxHash>,
-    );
 }
 
 impl<T: PoolTransaction> OpPayloadTransactions<T> for () {
@@ -692,14 +663,6 @@ impl<T: PoolTransaction> OpPayloadTransactions<T> for () {
         attr: BestTransactionsAttributes,
     ) -> impl PayloadTransactions<Transaction = T> {
         BestPayloadTransactions::new(pool.best_transactions_with_attributes(attr))
-    }
-
-    fn remove_invalid<Pool: TransactionPool<Transaction = T>>(
-        &self,
-        pool: Pool,
-        hashes: Vec<TxHash>,
-    ) {
-        pool.remove_transactions(hashes);
     }
 }
 
@@ -1061,7 +1024,6 @@ where
                 if exclude_reverting_txs {
                     info!(target: "payload_builder", tx_hash = ?tx.tx_hash(), "skipping reverted transaction");
                     best_txs.mark_invalid(tx.signer(), tx.nonce());
-                    info.invalid_tx_hashes.insert(tx.tx_hash());
                     continue;
                 }
             }

@@ -75,6 +75,7 @@ serde.workspace = true
 secp256k1.workspace = true
 tokio.workspace = true
 jsonrpsee = { workspace = true }
+jsonrpsee-types.workspace = true
 async-trait = { workspace = true }
 clap_builder = { workspace = true }
 clap.workspace = true
