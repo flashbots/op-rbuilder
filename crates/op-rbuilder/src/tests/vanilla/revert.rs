@@ -1,8 +1,10 @@
 use alloy_provider::PendingTransactionBuilder;
 use op_alloy_network::Optimism;
 
-use crate::primitives::bundle::MAX_BLOCK_RANGE_BLOCKS;
-use crate::tests::{BundleOpts, TestHarness, TestHarnessBuilder};
+use crate::{
+    primitives::bundle::MAX_BLOCK_RANGE_BLOCKS,
+    tests::{BundleOpts, TestHarness, TestHarnessBuilder},
+};
 
 #[tokio::test]
 async fn revert_protection_monitor_transaction_gc() -> eyre::Result<()> {

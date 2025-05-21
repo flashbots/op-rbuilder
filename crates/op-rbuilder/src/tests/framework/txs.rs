@@ -1,5 +1,4 @@
-use crate::primitives::bundle::Bundle;
-use crate::tx_signer::Signer;
+use crate::{primitives::bundle::Bundle, tx_signer::Signer};
 use alloy_consensus::TxEip1559;
 use alloy_eips::{eip2718::Encodable2718, BlockNumberOrTag};
 use alloy_primitives::{hex, Bytes};

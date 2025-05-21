@@ -1,5 +1,7 @@
-use crate::primitives::bundle::{Bundle, MAX_BLOCK_RANGE_BLOCKS};
-use crate::tx::{FBPoolTransaction, FBPooledTransaction};
+use crate::{
+    primitives::bundle::{Bundle, MAX_BLOCK_RANGE_BLOCKS},
+    tx::{FBPoolTransaction, FBPooledTransaction},
+};
 use alloy_primitives::B256;
 use alloy_rpc_types_eth::erc4337::TransactionConditional;
 use jsonrpsee::{
