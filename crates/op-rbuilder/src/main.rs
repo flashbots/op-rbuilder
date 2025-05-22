@@ -81,6 +81,11 @@ fn main() {
 
                     Ok(())
                 })
+                .extend_rpc_modules(|ctx| {
+                    ctx.modules.
+                    Ok(())
+                }
+                )
                 .launch()
                 .await?;
 
