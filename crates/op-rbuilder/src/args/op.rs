@@ -3,10 +3,12 @@
 //! Copied from OptimismNode to allow easy extension.
 
 //! clap [Args](clap::Args) for optimism rollup configuration
-use std::path::PathBuf;
-
-use crate::tx_signer::Signer;
+use crate::{primitives::reth::engine_api_builder::EnginePeer, tx_signer::Signer};
+use alloy_rpc_types_engine::JwtSecret;
+use anyhow::{anyhow, Result};
 use reth_optimism_node::args::RollupArgs;
+use std::path::PathBuf;
+use url::Url;
 
 /// Parameters for rollup configuration
 #[derive(Debug, Clone, Default, PartialEq, Eq, clap::Args)]
@@ -38,6 +40,7 @@ pub struct OpRbuilderArgs {
     #[arg(long = "builder.enable-revert-protection", default_value = "false")]
     pub enable_revert_protection: bool,
 
+    /// Path to builder playgorund to automatically start up the node connected to it
     #[arg(
         long = "builder.playground",
         num_args = 0..=1,
@@ -46,17 +49,52 @@ pub struct OpRbuilderArgs {
         env = "PLAYGROUND_DIR",
     )]
     pub playground: Option<PathBuf>,
-
     #[command(flatten)]
     pub flashblocks: FlashblocksArgs,
+    /// List or builders in the network that FCU would be propagated to
+    #[arg(long = "builder.engine-api-peer", value_parser = parse_engine_peer_arg, action = clap::ArgAction::Append)]
+    pub engine_peers: Vec<EnginePeer>,
 }
 
-fn expand_path(s: &str) -> Result<PathBuf, String> {
+fn expand_path(s: &str) -> Result<PathBuf> {
     shellexpand::full(s)
-        .map_err(|e| format!("expansion error for `{s}`: {e}"))?
+        .map_err(|e| anyhow!("expansion error for `{s}`: {e}"))?
         .into_owned()
         .parse()
-        .map_err(|e| format!("invalid path after expansion: {e}"))
+        .map_err(|e| anyhow!("invalid path after expansion: {e}"))
+}
+
+/// Parse engine peer configuration string for clap argument parsing.
+///
+/// Format: "url@jwt_path" (JWT path is required)
+/// - url: HTTP/HTTPS endpoint of the peer builder
+/// - jwt_path: File path to JWT token for authentication (required after @)
+fn parse_engine_peer_arg(s: &str) -> Result<EnginePeer> {
+    let s = s.trim();
+
+    if s.is_empty() {
+        return Err(anyhow!("Engine peer cannot be empty"));
+    }
+
+    // Find the @ delimiter - it's required
+    // Caution: this will misshandle cases when pathname contains `@` symbols, we do not expect such filenames tho
+    let (url_part, jwt_path_part) = s.rsplit_once('@').ok_or_else(|| anyhow!("Engine peer must include JWT path after '@' (format: url@jwt_path). Urls with @ in the path are not accepted."))?;
+
+    if url_part.is_empty() {
+        return Err(anyhow!("URL part cannot be empty"));
+    }
+
+    if jwt_path_part.is_empty() {
+        return Err(anyhow!("JWT path cannot be empty (format: url@jwt_path)"));
+    }
+
+    let url = Url::parse(url_part)?;
+
+    let jwt_path = PathBuf::from(jwt_path_part);
+
+    let jwt_secret = JwtSecret::from_file(&jwt_path)?;
+
+    Ok(EnginePeer::new(url, jwt_secret))
 }
 
 /// Parameters for Flashblocks configuration
