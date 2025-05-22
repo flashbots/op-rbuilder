@@ -3,7 +3,6 @@ use crate::{
     tx::{FBPooledTransaction, MaybeRevertingTransaction},
 };
 use alloy_primitives::B256;
-use alloy_rpc_types_eth::erc4337::TransactionConditional;
 use jsonrpsee::{
     core::{async_trait, RpcResult},
     proc_macros::rpc,
@@ -30,18 +29,6 @@ pub struct RevertProtectionExt<Pool, Provider> {
 impl<Pool, Provider> RevertProtectionExt<Pool, Provider> {
     pub fn new(pool: Pool, provider: Provider) -> Self {
         Self { pool, provider }
-    }
-}
-
-impl Bundle {
-    fn conditional(&self) -> TransactionConditional {
-        TransactionConditional {
-            block_number_min: None,
-            block_number_max: self.block_number_max,
-            known_accounts: Default::default(),
-            timestamp_max: None,
-            timestamp_min: None,
-        }
     }
 }
 
