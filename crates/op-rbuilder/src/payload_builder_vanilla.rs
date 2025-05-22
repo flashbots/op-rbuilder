@@ -1,6 +1,9 @@
 use crate::{
-    generator::BuildArguments, metrics::OpRBuilderMetrics, primitives::reth::ExecutionInfo,
-    tx::FBPoolTransaction, tx_signer::Signer,
+    generator::BuildArguments,
+    metrics::OpRBuilderMetrics,
+    primitives::reth::ExecutionInfo,
+    tx::{FBPoolTransaction, MaybeRevertingTransaction},
+    tx_signer::Signer,
 };
 use alloy_consensus::{
     constants::EMPTY_WITHDRAWALS, transaction::Recovered, Eip658Value, Header, Transaction,

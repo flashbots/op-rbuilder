@@ -1,6 +1,6 @@
 use crate::{
     primitives::bundle::{Bundle, MAX_BLOCK_RANGE_BLOCKS},
-    tx::{FBPoolTransaction, FBPooledTransaction},
+    tx::{FBPooledTransaction, MaybeRevertingTransaction},
 };
 use alloy_primitives::B256;
 use alloy_rpc_types_eth::erc4337::TransactionConditional;

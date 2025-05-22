@@ -16,10 +16,12 @@ use reth_primitives_traits::InMemorySize;
 use reth_transaction_pool::{EthBlobTransactionSidecar, EthPoolTransaction, PoolTransaction};
 
 pub trait FBPoolTransaction:
-    EthPoolTransaction + MaybeInteropTransaction + MaybeConditionalTransaction + DataAvailabilitySized
+    EthPoolTransaction
+    + MaybeInteropTransaction
+    + MaybeConditionalTransaction
+    + DataAvailabilitySized
+    + MaybeRevertingTransaction
 {
-    fn set_exclude_reverting_txs(&mut self, exclude: bool);
-    fn exclude_reverting_txs(&self) -> bool;
 }
 
 #[derive(Clone, Debug)]
@@ -28,7 +30,14 @@ pub struct FBPooledTransaction {
     pub exclude_reverting_txs: bool,
 }
 
-impl FBPoolTransaction for FBPooledTransaction {
+impl FBPoolTransaction for FBPooledTransaction {}
+
+pub trait MaybeRevertingTransaction {
+    fn set_exclude_reverting_txs(&mut self, exclude: bool);
+    fn exclude_reverting_txs(&self) -> bool;
+}
+
+impl MaybeRevertingTransaction for FBPooledTransaction {
     fn set_exclude_reverting_txs(&mut self, exclude: bool) {
         self.exclude_reverting_txs = exclude;
     }
@@ -40,7 +49,7 @@ impl FBPoolTransaction for FBPooledTransaction {
 
 impl InMemorySize for FBPooledTransaction {
     fn size(&self) -> usize {
-        self.inner.size()
+        self.inner.size() + core::mem::size_of::<bool>()
     }
 }
 
