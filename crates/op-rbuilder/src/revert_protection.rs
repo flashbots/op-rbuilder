@@ -9,8 +9,7 @@ use jsonrpsee::{
 };
 use reth_optimism_txpool::{conditional::MaybeConditionalTransaction, OpPooledTransaction};
 use reth_provider::StateProviderFactory;
-use reth_rpc_eth_types::utils::recover_raw_transaction;
-use reth_rpc_eth_types::EthApiError;
+use reth_rpc_eth_types::{utils::recover_raw_transaction, EthApiError};
 use reth_transaction_pool::{PoolTransaction, TransactionOrigin, TransactionPool};
 
 // Namespace overrides for revert protection support
