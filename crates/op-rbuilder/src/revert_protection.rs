@@ -18,8 +18,8 @@ use reth_transaction_pool::{PoolTransaction, TransactionOrigin, TransactionPool}
 #[cfg_attr(not(test), rpc(server, namespace = "eth"))]
 #[cfg_attr(test, rpc(server, client, namespace = "eth"))]
 pub trait EthApiOverride {
-    #[method(name = "sendRawTransactionRevert")]
-    async fn send_raw_transaction_revert(&self, tx: Bundle) -> RpcResult<B256>;
+    #[method(name = "sendBundle")]
+    async fn send_bundle(&self, tx: Bundle) -> RpcResult<B256>;
 }
 
 pub struct RevertProtectionExt<Pool, Provider> {
@@ -51,7 +51,7 @@ where
     Pool: TransactionPool<Transaction = FBPooledTransaction> + Clone + 'static,
     Provider: StateProviderFactory + Send + Sync + Clone + 'static,
 {
-    async fn send_raw_transaction_revert(&self, mut bundle: Bundle) -> RpcResult<B256> {
+    async fn send_bundle(&self, mut bundle: Bundle) -> RpcResult<B256> {
         let last_block_number = self.provider.best_block_number().unwrap(); // FIXME: do not unwrap
 
         // Only one transaction in the bundle is expected
