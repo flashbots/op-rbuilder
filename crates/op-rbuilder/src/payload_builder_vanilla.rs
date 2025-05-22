@@ -481,6 +481,7 @@ impl<Txs> OpBuilder<'_, Txs> {
 
         let payload = ExecutedPayload { info };
 
+        ctx.metrics.block_built_success.increment(1);
         Ok(BuildOutcomeKind::Better { payload })
     }
 
