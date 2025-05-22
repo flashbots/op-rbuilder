@@ -25,6 +25,8 @@ pub struct TestHarnessBuilder {
     flashblocks_ws_url: Option<String>,
     chain_block_time: Option<u64>,
     flashbots_block_time: Option<u64>,
+    max_da_tx_size: Option<u64>,
+    max_da_block_size: Option<u64>,
 }
 
 impl TestHarnessBuilder {
@@ -35,6 +37,8 @@ impl TestHarnessBuilder {
             flashblocks_ws_url: None,
             chain_block_time: None,
             flashbots_block_time: None,
+            max_da_tx_size: None,
+            max_da_block_size: None,
         }
     }
 
@@ -55,6 +59,16 @@ impl TestHarnessBuilder {
 
     pub fn with_flashbots_block_time(mut self, block_time: u64) -> Self {
         self.flashbots_block_time = Some(block_time);
+        self
+    }
+
+    pub fn with_max_da_tx_size(mut self, max_da_tx_size: u64) -> Self {
+        self.max_da_tx_size = Some(max_da_tx_size);
+        self
+    }
+    
+    pub fn with_max_da_block_size(mut self, max_da_block_size: u64) -> Self {
+        self.max_da_block_size = Some(max_da_block_size);
         self
     }
 

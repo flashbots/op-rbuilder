@@ -27,6 +27,8 @@ pub struct OpRbuilderConfig {
     chain_block_time: Option<u64>,
     flashbots_block_time: Option<u64>,
     with_revert_protection: Option<bool>,
+    max_da_tx_size: Option<u64>,
+    max_da_block_size: Option<u64>,
 }
 
 impl OpRbuilderConfig {
@@ -81,6 +83,16 @@ impl OpRbuilderConfig {
 
     pub fn with_flashbots_block_time(mut self, time: u64) -> Self {
         self.flashbots_block_time = Some(time);
+        self
+    }
+
+    pub fn with_max_da_tx_size(mut self, size: u64) -> Self {
+        self.max_da_tx_size = Some(size);
+        self
+    }
+
+    pub fn with_max_da_block_size(mut self, size: u64) -> Self {
+        self.max_da_block_size = Some(size);
         self
     }
 }
@@ -153,6 +165,16 @@ impl Service for OpRbuilderConfig {
         if let Some(flashbots_block_time) = self.flashbots_block_time {
             cmd.arg("--rollup.flashblock-block-time")
                 .arg(flashbots_block_time.to_string());
+        }
+
+        if let Some(max_da_tx_size) = self.max_da_tx_size {
+            cmd.arg("--rollup.max-da-tx-size")
+                .arg(max_da_tx_size.to_string());
+        }
+
+        if let Some(max_da_block_size) = self.max_da_block_size {
+            cmd.arg("--rollup.max-da-block-size")
+                .arg(max_da_block_size.to_string());
         }
 
         cmd
