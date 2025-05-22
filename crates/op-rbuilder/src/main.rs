@@ -2,9 +2,10 @@ use args::*;
 use builders::{BuilderConfig, BuilderMode, FlashblocksBuilder, StandardBuilder};
 use core::fmt::Debug;
 use reth_optimism_node::{
-    node::{OpAddOnsBuilder, OpPoolBuilder},
+    node::{OpAddOnsBuilder, OpEngineValidatorBuilder, OpPoolBuilder},
     OpNode,
 };
+
 use reth_transaction_pool::TransactionPool;
 
 /// CLI argument parsing.
@@ -23,6 +24,7 @@ use metrics::{
     VERGEN_CARGO_FEATURES, VERGEN_CARGO_TARGET_TRIPLE, VERGEN_GIT_SHA,
 };
 use monitor_tx_pool::monitor_tx_pool;
+use primitives::reth::engine_api_builder::OpEngineApiBuilder;
 use revert_protection::{EthApiOverrideServer, RevertProtectionExt};
 use tx::FBPooledTransaction;
 
@@ -68,6 +70,8 @@ where
     cli.run(|builder, builder_args| async move {
         let builder_config = BuilderConfig::<B::Config>::try_from(builder_args.clone())
             .expect("Failed to convert rollup args to builder config");
+        let default_builder: OpEngineApiBuilder<OpEngineValidatorBuilder> =
+            OpEngineApiBuilder::default();
         let da_config = builder_config.da_config.clone();
         let rollup_args = builder_args.rollup_args;
         let op_node = OpNode::new(rollup_args.clone());
@@ -96,7 +100,9 @@ where
                     .with_sequencer(rollup_args.sequencer.clone())
                     .with_enable_tx_conditional(rollup_args.enable_tx_conditional)
                     .with_da_config(da_config)
-                    .build(),
+                    .build()
+                    .rpc_add_ons
+                    .with_engine_api(default_builder),
             )
             .extend_rpc_modules(move |ctx| {
                 if builder_args.enable_revert_protection {

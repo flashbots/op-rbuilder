@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{borrow::Cow, sync::Arc};
 
 use alloy_consensus::{
     conditional::BlockConditionalAttributes, BlobTransactionSidecar, BlobTransactionValidationError,
@@ -9,11 +9,17 @@ use alloy_rpc_types_eth::{erc4337::TransactionConditional, AccessList};
 use reth_optimism_primitives::OpTransactionSigned;
 use reth_optimism_txpool::{
     conditional::MaybeConditionalTransaction, estimated_da_size::DataAvailabilitySized,
-    interop::MaybeInteropTransaction, OpPooledTransaction,
+    interop::MaybeInteropTransaction, OpPooledTransaction, OpPooledTx,
 };
 use reth_primitives::{kzg::KzgSettings, Recovered};
 use reth_primitives_traits::InMemorySize;
 use reth_transaction_pool::{EthBlobTransactionSidecar, EthPoolTransaction, PoolTransaction};
+
+impl OpPooledTx for FBPooledTransaction {
+    fn encoded_2718(&self) -> Cow<'_, Bytes> {
+        Cow::Borrowed(self.inner.encoded_2718())
+    }
+}
 
 pub trait FBPoolTransaction:
     EthPoolTransaction
