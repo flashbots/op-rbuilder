@@ -58,9 +58,9 @@ lt: lint test ## Run "lint" and "test"
 .PHONY: fmt
 fmt: ## Format the code
 	cargo +nightly fmt
-	cargo +nightly fix --allow-staged
-	cargo +nightly clippy --features "$(FEATURES)" --fix --allow-staged
-	cargo +nightly clippy -p op-rbuilder --features "$(FEATURES)" --fix --allow-staged
+	cargo +nightly clippy --features "$(FEATURES)" --fix --allow-staged --allow-dirty
+	cargo +nightly clippy -p op-rbuilder --features "$(FEATURES)" --fix --allow-staged --allow-dirty
+	cargo +nightly fix --allow-staged --allow-dirty
 
 .PHONY: bench
 bench: ## Run benchmarks
