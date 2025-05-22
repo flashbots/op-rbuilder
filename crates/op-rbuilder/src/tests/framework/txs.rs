@@ -156,7 +156,7 @@ impl TransactionBuilder {
 
             let tx_hash = provider
                 .client()
-                .request("eth_sendRawTransactionRevert", (bundle,))
+                .request("eth_sendBundle", (bundle,))
                 .await?;
 
             return Ok(PendingTransactionBuilder::new(
