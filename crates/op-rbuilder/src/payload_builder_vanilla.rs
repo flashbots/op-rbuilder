@@ -8,9 +8,9 @@ use alloy_consensus::{
     constants::EMPTY_WITHDRAWALS, transaction::Recovered, Eip658Value, Header, Transaction,
     TxEip1559, Typed2718, EMPTY_OMMER_ROOT_HASH,
 };
-use alloy_eips::{eip7685::EMPTY_REQUESTS_HASH, merge::BEACON_NONCE};
+use alloy_eips::{eip7685::EMPTY_REQUESTS_HASH, merge::BEACON_NONCE, Encodable2718};
 use alloy_op_evm::block::receipt_builder::OpReceiptBuilder;
-use alloy_primitives::{private::alloy_rlp::Encodable, Address, Bytes, TxHash, TxKind, U256};
+use alloy_primitives::{Address, Bytes, TxHash, TxKind, U256};
 use alloy_rpc_types_engine::PayloadId;
 use alloy_rpc_types_eth::Withdrawals;
 use op_alloy_consensus::{OpDepositReceipt, OpTypedTransaction};
@@ -582,15 +582,7 @@ impl<Txs> OpBuilder<'_, Txs> {
         let block_da_limit = ctx
             .da_config
             .max_da_block_size()
-            .map(|da_size| da_size - builder_tx_da_size as u64);
-        // Check that it's possible to create builder tx, considering max_da_tx_size, otherwise panic
-        if let Some(tx_da_limit) = ctx.da_config.max_da_tx_size() {
-            // Panic indicate max_da_tx_size misconfiguration
-            assert!(
-                tx_da_limit >= builder_tx_da_size as u64,
-                "The configured da_config.max_da_tx_size is too small to accommodate builder tx."
-            );
-        }
+            .map(|da_size| da_size.saturating_sub(builder_tx_da_size));
 
         if !ctx.attributes().no_tx_pool {
             let best_txs_start_time = Instant::now();
@@ -1314,7 +1306,7 @@ where
         db: &mut State<DB>,
         builder_tx_gas: u64,
         message: Vec<u8>,
-    ) -> Option<usize>
+    ) -> Option<u64>
     where
         DB: Database<Error = ProviderError>,
     {
@@ -1325,7 +1317,9 @@ where
                 // Create and sign the transaction
                 let builder_tx =
                     signed_builder_tx(db, builder_tx_gas, message, signer, base_fee, chain_id)?;
-                Ok(builder_tx.length())
+                Ok(op_alloy_flz::tx_estimated_size_fjord(
+                    builder_tx.encoded_2718().as_slice(),
+                ))
             })
             .transpose()
             .unwrap_or_else(|err: PayloadBuilderError| {

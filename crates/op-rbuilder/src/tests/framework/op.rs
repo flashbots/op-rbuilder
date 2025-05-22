@@ -86,13 +86,13 @@ impl OpRbuilderConfig {
         self
     }
 
-    pub fn with_max_da_tx_size(mut self, size: u64) -> Self {
-        self.max_da_tx_size = Some(size);
+    pub fn with_max_da_tx_size(mut self, size: Option<u64>) -> Self {
+        self.max_da_tx_size = size;
         self
     }
 
-    pub fn with_max_da_block_size(mut self, size: u64) -> Self {
-        self.max_da_block_size = Some(size);
+    pub fn with_max_da_block_size(mut self, size: Option<u64>) -> Self {
+        self.max_da_block_size = size;
         self
     }
 }
@@ -168,12 +168,12 @@ impl Service for OpRbuilderConfig {
         }
 
         if let Some(max_da_tx_size) = self.max_da_tx_size {
-            cmd.arg("--rollup.max-da-tx-size")
+            cmd.arg("--builder.max-da-tx-size")
                 .arg(max_da_tx_size.to_string());
         }
 
         if let Some(max_da_block_size) = self.max_da_block_size {
-            cmd.arg("--rollup.max-da-block-size")
+            cmd.arg("--builder.max-da-block-size")
                 .arg(max_da_block_size.to_string());
         }
 

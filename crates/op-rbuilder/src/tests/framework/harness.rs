@@ -66,7 +66,7 @@ impl TestHarnessBuilder {
         self.max_da_tx_size = Some(max_da_tx_size);
         self
     }
-    
+
     pub fn with_max_da_block_size(mut self, max_da_block_size: u64) -> Self {
         self.max_da_block_size = Some(max_da_block_size);
         self
@@ -93,8 +93,9 @@ impl TestHarnessBuilder {
             .network_port(get_available_port())
             .http_port(builder_http_port)
             .with_builder_private_key(BUILDER_PRIVATE_KEY)
-            .with_revert_protection(self.use_revert_protection);
-
+            .with_revert_protection(self.use_revert_protection)
+            .with_max_da_block_size(self.max_da_block_size)
+            .with_max_da_tx_size(self.max_da_tx_size);
         if let Some(flashblocks_ws_url) = self.flashblocks_ws_url {
             op_rbuilder_config = op_rbuilder_config.with_flashblocks_ws_url(&flashblocks_ws_url);
         }
