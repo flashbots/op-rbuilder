@@ -1269,6 +1269,8 @@ where
             // add gas used by the transaction to cumulative gas used, before creating the receipt
             let gas_used = result.gas_used();
             info.cumulative_gas_used += gas_used;
+            // record tx da size
+            info.cumulative_da_bytes_used += tx_da_size;
 
             let ctx = ReceiptBuilderCtx {
                 tx: tx.inner(),

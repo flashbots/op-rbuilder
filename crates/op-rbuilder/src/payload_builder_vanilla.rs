@@ -1208,6 +1208,8 @@ where
             // receipt
             let gas_used = result.gas_used();
             info.cumulative_gas_used += gas_used;
+            // record tx da size
+            info.cumulative_da_bytes_used += tx_da_size;
 
             // Push transaction changeset and calculate header bloom filter for receipt.
             let ctx = ReceiptBuilderCtx {
