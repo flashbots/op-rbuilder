@@ -54,30 +54,37 @@ where
     async fn send_raw_transaction_revert(&self, mut bundle: Bundle) -> RpcResult<B256> {
         let last_block_number = self.provider.best_block_number().unwrap(); // FIXME: do not unwrap
 
+        // Only one transaction in the bundle is expected
+        let bundle_transaction = match bundle.transactions.len() {
+            0 => {
+                return Err(rpc_err_invalid_params(
+                    "bundle must contain at least one transaction",
+                ));
+            }
+            1 => bundle.transactions[0].clone(),
+            _ => {
+                return Err(rpc_err_invalid_params(
+                    "bundle must contain exactly one transaction",
+                ));
+            }
+        };
+
         if let Some(block_number_max) = bundle.block_number_max {
             // The max block cannot be a past block
             if block_number_max <= last_block_number {
-                return Err(rpc_err(
-                    jsonrpsee_types::error::INVALID_PARAMS_CODE,
-                    "block_number_max is a past block",
-                    None,
-                ));
+                return Err(rpc_err_invalid_params("block_number_max is a past block"));
             }
 
             // Validate that it is not greater than the max_block_range
             if block_number_max > last_block_number + MAX_BLOCK_RANGE_BLOCKS {
-                return Err(rpc_err(
-                    jsonrpsee_types::error::INVALID_PARAMS_CODE,
-                    "block_number_max is too high",
-                    None,
-                ));
+                return Err(rpc_err_invalid_params("block_number_max is too high"));
             }
         } else {
             // If no upper bound is set, use the maximum block range
             bundle.block_number_max = Some(last_block_number + MAX_BLOCK_RANGE_BLOCKS);
         }
 
-        let recovered = recover_raw_transaction(&bundle.transaction)?;
+        let recovered = recover_raw_transaction(&bundle_transaction)?;
         let mut pool_transaction: FBPooledTransaction =
             OpPooledTransaction::from_pooled(recovered).into();
 
@@ -92,4 +99,8 @@ where
 
         Ok(hash)
     }
+}
+
+fn rpc_err_invalid_params(msg: &str) -> jsonrpsee_types::ErrorObjectOwned {
+    rpc_err(jsonrpsee_types::error::INVALID_PARAMS_CODE, msg, None)
 }

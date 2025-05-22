@@ -150,7 +150,7 @@ impl TransactionBuilder {
         if let Some(bundle_opts) = bundle_opts {
             // Send the transaction as a bundle with the bundle options
             let bundle = Bundle {
-                transaction: transaction_encoded.into(),
+                transactions: vec![transaction_encoded.into()],
                 block_number_max: bundle_opts.block_number_max,
             };
 
