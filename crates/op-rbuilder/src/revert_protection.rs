@@ -90,7 +90,7 @@ where
             .pool
             .add_transaction(TransactionOrigin::Local, pool_transaction)
             .await
-            .map_err(|e| EthApiError::from(e))?;
+            .map_err(EthApiError::from)?;
 
         Ok(hash)
     }
