@@ -2,6 +2,7 @@ use args::CliExt;
 use clap::Parser;
 use reth_optimism_cli::{chainspec::OpChainSpecParser, Cli};
 use reth_optimism_node::{node::OpAddOnsBuilder, OpNode};
+use reth_optimism_node::node::OpEngineValidatorBuilder;
 use reth_transaction_pool::TransactionPool;
 
 /// CLI argument parsing.
@@ -29,6 +30,7 @@ use metrics::{
     VERGEN_CARGO_FEATURES, VERGEN_CARGO_TARGET_TRIPLE, VERGEN_GIT_SHA,
 };
 use monitor_tx_pool::monitor_tx_pool;
+use primitives::reth::engine_api_builder::OpEngineApiBuilder;
 
 // Prefer jemalloc for performance reasons.
 #[cfg(all(feature = "jemalloc", unix))]
@@ -45,6 +47,8 @@ fn main() {
         build_profile: BUILD_PROFILE_NAME,
     };
 
+    let default_builder: OpEngineApiBuilder<OpEngineValidatorBuilder> = OpEngineApiBuilder::default();
+    
     Cli::<OpChainSpecParser, args::OpRbuilderArgs>::parse()
         .populate_defaults()
         .run(|builder, builder_args| async move {
@@ -61,11 +65,10 @@ fn main() {
                     builder_args.chain_block_time,
                     builder_args.flashblock_block_time,
                 )))
-                .with_add_ons(
-                    OpAddOnsBuilder::default()
-                        .with_sequencer(rollup_args.sequencer.clone())
-                        .with_enable_tx_conditional(rollup_args.enable_tx_conditional)
-                        .build(),
+                .with_add_ons(OpAddOnsBuilder::default()
+                                  .with_sequencer(rollup_args.sequencer.clone())
+                                  .with_enable_tx_conditional(rollup_args.enable_tx_conditional)
+                                  .build().rpc_add_ons.with_engine_api(default_builder)
                 )
                 .on_node_started(move |ctx| {
                     version.register_version_metrics();
@@ -81,11 +84,6 @@ fn main() {
 
                     Ok(())
                 })
-                .extend_rpc_modules(|ctx| {
-                    ctx.modules.
-                    Ok(())
-                }
-                )
                 .launch()
                 .await?;
 
