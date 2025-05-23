@@ -438,6 +438,7 @@ dependencies = [
  "alloy-pubsub",
  "alloy-rpc-client",
  "alloy-rpc-types-eth",
+ "alloy-rpc-types-txpool",
  "alloy-signer",
  "alloy-sol-types",
  "alloy-transport",
@@ -5550,6 +5551,7 @@ dependencies = [
  "jsonrpsee 0.25.1",
  "metrics",
  "op-alloy-consensus",
+ "op-alloy-flz",
  "op-alloy-network",
  "op-alloy-rpc-types-engine",
  "op-revm",
@@ -9788,7 +9790,7 @@ dependencies = [
 [[package]]
 name = "rollup-boost"
 version = "0.1.0"
-source = "git+http://github.com/flashbots/rollup-boost?rev=b9e6353d08672bd19e754a9525de47e04b34c84c#b9e6353d08672bd19e754a9525de47e04b34c84c"
+source = "git+http://github.com/flashbots/rollup-boost?rev=8506dfb7d84c65746f7c88d250983658438f59e8#8506dfb7d84c65746f7c88d250983658438f59e8"
 dependencies = [
  "alloy-primitives",
  "alloy-rpc-types-engine",

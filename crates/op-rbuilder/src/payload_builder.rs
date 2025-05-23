@@ -38,11 +38,12 @@ use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
 use reth_optimism_forks::OpHardforks;
 use reth_optimism_node::OpEngineTypes;
 use reth_optimism_payload_builder::{
+    config::OpDAConfig,
     error::OpPayloadBuilderError,
     payload::{OpBuiltPayload, OpPayloadBuilderAttributes},
 };
 use reth_optimism_primitives::{OpPrimitives, OpReceipt, OpTransactionSigned};
-use reth_optimism_txpool::OpPooledTx;
+use reth_optimism_txpool::{estimated_da_size::DataAvailabilitySized, OpPooledTx};
 use reth_payload_builder::PayloadBuilderService;
 use reth_payload_builder_primitives::PayloadBuilderError;
 use reth_payload_primitives::PayloadBuilderAttributes;
@@ -96,6 +97,7 @@ struct FlashblocksMetadata<N: NodePrimitives> {
 pub struct CustomOpPayloadBuilder {
     #[expect(dead_code)]
     builder_signer: Option<Signer>,
+    da_config: OpDAConfig,
     flashblocks_ws_url: String,
     chain_block_time: u64,
     flashblock_block_time: u64,
@@ -108,12 +110,14 @@ impl CustomOpPayloadBuilder {
         builder_signer: Option<Signer>,
         extra_block_deadline: std::time::Duration,
         enable_revert_protection: bool,
+        da_config: OpDAConfig,
         flashblocks_ws_url: String,
         chain_block_time: u64,
         flashblock_block_time: u64,
     ) -> Self {
         Self {
             builder_signer,
+            da_config,
             flashblocks_ws_url,
             chain_block_time,
             flashblock_block_time,
@@ -135,6 +139,7 @@ where
     Pool: TransactionPool<Transaction: PoolTransaction<Consensus = TxTy<Node::Types>>>
         + Unpin
         + 'static,
+    <Pool as TransactionPool>::Transaction: OpPooledTx,
     Evm: ConfigureEvm<
             Primitives = PrimitivesTy<Node::Types>,
             NextBlockEnvCtx = OpNextBlockEnvAttributes,
@@ -152,6 +157,7 @@ where
             OpEvmConfig::optimism(ctx.chain_spec()),
             pool,
             ctx.provider().clone(),
+            self.da_config,
             self.flashblocks_ws_url.clone(),
             self.chain_block_time,
             self.flashblock_block_time,
@@ -246,6 +252,8 @@ pub struct OpPayloadBuilder<Pool, Client> {
     pub pool: Pool,
     /// Node client
     pub client: Client,
+    /// DA settings.
+    pub da_config: OpDAConfig,
     /// Channel sender for publishing messages
     pub tx: mpsc::UnboundedSender<String>,
     /// chain block time
@@ -264,6 +272,7 @@ impl<Pool, Client> OpPayloadBuilder<Pool, Client> {
         evm_config: OpEvmConfig,
         pool: Pool,
         client: Client,
+        da_config: OpDAConfig,
         flashblocks_ws_url: String,
         chain_block_time: u64,
         flashblock_block_time: u64,
@@ -281,6 +290,7 @@ impl<Pool, Client> OpPayloadBuilder<Pool, Client> {
             evm_config,
             pool,
             client,
+            da_config,
             tx,
             chain_block_time,
             flashblock_block_time,
@@ -342,7 +352,8 @@ impl<Pool, Client> OpPayloadBuilder<Pool, Client> {
 
 impl<Pool, Client> OpPayloadBuilder<Pool, Client>
 where
-    Pool: TransactionPool<Transaction: PoolTransaction<Consensus = OpTransactionSigned>>,
+    Pool:
+        TransactionPool<Transaction: PoolTransaction<Consensus = OpTransactionSigned> + OpPooledTx>,
     Client: StateProviderFactory + ChainSpecProvider<ChainSpec: EthChainSpec + OpHardforks>,
 {
     /// Send a message to be published
@@ -399,6 +410,7 @@ where
 
         let ctx = OpPayloadBuilderCtx {
             evm_config: self.evm_config.clone(),
+            da_config: self.da_config.clone(),
             chain_spec: self.client.chain_spec(),
             config,
             evm_env,
@@ -448,7 +460,16 @@ where
 
         let gas_per_batch = ctx.block_gas_limit() / self.flashblocks_per_block;
 
+        // We initially set total_gas_per_batch equal to 1 flashblocks portion and then
+        // add additional portions to the limit as we build more flashblocks
         let mut total_gas_per_batch = gas_per_batch;
+
+        let da_per_batch = if let Some(da_limit) = ctx.da_config.max_da_block_size() {
+            Some(da_limit / self.flashblocks_per_block)
+        } else {
+            None
+        };
+        let mut total_da_per_batch = da_per_batch;
 
         let mut flashblock_count = 0;
         // Create a channel to coordinate flashblock building
@@ -518,9 +539,10 @@ where
                     // Continue with flashblock building
                     tracing::info!(
                         target: "payload_builder",
-                        "Building flashblock {} {}",
+                        "Building flashblock idx={} target_gas={} taget_da={}",
                         flashblock_count,
                         total_gas_per_batch,
+                        total_da_per_batch.unwrap_or(0),
                     );
 
                     let flashblock_build_start_time = Instant::now();
@@ -547,6 +569,7 @@ where
                         &mut db,
                         best_txs,
                         total_gas_per_batch.min(ctx.block_gas_limit()),
+                        total_da_per_batch,
                     )?;
                     ctx.metrics
                         .payload_tx_simulation_duration
@@ -601,6 +624,9 @@ where
                             // Update bundle_state for next iteration
                             bundle_state = new_bundle_state;
                             total_gas_per_batch += gas_per_batch;
+                            if let Some(da_limit) = da_per_batch {
+                                total_da_per_batch.as_mut().map(|da| *da += da_limit);
+                            }
                             flashblock_count += 1;
                             tracing::info!(target: "payload_builder", "Flashblock {} built", flashblock_count);
                         }
@@ -622,7 +648,8 @@ where
 impl<Pool, Client> PayloadBuilder for OpPayloadBuilder<Pool, Client>
 where
     Client: StateProviderFactory + ChainSpecProvider<ChainSpec: EthChainSpec + OpHardforks> + Clone,
-    Pool: TransactionPool<Transaction: PoolTransaction<Consensus = OpTransactionSigned>>,
+    Pool:
+        TransactionPool<Transaction: PoolTransaction<Consensus = OpTransactionSigned> + OpPooledTx>,
 {
     type Attributes = OpPayloadBuilderAttributes<OpTransactionSigned>;
     type BuiltPayload = OpBuiltPayload;
@@ -894,6 +921,8 @@ impl<T: PoolTransaction> OpPayloadTransactions<T> for () {
 pub struct OpPayloadBuilderCtx<ChainSpec> {
     /// The type that knows how to perform system calls and configure the evm.
     pub evm_config: OpEvmConfig,
+    /// The DA config for the payload builder
+    pub da_config: OpDAConfig,
     /// The chainspec
     pub chain_spec: Arc<ChainSpec>,
     /// How to build the payload.
@@ -1150,9 +1179,10 @@ where
         info: &mut ExecutionInfo<OpPrimitives>,
         db: &mut State<DB>,
         mut best_txs: impl PayloadTransactions<
-            Transaction: PoolTransaction<Consensus = OpTransactionSigned>,
+            Transaction: PoolTransaction<Consensus = OpTransactionSigned> + OpPooledTx,
         >,
         batch_gas_limit: u64,
+        block_da_limit: Option<u64>,
     ) -> Result<Option<()>, PayloadBuilderError>
     where
         DB: Database<Error = ProviderError>,
@@ -1162,10 +1192,11 @@ where
         let mut num_txs_simulated = 0;
         let mut num_txs_simulated_success = 0;
         let mut num_txs_simulated_fail = 0;
-
+        let tx_da_limit = self.da_config.max_da_tx_size();
         let mut evm = self.evm_config.evm_with_env(&mut *db, self.evm_env.clone());
 
         while let Some(tx) = best_txs.next(()) {
+            let tx_da_size = tx.estimated_da_size();
             let tx = tx.into_consensus();
             num_txs_considered += 1;
 
@@ -1175,7 +1206,13 @@ where
             }
 
             // ensure we still have capacity for this transaction
-            if info.is_tx_over_limits(tx.inner(), batch_gas_limit, None, None) {
+            if info.is_tx_over_limits(
+                tx_da_size,
+                batch_gas_limit,
+                tx_da_limit,
+                block_da_limit,
+                tx.gas_limit(),
+            ) {
                 // we can't fit this transaction into the block, so we need to mark it as
                 // invalid which also removes all dependent transaction from
                 // the iterator before we can continue
@@ -1232,6 +1269,8 @@ where
             // add gas used by the transaction to cumulative gas used, before creating the receipt
             let gas_used = result.gas_used();
             info.cumulative_gas_used += gas_used;
+            // record tx da size
+            info.cumulative_da_bytes_used += tx_da_size;
 
             let ctx = ReceiptBuilderCtx {
                 tx: tx.inner(),
