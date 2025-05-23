@@ -326,6 +326,19 @@ where
             return Poll::Ready(Ok(()));
         }
 
+        // Poll the build_complete_rx receiver
+        match this.build_complete_rx.poll_unpin(cx) {
+            Poll::Ready(Ok(result)) => {
+                tracing::debug!("Build job completed");
+                return Poll::Ready(result);
+            }
+            Poll::Ready(Err(_)) => {
+                tracing::warn!("Build job sender was dropped");
+                return Poll::Ready(Ok(()));
+            }
+            Poll::Pending => {}
+        }
+
         Poll::Pending
     }
 }
