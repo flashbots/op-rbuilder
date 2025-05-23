@@ -25,8 +25,8 @@ pub struct TestHarnessBuilder {
     flashblocks_ws_url: Option<String>,
     chain_block_time: Option<u64>,
     flashbots_block_time: Option<u64>,
-    max_da_tx_size: Option<u64>,
-    max_da_block_size: Option<u64>,
+    namespaces: Option<String>,
+    extra_params: Option<String>,
 }
 
 impl TestHarnessBuilder {
@@ -37,8 +37,8 @@ impl TestHarnessBuilder {
             flashblocks_ws_url: None,
             chain_block_time: None,
             flashbots_block_time: None,
-            max_da_tx_size: None,
-            max_da_block_size: None,
+            namespaces: None,
+            extra_params: None,
         }
     }
 
@@ -62,13 +62,13 @@ impl TestHarnessBuilder {
         self
     }
 
-    pub fn with_max_da_tx_size(mut self, max_da_tx_size: u64) -> Self {
-        self.max_da_tx_size = Some(max_da_tx_size);
+    pub fn with_namespaces(mut self, namespaces: &str) -> Self {
+        self.namespaces = Some(namespaces.to_string());
         self
     }
 
-    pub fn with_max_da_block_size(mut self, max_da_block_size: u64) -> Self {
-        self.max_da_block_size = Some(max_da_block_size);
+    pub fn with_extra_params(mut self, extra_params: &str) -> Self {
+        self.extra_params = Some(extra_params.to_string());
         self
     }
 
@@ -83,7 +83,7 @@ impl TestHarnessBuilder {
         std::fs::write(&genesis_path, genesis)?;
 
         // create the builder
-        let builder_data_dir = std::env::temp_dir().join(Uuid::new_v4().to_string());
+        let builder_data_dir: PathBuf = std::env::temp_dir().join(Uuid::new_v4().to_string());
         let builder_auth_rpc_port = get_available_port();
         let builder_http_port = get_available_port();
         let mut op_rbuilder_config = OpRbuilderConfig::new()
@@ -94,8 +94,8 @@ impl TestHarnessBuilder {
             .http_port(builder_http_port)
             .with_builder_private_key(BUILDER_PRIVATE_KEY)
             .with_revert_protection(self.use_revert_protection)
-            .with_max_da_block_size(self.max_da_block_size)
-            .with_max_da_tx_size(self.max_da_tx_size);
+            .with_namespaces(self.namespaces)
+            .with_extra_params(self.extra_params);
         if let Some(flashblocks_ws_url) = self.flashblocks_ws_url {
             op_rbuilder_config = op_rbuilder_config.with_flashblocks_ws_url(&flashblocks_ws_url);
         }

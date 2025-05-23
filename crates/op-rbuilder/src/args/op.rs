@@ -58,10 +58,6 @@ pub struct OpRbuilderArgs {
         env = "PLAYGROUND_DIR",
     )]
     pub playground: Option<PathBuf>,
-    #[arg(long = "builder.max-da-tx-size", default_value = "0")]
-    pub max_da_tx_size: u64,
-    #[arg(long = "builder.max-da-block-size", default_value = "0")]
-    pub max_da_block_size: u64,
 }
 
 fn expand_path(s: &str) -> Result<PathBuf, String> {

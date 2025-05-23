@@ -51,8 +51,7 @@ fn main() {
         .run(|builder, builder_args| async move {
             let rollup_args = builder_args.rollup_args;
 
-            let da_config =
-                OpDAConfig::new(builder_args.max_da_tx_size, builder_args.max_da_block_size);
+            let da_config = OpDAConfig::default();
             let op_node = OpNode::new(rollup_args.clone());
             let handle = builder
                 .with_types::<OpNode>()
@@ -60,7 +59,7 @@ fn main() {
                     builder_args.builder_signer,
                     std::time::Duration::from_secs(builder_args.extra_block_deadline_secs),
                     builder_args.enable_revert_protection,
-                    da_config,
+                    da_config.clone(),
                     builder_args.flashblocks_ws_url,
                     builder_args.chain_block_time,
                     builder_args.flashblock_block_time,
@@ -69,6 +68,7 @@ fn main() {
                     OpAddOnsBuilder::default()
                         .with_sequencer(rollup_args.sequencer.clone())
                         .with_enable_tx_conditional(rollup_args.enable_tx_conditional)
+                        .with_da_config(da_config)
                         .build(),
                 )
                 .on_node_started(move |ctx| {

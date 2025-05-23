@@ -108,6 +108,9 @@ tikv-jemallocator = { version = "0.6", optional = true }
 vergen = { workspace = true, features = ["build", "cargo", "emit_and_set"] }
 vergen-git2.workspace = true
 
+[dev-dependencies]
+alloy-provider = {workspace = true, default-features = true, features = ["txpool-api"]}
+
 [features]
 default = ["jemalloc"]
 
