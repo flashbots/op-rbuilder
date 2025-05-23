@@ -178,6 +178,7 @@ where
         let deadline = Box::pin(tokio::time::sleep(deadline));
         let config = PayloadConfig::new(Arc::new(parent_header.clone()), attributes);
 
+        let (tx, rx) = oneshot::channel();
         let mut job = BlockPayloadJob {
             executor: self.executor.clone(),
             builder: self.builder.clone(),
@@ -185,7 +186,8 @@ where
             cell: BlockCell::new(),
             cancel: cancel_token,
             deadline,
-            build_complete: None,
+            build_complete_rx: rx,
+            build_complete_tx: Some(tx),
             enable_revert_protection: self.enable_revert_protection,
         };
 
@@ -218,7 +220,8 @@ where
     /// Cancellation token for the running job
     pub(crate) cancel: CancellationToken,
     pub(crate) deadline: Pin<Box<Sleep>>, // Add deadline
-    pub(crate) build_complete: Option<oneshot::Receiver<Result<(), PayloadBuilderError>>>,
+    pub(crate) build_complete_rx: oneshot::Receiver<Result<(), PayloadBuilderError>>,
+    pub(crate) build_complete_tx: Option<oneshot::Sender<Result<(), PayloadBuilderError>>>,
     /// Block building options
     pub(crate) enable_revert_protection: bool,
 }
@@ -281,10 +284,7 @@ where
         let cell = self.cell.clone();
         let cancel = self.cancel.clone();
         let enable_revert_protection = self.enable_revert_protection;
-
-        let (tx, rx) = oneshot::channel();
-        self.build_complete = Some(rx);
-
+        let tx = self.build_complete_tx.take().expect("already spawned");
         self.executor.spawn_blocking(Box::pin(async move {
             let args = BuildArguments {
                 cached_reads: Default::default(),
