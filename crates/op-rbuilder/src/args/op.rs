@@ -51,6 +51,7 @@ pub struct OpRbuilderArgs {
     #[arg(long = "builder.enable-revert-protection", default_value = "false")]
     pub enable_revert_protection: bool,
 
+    /// Path to builder playgorund to automatically start up the node connected to it 
     #[arg(
         long = "builder.playground",
         num_args = 0..=1,
@@ -59,6 +60,8 @@ pub struct OpRbuilderArgs {
         env = "PLAYGROUND_DIR",
     )]
     pub playground: Option<PathBuf>,
+    /// List or builders in the network that FCU would be propagated to
+    pub engine_peers: Vec<String>
 }
 
 fn expand_path(s: &str) -> Result<PathBuf, String> {
