@@ -1,9 +1,6 @@
 use crate::{
-    generator::BuildArguments,
-    metrics::OpRBuilderMetrics,
-    primitives::reth::ExecutionInfo,
-    tx::{FBPoolTransaction, MaybeRevertingTransaction},
-    tx_signer::Signer,
+    generator::BuildArguments, metrics::OpRBuilderMetrics, primitives::reth::ExecutionInfo,
+    traits::*, tx::MaybeRevertingTransaction, tx_signer::Signer,
 };
 use alloy_consensus::{
     constants::EMPTY_WITHDRAWALS, transaction::Recovered, Eip658Value, Header, Transaction,
@@ -17,31 +14,28 @@ use alloy_rpc_types_eth::Withdrawals;
 use op_alloy_consensus::{OpDepositReceipt, OpTypedTransaction};
 use op_revm::OpSpecId;
 use reth::{
-    builder::{components::PayloadBuilderBuilder, node::FullNodeTypes, BuilderContext},
+    builder::{components::PayloadBuilderBuilder, BuilderContext},
     core::primitives::InMemorySize,
 };
 use reth_basic_payload_builder::{
     BuildOutcome, BuildOutcomeKind, MissingPayloadBehaviour, PayloadConfig,
 };
 use reth_chain_state::{ExecutedBlock, ExecutedBlockWithTrieUpdates};
-use reth_chainspec::{ChainSpecProvider, EthChainSpec, EthereumHardforks};
+use reth_chainspec::{EthChainSpec, EthereumHardforks};
 use reth_evm::{
     env::EvmEnv, eth::receipt_builder::ReceiptBuilderCtx, execute::BlockBuilder, ConfigureEvm,
     Database, Evm, EvmError, InvalidTxError,
 };
 use reth_execution_types::ExecutionOutcome;
-use reth_node_api::{NodePrimitives, NodeTypes, PrimitivesTy};
 use reth_node_builder::components::BasicPayloadServiceBuilder;
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_consensus::{calculate_receipt_root_no_memo_optimism, isthmus};
 use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
 use reth_optimism_forks::OpHardforks;
-use reth_optimism_node::OpEngineTypes;
 use reth_optimism_payload_builder::{
     config::{OpBuilderConfig, OpDAConfig},
     error::OpPayloadBuilderError,
     payload::{OpBuiltPayload, OpPayloadBuilderAttributes},
-    OpPayloadPrimitives,
 };
 use reth_optimism_primitives::{OpPrimitives, OpReceipt, OpTransactionSigned};
 use reth_payload_builder_primitives::PayloadBuilderError;
@@ -50,8 +44,7 @@ use reth_payload_util::{BestPayloadTransactions, NoopPayloadTransactions, Payloa
 use reth_primitives::{BlockBody, SealedHeader};
 use reth_primitives_traits::{proofs, Block as _, RecoveredBlock, SignedTransaction};
 use reth_provider::{
-    HashedPostStateProvider, ProviderError, StateProviderFactory, StateRootProvider,
-    StorageRootProvider,
+    HashedPostStateProvider, ProviderError, StateRootProvider, StorageRootProvider,
 };
 use reth_revm::database::StateProviderDatabase;
 use reth_transaction_pool::{BestTransactionsAttributes, PoolTransaction, TransactionPool};
@@ -69,9 +62,9 @@ const TOTAL_COST_FLOOR_PER_TOKEN: u64 = 10;
 
 /// Holds the state after execution
 #[derive(Debug)]
-pub struct ExecutedPayload<N: NodePrimitives> {
+pub struct ExecutedPayload {
     /// Tracked execution info
-    pub info: ExecutionInfo<N>,
+    pub info: ExecutionInfo,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -119,23 +112,10 @@ impl CustomOpPayloadBuilder {
     }
 }
 
-impl<Node, Pool, Evm> PayloadBuilderBuilder<Node, Pool, Evm> for CustomOpPayloadBuilder
+impl<Node, Pool> PayloadBuilderBuilder<Node, Pool, OpEvmConfig> for CustomOpPayloadBuilder
 where
-    Node: FullNodeTypes<
-        Types: NodeTypes<
-            Payload = OpEngineTypes,
-            ChainSpec = OpChainSpec,
-            Primitives = OpPrimitives,
-        >,
-    >,
-    Pool: TransactionPool<Transaction: FBPoolTransaction<Consensus = OpTransactionSigned>>
-        + Unpin
-        + 'static,
-    <Pool as TransactionPool>::Transaction: FBPoolTransaction,
-    Evm: ConfigureEvm<
-            Primitives = PrimitivesTy<Node::Types>,
-            NextBlockEnvCtx = OpNextBlockEnvAttributes,
-        > + 'static,
+    Node: NodeBounds,
+    Pool: PoolBounds,
 {
     type PayloadBuilder = OpPayloadBuilderVanilla<Pool, Node::Provider>;
 
@@ -143,7 +123,7 @@ where
         self,
         ctx: &BuilderContext<Node>,
         pool: Pool,
-        _evm_config: Evm,
+        _evm_config: OpEvmConfig,
     ) -> eyre::Result<Self::PayloadBuilder> {
         Ok(OpPayloadBuilderVanilla::new(
             OpEvmConfig::optimism(ctx.chain_spec()),
@@ -157,8 +137,8 @@ where
 impl<Pool, Client, Txs> reth_basic_payload_builder::PayloadBuilder
     for OpPayloadBuilderVanilla<Pool, Client, Txs>
 where
-    Pool: TransactionPool<Transaction: FBPoolTransaction<Consensus = OpTransactionSigned>>,
-    Client: StateProviderFactory + ChainSpecProvider<ChainSpec: EthChainSpec + OpHardforks> + Clone,
+    Pool: PoolBounds,
+    Client: ClientBounds,
     Txs: OpPayloadTransactions<Pool::Transaction>,
 {
     type Attributes = OpPayloadBuilderAttributes<OpTransactionSigned>;
@@ -269,8 +249,8 @@ impl<Pool, Client> OpPayloadBuilderVanilla<Pool, Client> {
 
 impl<Pool, Client, T> OpPayloadBuilderVanilla<Pool, Client, T>
 where
-    Pool: TransactionPool<Transaction: FBPoolTransaction<Consensus = OpTransactionSigned>>,
-    Client: StateProviderFactory + ChainSpecProvider<ChainSpec: EthChainSpec + OpHardforks>,
+    Pool: PoolBounds,
+    Client: ClientBounds,
 {
     /// Constructs an Optimism payload from the transactions sent via the
     /// Payload attributes by the sequencer. If the `no_tx_pool` argument is passed in
@@ -280,14 +260,11 @@ where
     /// Given build arguments including an Optimism client, transaction pool,
     /// and configuration, this function creates a transaction payload. Returns
     /// a result indicating success with the payload or an error in case of failure.
-    fn build_payload<'a, Txs>(
+    fn build_payload<'a, Txs: PayloadTxsBounds>(
         &self,
         args: BuildArguments<OpPayloadBuilderAttributes<OpTransactionSigned>, OpBuiltPayload>,
         best: impl FnOnce(BestTransactionsAttributes) -> Txs + Send + Sync + 'a,
-    ) -> Result<BuildOutcome<OpBuiltPayload>, PayloadBuilderError>
-    where
-        Txs: PayloadTransactions<Transaction: FBPoolTransaction<Consensus = OpTransactionSigned>>,
-    {
+    ) -> Result<BuildOutcome<OpBuiltPayload>, PayloadBuilderError> {
         let BuildArguments {
             mut cached_reads,
             config,
@@ -387,17 +364,14 @@ impl<'a, Txs> OpBuilder<'a, Txs> {
     }
 }
 
-impl<Txs> OpBuilder<'_, Txs> {
+impl<Txs: PayloadTxsBounds> OpBuilder<'_, Txs> {
     /// Executes the payload and returns the outcome.
-    pub fn execute<ChainSpec, N, DB, P>(
+    pub fn execute<DB, P>(
         self,
         state: &mut State<DB>,
-        ctx: &OpPayloadBuilderCtx<ChainSpec, N>,
-    ) -> Result<BuildOutcomeKind<ExecutedPayload<N>>, PayloadBuilderError>
+        ctx: &OpPayloadBuilderCtx,
+    ) -> Result<BuildOutcomeKind<ExecutedPayload>, PayloadBuilderError>
     where
-        N: OpPayloadPrimitives<_TX = OpTransactionSigned>,
-        Txs: PayloadTransactions<Transaction: FBPoolTransaction<Consensus = OpTransactionSigned>>,
-        ChainSpec: EthChainSpec + OpHardforks,
         DB: Database<Error = ProviderError> + AsRef<P>,
         P: StorageRootProvider,
     {
@@ -489,14 +463,12 @@ impl<Txs> OpBuilder<'_, Txs> {
     }
 
     /// Builds the payload on top of the state.
-    pub fn build<ChainSpec, DB, P>(
+    pub fn build<DB, P>(
         self,
         mut state: State<DB>,
-        ctx: OpPayloadBuilderCtx<ChainSpec, OpPrimitives>,
+        ctx: OpPayloadBuilderCtx,
     ) -> Result<BuildOutcomeKind<OpBuiltPayload>, PayloadBuilderError>
     where
-        ChainSpec: EthChainSpec + OpHardforks,
-        Txs: PayloadTransactions<Transaction: FBPoolTransaction<Consensus = OpTransactionSigned>>,
         DB: Database<Error = ProviderError> + AsRef<P>,
         P: StateRootProvider + HashedPostStateProvider + StorageRootProvider,
     {
@@ -672,15 +644,15 @@ impl<T: PoolTransaction> OpPayloadTransactions<T> for () {
 
 /// Container type that holds all necessities to build a new payload.
 #[derive(Debug)]
-pub struct OpPayloadBuilderCtx<ChainSpec, N: NodePrimitives> {
+pub struct OpPayloadBuilderCtx {
     /// The type that knows how to perform system calls and configure the evm.
     pub evm_config: OpEvmConfig,
     /// The DA config for the payload builder
     pub da_config: OpDAConfig,
     /// The chainspec
-    pub chain_spec: Arc<ChainSpec>,
+    pub chain_spec: Arc<OpChainSpec>,
     /// How to build the payload.
-    pub config: PayloadConfig<OpPayloadBuilderAttributes<N::SignedTx>>,
+    pub config: PayloadConfig<OpPayloadBuilderAttributes<OpTransactionSigned>>,
     /// Evm Settings
     pub evm_env: EvmEnv<OpSpecId>,
     /// Block env attributes for the current block.
@@ -693,18 +665,14 @@ pub struct OpPayloadBuilderCtx<ChainSpec, N: NodePrimitives> {
     pub metrics: OpRBuilderMetrics,
 }
 
-impl<ChainSpec, N> OpPayloadBuilderCtx<ChainSpec, N>
-where
-    ChainSpec: EthChainSpec + OpHardforks,
-    N: NodePrimitives,
-{
+impl OpPayloadBuilderCtx {
     /// Returns the parent block the payload will be build on.
     pub fn parent(&self) -> &SealedHeader {
         &self.config.parent_header
     }
 
     /// Returns the builder attributes.
-    pub const fn attributes(&self) -> &OpPayloadBuilderAttributes<N::SignedTx> {
+    pub const fn attributes(&self) -> &OpPayloadBuilderAttributes<OpTransactionSigned> {
         &self.config.attributes
     }
 
@@ -822,11 +790,7 @@ where
     }
 }
 
-impl<ChainSpec, N> OpPayloadBuilderCtx<ChainSpec, N>
-where
-    ChainSpec: EthChainSpec + OpHardforks,
-    N: OpPayloadPrimitives<_TX = OpTransactionSigned>,
-{
+impl OpPayloadBuilderCtx {
     /// Constructs a receipt for the given transaction.
     fn build_receipt<E: Evm>(
         &self,
@@ -863,7 +827,7 @@ where
     pub fn execute_sequencer_transactions<DB>(
         &self,
         db: &mut State<DB>,
-    ) -> Result<ExecutionInfo<N>, PayloadBuilderError>
+    ) -> Result<ExecutionInfo, PayloadBuilderError>
     where
         DB: Database<Error = ProviderError>,
     {
@@ -949,11 +913,9 @@ where
     /// Returns `Ok(Some(())` if the job was cancelled.
     pub fn execute_best_transactions<DB>(
         &self,
-        info: &mut ExecutionInfo<N>,
+        info: &mut ExecutionInfo,
         db: &mut State<DB>,
-        mut best_txs: impl PayloadTransactions<
-            Transaction: FBPoolTransaction<Consensus = OpTransactionSigned>,
-        >,
+        mut best_txs: impl PayloadTxsBounds,
         block_gas_limit: u64,
         block_da_limit: Option<u64>,
     ) -> Result<Option<()>, PayloadBuilderError>
@@ -1082,7 +1044,7 @@ where
 
     pub fn add_builder_tx<DB>(
         &self,
-        info: &mut ExecutionInfo<N>,
+        info: &mut ExecutionInfo,
         db: &mut State<DB>,
         builder_tx_gas: u64,
         message: Vec<u8>,

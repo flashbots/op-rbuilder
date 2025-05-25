@@ -1,13 +1,12 @@
 //! Heavily influenced by [reth](https://github.com/paradigmxyz/reth/blob/1e965caf5fa176f244a31c0d2662ba1b590938db/crates/optimism/payload/src/builder.rs#L570)
 use alloy_consensus::Transaction;
 use alloy_primitives::{private::alloy_rlp::Encodable, Address, U256};
-use reth_node_api::NodePrimitives;
-use reth_optimism_primitives::OpReceipt;
+use reth_optimism_primitives::{OpReceipt, OpTransactionSigned};
 
 #[derive(Default, Debug)]
-pub struct ExecutionInfo<N: NodePrimitives> {
+pub struct ExecutionInfo {
     /// All executed transactions (unrecovered).
-    pub executed_transactions: Vec<N::SignedTx>,
+    pub executed_transactions: Vec<OpTransactionSigned>,
     /// The recovered senders for the executed transactions.
     pub executed_senders: Vec<Address>,
     /// The transaction receipts
@@ -23,7 +22,7 @@ pub struct ExecutionInfo<N: NodePrimitives> {
     pub last_flashblock_index: usize,
 }
 
-impl<N: NodePrimitives> ExecutionInfo<N> {
+impl ExecutionInfo {
     /// Create a new instance with allocated slots.
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
@@ -46,7 +45,7 @@ impl<N: NodePrimitives> ExecutionInfo<N> {
     ///   maximum allowed DA limit per block.
     pub fn is_tx_over_limits(
         &self,
-        tx: &N::SignedTx,
+        tx: &OpTransactionSigned,
         block_gas_limit: u64,
         tx_data_limit: Option<u64>,
         block_data_limit: Option<u64>,
