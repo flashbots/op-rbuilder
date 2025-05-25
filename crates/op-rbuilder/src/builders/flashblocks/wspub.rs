@@ -93,6 +93,10 @@ async fn listener_loop(
     sent: Arc<AtomicUsize>,
     subs: Arc<AtomicUsize>,
 ) {
+    listener
+        .set_nonblocking(true)
+        .expect("Failed to set TcpListener socket to non-blocking");
+    
     let listener = tokio::net::TcpListener::from_std(listener)
         .expect("Failed to convert TcpListener to tokio TcpListener");
 
@@ -182,7 +186,7 @@ async fn broadcast_loop(
                     // Here you would typically send the payload to the WebSocket clients.
                     // For this example, we just increment the sent counter.
                     sent.fetch_add(1, Ordering::Relaxed);
-                    metrics.messages_sent_count.increment(1);            
+                    metrics.messages_sent_count.increment(1);
 
                     tracing::info!("Broadcasted payload: {:?}", payload);
                     if let Err(e) = stream.send(Message::Text(payload)).await {

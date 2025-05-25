@@ -33,6 +33,10 @@ static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
 fn main() {
     let cli = Cli::parsed();
+    cli.logs
+        .init_tracing()
+        .expect("Failed to initialize tracing");
+
     match cli.builder_mode() {
         BuilderMode::Standard => {
             tracing::info!("Starting OP builder in standard mode");

@@ -69,7 +69,6 @@ impl<Pool, Client> OpPayloadBuilder<Pool, Client> {
         client: Client,
         config: BuilderConfig<FlashblocksConfig>,
     ) -> eyre::Result<Self> {
-
         let metrics = Arc::new(OpRBuilderMetrics::default());
         let ws_pub = WebSocketPublisher::new(config.specific.ws_addr, Arc::clone(&metrics))?.into();
 
