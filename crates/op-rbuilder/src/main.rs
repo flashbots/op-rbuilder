@@ -21,14 +21,14 @@ mod traits;
 mod tx;
 mod tx_signer;
 
-//#[cfg(not(feature = "flashblocks"))]
+#[cfg(not(feature = "flashblocks"))]
 mod payload_builder_vanilla;
 
-//#[cfg(not(feature = "flashblocks"))]
+#[cfg(not(feature = "flashblocks"))]
 use payload_builder_vanilla::CustomOpPayloadBuilder;
 
-// #[cfg(feature = "flashblocks")]
-// use payload_builder::CustomOpPayloadBuilder;
+#[cfg(feature = "flashblocks")]
+use payload_builder::CustomOpPayloadBuilder;
 
 use metrics::{
     VersionInfo, BUILD_PROFILE_NAME, CARGO_PKG_VERSION, VERGEN_BUILD_TIMESTAMP,
