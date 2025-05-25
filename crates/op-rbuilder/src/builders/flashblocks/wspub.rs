@@ -7,8 +7,7 @@ use core::{
 };
 use futures::{Sink, SinkExt};
 use rollup_boost::primitives::FlashblocksPayloadV1;
-use std::sync::Arc;
-use std::{io, net::TcpListener};
+use std::{io, net::TcpListener, sync::Arc};
 use tokio::{
     net::TcpStream,
     sync::{
@@ -96,7 +95,7 @@ async fn listener_loop(
     listener
         .set_nonblocking(true)
         .expect("Failed to set TcpListener socket to non-blocking");
-    
+
     let listener = tokio::net::TcpListener::from_std(listener)
         .expect("Failed to convert TcpListener to tokio TcpListener");
 
@@ -211,10 +210,10 @@ impl Debug for WebSocketPublisher {
         let subs = self.subs.load(Ordering::Relaxed);
         let sent = self.sent.load(Ordering::Relaxed);
 
-        f.write_str(&format!(
-            "WebSocketPublisher(subs={}, payloads={})",
-            subs, sent
-        ))
+        f.debug_struct("WebSocketPublisher")
+            .field("subs", &subs)
+            .field("payloads_sent", &sent)
+            .finish()
     }
 }
 

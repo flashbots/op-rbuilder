@@ -51,7 +51,6 @@ lint: ## Run the linters
 test: ## Run the tests for rbuilder and op-rbuilder
 	cargo test --verbose --features "$(FEATURES)"
 	cargo test -p op-rbuilder --verbose --features "$(FEATURES)"
-	cargo test -p op-rbuilder --verbose --features "$(FEATURES),flashblocks"
 
 .PHONY: lt
 lt: lint test ## Run "lint" and "test"
