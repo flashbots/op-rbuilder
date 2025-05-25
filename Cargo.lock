@@ -5544,6 +5544,7 @@ dependencies = [
  "chrono",
  "clap",
  "clap_builder",
+ "dashmap 6.1.0",
  "derive_more",
  "eyre",
  "futures",
