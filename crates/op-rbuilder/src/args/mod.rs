@@ -61,6 +61,8 @@ impl CliExt for Cli {
         Cli::parse().populate_defaults()
     }
 
+    /// Returns the type of builder implementation that the node is started with.
+    /// Currently supports `Standard` and `Flashblocks` modes.
     fn builder_mode(&self) -> BuilderMode {
         if let Commands::Node(ref node_command) = self.command {
             if node_command.ext.enable_flashblocks {
