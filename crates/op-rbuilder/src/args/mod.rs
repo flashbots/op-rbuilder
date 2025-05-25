@@ -62,7 +62,12 @@ impl CliExt for Cli {
     }
 
     fn builder_mode(&self) -> BuilderMode {
-        todo!();
+        if let Commands::Node(ref node_command) = self.command {
+            if node_command.ext.enable_flashblocks {
+                return BuilderMode::Flashblocks;
+            }
+        }
+        BuilderMode::Standard
     }
 }
 

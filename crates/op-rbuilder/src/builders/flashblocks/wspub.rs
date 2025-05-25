@@ -23,6 +23,8 @@ use tokio_tungstenite::{
 };
 use tracing::warn;
 
+use crate::metrics::OpRBuilderMetrics;
+
 /// A WebSockets publisher that accepts connections from client websockets and broadcasts to them
 /// updates about new flashblocks. It maintains a count of sent messages and active subscriptions.
 ///
@@ -35,7 +37,7 @@ pub struct WebSocketPublisher {
 }
 
 impl WebSocketPublisher {
-    pub fn new(addr: SocketAddr) -> io::Result<Self> {
+    pub fn new(addr: SocketAddr, metrics: Arc<OpRBuilderMetrics>) -> io::Result<Self> {
         let (pipe, _) = broadcast::channel(100);
         let (term, _) = watch::channel(false);
 
@@ -45,6 +47,7 @@ impl WebSocketPublisher {
 
         tokio::spawn(listener_loop(
             listener,
+            metrics,
             pipe.subscribe(),
             term.subscribe(),
             Arc::clone(&sent),
@@ -84,6 +87,7 @@ impl Drop for WebSocketPublisher {
 
 async fn listener_loop(
     listener: TcpListener,
+    metrics: Arc<OpRBuilderMetrics>,
     receiver: Receiver<Utf8Bytes>,
     term: watch::Receiver<bool>,
     sent: Arc<AtomicUsize>,
@@ -101,6 +105,7 @@ async fn listener_loop(
 
     loop {
         let subs = Arc::clone(&subs);
+        let metrics = Arc::clone(&metrics);
 
         tokio::select! {
             // drop this connection if the `WebSocketPublisher` is dropped
@@ -125,7 +130,7 @@ async fn listener_loop(
                             tracing::debug!("WebSocket connection established with {}", peer_addr);
 
                             // Handle the WebSocket connection in a dedicated task
-                            broadcast_loop(stream, term, receiver_clone, sent).await;
+                            broadcast_loop(stream, metrics, term, receiver_clone, sent).await;
 
                             subs.fetch_sub(1, Ordering::Relaxed);
                             tracing::debug!("WebSocket connection closed for {}", peer_addr);
@@ -147,6 +152,7 @@ async fn listener_loop(
 /// decrement the subscription count in the `WebSocketPublisher`.
 async fn broadcast_loop(
     stream: WebSocketStream<TcpStream>,
+    metrics: Arc<OpRBuilderMetrics>,
     term: watch::Receiver<bool>,
     blocks: broadcast::Receiver<Utf8Bytes>,
     sent: Arc<AtomicUsize>,
@@ -159,6 +165,8 @@ async fn broadcast_loop(
     };
 
     loop {
+        let metrics = Arc::clone(&metrics);
+
         tokio::select! {
             // Check if the publisher is terminated
             _ = term.changed() => {
@@ -174,6 +182,8 @@ async fn broadcast_loop(
                     // Here you would typically send the payload to the WebSocket clients.
                     // For this example, we just increment the sent counter.
                     sent.fetch_add(1, Ordering::Relaxed);
+                    metrics.messages_sent_count.increment(1);            
+
                     tracing::info!("Broadcasted payload: {:?}", payload);
                     if let Err(e) = stream.send(Message::Text(payload)).await {
                         tracing::debug!("Closing flashblocks subscription for {peer_addr}: {e}");

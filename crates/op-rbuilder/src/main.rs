@@ -18,12 +18,6 @@ mod traits;
 mod tx;
 mod tx_signer;
 
-// #[cfg(not(feature = "flashblocks"))]
-// mod payload_builder_vanilla;
-
-// #[cfg(not(feature = "flashblocks"))]
-// use payload_builder_vanilla::CustomOpPayloadBuilder;
-
 use metrics::{
     VersionInfo, BUILD_PROFILE_NAME, CARGO_PKG_VERSION, VERGEN_BUILD_TIMESTAMP,
     VERGEN_CARGO_FEATURES, VERGEN_CARGO_TARGET_TRIPLE, VERGEN_GIT_SHA,

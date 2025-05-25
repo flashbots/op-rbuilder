@@ -10,13 +10,12 @@ use reth_optimism_payload_builder::config::OpDAConfig;
 use crate::{
     args::OpRbuilderArgs,
     traits::{NodeBounds, PoolBounds},
+    tx_signer::Signer,
 };
 
 mod flashblocks;
 mod generator;
 mod standard;
-
-mod old_standard;
 
 pub use flashblocks::FlashblocksBuilder;
 pub use standard::StandardBuilder;
@@ -65,6 +64,9 @@ pub trait PayloadBuilder: Send + Sync + 'static {
 /// Configuration values that are applicable to any type of block builder.
 #[derive(Clone)]
 pub struct BuilderConfig<Specific: Clone> {
+    /// Secret key of the builder that is used to sign the end of block transaction.
+    pub builder_signer: Option<Signer>,
+
     /// When set to true, transactions are simulated by the builder and excluded from the block
     /// if they revert. They may still be included in the block if individual transactions
     /// opt-out of revert protection.
@@ -104,6 +106,13 @@ pub struct BuilderConfig<Specific: Clone> {
 impl<S: Debug + Clone> core::fmt::Debug for BuilderConfig<S> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("Config")
+            .field(
+                "builder_signer",
+                &match self.builder_signer.as_ref() {
+                    Some(signer) => signer.address.to_string(),
+                    None => "None".into(),
+                },
+            )
             .field("revert_protection", &self.revert_protection)
             .field("block_time", &self.block_time)
             .field("block_time_leeway", &self.block_time_leeway)
@@ -116,6 +125,7 @@ impl<S: Debug + Clone> core::fmt::Debug for BuilderConfig<S> {
 impl<S: Default + Clone> Default for BuilderConfig<S> {
     fn default() -> Self {
         Self {
+            builder_signer: None,
             revert_protection: false,
             block_time: Duration::from_secs(2),
             block_time_leeway: Duration::from_millis(500),
@@ -133,6 +143,7 @@ where
 
     fn try_from(args: OpRbuilderArgs) -> Result<Self, Self::Error> {
         Ok(Self {
+            builder_signer: args.builder_signer,
             revert_protection: args.enable_revert_protection,
             block_time: Duration::from_millis(args.chain_block_time),
             block_time_leeway: Duration::from_millis(500),

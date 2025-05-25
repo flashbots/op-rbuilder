@@ -58,7 +58,7 @@ pub struct OpPayloadBuilder<Pool, Client> {
     /// System configuration for the builder
     pub config: BuilderConfig<FlashblocksConfig>,
     /// The metrics for the builder
-    pub metrics: OpRBuilderMetrics,
+    pub metrics: Arc<OpRBuilderMetrics>,
 }
 
 impl<Pool, Client> OpPayloadBuilder<Pool, Client> {
@@ -69,7 +69,9 @@ impl<Pool, Client> OpPayloadBuilder<Pool, Client> {
         client: Client,
         config: BuilderConfig<FlashblocksConfig>,
     ) -> eyre::Result<Self> {
-        let ws_pub = WebSocketPublisher::new(config.specific.ws_addr)?.into();
+
+        let metrics = Arc::new(OpRBuilderMetrics::default());
+        let ws_pub = WebSocketPublisher::new(config.specific.ws_addr, Arc::clone(&metrics))?.into();
 
         Ok(Self {
             evm_config,
@@ -77,7 +79,7 @@ impl<Pool, Client> OpPayloadBuilder<Pool, Client> {
             client,
             ws_pub,
             config,
-            metrics: Default::default(),
+            metrics,
         })
     }
 }

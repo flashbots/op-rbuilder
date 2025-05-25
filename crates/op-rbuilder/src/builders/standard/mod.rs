@@ -1,10 +1,11 @@
-use payload::{StandardPayloadBuilderBuilder, StandardServiceBuilder};
+use payload::StandardPayloadBuilderBuilder;
 use reth_node_builder::components::BasicPayloadServiceBuilder;
 
 use crate::traits::{NodeBounds, PoolBounds};
 
 use super::BuilderConfig;
 
+mod context;
 mod payload;
 
 /// Block building strategy that builds blocks using the standard approach by
