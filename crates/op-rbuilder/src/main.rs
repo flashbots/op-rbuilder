@@ -31,6 +31,15 @@ use tx::FBPooledTransaction;
 #[global_allocator]
 static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
+const VERSION: VersionInfo = VersionInfo {
+    version: CARGO_PKG_VERSION,
+    build_timestamp: VERGEN_BUILD_TIMESTAMP,
+    cargo_features: VERGEN_CARGO_FEATURES,
+    git_sha: VERGEN_GIT_SHA,
+    target_triple: VERGEN_CARGO_TARGET_TRIPLE,
+    build_profile: BUILD_PROFILE_NAME,
+};
+
 fn main() {
     let cli = Cli::parsed();
     cli.logs
@@ -123,12 +132,3 @@ where
     })
     .unwrap();
 }
-
-const VERSION: VersionInfo = VersionInfo {
-    version: CARGO_PKG_VERSION,
-    build_timestamp: VERGEN_BUILD_TIMESTAMP,
-    cargo_features: VERGEN_CARGO_FEATURES,
-    git_sha: VERGEN_GIT_SHA,
-    target_triple: VERGEN_CARGO_TARGET_TRIPLE,
-    build_profile: BUILD_PROFILE_NAME,
-};

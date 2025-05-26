@@ -21,7 +21,7 @@ pub struct OpRbuilderArgs {
     pub builder_signer: Option<Signer>,
 
     /// When set to true, the builder will build flashblocks
-    /// and will only build standard blocks at the chain block time.
+    /// and will build standard blocks at the chain block time.
     ///
     /// The default value will change in the future once the flashblocks
     /// feature is stable.
