@@ -1,14 +1,16 @@
 use core::time::Duration;
 use std::{sync::Arc, time::Instant};
 
-use super::{config::FlashblocksConfig, wspub::WebSocketPublisher, ExecutionInfo};
+use super::{config::FlashblocksConfig, wspub::WebSocketPublisher};
 use crate::{
     builders::{
-        flashblocks::{config::FlashBlocksConfigExt, context::OpPayloadBuilderCtx},
+        context::OpPayloadBuilderCtx,
+        flashblocks::config::FlashBlocksConfigExt,
         generator::{BlockCell, BuildArguments},
         BuilderConfig,
     },
     metrics::OpRBuilderMetrics,
+    primitives::reth::ExecutionInfo,
     traits::{ClientBounds, PoolBounds},
 };
 use alloy_consensus::{
@@ -42,6 +44,12 @@ use rollup_boost::primitives::{
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tracing::{debug, error, warn};
+
+#[derive(Debug, Default)]
+struct ExtraExecutionInfo {
+    /// Index of the last consumed flashblock
+    pub last_flashblock_index: usize,
+}
 
 /// Optimism's payload builder
 #[derive(Debug, Clone)]
@@ -166,6 +174,8 @@ where
             evm_env,
             block_env_attributes,
             cancel,
+            da_config: self.config.da_config.clone(),
+            builder_signer: self.config.builder_signer,
             metrics: Default::default(),
         };
 
@@ -211,8 +221,11 @@ where
         }
 
         let gas_per_batch = ctx.block_gas_limit() / self.config.flashblocks_per_block();
-
         let mut total_gas_per_batch = gas_per_batch;
+        let total_da_bytes_per_batch = ctx
+            .da_config
+            .max_da_block_size()
+            .map(|limit| limit / self.config.flashblocks_per_block());
 
         let mut flashblock_count = 0;
         // Create a channel to coordinate flashblock building
@@ -311,6 +324,7 @@ where
                         &mut db,
                         best_txs,
                         total_gas_per_batch.min(ctx.block_gas_limit()),
+                        total_da_bytes_per_batch,
                     )?;
                     ctx.metrics
                         .payload_tx_simulation_duration
@@ -408,7 +422,7 @@ struct FlashblocksMetadata {
 fn execute_pre_steps<DB>(
     state: &mut State<DB>,
     ctx: &OpPayloadBuilderCtx,
-) -> Result<ExecutionInfo, PayloadBuilderError>
+) -> Result<ExecutionInfo<ExtraExecutionInfo>, PayloadBuilderError>
 where
     DB: Database<Error = ProviderError>,
 {
@@ -424,10 +438,10 @@ where
     Ok(info)
 }
 
-pub fn build_block<DB, P>(
+fn build_block<DB, P>(
     mut state: State<DB>,
     ctx: &OpPayloadBuilderCtx,
-    info: &mut ExecutionInfo,
+    info: &mut ExecutionInfo<ExtraExecutionInfo>,
 ) -> Result<(OpBuiltPayload, FlashblocksPayloadV1, BundleState), PayloadBuilderError>
 where
     DB: Database<Error = ProviderError> + AsRef<P>,

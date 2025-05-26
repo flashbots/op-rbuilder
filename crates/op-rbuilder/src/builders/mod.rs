@@ -13,6 +13,7 @@ use crate::{
     tx_signer::Signer,
 };
 
+mod context;
 mod flashblocks;
 mod generator;
 mod standard;

@@ -38,7 +38,7 @@ use crate::{
     traits::{ClientBounds, NodeBounds, PayloadTxsBounds, PoolBounds},
 };
 
-use super::context::OpPayloadBuilderCtx;
+use super::super::context::OpPayloadBuilderCtx;
 
 pub struct StandardPayloadBuilderBuilder(pub BuilderConfig<()>);
 

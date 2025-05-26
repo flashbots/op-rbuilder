@@ -5,7 +5,6 @@ use crate::traits::{NodeBounds, PoolBounds};
 
 use super::BuilderConfig;
 
-mod context;
 mod payload;
 
 /// Block building strategy that builds blocks using the standard approach by

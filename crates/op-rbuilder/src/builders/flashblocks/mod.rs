@@ -4,7 +4,7 @@ use config::FlashblocksConfig;
 use service::FlashblocksServiceBuilder;
 
 mod config;
-mod context;
+//mod context;
 mod payload;
 mod service;
 mod wspub;
@@ -32,11 +32,3 @@ impl super::PayloadBuilder for FlashblocksBuilder {
         Ok(FlashblocksServiceBuilder(config))
     }
 }
-
-#[derive(Debug, Default)]
-struct ExtraExecutionInfo {
-    /// Index of the last consumed flashblock
-    pub last_flashblock_index: usize,
-}
-
-type ExecutionInfo = crate::primitives::reth::ExecutionInfo<ExtraExecutionInfo>;
