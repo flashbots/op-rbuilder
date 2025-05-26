@@ -5,7 +5,6 @@ use reth_optimism_node::{
     node::{OpAddOnsBuilder, OpPoolBuilder},
     OpNode,
 };
-use reth_optimism_payload_builder::config::OpDAConfig;
 use reth_transaction_pool::TransactionPool;
 
 /// CLI argument parsing.
@@ -69,7 +68,7 @@ where
     cli.run(|builder, builder_args| async move {
         let builder_config = BuilderConfig::<B::Config>::try_from(builder_args.clone())
             .expect("Failed to convert rollup args to builder config");
-        let da_config = OpDAConfig::default();
+        let da_config = builder_config.da_config.clone();
         let rollup_args = builder_args.rollup_args;
         let op_node = OpNode::new(rollup_args.clone());
         let handle = builder
