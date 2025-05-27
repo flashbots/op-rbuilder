@@ -30,9 +30,12 @@ impl TryFrom<OpRbuilderArgs> for FlashblocksConfig {
     type Error = eyre::Report;
 
     fn try_from(args: OpRbuilderArgs) -> Result<Self, Self::Error> {
-        let interval = Duration::from_millis(args.flashblocks.block_time);
+        let interval = Duration::from_millis(args.flashblocks.flashblocks_block_time);
 
-        let ws_addr = SocketAddr::new(args.flashblocks.addr.parse()?, args.flashblocks.port);
+        let ws_addr = SocketAddr::new(
+            args.flashblocks.flashblocks_addr.parse()?,
+            args.flashblocks.flashblocks_port,
+        );
         Ok(Self { ws_addr, interval })
     }
 }

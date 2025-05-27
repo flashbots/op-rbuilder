@@ -60,6 +60,9 @@ fn expand_path(s: &str) -> Result<PathBuf, String> {
 }
 
 /// Parameters for Flashblocks configuration
+/// The names in the struct are prefixed with `flashblocks` to avoid conflicts
+/// with the standard block building configuration since these args are flattened
+/// into the main `OpRbuilderArgs` struct with the other rollup/node args.
 #[derive(Debug, Clone, Default, PartialEq, Eq, clap::Args)]
 pub struct FlashblocksArgs {
     /// When set to true, the builder will build flashblocks
@@ -80,11 +83,15 @@ pub struct FlashblocksArgs {
         env = "FLASHBLOCKS_WS_PORT",
         default_value = "1111"
     )]
-    pub port: u16,
+    pub flashblocks_port: u16,
 
     /// The address that we bind to for the websocket server that provides flashblocks
-    #[arg(long = "flashblocks.addr", env = "FLASHBLOCKS_WS_ADDR")]
-    pub addr: String,
+    #[arg(
+        long = "flashblocks.addr",
+        env = "FLASHBLOCKS_WS_ADDR",
+        default_value = "127.0.0.1"
+    )]
+    pub flashblocks_addr: String,
 
     /// flashblock block time in milliseconds
     #[arg(
@@ -92,5 +99,5 @@ pub struct FlashblocksArgs {
         default_value = "250",
         env = "FLASHBLOCK_BLOCK_TIME"
     )]
-    pub block_time: u64,
+    pub flashblocks_block_time: u64,
 }
