@@ -2,21 +2,29 @@ use crate::{
     primitives::bundle::{Bundle, BundleResult, MAX_BLOCK_RANGE_BLOCKS},
     tx::{FBPooledTransaction, MaybeRevertingTransaction},
 };
+use alloy_primitives::B256;
 use jsonrpsee::{
     core::{async_trait, RpcResult},
     proc_macros::rpc,
 };
 use reth_optimism_txpool::{conditional::MaybeConditionalTransaction, OpPooledTransaction};
-use reth_provider::StateProviderFactory;
+use reth_provider::{ReceiptProvider, StateProviderFactory};
 use reth_rpc_eth_types::{utils::recover_raw_transaction, EthApiError};
 use reth_transaction_pool::{PoolTransaction, TransactionOrigin, TransactionPool};
 
 // Namespace overrides for revert protection support
 #[cfg_attr(not(test), rpc(server, namespace = "eth"))]
 #[cfg_attr(test, rpc(server, client, namespace = "eth"))]
-pub trait EthApiOverride {
+pub trait EthApiOverride<R> {
     #[method(name = "sendBundle")]
     async fn send_bundle(&self, tx: Bundle) -> RpcResult<BundleResult>;
+}
+
+#[rpc(server, client, namespace = "eth")]
+pub trait EthApiOverrideReplacement<R> {
+    // Name TBD
+    #[method(name = "getTransactionReceipt")]
+    async fn transaction_receipt(&self, hash: B256) -> RpcResult<Option<R>>;
 }
 
 pub struct RevertProtectionExt<Pool, Provider> {
@@ -24,17 +32,40 @@ pub struct RevertProtectionExt<Pool, Provider> {
     provider: Provider,
 }
 
-impl<Pool, Provider> RevertProtectionExt<Pool, Provider> {
+impl<Pool, Provider> RevertProtectionExt<Pool, Provider>
+where
+    Pool: Clone,
+    Provider: Clone,
+{
     pub fn new(pool: Pool, provider: Provider) -> Self {
         Self { pool, provider }
     }
+
+    pub fn bundle_api(&self) -> RevertProtectionBundleAPI<Pool, Provider> {
+        RevertProtectionBundleAPI {
+            pool: self.pool.clone(),
+            provider: self.provider.clone(),
+        }
+    }
+
+    pub fn eth_api(&self) -> RevertProtectionEthAPI<Provider> {
+        RevertProtectionEthAPI {
+            provider: self.provider.clone(),
+        }
+    }
+}
+
+pub struct RevertProtectionBundleAPI<Pool, Provider> {
+    pool: Pool,
+    provider: Provider,
 }
 
 #[async_trait]
-impl<Pool, Provider> EthApiOverrideServer for RevertProtectionExt<Pool, Provider>
+impl<Pool, Provider, R> EthApiOverrideServer<R> for RevertProtectionBundleAPI<Pool, Provider>
 where
+    R: Send + Sync + Clone + 'static,
     Pool: TransactionPool<Transaction = FBPooledTransaction> + Clone + 'static,
-    Provider: StateProviderFactory + Send + Sync + Clone + 'static,
+    Provider: StateProviderFactory + ReceiptProvider<Receipt = R> + Send + Sync + Clone + 'static,
 {
     async fn send_bundle(&self, mut bundle: Bundle) -> RpcResult<BundleResult> {
         let last_block_number = self
@@ -93,5 +124,30 @@ where
 
         let result = BundleResult { bundle_hash: hash };
         Ok(result)
+    }
+}
+
+pub struct RevertProtectionEthAPI<Provider> {
+    provider: Provider,
+}
+
+#[async_trait]
+impl<Provider, R> EthApiOverrideReplacementServer<R> for RevertProtectionEthAPI<Provider>
+where
+    R: Send + Sync + Clone + 'static,
+    Provider: StateProviderFactory + ReceiptProvider<Receipt = R> + Send + Sync + Clone + 'static,
+{
+    async fn transaction_receipt(&self, hash: B256) -> RpcResult<Option<R>> {
+        println!("transaction_receipt: {:?}", hash);
+
+        let receipt = self
+            .provider
+            .receipt_by_hash(hash)
+            .map_err(EthApiError::from)?;
+
+        match receipt {
+            Some(receipt) => Ok(Some(receipt)),
+            None => Ok(None),
+        }
     }
 }

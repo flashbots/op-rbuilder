@@ -23,7 +23,9 @@ use metrics::{
     VERGEN_CARGO_FEATURES, VERGEN_CARGO_TARGET_TRIPLE, VERGEN_GIT_SHA,
 };
 use monitor_tx_pool::monitor_tx_pool;
-use revert_protection::{EthApiOverrideServer, RevertProtectionExt};
+use revert_protection::{
+    EthApiOverrideReplacementServer, EthApiOverrideServer, RevertProtectionExt,
+};
 use tx::FBPooledTransaction;
 
 // Prefer jemalloc for performance reasons.
@@ -107,7 +109,9 @@ where
                     let revert_protection_ext = RevertProtectionExt::new(pool, provider);
 
                     ctx.modules
-                        .merge_configured(revert_protection_ext.into_rpc())?;
+                        .merge_configured(revert_protection_ext.bundle_api().into_rpc())?;
+                    ctx.modules
+                        .replace_configured(revert_protection_ext.eth_api().into_rpc())?;
                 }
 
                 Ok(())
