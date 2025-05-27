@@ -1,6 +1,6 @@
 use alloy_primitives::Address;
 use clap::Parser;
-use op_rbuilder::tester::*;
+use op_rbuilder::tests::*;
 
 /// CLI Commands
 #[derive(Parser, Debug)]
@@ -30,6 +30,9 @@ enum Commands {
 
         #[clap(long, short, action)]
         flashblocks_endpoint: Option<String>,
+
+        #[clap(long, action, default_value = "false")]
+        no_sleep: bool,
     },
     /// Deposit funds to the system
     Deposit {
@@ -51,12 +54,14 @@ async fn main() -> eyre::Result<()> {
             no_tx_pool,
             block_time_secs,
             flashblocks_endpoint,
+            no_sleep,
         } => {
             run_system(
                 validation,
                 no_tx_pool,
                 block_time_secs,
                 flashblocks_endpoint,
+                no_sleep,
             )
             .await
         }
@@ -66,9 +71,47 @@ async fn main() -> eyre::Result<()> {
 
             generator.init().await?;
 
-            let block_hash = generator.deposit(address, amount).await?;
-            println!("Deposit transaction included in block: {block_hash}");
+            let block_generated = generator.deposit(address, amount).await?;
+            println!(
+                "Deposit transaction included in block: {:?}",
+                block_generated.block_hash()
+            );
             Ok(())
         }
+    }
+}
+
+#[allow(dead_code)]
+pub async fn run_system(
+    validation: bool,
+    no_tx_pool: bool,
+    block_time_secs: u64,
+    flashblocks_endpoint: Option<String>,
+    no_sleep: bool,
+) -> eyre::Result<()> {
+    println!("Validation: {validation}");
+
+    let engine_api = EngineApi::new("http://localhost:4444").unwrap();
+    let validation_api = if validation {
+        Some(EngineApi::new("http://localhost:5555").unwrap())
+    } else {
+        None
+    };
+
+    let mut generator = BlockGenerator::new(
+        engine_api,
+        validation_api,
+        no_tx_pool,
+        block_time_secs,
+        flashblocks_endpoint,
+    );
+
+    generator.init().await?;
+
+    // Infinite loop generating blocks
+    loop {
+        println!("Generating new block...");
+        let block_generated = generator.submit_payload(None, 0, no_sleep).await?;
+        println!("Generated block: {:?}", block_generated.block_hash());
     }
 }

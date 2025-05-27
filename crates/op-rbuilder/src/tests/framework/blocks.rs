@@ -2,196 +2,15 @@ use crate::tx_signer::Signer;
 use alloy_eips::{eip2718::Encodable2718, BlockNumberOrTag};
 use alloy_primitives::{address, hex, Address, Bytes, TxKind, B256, U256};
 use alloy_rpc_types_engine::{
-    ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPayloadV3, ForkchoiceUpdated,
-    PayloadAttributes, PayloadStatus, PayloadStatusEnum,
+    ExecutionPayload, ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPayloadV3,
+    PayloadAttributes, PayloadStatusEnum,
 };
 use alloy_rpc_types_eth::Block;
-use jsonrpsee::{
-    core::RpcResult,
-    http_client::{transport::HttpBackend, HttpClient},
-    proc_macros::rpc,
-};
 use op_alloy_consensus::{OpTypedTransaction, TxDeposit};
 use op_alloy_rpc_types_engine::OpPayloadAttributes;
-use reth::rpc::{api::EngineApiClient, types::engine::ForkchoiceState};
-use reth_node_api::{EngineTypes, PayloadTypes};
-use reth_optimism_node::OpEngineTypes;
-use reth_payload_builder::PayloadId;
-use reth_rpc_layer::{AuthClientLayer, AuthClientService, JwtSecret};
-use rollup_boost::{Flashblocks, FlashblocksService};
-use serde_json::Value;
-use std::{
-    str::FromStr,
-    time::{SystemTime, UNIX_EPOCH},
-};
+use rollup_boost::{Flashblocks, FlashblocksService, OpExecutionPayloadEnvelope, Version};
 
-/// Helper for engine api operations
-pub struct EngineApi {
-    pub engine_api_client: HttpClient<AuthClientService<HttpBackend>>,
-}
-
-/// Builder for EngineApi configuration
-pub struct EngineApiBuilder {
-    url: String,
-    jwt_secret: String,
-}
-
-impl Default for EngineApiBuilder {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl EngineApiBuilder {
-    pub fn new() -> Self {
-        Self {
-            url: String::from("http://localhost:8551"), // default value
-            jwt_secret: String::from(
-                "688f5d737bad920bdfb2fc2f488d6b6209eebda1dae949a8de91398d932c517a",
-            ), // default value
-        }
-    }
-
-    pub fn with_url(mut self, url: &str) -> Self {
-        self.url = url.to_string();
-        self
-    }
-
-    pub fn build(self) -> Result<EngineApi, Box<dyn std::error::Error>> {
-        let secret_layer = AuthClientLayer::new(JwtSecret::from_str(&self.jwt_secret)?);
-        let middleware = tower::ServiceBuilder::default().layer(secret_layer);
-        let client = jsonrpsee::http_client::HttpClientBuilder::default()
-            .set_http_middleware(middleware)
-            .build(&self.url)
-            .expect("Failed to create http client");
-
-        Ok(EngineApi {
-            engine_api_client: client,
-        })
-    }
-}
-
-impl EngineApi {
-    pub fn builder() -> EngineApiBuilder {
-        EngineApiBuilder::new()
-    }
-
-    pub fn new(url: &str) -> Result<Self, Box<dyn std::error::Error>> {
-        Self::builder().with_url(url).build()
-    }
-
-    pub fn new_with_port(port: u16) -> Result<Self, Box<dyn std::error::Error>> {
-        Self::builder()
-            .with_url(&format!("http://localhost:{port}"))
-            .build()
-    }
-
-    pub async fn get_payload_v3(
-        &self,
-        payload_id: PayloadId,
-    ) -> eyre::Result<<OpEngineTypes as EngineTypes>::ExecutionPayloadEnvelopeV3> {
-        println!(
-            "Fetching payload with id: {} at {}",
-            payload_id,
-            chrono::Utc::now()
-        );
-
-        Ok(
-            EngineApiClient::<OpEngineTypes>::get_payload_v3(&self.engine_api_client, payload_id)
-                .await?,
-        )
-    }
-
-    pub async fn new_payload(
-        &self,
-        payload: ExecutionPayloadV3,
-        versioned_hashes: Vec<B256>,
-        parent_beacon_block_root: B256,
-    ) -> eyre::Result<PayloadStatus> {
-        println!("Submitting new payload at {}...", chrono::Utc::now());
-
-        Ok(EngineApiClient::<OpEngineTypes>::new_payload_v3(
-            &self.engine_api_client,
-            payload,
-            versioned_hashes,
-            parent_beacon_block_root,
-        )
-        .await?)
-    }
-
-    pub async fn update_forkchoice(
-        &self,
-        current_head: B256,
-        new_head: B256,
-        payload_attributes: Option<<OpEngineTypes as PayloadTypes>::PayloadAttributes>,
-    ) -> eyre::Result<ForkchoiceUpdated> {
-        println!("Updating forkchoice at {}...", chrono::Utc::now());
-
-        Ok(EngineApiClient::<OpEngineTypes>::fork_choice_updated_v3(
-            &self.engine_api_client,
-            ForkchoiceState {
-                head_block_hash: new_head,
-                safe_block_hash: current_head,
-                finalized_block_hash: current_head,
-            },
-            payload_attributes,
-        )
-        .await?)
-    }
-
-    pub async fn latest(&self) -> eyre::Result<Option<alloy_rpc_types_eth::Block>> {
-        self.get_block_by_number(BlockNumberOrTag::Latest, false)
-            .await
-    }
-
-    pub async fn get_block_by_number(
-        &self,
-        number: BlockNumberOrTag,
-        include_txs: bool,
-    ) -> eyre::Result<Option<alloy_rpc_types_eth::Block>> {
-        Ok(
-            BlockApiClient::get_block_by_number(&self.engine_api_client, number, include_txs)
-                .await?,
-        )
-    }
-}
-
-#[rpc(server, client, namespace = "eth")]
-pub trait BlockApi {
-    #[method(name = "getBlockByNumber")]
-    async fn get_block_by_number(
-        &self,
-        block_number: BlockNumberOrTag,
-        include_txs: bool,
-    ) -> RpcResult<Option<alloy_rpc_types_eth::Block>>;
-}
-
-// TODO: This is not being recognized as used code by the main function
-#[allow(dead_code)]
-pub async fn generate_genesis(output: Option<String>) -> eyre::Result<()> {
-    // Read the template file
-    let template = include_str!("fixtures/genesis.json.tmpl");
-
-    // Parse the JSON
-    let mut genesis: Value = serde_json::from_str(template)?;
-
-    // Update the timestamp field - example using current timestamp
-    let timestamp = chrono::Utc::now().timestamp();
-    if let Some(config) = genesis.as_object_mut() {
-        // Assuming timestamp is at the root level - adjust path as needed
-        config["timestamp"] = Value::String(format!("0x{timestamp:x}"));
-    }
-
-    // Write the result to the output file
-    if let Some(output) = output {
-        std::fs::write(&output, serde_json::to_string_pretty(&genesis)?)?;
-        println!("Generated genesis file at: {output}");
-    } else {
-        println!("{}", serde_json::to_string_pretty(&genesis)?);
-    }
-
-    Ok(())
-}
+use super::apis::EngineApi;
 
 // L1 block info for OP mainnet block 124665056 (stored in input of tx at index 0)
 //
@@ -205,6 +24,7 @@ pub struct BlockGenerator {
     latest_hash: B256,
     no_tx_pool: bool,
     block_time_secs: u64,
+    timestamp: u64,
     // flashblocks service
     flashblocks_endpoint: Option<String>,
     flashblocks_service: Option<FlashblocksService>,
@@ -223,6 +43,7 @@ impl BlockGenerator {
             validation_api,
             latest_hash: B256::ZERO, // temporary value
             no_tx_pool,
+            timestamp: 0,
             block_time_secs,
             flashblocks_endpoint,
             flashblocks_service: None,
@@ -233,6 +54,7 @@ impl BlockGenerator {
     pub async fn init(&mut self) -> eyre::Result<Block> {
         let latest_block = self.engine_api.latest().await?.expect("block not found");
         self.latest_hash = latest_block.header.hash;
+        self.timestamp = latest_block.header.timestamp;
 
         // Sync validation node if it exists
         if let Some(validation_api) = &self.validation_api {
@@ -339,12 +161,8 @@ impl BlockGenerator {
         transactions: Option<Vec<Bytes>>,
         block_building_delay_secs: u64,
         no_sleep: bool, // TODO: Change this, too many parameters we can tweak here to put as a function arguments
-    ) -> eyre::Result<B256> {
-        let timestamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
-        let timestamp = timestamp + self.block_time_secs;
+    ) -> eyre::Result<BlockGenerated> {
+        let timestamp = self.timestamp + self.block_time_secs;
 
         // Add L1 block info as the first transaction in every L2 block
         // This deposit transaction contains L1 block metadata required by the L2 chain
@@ -418,15 +236,24 @@ impl BlockGenerator {
         }
 
         let payload = if let Some(flashblocks_service) = &self.flashblocks_service {
-            flashblocks_service.get_best_payload().await?.unwrap()
+            flashblocks_service
+                .get_best_payload(Version::V3)
+                .await?
+                .unwrap()
         } else {
-            self.engine_api.get_payload_v3(payload_id).await?
+            OpExecutionPayloadEnvelope::V3(self.engine_api.get_payload_v3(payload_id).await?)
+        };
+
+        let execution_payload = if let ExecutionPayload::V3(execution_payload) = payload.into() {
+            execution_payload
+        } else {
+            return Err(eyre::eyre!("execution_payload should be V3"));
         };
 
         // Validate with builder node
         let validation_status = self
             .engine_api
-            .new_payload(payload.execution_payload.clone(), vec![], B256::ZERO)
+            .new_payload(execution_payload.clone(), vec![], B256::ZERO)
             .await?;
 
         if validation_status.status != PayloadStatusEnum::Valid {
@@ -436,7 +263,7 @@ impl BlockGenerator {
         // Validate with validation node if present
         if let Some(validation_api) = &self.validation_api {
             let validation_status = validation_api
-                .new_payload(payload.execution_payload.clone(), vec![], B256::ZERO)
+                .new_payload(execution_payload.clone(), vec![], B256::ZERO)
                 .await?;
 
             if validation_status.status != PayloadStatusEnum::Valid {
@@ -444,11 +271,7 @@ impl BlockGenerator {
             }
         }
 
-        let new_block_hash = payload
-            .execution_payload
-            .payload_inner
-            .payload_inner
-            .block_hash;
+        let new_block_hash = execution_payload.payload_inner.payload_inner.block_hash;
 
         // Update forkchoice on builder
         self.engine_api
@@ -464,21 +287,31 @@ impl BlockGenerator {
 
         // Update internal state
         self.latest_hash = new_block_hash;
-        Ok(new_block_hash)
+        self.timestamp = execution_payload.timestamp();
+
+        let block = self
+            .engine_api
+            .get_block_by_number(BlockNumberOrTag::Latest, false)
+            .await?
+            .expect("block not found");
+
+        assert_eq!(block.header.hash, new_block_hash);
+
+        let generated_block = BlockGenerated { block };
+        Ok(generated_block)
     }
 
     /// Generate a single new block and return its hash
-    pub async fn generate_block(&mut self) -> eyre::Result<B256> {
+    pub async fn generate_block(&mut self) -> eyre::Result<BlockGenerated> {
         self.submit_payload(None, 0, false).await
     }
 
-    pub async fn generate_block_with_delay(&mut self, delay: u64) -> eyre::Result<B256> {
+    pub async fn generate_block_with_delay(&mut self, delay: u64) -> eyre::Result<BlockGenerated> {
         self.submit_payload(None, delay, false).await
     }
 
     /// Submit a deposit transaction to seed an account with ETH
-    #[allow(dead_code)]
-    pub async fn deposit(&mut self, address: Address, value: u128) -> eyre::Result<B256> {
+    pub async fn deposit(&mut self, address: Address, value: u128) -> eyre::Result<BlockGenerated> {
         // Create deposit transaction
         let deposit_tx = TxDeposit {
             source_hash: B256::default(),
@@ -499,39 +332,52 @@ impl BlockGenerator {
         self.submit_payload(Some(vec![signed_tx_rlp.into()]), 0, false)
             .await
     }
+
+    pub async fn create_funded_accounts(
+        &mut self,
+        count: usize,
+        amount: u128,
+    ) -> eyre::Result<Vec<Signer>> {
+        let mut signers = Vec::with_capacity(count);
+
+        for _ in 0..count {
+            // Create a new signer
+            let signer = Signer::random();
+            let address = signer.address;
+
+            // Deposit funds to the new account
+            self.deposit(address, amount).await?;
+
+            signers.push(signer);
+        }
+
+        Ok(signers)
+    }
 }
 
-// TODO: This is not being recognized as used code by the main function
-#[allow(dead_code)]
-pub async fn run_system(
-    validation: bool,
-    no_tx_pool: bool,
-    block_time_secs: u64,
-    flashblocks_endpoint: Option<String>,
-) -> eyre::Result<()> {
-    println!("Validation: {validation}");
+#[derive(Debug)]
+pub struct BlockGenerated {
+    pub block: Block,
+}
 
-    let engine_api = EngineApi::new("http://localhost:4444").unwrap();
-    let validation_api = if validation {
-        Some(EngineApi::new("http://localhost:5555").unwrap())
-    } else {
-        None
-    };
+impl BlockGenerated {
+    pub fn block_hash(&self) -> B256 {
+        self.block.header.hash
+    }
 
-    let mut generator = BlockGenerator::new(
-        engine_api,
-        validation_api,
-        no_tx_pool,
-        block_time_secs,
-        flashblocks_endpoint,
-    );
+    pub fn not_includes(&self, tx_hash: B256) -> bool {
+        !self.includes(tx_hash)
+    }
 
-    generator.init().await?;
+    pub fn includes(&self, tx_hash: B256) -> bool {
+        self.block.transactions.hashes().any(|hash| hash == tx_hash)
+    }
 
-    // Infinite loop generating blocks
-    loop {
-        println!("Generating new block...");
-        let block_hash = generator.generate_block().await?;
-        println!("Generated block: {block_hash}");
+    pub fn includes_vec(&self, tx_hashes: Vec<B256>) -> bool {
+        tx_hashes.iter().all(|hash| self.includes(*hash))
+    }
+
+    pub fn not_includes_vec(&self, tx_hashes: Vec<B256>) -> bool {
+        tx_hashes.iter().all(|hash| self.not_includes(*hash))
     }
 }

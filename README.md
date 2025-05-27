@@ -109,3 +109,54 @@ cargo run -- spam ./scenarios/simple.toml http://localhost:2222 --tpb 10 --durat
 ```
 
 And you should start to see blocks being built and landed on-chain with `contender` transactions.
+
+
+## Builder playground
+
+You can quickly spin up an op-stack devnet using [builder-playground](https://github.com/flashbots/builder-playground). The quickest workflow to get op-stack running against your local `op-rbuilder` instance is:
+
+1. Check out the builder playground repo
+
+```
+git clone git@github.com:flashbots/builder-playground.git
+```
+
+2. In the builder-playgound spin up an l2 opstack setup specifying that it should use an external block builder:
+
+```
+go run main.go cook opstack --external-builder http://host.docker.internal:4444
+```
+
+3. Run rbuilder in playground mode:
+
+```
+cargo run --bin op-rbuilder -- node --builder.playground
+```
+
+You could also run it using:
+
+```
+just run-playground
+```
+
+
+This will automatically try to detect all settings and ports from the currently running playground. Sometimes you might need to clean up the builder-playground state between runs. This can be done using:
+
+```
+rm -rf ~/.local/share/reth
+sudo rm -rf ~/.playground
+```
+
+## Running GitHub actions locally
+
+To verify that CI will allow your PR to be merged before sending it please make sure that our GitHub `checks.yaml` action passes locall by calling:
+
+```
+act -W .github/workflows/checks.yaml
+```
+
+More instructions on installing and configuring `act` can be found on [their website](https://nektosact.com). 
+
+### Known issues
+- Running actions locally require a Github Token. You can generate one by following instructions on [Github Docs](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens). After generating a token you will need to pass it to `act` either through the command line using `-s GITHUB_TOKEN=<your token>` or by adding it to the `~/.config/act/actrc` file.
+- You might get an error about missing or incompatible `warp-ubuntu-latest-x64-32x` platform. This can be mitigated by adding `-P warp-ubuntu-latest-x64-32x=ghcr.io/catthehacker/ubuntu:act-latest` on the command line when calling `act` or appending this flag to `~/.config/act/actrc`

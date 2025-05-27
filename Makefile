@@ -27,6 +27,14 @@ clean: ## Clean up
 build: ## Build (debug version)
 	cargo build --features "$(FEATURES)"
 
+.PHONY: op-rbuilder
+op-rbuilder: ## Build op-rbuilder (debug version)
+	cargo build -p op-rbuilder --bin op-rbuilder --features "$(FEATURES)"
+
+.PHONY: tester
+tester: ## Build tester (debug version)
+	cargo build -p op-rbuilder --bin tester --features "testing,$(FEATURES)"
+
 .PHONY: docker-image-rbuilder
 docker-image-rbuilder: ## Build a rbuilder Docker image
 	docker build --platform linux/amd64 --target rbuilder-runtime --build-arg FEATURES="$(FEATURES)"  . -t rbuilder
@@ -43,7 +51,6 @@ lint: ## Run the linters
 test: ## Run the tests for rbuilder and op-rbuilder
 	cargo test --verbose --features "$(FEATURES)"
 	cargo test -p op-rbuilder --verbose --features "$(FEATURES)"
-	cargo test -p op-rbuilder --verbose --features "$(FEATURES),flashblocks"
 
 .PHONY: lt
 lt: lint test ## Run "lint" and "test"
