@@ -1,9 +1,7 @@
 use std::{borrow::Cow, sync::Arc};
 
-use alloy_consensus::{
-    conditional::BlockConditionalAttributes, BlobTransactionSidecar, BlobTransactionValidationError,
-};
-use alloy_eips::{eip7702::SignedAuthorization, Typed2718};
+use alloy_consensus::{conditional::BlockConditionalAttributes, BlobTransactionValidationError};
+use alloy_eips::{eip7594::BlobTransactionSidecarVariant, eip7702::SignedAuthorization, Typed2718};
 use alloy_primitives::{Address, Bytes, TxHash, TxKind, B256, U256};
 use alloy_rpc_types_eth::{erc4337::TransactionConditional, AccessList};
 use reth_optimism_primitives::OpTransactionSigned;
@@ -185,21 +183,21 @@ impl EthPoolTransaction for FBPooledTransaction {
 
     fn try_into_pooled_eip4844(
         self,
-        sidecar: Arc<BlobTransactionSidecar>,
+        sidecar: Arc<BlobTransactionSidecarVariant>,
     ) -> Option<Recovered<Self::Pooled>> {
         self.inner.try_into_pooled_eip4844(sidecar)
     }
 
     fn try_from_eip4844(
         _tx: Recovered<Self::Consensus>,
-        _sidecar: BlobTransactionSidecar,
+        _sidecar: BlobTransactionSidecarVariant,
     ) -> Option<Self> {
         None
     }
 
     fn validate_blob(
         &self,
-        _sidecar: &BlobTransactionSidecar,
+        _sidecar: &BlobTransactionSidecarVariant,
         _settings: &KzgSettings,
     ) -> Result<(), BlobTransactionValidationError> {
         Err(BlobTransactionValidationError::NotBlobTransaction(
