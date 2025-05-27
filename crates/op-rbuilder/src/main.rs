@@ -106,7 +106,11 @@ where
 
                     let pool = ctx.pool().clone();
                     let provider = ctx.provider().clone();
-                    let revert_protection_ext = RevertProtectionExt::new(pool, provider);
+                    let revert_protection_ext: RevertProtectionExt<
+                        _,
+                        _,
+                        op_alloy_network::Optimism,
+                    > = RevertProtectionExt::new(pool, provider);
 
                     ctx.modules
                         .merge_configured(revert_protection_ext.bundle_api().into_rpc())?;

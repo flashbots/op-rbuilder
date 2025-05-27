@@ -7,6 +7,8 @@ use jsonrpsee::{
     core::{async_trait, RpcResult},
     proc_macros::rpc,
 };
+use op_alloy_rpc_types::OpTransactionReceipt;
+use reth::rpc::api::eth::{types::RpcTypes, RpcReceipt};
 use reth_optimism_primitives::OpReceipt;
 use reth_optimism_txpool::{conditional::MaybeConditionalTransaction, OpPooledTransaction};
 use reth_provider::{ReceiptProvider, StateProviderFactory};
@@ -22,24 +24,29 @@ pub trait EthApiOverride {
 }
 
 #[rpc(server, client, namespace = "eth")]
-pub trait EthApiOverrideReplacement<R> {
+pub trait EthApiOverrideReplacement<R: RpcTypes> {
     // Name TBD
     #[method(name = "getTransactionReceipt")]
-    async fn transaction_receipt(&self, hash: B256) -> RpcResult<Option<R>>;
+    async fn transaction_receipt(&self, hash: B256) -> RpcResult<Option<RpcReceipt<R>>>;
 }
 
-pub struct RevertProtectionExt<Pool, Provider> {
+pub struct RevertProtectionExt<Pool, Provider, Network = op_alloy_network::Optimism> {
     pool: Pool,
     provider: Provider,
+    _network: std::marker::PhantomData<Network>,
 }
 
-impl<Pool, Provider> RevertProtectionExt<Pool, Provider>
+impl<Pool, Provider, Network> RevertProtectionExt<Pool, Provider, Network>
 where
     Pool: Clone,
     Provider: Clone,
 {
     pub fn new(pool: Pool, provider: Provider) -> Self {
-        Self { pool, provider }
+        Self {
+            pool,
+            provider,
+            _network: std::marker::PhantomData,
+        }
     }
 
     pub fn bundle_api(&self) -> RevertProtectionBundleAPI<Pool, Provider> {
@@ -132,14 +139,18 @@ pub struct RevertProtectionEthAPI<Provider> {
 }
 
 #[async_trait]
-impl<Provider> EthApiOverrideReplacementServer<OpReceipt> for RevertProtectionEthAPI<Provider>
+impl<Provider, R> EthApiOverrideReplacementServer<R> for RevertProtectionEthAPI<Provider>
 where
     Provider:
         StateProviderFactory + ReceiptProvider<Receipt = OpReceipt> + Send + Sync + Clone + 'static,
+    R: RpcTypes<Receipt = OpTransactionReceipt>,
 {
-    async fn transaction_receipt(&self, hash: B256) -> RpcResult<Option<OpReceipt>> {
+    async fn transaction_receipt(&self, hash: B256) -> RpcResult<Option<RpcReceipt<R>>> {
         println!("transaction_receipt: {:?}", hash);
 
+        panic!("bad");
+
+        /*
         let receipt = self
             .provider
             .receipt_by_hash(hash)
@@ -149,5 +160,6 @@ where
             Some(receipt) => Ok(Some(receipt)),
             None => Ok(None),
         }
+        */
     }
 }
