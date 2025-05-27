@@ -67,6 +67,7 @@ reth-evm = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.3" }
 reth-evm-ethereum = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.3" }
 reth-execution-errors = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.3" }
 reth-exex = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.3" }
+reth-tasks = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.3" }
 reth-metrics = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.3" }
 reth-trie-db = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.3" }
 reth-payload-primitives = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.3" }

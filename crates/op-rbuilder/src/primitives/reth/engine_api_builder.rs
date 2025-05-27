@@ -24,12 +24,38 @@ use reth_node_api::{EngineTypes, EngineValidator};
 use reth_rpc_api::IntoEngineApiRpcModule;
 use reth_rpc_engine_api::EngineApi;
 use reth_storage_api::{BlockReader, HeaderProvider, StateProviderFactory};
+use reth_tasks::TaskExecutor;
 use reth_transaction_pool::TransactionPool;
 
+use reqwest::Client;
+use serde_json::json;
+use tracing;
+
 /// Builder for basic [`OpEngineApi`] implementation.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct OpEngineApiBuilder<EV> {
     engine_validator_builder: EV,
+    engine_peers: Option<String>,
+}
+
+impl<EV> OpEngineApiBuilder<EV> {
+    /// Create a new builder with engine peers configuration
+    pub fn with_engine_peers(mut self, engine_peers: Option<String>) -> Self {
+        self.engine_peers = engine_peers;
+        self
+    }
+}
+
+impl<EV> Default for OpEngineApiBuilder<EV>
+where
+    EV: Default,
+{
+    fn default() -> Self {
+        Self {
+            engine_validator_builder: EV::default(),
+            engine_peers: None,
+        }
+    }
 }
 
 impl<N, EV> EngineApiBuilder<N> for OpEngineApiBuilder<EV>
@@ -53,6 +79,7 @@ where
     async fn build_engine_api(self, ctx: &AddOnsContext<'_, N>) -> eyre::Result<Self::EngineApi> {
         let Self {
             engine_validator_builder,
+            engine_peers,
         } = self;
 
         let engine_validator = engine_validator_builder.build(ctx).await?;
@@ -75,12 +102,30 @@ where
             ctx.config.engine.accept_execution_requests_hash,
         );
 
-        Ok(OpEngineApiExt::new(OpEngineApi::new(inner)))
+        // Parse engine peers configuration
+        let engine_peers = engine_peers
+            .map(|peers_str| {
+                peers_str
+                    .split(',')
+                    .map(|s| s.trim().to_string())
+                    .collect::<Vec<String>>()
+            })
+            .unwrap_or_default();
+
+        Ok(OpEngineApiExt::new(
+            OpEngineApi::new(inner),
+            engine_peers,
+            ctx.node.task_executor().clone(),
+            Client::new(),
+        ))
     }
 }
 
 pub struct OpEngineApiExt<Provider, EngineT: EngineTypes, Pool, Validator, ChainSpec> {
     inner: OpEngineApi<Provider, EngineT, Pool, Validator, ChainSpec>,
+    engine_peers: Vec<String>,
+    task_executor: TaskExecutor,
+    http_client: Client,
 }
 
 impl<Provider, EngineT, Pool, Validator, ChainSpec>
@@ -92,8 +137,56 @@ where
     Validator: EngineValidator<EngineT>,
     ChainSpec: EthereumHardforks + Send + Sync + 'static,
 {
-    pub fn new(engine: OpEngineApi<Provider, EngineT, Pool, Validator, ChainSpec>) -> Self {
-        Self { inner: engine }
+    pub fn new(
+        engine: OpEngineApi<Provider, EngineT, Pool, Validator, ChainSpec>,
+        engine_peers: Vec<String>,
+        task_executor: TaskExecutor,
+        http_client: Client,
+    ) -> Self {
+        Self {
+            inner: engine,
+            engine_peers,
+            task_executor,
+            http_client,
+        }
+    }
+
+    /// Multiplexes the given engine API call to all configured peers
+    async fn multiplex_to_peers<T: serde::Serialize>(&self, method: &str, params: T) {
+        if self.engine_peers.is_empty() {
+            return;
+        }
+
+        let client = &self.http_client;
+        let task_executor = &self.task_executor;
+        let method = method.to_string(); // Convert to owned String
+
+        // Serialize params once for all peers
+        let request_body = json!({
+            "jsonrpc": "2.0",
+            "method": method,
+            "params": params,
+            "id": 1
+        });
+
+        for peer_url in &self.engine_peers {
+            let peer_url = peer_url.clone();
+            let client = client.clone();
+            let method = method.clone(); // Clone the owned String
+            let request_body = request_body.clone(); // Clone the serialized request
+
+            task_executor.spawn(Box::pin(async move {
+                if let Err(e) = client
+                    .post(&peer_url)
+                    .header("Content-Type", "application/json")
+                    .json(&request_body)
+                    .send()
+                    .await
+                {
+                    tracing::warn!("Failed to forward {} to peer {}: {}", method, peer_url, e);
+                }
+            }));
+        }
     }
 }
 
@@ -154,6 +247,14 @@ where
         payload_attributes: Option<EngineT::PayloadAttributes>,
     ) -> RpcResult<ForkchoiceUpdated> {
         println!("fork_choice_updated_v2");
+
+        // Multiplex to peers
+        self.multiplex_to_peers(
+            "engine_forkchoiceUpdatedV2",
+            (&fork_choice_state, &payload_attributes),
+        )
+        .await;
+
         self.inner
             .fork_choice_updated_v2(fork_choice_state, payload_attributes)
             .await
@@ -165,6 +266,14 @@ where
         payload_attributes: Option<EngineT::PayloadAttributes>,
     ) -> RpcResult<ForkchoiceUpdated> {
         println!("fork_choice_updated_v3");
+
+        // Multiplex to peers
+        self.multiplex_to_peers(
+            "engine_forkchoiceUpdatedV3",
+            (&fork_choice_state, &payload_attributes),
+        )
+        .await;
+
         self.inner
             .fork_choice_updated_v3(fork_choice_state, payload_attributes)
             .await

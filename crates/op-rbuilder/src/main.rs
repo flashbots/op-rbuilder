@@ -71,7 +71,7 @@ where
         let builder_config = BuilderConfig::<B::Config>::try_from(builder_args.clone())
             .expect("Failed to convert rollup args to builder config");
         let default_builder: OpEngineApiBuilder<OpEngineValidatorBuilder> =
-            OpEngineApiBuilder::default();
+            OpEngineApiBuilder::default().with_engine_peers(builder_args.engine_peers.clone());
         let da_config = builder_config.da_config.clone();
         let rollup_args = builder_args.rollup_args;
         let op_node = OpNode::new(rollup_args.clone());

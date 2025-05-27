@@ -49,6 +49,7 @@ reth-node-builder.workspace = true
 reth-storage-api.workspace = true
 reth-rpc-api.workspace = true
 reth-rpc-eth-types.workspace = true
+reth-tasks.workspace = true
 
 alloy-primitives.workspace = true
 alloy-consensus.workspace = true
@@ -93,6 +94,7 @@ tokio-util.workspace = true
 thiserror.workspace = true
 parking_lot.workspace = true
 url.workspace = true
+reqwest = { version = "0.12", features = ["json"] }
 
 tower = "0.5"
 futures = "0.3"
