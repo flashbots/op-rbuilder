@@ -32,12 +32,7 @@ impl TryFrom<OpRbuilderArgs> for FlashblocksConfig {
     fn try_from(args: OpRbuilderArgs) -> Result<Self, Self::Error> {
         let interval = Duration::from_millis(args.flashblocks.block_time);
 
-        #[allow(deprecated)]
-        let ws_addr = match args.flashblocks.url_deprecated {
-            Some(url) => url.parse()?,
-            None => SocketAddr::new(args.flashblocks.addr.parse()?, args.flashblocks.port),
-        };
-
+        let ws_addr = SocketAddr::new(args.flashblocks.addr.parse()?, args.flashblocks.port);
         Ok(Self { ws_addr, interval })
     }
 }

@@ -153,7 +153,7 @@ impl Service for OpRbuilderConfig {
         }
 
         if let Some(flashblocks_port) = &self.flashblocks_port {
-            cmd.arg("--rollup.enable-flashblocks").arg("true");
+            cmd.arg("--flashblocks.enabled").arg("true");
             cmd.arg("--flashblocks.addr").arg("127.0.0.1");
             cmd.arg("--flashblocks.port")
                 .arg(flashblocks_port.to_string());

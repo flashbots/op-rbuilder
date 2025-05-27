@@ -68,11 +68,11 @@ pub struct FlashblocksArgs {
     /// The default value will change in the future once the flashblocks
     /// feature is stable.
     #[arg(
-        long = "rollup.enable-flashblocks",
+        long = "flashblocks.enabled",
         default_value = "false",
         env = "ENABLE_FLASHBLOCKS"
     )]
-    pub enable_flashblocks: bool,
+    pub enabled: bool,
 
     /// The port that we bind to for the websocket server that provides flashblocks
     #[arg(
@@ -88,14 +88,9 @@ pub struct FlashblocksArgs {
 
     /// flashblock block time in milliseconds
     #[arg(
-        long = "rollup.flashblock-block-time",
+        long = "flashblock.block-time",
         default_value = "250",
         env = "FLASHBLOCK_BLOCK_TIME"
     )]
     pub block_time: u64,
-
-    /// Websocket port for flashblock payload builder
-    #[arg(long = "rollup.flashblocks-ws-url", env = "FLASHBLOCKS_WS_URL")]
-    #[deprecated = "Use --flashblocks.port and --flashblocks.addr instead"]
-    pub url_deprecated: Option<String>,
 }
