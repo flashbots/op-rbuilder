@@ -58,35 +58,32 @@ fn main() -> Result<()> {
     };
 
     let mut cli_app = cli.configure();
-    cli_app.init_tracing();
-    cli_app.run(OtherCommand)?;
+
+    // TODO: Add telemetry here
+
+    cli_app.init_tracing()?;
+    match mode {
+        Some(BuilderMode::Standard) => {
+            tracing::info!("Starting OP builder in standard mode");
+            let launcher = BuilderLauncher::<StandardBuilder>::new();
+            cli_app.run(launcher)?;
+        }
+        Some(BuilderMode::Flashblocks) => {
+            tracing::info!("Starting OP builder in flashblocks mode");
+            let launcher = BuilderLauncher::<FlashblocksBuilder>::new();
+            cli_app.run(launcher)?;
+        }
+        None => {
+            cli_app.run(NoLauncher)?;
+        }
+    }
 
     Ok(())
-
-    /*
-    /*
-    cli.logs
-        .init_tracing()
-        .expect("Failed to initialize tracing");
-    */
-
-
-    match mode {
-        BuilderMode::Standard => {
-            tracing::info!("Starting OP builder in standard mode");
-            start_builder_node::<StandardBuilder>(cli);
-        }
-        BuilderMode::Flashblocks => {
-            tracing::info!("Starting OP builder in flashblocks mode");
-            start_builder_node::<FlashblocksBuilder>(cli);
-        }
-    };
-    */
 }
 
-struct OtherCommand;
+struct NoLauncher;
 
-impl Launcher<OpChainSpecParser, OpRbuilderArgs> for OtherCommand {
+impl Launcher<OpChainSpecParser, OpRbuilderArgs> for NoLauncher {
     fn entrypoint(
         self,
         _builder: WithLaunchContext<NodeBuilder<Arc<DatabaseEnv>, OpChainSpec>>,
