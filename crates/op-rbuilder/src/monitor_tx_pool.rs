@@ -1,11 +1,28 @@
 use crate::tx::FBPooledTransaction;
 use futures_util::StreamExt;
-use reth_transaction_pool::{AllTransactionsEvents, FullTransactionEvent};
+use reth_transaction_pool::{FullTransactionEvent, TransactionPool};
 use tracing::info;
 
-pub async fn monitor_tx_pool(mut new_transactions: AllTransactionsEvents<FBPooledTransaction>) {
-    while let Some(event) = new_transactions.next().await {
-        transaction_event_log(event);
+pub struct TransactionPoolMonitor<Pool> {
+    pool: Pool,
+}
+
+impl<Pool> TransactionPoolMonitor<Pool> {
+    pub fn new(pool: Pool) -> Self {
+        Self { pool }
+    }
+}
+
+impl<Pool> TransactionPoolMonitor<Pool>
+where
+    Pool: TransactionPool<Transaction = FBPooledTransaction> + Clone + 'static,
+{
+    pub async fn run(self) {
+        let mut new_transactions = self.pool.all_transactions_event_listener();
+
+        while let Some(event) = new_transactions.next().await {
+            transaction_event_log(event);
+        }
     }
 }
 

@@ -5,7 +5,6 @@ use reth_optimism_node::{
     node::{OpAddOnsBuilder, OpPoolBuilder},
     OpNode,
 };
-use reth_transaction_pool::TransactionPool;
 
 /// CLI argument parsing.
 pub mod args;
@@ -22,7 +21,7 @@ use metrics::{
     VersionInfo, BUILD_PROFILE_NAME, CARGO_PKG_VERSION, VERGEN_BUILD_TIMESTAMP,
     VERGEN_CARGO_FEATURES, VERGEN_CARGO_TARGET_TRIPLE, VERGEN_GIT_SHA,
 };
-use monitor_tx_pool::monitor_tx_pool;
+use monitor_tx_pool::TransactionPoolMonitor;
 use revert_protection::{EthApiOverrideServer, RevertProtectionExt};
 use tx::FBPooledTransaction;
 
@@ -116,10 +115,12 @@ where
                 VERSION.register_version_metrics();
                 if builder_args.log_pool_transactions {
                     tracing::info!("Logging pool transactions");
+
+                    let tx_monitor = TransactionPoolMonitor::new(ctx.pool.clone());
                     ctx.task_executor.spawn_critical(
                         "txlogging",
                         Box::pin(async move {
-                            monitor_tx_pool(ctx.pool.all_transactions_event_listener()).await;
+                            tx_monitor.run().await;
                         }),
                     );
                 }
