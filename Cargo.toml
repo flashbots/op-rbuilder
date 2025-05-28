@@ -82,6 +82,7 @@ reth-network-peers = { git = "https://github.com/paradigmxyz/reth", rev = "90896
 reth-testing-utils = { git = "https://github.com/paradigmxyz/reth", rev = "9089672839a7275c11a77408d3270f786437ff3f" }
 reth-node-builder = { git = "https://github.com/paradigmxyz/reth", rev = "9089672839a7275c11a77408d3270f786437ff3f" }
 reth-rpc-eth-types =  { git = "https://github.com/paradigmxyz/reth", rev = "9089672839a7275c11a77408d3270f786437ff3f" }
+reth-tracing-otlp =  { git = "https://github.com/paradigmxyz/reth", rev = "9089672839a7275c11a77408d3270f786437ff3f" }
 
 # reth optimism
 reth-optimism-primitives = { git = "https://github.com/paradigmxyz/reth", rev = "9089672839a7275c11a77408d3270f786437ff3f" }

@@ -44,7 +44,11 @@ fn main() -> Result<()> {
 
     let mut cli_app = cli.configure();
 
-    // TODO: Add telemetry here
+    #[cfg(feature = "tracing")]
+    {
+        let otlp = reth_tracing_otlp::layer("op-reth");
+        cli_app.access_tracing_layers()?.add_layer(otlp);
+    }
 
     cli_app.init_tracing()?;
     match mode {

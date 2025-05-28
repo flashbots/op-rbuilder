@@ -52,6 +52,7 @@ reth-storage-api.workspace = true
 reth-rpc-api.workspace = true
 reth-rpc-eth-types.workspace = true
 reth-tasks.workspace = true
+reth-tracing-otlp = { workspace = true, optional = true }
 
 alloy-primitives.workspace = true
 alloy-consensus.workspace = true
@@ -146,6 +147,8 @@ min-debug-logs = ["tracing/release_max_level_debug"]
 min-trace-logs = ["tracing/release_max_level_trace"]
 
 testing = []
+
+tracing = ["reth-tracing-otlp"]
 
 [[bin]]
 name = "op-rbuilder"
