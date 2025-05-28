@@ -241,25 +241,31 @@ async fn revert_protection_check_transaction_receipt_status_message() -> eyre::R
             .build()
             .await?;
 
+    let provider = harness.provider()?;
     let mut generator = harness.block_generator().await?;
 
     let reverting_tx = harness
         .create_transaction()
+        .with_revert()
         .with_bundle(BundleOpts {
-            block_number_max: Some(1),
+            block_number_max: Some(3),
         })
         .send()
         .await?;
-
     let tx_hash = reverting_tx.tx_hash();
-    println!("reverting_tx: {:?}", tx_hash);
-    let _ = generator.generate_block().await?;
-    let _ = generator.generate_block().await?;
-    let _ = generator.generate_block().await?;
 
-    let provider = harness.provider()?;
+    let _ = generator.generate_block().await?;
+    let receipt = provider.get_transaction_receipt(*tx_hash).await?;
+    assert!(receipt.is_none());
+
+    let _ = generator.generate_block().await?;
+    let receipt = provider.get_transaction_receipt(*tx_hash).await?;
+    assert!(receipt.is_none());
+
+    // Dropped
+    let _ = generator.generate_block().await?;
     let receipt = provider.get_transaction_receipt(*tx_hash).await;
-    println!("receipt: {:?}", receipt);
+    assert!(receipt.is_err());
 
     Ok(())
 }
