@@ -5,7 +5,6 @@ use reth_optimism_node::{
     node::{OpAddOnsBuilder, OpPoolBuilder},
     OpNode,
 };
-use reth_transaction_pool::TransactionPool;
 
 /// CLI argument parsing.
 pub mod args;
@@ -22,7 +21,7 @@ use metrics::{
     VersionInfo, BUILD_PROFILE_NAME, CARGO_PKG_VERSION, VERGEN_BUILD_TIMESTAMP,
     VERGEN_CARGO_FEATURES, VERGEN_CARGO_TARGET_TRIPLE, VERGEN_GIT_SHA,
 };
-use monitor_tx_pool::monitor_tx_pool;
+use monitor_tx_pool::{TransactionPoolMonitor, TxpoolExtApiServer};
 use revert_protection::{EthApiOverrideServer, RevertProtectionExt};
 use tx::FBPooledTransaction;
 
@@ -99,30 +98,41 @@ where
                     .build(),
             )
             .extend_rpc_modules(move |ctx| {
+                let pool = ctx.pool().clone();
+
                 if builder_args.enable_revert_protection {
                     tracing::info!("Revert protection enabled");
 
-                    let pool = ctx.pool().clone();
                     let provider = ctx.provider().clone();
-                    let revert_protection_ext = RevertProtectionExt::new(pool, provider);
+                    let revert_protection_ext = RevertProtectionExt::new(pool.clone(), provider);
 
                     ctx.modules
                         .merge_configured(revert_protection_ext.into_rpc())?;
                 }
 
-                Ok(())
-            })
-            .on_node_started(move |ctx| {
-                VERSION.register_version_metrics();
-                if builder_args.log_pool_transactions {
+                if builder_args.log_pool_transactions || builder_args.enable_txpool_monitor {
                     tracing::info!("Logging pool transactions");
-                    ctx.task_executor.spawn_critical(
+
+                    let tx_monitor = TransactionPoolMonitor::new(
+                        pool,
+                        builder_args.log_pool_transactions,
+                        builder_args.enable_txpool_monitor,
+                        builder_args.txpool_monitor_buffer_size,
+                    );
+                    ctx.modules.merge_configured(tx_monitor.rpc().into_rpc())?;
+
+                    ctx.node().task_executor.spawn_critical(
                         "txlogging",
                         Box::pin(async move {
-                            monitor_tx_pool(ctx.pool.all_transactions_event_listener()).await;
+                            tx_monitor.run().await;
                         }),
                     );
                 }
+
+                Ok(())
+            })
+            .on_node_started(move |_ctx| {
+                VERSION.register_version_metrics();
 
                 Ok(())
             })

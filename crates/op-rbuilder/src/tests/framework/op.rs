@@ -21,6 +21,7 @@ pub struct OpRbuilderConfig {
     chain_config_path: Option<PathBuf>,
     data_dir: Option<PathBuf>,
     http_port: Option<u16>,
+    ws_port: Option<u16>,
     network_port: Option<u16>,
     builder_private_key: Option<String>,
     flashblocks_port: Option<u16>,
@@ -58,6 +59,11 @@ impl OpRbuilderConfig {
 
     pub fn http_port(mut self, port: u16) -> Self {
         self.http_port = Some(port);
+        self
+    }
+
+    pub fn ws_port(mut self, port: u16) -> Self {
+        self.ws_port = Some(port);
         self
     }
 
@@ -130,6 +136,7 @@ impl Service for OpRbuilderConfig {
             .arg("--color")
             .arg("never")
             .arg("--builder.log-pool-transactions")
+            .arg("--builder.enable-txpool-monitor")
             .arg("--port")
             .arg(self.network_port.expect("network_port not set").to_string())
             .arg("--ipcdisable")
@@ -150,6 +157,10 @@ impl Service for OpRbuilderConfig {
             cmd.arg("--http")
                 .arg("--http.port")
                 .arg(http_port.to_string());
+        }
+
+        if let Some(ws_port) = self.ws_port {
+            cmd.arg("--ws").arg("--ws.port").arg(ws_port.to_string());
         }
 
         if let Some(flashblocks_port) = &self.flashblocks_port {
