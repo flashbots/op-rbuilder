@@ -14,8 +14,10 @@ use reth_optimism_txpool::{conditional::MaybeConditionalTransaction, OpPooledTra
 use reth_provider::StateProviderFactory;
 use reth_rpc_eth_types::{utils::recover_raw_transaction, EthApiError};
 use reth_transaction_pool::{PoolTransaction, TransactionOrigin, TransactionPool};
-use std::num::NonZeroUsize;
-use std::sync::{Arc, Mutex};
+use std::{
+    num::NonZeroUsize,
+    sync::{Arc, Mutex},
+};
 
 // We have to split the RPC modules in two sets because we have methods that both
 // replace an existing method and add a new one.
