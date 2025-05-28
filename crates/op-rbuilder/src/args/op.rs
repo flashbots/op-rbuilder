@@ -31,6 +31,14 @@ pub struct OpRbuilderArgs {
     #[arg(long = "builder.log-pool-transactions", default_value = "false")]
     pub log_pool_transactions: bool,
 
+    /// Signals whether to enable the txpool monitor
+    #[arg(long = "builder.enable-txpool-monitor", default_value = "false")]
+    pub enable_txpool_monitor: bool,
+
+    /// The buffer size for the txpool events
+    #[arg(long = "builder.txpool-monitor-buffer-size", default_value = "1000")]
+    pub txpool_monitor_buffer_size: usize,
+
     /// How much time extra to wait for the block building job to complete and not get garbage collected
     #[arg(long = "builder.extra-block-deadline-secs", default_value = "20")]
     pub extra_block_deadline_secs: u64,

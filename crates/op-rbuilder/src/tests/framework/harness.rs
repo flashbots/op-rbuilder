@@ -86,12 +86,14 @@ impl TestHarnessBuilder {
         let builder_data_dir: PathBuf = std::env::temp_dir().join(Uuid::new_v4().to_string());
         let builder_auth_rpc_port = get_available_port();
         let builder_http_port = get_available_port();
+        let builder_ws_port = get_available_port();
         let mut op_rbuilder_config = OpRbuilderConfig::new()
             .chain_config_path(genesis_path.clone())
             .data_dir(builder_data_dir)
             .auth_rpc_port(builder_auth_rpc_port)
             .network_port(get_available_port())
             .http_port(builder_http_port)
+            .ws_port(builder_ws_port)
             .with_builder_private_key(BUILDER_PRIVATE_KEY)
             .with_revert_protection(self.use_revert_protection)
             .with_namespaces(self.namespaces)
@@ -131,6 +133,7 @@ impl TestHarnessBuilder {
             framework: framework,
             builder_auth_rpc_port,
             builder_http_port,
+            builder_ws_port,
             validator_auth_rpc_port,
             builder_log_path,
         })
@@ -141,6 +144,7 @@ pub struct TestHarness {
     framework: IntegrationFramework,
     builder_auth_rpc_port: u16,
     builder_http_port: u16,
+    pub builder_ws_port: u16,
     validator_auth_rpc_port: u16,
     builder_log_path: PathBuf,
 }
