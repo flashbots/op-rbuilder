@@ -7,7 +7,7 @@ use super::{
 };
 use crate::{OpRbuilderArgs, VERSION};
 use core::fmt::Debug;
-use eyre::Result;
+use eyre::{eyre, Result};
 use futures::{future, Future};
 use reth::builder::{NodeBuilder, WithLaunchContext};
 use reth_cli_commands::launcher::Launcher;
@@ -15,6 +15,7 @@ use reth_db::mdbx::DatabaseEnv;
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_cli::chainspec::OpChainSpecParser;
 use reth_optimism_node::{
+    args::RollupArgs,
     node::{OpAddOnsBuilder, OpEngineValidatorBuilder, OpPoolBuilder},
     OpNode,
 };
@@ -37,12 +38,61 @@ pub struct BuilderLauncher<B> {
     _builder: PhantomData<B>,
 }
 
-impl<B> BuilderLauncher<B> {
+impl<B> BuilderLauncher<B>
+where
+    B: PayloadBuilder,
+{
     pub fn new() -> Self {
         Self {
             _builder: PhantomData,
         }
     }
+
+    /*
+    fn op_node(
+        builder_args: &OpRbuilderArgs,
+    ) -> Result<()> {
+        let builder_config = BuilderConfig::<B::Config>::try_from(builder_args.clone())
+                .map_err(|_| eyre!("Failed to convert rollup args to builder config"))?;
+        let rollup_args = builder_args.rollup_args.clone();
+        let op_node = OpNode::new(rollup_args);
+        let comp = op_node
+            .components()
+            .pool(
+                OpPoolBuilder::<FBPooledTransaction>::default()
+                .with_enable_tx_conditional(
+                    // Revert protection uses the same internal pool logic as conditional transactions
+                    // to garbage collect transactions out of the bundle range.
+                    rollup_args.enable_tx_conditional
+                    || builder_args.enable_revert_protection,
+                )
+                .with_supervisor(
+                    rollup_args.supervisor_http.clone(),
+                    rollup_args.supervisor_safety_level,
+                ),
+            )
+            .payload(B::new_service(builder_config)?);
+        Ok(comp)
+    }
+    */
+
+    /*
+    fn add_ons(builder_args: &OpRbuilderArgs) -> RcpAddOns {
+        let builder_config = BuilderConfig::<B::Config>::try_from(builder_args.clone())
+            .expect("Failed to convert rollup args to builder config");
+        let da_config = builder_config.da_config.clone();
+        let rollup_args = &builder_args.rollup_args;
+        let default_builder = OpEngineApiBuilder::<OpEngineValidatorBuilder>::default()
+            .with_engine_peers(builder_args.engine_peers.clone());
+        OpAddOnsBuilder::default()
+            .with_sequencer(rollup_args.sequencer.clone())
+            .with_enable_tx_conditional(rollup_args.enable_tx_conditional)
+            .with_da_config(da_config)
+            .build()
+            .rpc_add_ons
+            .with_engine_api(default_builder)
+    }
+    */
 }
 
 impl<B> Launcher<OpChainSpecParser, OpRbuilderArgs> for BuilderLauncher<B>
