@@ -24,7 +24,7 @@ use metrics::{
 };
 use monitor_tx_pool::monitor_tx_pool;
 use revert_protection::{
-    EthApiOverrideReplacementServer, EthApiOverrideServer, RevertProtectionExt,
+    create_shared_cache, EthApiOverrideReplacementServer, EthApiOverrideServer, RevertProtectionExt,
 };
 use tx::FBPooledTransaction;
 
@@ -73,6 +73,9 @@ where
         let da_config = builder_config.da_config.clone();
         let rollup_args = builder_args.rollup_args;
         let op_node = OpNode::new(rollup_args.clone());
+        let reverted_cache = create_shared_cache(100);
+        let reverted_cache_copy = reverted_cache.clone();
+
         let handle = builder
             .with_types::<OpNode>()
             .with_components(
@@ -109,13 +112,19 @@ where
                     let revert_protection_ext: RevertProtectionExt<
                         _,
                         _,
+                        _,
                         op_alloy_network::Optimism,
-                    > = RevertProtectionExt::new(pool, provider);
+                    > = RevertProtectionExt::new(pool, provider, ctx.registry.eth_api().clone());
 
+                    // We have to split the RPC modules in two sets because we have methods that both
+                    // replace an existing method and add a new one.
+                    // Tracking change in Reth here to have a single method for both:
+                    // https://github.com/paradigmxyz/reth/issues/16502
                     ctx.modules
                         .merge_configured(revert_protection_ext.bundle_api().into_rpc())?;
-                    ctx.modules
-                        .replace_configured(revert_protection_ext.eth_api().into_rpc())?;
+                    ctx.modules.replace_configured(
+                        revert_protection_ext.eth_api(reverted_cache).into_rpc(),
+                    )?;
                 }
 
                 Ok(())
@@ -127,7 +136,11 @@ where
                     ctx.task_executor.spawn_critical(
                         "txlogging",
                         Box::pin(async move {
-                            monitor_tx_pool(ctx.pool.all_transactions_event_listener()).await;
+                            monitor_tx_pool(
+                                ctx.pool.all_transactions_event_listener(),
+                                reverted_cache_copy,
+                            )
+                            .await;
                         }),
                     );
                 }

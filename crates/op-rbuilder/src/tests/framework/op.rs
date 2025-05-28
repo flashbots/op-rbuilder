@@ -137,6 +137,7 @@ impl Service for OpRbuilderConfig {
 
         if let Some(revert_protection) = self.with_revert_protection {
             if revert_protection {
+                println!("revert_protection is enabled");
                 cmd.arg("--builder.enable-revert-protection");
             }
         }

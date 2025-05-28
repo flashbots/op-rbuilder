@@ -2,21 +2,20 @@ use crate::{
     primitives::bundle::{Bundle, BundleResult, MAX_BLOCK_RANGE_BLOCKS},
     tx::{FBPooledTransaction, MaybeRevertingTransaction},
 };
+use alloy_json_rpc::RpcObject;
 use alloy_primitives::B256;
 use jsonrpsee::{
     core::{async_trait, RpcResult},
     proc_macros::rpc,
 };
-use op_alloy_rpc_types::OpTransactionReceipt;
-use reth::rpc::api::eth::{types::RpcTypes, FullEthApiTypes, RpcBlock, RpcHeader, RpcReceipt, RpcTransaction};
-use reth_optimism_primitives::OpReceipt;
+use lru::LruCache;
+use reth::rpc::api::eth::{helpers::FullEthApi, RpcReceipt};
 use reth_optimism_txpool::{conditional::MaybeConditionalTransaction, OpPooledTransaction};
-use reth_provider::{ReceiptProvider, StateProviderFactory};
+use reth_provider::StateProviderFactory;
 use reth_rpc_eth_types::{utils::recover_raw_transaction, EthApiError};
 use reth_transaction_pool::{PoolTransaction, TransactionOrigin, TransactionPool};
-use alloy_json_rpc::RpcObject;
-use op_alloy_network::Optimism;
-use reth::rpc::eth::EthApiServer;
+use std::num::NonZeroUsize;
+use std::sync::{Arc, Mutex};
 
 // Namespace overrides for revert protection support
 #[cfg_attr(not(test), rpc(server, namespace = "eth"))]
@@ -33,21 +32,24 @@ pub trait EthApiOverrideReplacement<R: RpcObject> {
     async fn transaction_receipt(&self, hash: B256) -> RpcResult<Option<R>>;
 }
 
-pub struct RevertProtectionExt<Pool, Provider, Network = op_alloy_network::Optimism> {
+pub struct RevertProtectionExt<Pool, Provider, Eth, Network = op_alloy_network::Optimism> {
     pool: Pool,
     provider: Provider,
+    eth_api: Eth,
     _network: std::marker::PhantomData<Network>,
 }
 
-impl<Pool, Provider, Network> RevertProtectionExt<Pool, Provider, Network>
+impl<Pool, Provider, Eth, Network> RevertProtectionExt<Pool, Provider, Eth, Network>
 where
     Pool: Clone,
     Provider: Clone,
+    Eth: Clone,
 {
-    pub fn new(pool: Pool, provider: Provider) -> Self {
+    pub fn new(pool: Pool, provider: Provider, eth_api: Eth) -> Self {
         Self {
             pool,
             provider,
+            eth_api,
             _network: std::marker::PhantomData,
         }
     }
@@ -59,11 +61,22 @@ where
         }
     }
 
-    pub fn eth_api(&self) -> RevertProtectionEthAPI<Provider> {
+    pub fn eth_api(&self, reverted_cache: SharedLruCache<B256, ()>) -> RevertProtectionEthAPI<Eth> {
         RevertProtectionEthAPI {
-            provider: self.provider.clone(),
+            eth_api: self.eth_api.clone(),
+            reverted_cache,
         }
     }
+}
+
+pub type SharedLruCache<K, V> = Arc<Mutex<LruCache<K, V>>>;
+
+pub fn create_shared_cache<K, V>(capacity: usize) -> SharedLruCache<K, V>
+where
+    K: std::hash::Hash + Eq,
+{
+    let cache = LruCache::new(NonZeroUsize::new(capacity).unwrap());
+    Arc::new(Mutex::new(cache))
 }
 
 pub struct RevertProtectionBundleAPI<Pool, Provider> {
@@ -137,31 +150,35 @@ where
     }
 }
 
-pub struct RevertProtectionEthAPI<Provider> {
-    provider: Provider,
+pub struct RevertProtectionEthAPI<Eth> {
+    eth_api: Eth,
+    reverted_cache: SharedLruCache<B256, ()>,
 }
 
 #[async_trait]
-impl<Provider> EthApiOverrideReplacementServer<RpcReceipt<Optimism>> for RevertProtectionEthAPI<Provider>
+impl<Eth> EthApiOverrideReplacementServer<RpcReceipt<Eth::NetworkTypes>>
+    for RevertProtectionEthAPI<Eth>
 where
-    Provider:
-        StateProviderFactory + ReceiptProvider<Receipt = OpReceipt> + Send + Sync + Clone + 'static,
+    Eth: FullEthApi + Send + Sync + Clone + 'static,
 {
-    async fn transaction_receipt(&self, hash: B256) -> RpcResult<Option<RpcReceipt<Optimism>>> {
-        println!("transaction_receipt: {:?}", hash);
-
-        panic!("bad");
-
-        /*
-        let receipt = self
-            .provider
-            .receipt_by_hash(hash)
-            .map_err(EthApiError::from)?;
-
-        match receipt {
+    async fn transaction_receipt(
+        &self,
+        hash: B256,
+    ) -> RpcResult<Option<RpcReceipt<Eth::NetworkTypes>>> {
+        match self.eth_api.transaction_receipt(hash).await.unwrap() {
             Some(receipt) => Ok(Some(receipt)),
-            None => Ok(None),
+            None => {
+                // Try to find the transaction in the reverted cache
+                let reverted_cache = self.reverted_cache.lock().unwrap();
+                if reverted_cache.contains(&hash) {
+                    return Err(EthApiError::InvalidParams(
+                        "the transaction was reverted and dropped from the pool".into(),
+                    )
+                    .into());
+                } else {
+                    return Ok(None);
+                }
+            }
         }
-        */
     }
 }

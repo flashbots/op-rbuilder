@@ -5551,6 +5551,7 @@ dependencies = [
  "futures-util",
  "jsonrpsee 0.25.1",
  "jsonrpsee-types 0.25.1",
+ "lru 0.12.5",
  "metrics",
  "op-alloy-consensus",
  "op-alloy-flz",
