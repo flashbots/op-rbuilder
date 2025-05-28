@@ -1,11 +1,11 @@
 use crate::{
-    primitives::bundle::{Bundle, BundleResult},
-    tx_signer::Signer,
+    primitives::bundle::{Bundle, BundleResult}, tx::FBPooledTransaction, tx_signer::Signer
 };
 use alloy_consensus::TxEip1559;
 use alloy_eips::{eip2718::Encodable2718, BlockNumberOrTag};
-use alloy_primitives::{Address, Bytes, TxKind, U256};
+use alloy_primitives::{Address, Bytes, TxHash, TxKind, U256};
 use alloy_provider::{PendingTransactionBuilder, Provider, RootProvider};
+use reth_transaction_pool::AllTransactionsEvents;
 use core::cmp::max;
 use op_alloy_consensus::{OpTxEnvelope, OpTypedTransaction};
 use op_alloy_network::Optimism;
@@ -181,5 +181,45 @@ impl TransactionBuilder {
         Ok(provider
             .send_raw_transaction(transaction_encoded.as_slice())
             .await?)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TransactionStatus {
+    NotFound,
+    Pending,
+    Queued,
+    Dropped,
+}
+
+
+pub struct TransactionPoolObserver;
+
+impl TransactionPoolObserver {
+    pub fn new(stream: AllTransactionsEvents<FBPooledTransaction>) -> Self {
+        Self
+    }
+
+    pub fn current_status(&self, _txhash: TxHash) -> TransactionStatus {
+        TransactionStatus::NotFound
+    }
+
+    pub fn is_pending(&self, txhash: TxHash) -> bool {
+        matches!(self.current_status(txhash), TransactionStatus::Pending)
+    }
+
+    pub fn is_queued(&self, txhash: TxHash) -> bool {
+        matches!(self.current_status(txhash), TransactionStatus::Queued)
+    }
+
+    pub fn is_dropped(&self, txhash: TxHash) -> bool {
+        matches!(self.current_status(txhash), TransactionStatus::Dropped)
+    }
+
+    pub fn exists(&self, txhash: TxHash) -> bool {
+        matches!(
+            self.current_status(txhash),
+            TransactionStatus::Pending | TransactionStatus::Queued
+        )
     }
 }

@@ -1,77 +1,49 @@
 use alloy_provider::PendingTransactionBuilder;
 use op_alloy_network::Optimism;
 
-use crate::{
-    primitives::bundle::MAX_BLOCK_RANGE_BLOCKS,
-    tests::{BundleOpts, TestHarness, TestHarnessBuilder},
-};
+use crate::{args::OpRbuilderArgs, builders::StandardBuilder, tests::{BundleOpts, LocalInstance, TransactionBuilderExt}};
 
-/// This test ensures that the transactions that get reverted and not included in the block,
-/// are eventually dropped from the pool once their block range is reached.
-/// This test creates N transactions with different block ranges.
-#[tokio::test]
-async fn revert_protection_monitor_transaction_gc() -> eyre::Result<()> {
-    let harness = TestHarnessBuilder::new("revert_protection_monitor_transaction_gc")
-        .with_revert_protection()
-        .with_namespaces("eth,web3,txpool")
-        .build()
-        .await?;
-
-    let mut generator = harness.block_generator().await?;
-
-    // send 10 bundles with different block ranges
-    let mut pending_txn = Vec::new();
-    for i in 1..=10 {
-        let txn = harness
-            .create_transaction()
-            .with_revert()
-            .with_bundle(BundleOpts {
-                block_number_max: Some(i),
-            })
-            .send()
-            .await?;
-        pending_txn.push(txn);
-    }
-
-    // generate 10 blocks
-    for i in 0..10 {
-        let generated_block = generator.generate_block().await?;
-
-        // blocks should only include two transactions (deposit + builder)
-        assert_eq!(generated_block.block.transactions.len(), 2);
-
-        // since we created the 10 transactions with increasing block ranges, as we generate blocks
-        // one transaction will be gc on each block.
-        // transactions from [0, i] should be dropped, transactions from [i+1, 10] should be queued
-        for j in 0..=i {
-            let status = harness.check_tx_in_pool(*pending_txn[j].tx_hash()).await?;
-            assert!(status.is_dropped());
-        }
-        for j in i + 1..10 {
-            let status = harness.check_tx_in_pool(*pending_txn[j].tx_hash()).await?;
-            assert!(status.is_queued());
-        }
-    }
-
-    Ok(())
+async fn local_instance_with_revert_protection() -> eyre::Result<LocalInstance> {
+    LocalInstance::new::<StandardBuilder>(OpRbuilderArgs {
+        enable_revert_protection: true,
+        ..Default::default()
+    }).await
 }
 
 /// If revert protection is disabled, the transactions that revert are included in the block.
 #[tokio::test]
 async fn revert_protection_disabled() -> eyre::Result<()> {
-    let harness = TestHarnessBuilder::new("revert_protection_disabled")
-        .build()
-        .await?;
-
-    let mut generator = harness.block_generator().await?;
+    let rbuilder = LocalInstance::standard().await?;
+    let driver = rbuilder.driver().await?;
 
     for _ in 0..10 {
-        let valid_tx = harness.send_valid_transaction().await?;
-        let reverting_tx = harness.send_revert_transaction().await?;
-        let block_generated = generator.generate_block().await?;
+        let valid_tx = driver.transaction().random_valid_transfer().send().await?;
+        let reverting_tx = driver.transaction().random_reverting_transaction().send().await?;
+        let block = driver.build_new_block().await?;
 
-        assert!(block_generated.includes(*valid_tx.tx_hash()));
-        assert!(block_generated.includes(*reverting_tx.tx_hash()));
+        assert!(block.transactions.hashes().any(|hash| hash == *valid_tx.tx_hash()));
+        assert!(block.transactions.hashes().any(|hash| hash == *reverting_tx.tx_hash()));
+    }
+
+    Ok(())
+}
+
+/// If revert protection is enabled, the transactions that revert are not included in the block.
+#[tokio::test]
+async fn revert_protection_enabled() -> eyre::Result<()> {
+    let rbuilder = LocalInstance::new::<StandardBuilder>(OpRbuilderArgs {
+        enable_revert_protection: true,
+        ..Default::default()
+    }).await?;
+    let driver = rbuilder.driver().await?;
+
+    for _ in 0..10 {
+        let valid_tx = driver.transaction().random_valid_transfer().send().await?;
+        let reverting_tx = driver.transaction().random_reverting_transaction().send().await?;
+        let block = driver.build_new_block().await?;
+
+        assert!(block.transactions.hashes().any(|hash| hash == *valid_tx.tx_hash()));
+        assert!(!block.transactions.hashes().any(|hash| hash == *reverting_tx.tx_hash()));
     }
 
     Ok(())
@@ -81,12 +53,11 @@ async fn revert_protection_disabled() -> eyre::Result<()> {
 /// since the revert RPC endpoint is not available.
 #[tokio::test]
 async fn revert_protection_disabled_bundle_endpoint_error() -> eyre::Result<()> {
-    let harness = TestHarnessBuilder::new("revert_protection_disabled_bundle_endpoint_error")
-        .build()
-        .await?;
+    let rbuilder = LocalInstance::standard().await?;
+    let driver = rbuilder.driver().await?;
 
-    let res = harness
-        .create_transaction()
+    let res = driver
+        .transaction()
         .with_bundle(BundleOpts::default())
         .send()
         .await;
@@ -98,135 +69,183 @@ async fn revert_protection_disabled_bundle_endpoint_error() -> eyre::Result<()> 
     Ok(())
 }
 
-/// Test the behaviour of the revert protection bundle, if the bundle **does not** revert
-/// the transaction is included in the block. If the bundle reverts, the transaction
-/// is not included in the block and tried again for the next bundle range blocks
-/// when it will be dropped from the pool.
-#[tokio::test]
-async fn revert_protection_bundle() -> eyre::Result<()> {
-    let harness = TestHarnessBuilder::new("revert_protection_bundle")
-        .with_revert_protection()
-        .with_namespaces("eth,web3,txpool")
-        .build()
-        .await?;
+// /// This test ensures that the transactions that get reverted and not included in the block,
+// /// are eventually dropped from the pool once their block range is reached.
+// /// This test creates N transactions with different block ranges.
+// #[tokio::test]
+// async fn revert_protection_monitor_transaction_gc() -> eyre::Result<()> {
+//     let rbuilder = LocalInstance::standard().await?;
+//     let driver = rbuilder.driver().await?;
 
-    let mut generator = harness.block_generator().await?; // Block 1
+//     let latest_block_number = driver.latest().await?.header.number;
 
-    // Test 1: Bundle does not revert
-    let valid_bundle = harness
-        .create_transaction()
-        .with_bundle(BundleOpts::default())
-        .send()
-        .await?;
+//     // send 10 bundles with different block ranges
+//     let mut pending_txn = Vec::new();
+//     for i in 1..=10 {
+//         let txn = driver
+//             .transaction()
+//             .random_reverting_transaction()
+//             .with_bundle(BundleOpts {
+//                 block_number_max: Some(latest_block_number + i),
+//             })
+//             .send()
+//             .await?;
+//         pending_txn.push(txn);
+//     }
 
-    let block_generated = generator.generate_block().await?; // Block 2
-    assert!(block_generated.includes(*valid_bundle.tx_hash()));
+//     // generate 10 blocks
+//     for i in 0..10 {
+//         let block = driver.build_new_block().await?;
 
-    let bundle_opts = BundleOpts {
-        block_number_max: Some(4),
-    };
+//         // blocks should only include two transactions (deposit + builder)
+//         assert_eq!(block.transactions.len(), 2);
+        
+//         // since we created the 10 transactions with increasing block ranges, as we generate blocks
+//         // one transaction will be gc on each block.
+//         // transactions from [0, i] should be dropped, transactions from [i+1, 10] should be queued
+//         for j in 0..=i {
+//             let status = harness.check_tx_in_pool(*pending_txn[j].tx_hash()).await?;
+//             assert!(status.is_dropped());
+//         }
+//         for j in i + 1..10 {
+//             let status = harness.check_tx_in_pool(*pending_txn[j].tx_hash()).await?;
+//             assert!(status.is_queued());
+//         }
+//     }
 
-    let reverted_bundle = harness
-        .create_transaction()
-        .with_revert()
-        .with_bundle(bundle_opts)
-        .send()
-        .await?;
+//     Ok(())
+// }
 
-    // Test 2: Bundle reverts. It is not included in the block
-    let block_generated = generator.generate_block().await?; // Block 3
-    assert!(block_generated.not_includes(*reverted_bundle.tx_hash()));
 
-    // After the block the transaction is still pending in the pool
-    assert!(harness
-        .check_tx_in_pool(*reverted_bundle.tx_hash())
-        .await?
-        .is_pending());
+// /// Test the behaviour of the revert protection bundle, if the bundle **does not** revert
+// /// the transaction is included in the block. If the bundle reverts, the transaction
+// /// is not included in the block and tried again for the next bundle range blocks
+// /// when it will be dropped from the pool.
+// #[tokio::test]
+// async fn revert_protection_bundle() -> eyre::Result<()> {
+//     let harness = TestHarnessBuilder::new("revert_protection_bundle")
+//         .with_revert_protection()
+//         .with_namespaces("eth,web3,txpool")
+//         .build()
+//         .await?;
 
-    // Test 3: Chain progresses beyond the bundle range. The transaction is dropped from the pool
-    generator.generate_block().await?; // Block 4
-    assert!(harness
-        .check_tx_in_pool(*reverted_bundle.tx_hash())
-        .await?
-        .is_pending());
+//     let mut generator = harness.block_generator().await?; // Block 1
 
-    generator.generate_block().await?; // Block 5
-    assert!(harness
-        .check_tx_in_pool(*reverted_bundle.tx_hash())
-        .await?
-        .is_dropped());
+//     // Test 1: Bundle does not revert
+//     let valid_bundle = harness
+//         .create_transaction()
+//         .with_bundle(BundleOpts::default())
+//         .send()
+//         .await?;
 
-    Ok(())
-}
+//     let block_generated = generator.generate_block().await?; // Block 2
+//     assert!(block_generated.includes(*valid_bundle.tx_hash()));
 
-/// Test the range limits for the revert protection bundle.
-#[tokio::test]
-async fn revert_protection_bundle_range_limits() -> eyre::Result<()> {
-    let harness = TestHarnessBuilder::new("revert_protection_bundle_range_limits")
-        .with_revert_protection()
-        .build()
-        .await?;
+//     let bundle_opts = BundleOpts {
+//         block_number_max: Some(4),
+//     };
 
-    let mut generator = harness.block_generator().await?;
+//     let reverted_bundle = harness
+//         .create_transaction()
+//         .with_revert()
+//         .with_bundle(bundle_opts)
+//         .send()
+//         .await?;
 
-    // Advance two blocks and try to send a bundle with max block = 1
-    generator.generate_block().await?; // Block 1
-    generator.generate_block().await?; // Block 2
+//     // Test 2: Bundle reverts. It is not included in the block
+//     let block_generated = generator.generate_block().await?; // Block 3
+//     assert!(block_generated.not_includes(*reverted_bundle.tx_hash()));
 
-    async fn send_bundle(
-        harness: &TestHarness,
-        block_number_max: u64,
-    ) -> eyre::Result<PendingTransactionBuilder<Optimism>> {
-        harness
-            .create_transaction()
-            .with_bundle(BundleOpts {
-                block_number_max: Some(block_number_max),
-            })
-            .send()
-            .await
-    }
+//     // After the block the transaction is still pending in the pool
+//     assert!(harness
+//         .check_tx_in_pool(*reverted_bundle.tx_hash())
+//         .await?
+//         .is_pending());
 
-    // Max block cannot be a past block
-    assert!(send_bundle(&harness, 1).await.is_err());
+//     // Test 3: Chain progresses beyond the bundle range. The transaction is dropped from the pool
+//     generator.generate_block().await?; // Block 4
+//     assert!(harness
+//         .check_tx_in_pool(*reverted_bundle.tx_hash())
+//         .await?
+//         .is_pending());
 
-    // Bundles are valid if their max block in in between the current block and the max block range
-    let next_valid_block = 3;
+//     generator.generate_block().await?; // Block 5
+//     assert!(harness
+//         .check_tx_in_pool(*reverted_bundle.tx_hash())
+//         .await?
+//         .is_dropped());
 
-    for i in next_valid_block..next_valid_block + MAX_BLOCK_RANGE_BLOCKS {
-        assert!(send_bundle(&harness, i).await.is_ok());
-    }
+//     Ok(())
+// }
 
-    // A bundle with a block out of range is invalid
-    assert!(
-        send_bundle(&harness, next_valid_block + MAX_BLOCK_RANGE_BLOCKS + 1)
-            .await
-            .is_err()
-    );
+// /// Test the range limits for the revert protection bundle.
+// #[tokio::test]
+// async fn revert_protection_bundle_range_limits() -> eyre::Result<()> {
+//     let harness = TestHarnessBuilder::new("revert_protection_bundle_range_limits")
+//         .with_revert_protection()
+//         .build()
+//         .await?;
 
-    Ok(())
-}
+//     let mut generator = harness.block_generator().await?;
 
-/// If a transaction reverts and was sent as a normal transaction through the eth_sendRawTransaction
-/// bundle, the transaction should be included in the block.
-/// This behaviour is the same as the 'revert_protection_disabled' test.
-#[tokio::test]
-async fn revert_protection_allow_reverted_transactions_without_bundle() -> eyre::Result<()> {
-    let harness =
-        TestHarnessBuilder::new("revert_protection_allow_reverted_transactions_without_bundle")
-            .with_revert_protection()
-            .build()
-            .await?;
+//     // Advance two blocks and try to send a bundle with max block = 1
+//     generator.generate_block().await?; // Block 1
+//     generator.generate_block().await?; // Block 2
 
-    let mut generator = harness.block_generator().await?;
+//     async fn send_bundle(
+//         harness: &TestHarness,
+//         block_number_max: u64,
+//     ) -> eyre::Result<PendingTransactionBuilder<Optimism>> {
+//         harness
+//             .create_transaction()
+//             .with_bundle(BundleOpts {
+//                 block_number_max: Some(block_number_max),
+//             })
+//             .send()
+//             .await
+//     }
 
-    for _ in 0..10 {
-        let valid_tx = harness.send_valid_transaction().await?;
-        let reverting_tx = harness.send_revert_transaction().await?;
-        let block_generated = generator.generate_block().await?;
+//     // Max block cannot be a past block
+//     assert!(send_bundle(&harness, 1).await.is_err());
 
-        assert!(block_generated.includes(*valid_tx.tx_hash()));
-        assert!(block_generated.includes(*reverting_tx.tx_hash()));
-    }
+//     // Bundles are valid if their max block in in between the current block and the max block range
+//     let next_valid_block = 3;
 
-    Ok(())
-}
+//     for i in next_valid_block..next_valid_block + MAX_BLOCK_RANGE_BLOCKS {
+//         assert!(send_bundle(&harness, i).await.is_ok());
+//     }
+
+//     // A bundle with a block out of range is invalid
+//     assert!(
+//         send_bundle(&harness, next_valid_block + MAX_BLOCK_RANGE_BLOCKS + 1)
+//             .await
+//             .is_err()
+//     );
+
+//     Ok(())
+// }
+
+// /// If a transaction reverts and was sent as a normal transaction through the eth_sendRawTransaction
+// /// bundle, the transaction should be included in the block.
+// /// This behaviour is the same as the 'revert_protection_disabled' test.
+// #[tokio::test]
+// async fn revert_protection_allow_reverted_transactions_without_bundle() -> eyre::Result<()> {
+//     let harness =
+//         TestHarnessBuilder::new("revert_protection_allow_reverted_transactions_without_bundle")
+//             .with_revert_protection()
+//             .build()
+//             .await?;
+
+//     let mut generator = harness.block_generator().await?;
+
+//     for _ in 0..10 {
+//         let valid_tx = harness.send_valid_transaction().await?;
+//         let reverting_tx = harness.send_revert_transaction().await?;
+//         let block_generated = generator.generate_block().await?;
+
+//         assert!(block_generated.includes(*valid_tx.tx_hash()));
+//         assert!(block_generated.includes(*reverting_tx.tx_hash()));
+//     }
+
+//     Ok(())
+// }

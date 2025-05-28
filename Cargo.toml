@@ -45,6 +45,7 @@ reth-chain-state = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.1"
 reth-cli = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.1" }
 reth-cli-util = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.1" }
 reth-db = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.1" }
+reth-db-api = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.1" }
 reth-db-common = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.1" }
 reth-errors = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.1" }
 reth-payload-builder = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.1" }
@@ -89,6 +90,7 @@ reth-optimism-node = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.
 reth-optimism-payload-builder = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.1" }
 reth-optimism-chainspec = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.1" }
 reth-optimism-txpool = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.1" }
+reth-optimism-rpc = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.1" }
 
 # compatible with reth "v1.4.1 dependencies
 revm = { version = "23.1.0", features = [

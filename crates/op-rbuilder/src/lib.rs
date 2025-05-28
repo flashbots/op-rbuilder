@@ -4,6 +4,7 @@ pub mod primitives;
 pub mod tx_signer;
 
 mod metrics;
+mod revert_protection;
 mod traits;
 mod tx;
 

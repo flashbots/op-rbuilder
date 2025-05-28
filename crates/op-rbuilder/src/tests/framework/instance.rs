@@ -6,7 +6,7 @@ use core::{
     time::Duration,
 };
 use std::sync::{Arc, LazyLock};
-
+use reth_transaction_pool::{AllTransactionsEvents, TransactionPool};
 use alloy_provider::{Identity, ProviderBuilder, RootProvider};
 use futures::FutureExt;
 use nanoid::nanoid;
@@ -26,13 +26,10 @@ use reth_optimism_node::{
 };
 
 use crate::{
-    args::OpRbuilderArgs,
-    builders::{BuilderConfig, FlashblocksBuilder, PayloadBuilder, StandardBuilder},
-    tx::FBPooledTransaction,
-    tx_signer::Signer,
+    args::OpRbuilderArgs, builders::{BuilderConfig, FlashblocksBuilder, PayloadBuilder, StandardBuilder}, revert_protection::{EthApiOverrideServer, RevertProtectionExt}, tx::FBPooledTransaction, tx_signer::Signer
 };
 
-use super::{ChainDriver, ChainDriverExt, EngineApi, Ipc, BUILDER_PRIVATE_KEY};
+use super::{ChainDriver, ChainDriverExt, EngineApi, Ipc, TransactionPoolObserver, BUILDER_PRIVATE_KEY};
 
 /// Represents a type that emulates a local in-process instance of the OP builder node.
 /// This node uses IPC as the communication channel for the RPC server Engine API.
@@ -42,6 +39,7 @@ pub struct LocalInstance {
     task_manager: Option<TaskManager>,
     exit_future: NodeExitFuture,
     _node_handle: Box<dyn Any + Send>,
+    pool_observer: TransactionPoolObserver
 }
 
 impl LocalInstance {
@@ -65,7 +63,7 @@ impl LocalInstance {
         args.builder_signer = Some(signer.clone());
         let builder_config = BuilderConfig::<P::Config>::try_from(args.clone())
             .expect("Failed to convert rollup args to builder config");
-
+        println!("Builder config: {builder_config:#?}");
         let node_builder = NodeBuilder::<_, OpChainSpec>::new(config.clone())
             .testing_node(task_manager.executor())
             .with_types::<OpNode>()
@@ -81,6 +79,20 @@ impl LocalInstance {
                     .with_enable_tx_conditional(op_node.args.enable_tx_conditional)
                     .build(),
             )
+            .extend_rpc_modules(move |ctx| {
+                if args.enable_revert_protection {
+                    tracing::info!("Revert protection enabled");
+
+                    let pool = ctx.pool().clone();
+                    let provider = ctx.provider().clone();
+                    let revert_protection_ext = RevertProtectionExt::new(pool, provider);
+
+                    ctx.modules
+                        .merge_configured(revert_protection_ext.into_rpc())?;
+                }
+
+                Ok(())
+            })
             .on_rpc_started(move |_, _| {
                 let _ = ready_tx.send(());
                 Ok(())
@@ -88,7 +100,9 @@ impl LocalInstance {
 
         let node_handle = node_builder.launch().await?;
         let exit_future = node_handle.node_exit_future;
-        let node_handle: Box<dyn Any + Send> = Box::new(node_handle.node);
+        let boxed_handle = Box::new(node_handle.node);
+        let pool_monitor: AllTransactionsEvents<FBPooledTransaction> = boxed_handle.pool.all_transactions_event_listener();
+        let node_handle: Box<dyn Any + Send> = boxed_handle;
 
         // don't give the user an instance before we have a functioning RPC server
         ready_rx.await.expect("Failed to receive ready signal");
@@ -99,6 +113,7 @@ impl LocalInstance {
             exit_future,
             _node_handle: node_handle,
             task_manager: Some(task_manager),
+            pool_observer: TransactionPoolObserver::new(pool_monitor),
         })
     }
 
@@ -138,6 +153,14 @@ impl LocalInstance {
 
     pub fn engine_api(&self) -> EngineApi<Ipc> {
         EngineApi::<Ipc>::with_ipc(self.auth_ipc())
+    }
+
+    pub const fn pool(&self) -> &TransactionPoolObserver {
+        &self.pool_observer
+    }
+
+    pub async fn driver(&self) -> eyre::Result<ChainDriver> {
+        ChainDriver::new(self).await
     }
 
     pub async fn provider(&self) -> eyre::Result<RootProvider<Optimism>> {

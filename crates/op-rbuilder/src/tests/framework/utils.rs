@@ -18,7 +18,7 @@ impl TransactionBuilderExt for TransactionBuilder {
     }
 
     fn random_reverting_transaction(self) -> Self {
-        self.with_input(hex!("60006000fd").into())
+        self.with_create().with_input(hex!("60006000fd").into()) // PUSH1 0x00 PUSH1 0x00 REVERT
     }
 }
 
@@ -29,6 +29,22 @@ pub trait ChainDriverExt {
         FUNDED_PRIVATE_KEYS[0]
             .parse()
             .expect("Invalid funded private key")
+    }
+
+    fn fund_accounts(
+        &self,
+        count: usize,
+        amount: u128,
+    ) -> impl Future<Output = eyre::Result<Vec<Signer>>> {
+        async move {
+            let accounts = (0..count).map(|_| Signer::random()).collect::<Vec<_>>();
+
+            for account in &accounts {
+                self.fund(account.address, amount).await?;
+            }
+
+            Ok(accounts)
+        }
     }
 }
 

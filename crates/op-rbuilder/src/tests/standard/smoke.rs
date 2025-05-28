@@ -4,7 +4,7 @@ use std::collections::HashSet;
 use alloy_primitives::TxHash;
 use tokio::join;
 
-use super::super::{ChainDriver, LocalInstance, TransactionBuilderExt};
+use crate::tests::{ChainDriver, LocalInstance, TransactionBuilderExt};
 
 #[tokio::test]
 
@@ -103,11 +103,11 @@ async fn produces_blocks_under_load_within_deadline() -> eyre::Result<()> {
                 .await
                 .map_err(|_| eyre::eyre!("Timeout while waiting for block"))?;
             }
-            
+
             // we're happy with one block produced under load
             // set the done flag to true to stop the transaction population
             done.store(true, std::sync::atomic::Ordering::Relaxed);
-            
+
             Ok::<(), eyre::Error>(())
         }
     );
