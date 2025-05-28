@@ -10,7 +10,7 @@ use op_alloy_consensus::{OpTypedTransaction, TxDeposit};
 use op_alloy_rpc_types_engine::OpPayloadAttributes;
 use rollup_boost::{Flashblocks, FlashblocksService, OpExecutionPayloadEnvelope, Version};
 
-use super::apis::EngineApi;
+use super::{apis::EngineApi, Http, Ipc, Protocol};
 
 // L1 block info for OP mainnet block 124665056 (stored in input of tx at index 0)
 //
@@ -18,9 +18,9 @@ use super::apis::EngineApi;
 const FJORD_DATA: &[u8] = &hex!("440a5e200000146b000f79c500000000000000040000000066d052e700000000013ad8a3000000000000000000000000000000000000000000000000000000003ef1278700000000000000000000000000000000000000000000000000000000000000012fdf87b89884a61e74b322bbcf60386f543bfae7827725efaaf0ab1de2294a590000000000000000000000006887246668a3b87f54deb3b94ba47a6f63f32985");
 
 /// A system that continuously generates blocks using the engine API
-pub struct BlockGenerator {
-    engine_api: EngineApi,
-    validation_api: Option<EngineApi>,
+pub struct BlockGenerator<LocalProtocol: Protocol = Ipc, ValidationProtocol: Protocol = Http> {
+    engine_api: EngineApi<LocalProtocol>,
+    validation_api: Option<EngineApi<ValidationProtocol>>,
     latest_hash: B256,
     no_tx_pool: bool,
     block_time_secs: u64,
@@ -30,10 +30,12 @@ pub struct BlockGenerator {
     flashblocks_service: Option<FlashblocksService>,
 }
 
-impl BlockGenerator {
+impl<LocalProtocol: Protocol, ValidationProtocol: Protocol>
+    BlockGenerator<LocalProtocol, ValidationProtocol>
+{
     pub fn new(
-        engine_api: EngineApi,
-        validation_api: Option<EngineApi>,
+        engine_api: EngineApi<LocalProtocol>,
+        validation_api: Option<EngineApi<ValidationProtocol>>,
         no_tx_pool: bool,
         block_time_secs: u64,
         flashblocks_endpoint: Option<String>,
@@ -57,9 +59,7 @@ impl BlockGenerator {
         self.timestamp = latest_block.header.timestamp;
 
         // Sync validation node if it exists
-        if let Some(validation_api) = &self.validation_api {
-            self.sync_validation_node(validation_api).await?;
-        }
+        self.sync_validation_node().await?;
 
         // Initialize flashblocks service
         if let Some(flashblocks_endpoint) = &self.flashblocks_endpoint {
@@ -75,7 +75,11 @@ impl BlockGenerator {
     }
 
     /// Sync the validation node to the current state
-    async fn sync_validation_node(&self, validation_api: &EngineApi) -> eyre::Result<()> {
+    async fn sync_validation_node(&self) -> eyre::Result<()> {
+        let Some(validation_api) = &self.validation_api else {
+            return Ok(()); // No validation node to sync
+        };
+
         let latest_validation_block = validation_api.latest().await?.expect("block not found");
         let latest_block = self.engine_api.latest().await?.expect("block not found");
 

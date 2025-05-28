@@ -182,8 +182,6 @@ async fn broadcast_loop(
             // Receive payloads from the broadcast channel
             payload = blocks.recv() => match payload {
                 Ok(payload) => {
-                    // Here you would typically send the payload to the WebSocket clients.
-                    // For this example, we just increment the sent counter.
                     sent.fetch_add(1, Ordering::Relaxed);
                     metrics.messages_sent_count.increment(1);
 

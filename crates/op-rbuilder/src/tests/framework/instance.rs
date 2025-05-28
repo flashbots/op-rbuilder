@@ -1,0 +1,241 @@
+use core::{
+    any::Any,
+    future::Future,
+    pin::Pin,
+    task::{Context, Poll},
+    time::Duration,
+};
+use std::sync::{Arc, LazyLock};
+
+use alloy_provider::{Identity, ProviderBuilder, RootProvider};
+use futures::FutureExt;
+use nanoid::nanoid;
+use op_alloy_network::Optimism;
+use tokio::sync::oneshot;
+
+use reth::{
+    args::{DatadirArgs, NetworkArgs, RpcServerArgs},
+    core::exit::NodeExitFuture,
+    tasks::TaskManager,
+};
+use reth_node_builder::{NodeBuilder, NodeConfig};
+use reth_optimism_chainspec::OpChainSpec;
+use reth_optimism_node::{
+    node::{OpAddOnsBuilder, OpPoolBuilder},
+    OpNode,
+};
+
+use crate::{
+    args::OpRbuilderArgs,
+    builders::{BuilderConfig, FlashblocksBuilder, PayloadBuilder, StandardBuilder},
+    tx::FBPooledTransaction,
+    tx_signer::Signer,
+};
+
+use super::{ChainDriver, ChainDriverExt, EngineApi, Ipc, BUILDER_PRIVATE_KEY};
+
+/// Represents a type that emulates a local in-process instance of the OP builder node.
+/// This node uses IPC as the communication channel for the RPC server Engine API.
+pub struct LocalInstance {
+    signer: Signer,
+    config: NodeConfig<OpChainSpec>,
+    task_manager: Option<TaskManager>,
+    exit_future: NodeExitFuture,
+    _node_handle: Box<dyn Any + Send>,
+}
+
+impl LocalInstance {
+    /// Creates a new local instance of the OP builder node with the given arguments.
+    /// This method does not prefund any accounts, so before sending any transactions
+    /// make sure that sender accounts are funded.
+    pub async fn new<P: PayloadBuilder>(args: OpRbuilderArgs) -> eyre::Result<Self> {
+        let mut args = args;
+        let task_manager = task_manager();
+        let config = node_config();
+        let op_node = OpNode::new(args.rollup_args.clone());
+        let (ready_tx, ready_rx) = oneshot::channel::<()>();
+        let signer = args.builder_signer.clone().unwrap_or_else(|| {
+            Signer::try_from_secret(
+                BUILDER_PRIVATE_KEY
+                    .parse()
+                    .expect("Invalid builder private key"),
+            )
+            .expect("Failed to create signer from private key")
+        });
+        args.builder_signer = Some(signer.clone());
+        let builder_config = BuilderConfig::<P::Config>::try_from(args.clone())
+            .expect("Failed to convert rollup args to builder config");
+
+        let node_builder = NodeBuilder::<_, OpChainSpec>::new(config.clone())
+            .testing_node(task_manager.executor())
+            .with_types::<OpNode>()
+            .with_components(
+                op_node
+                    .components()
+                    .pool(pool_component(&args))
+                    .payload(P::new_service(builder_config)?),
+            )
+            .with_add_ons(
+                OpAddOnsBuilder::default()
+                    .with_sequencer(op_node.args.sequencer.clone())
+                    .with_enable_tx_conditional(op_node.args.enable_tx_conditional)
+                    .build(),
+            )
+            .on_rpc_started(move |_, _| {
+                let _ = ready_tx.send(());
+                Ok(())
+            });
+
+        let node_handle = node_builder.launch().await?;
+        let exit_future = node_handle.node_exit_future;
+        let node_handle: Box<dyn Any + Send> = Box::new(node_handle.node);
+
+        // don't give the user an instance before we have a functioning RPC server
+        ready_rx.await.expect("Failed to receive ready signal");
+
+        Ok(Self {
+            signer,
+            config,
+            exit_future,
+            _node_handle: node_handle,
+            task_manager: Some(task_manager),
+        })
+    }
+
+    /// Creates new local instance of the OP builder node with the standard builder configuration.
+    /// This method prefunds the default accounts with 1 ETH each.
+    pub async fn standard() -> eyre::Result<Self> {
+        let instance = Self::new::<StandardBuilder>(Default::default()).await?;
+        let driver = ChainDriver::new(&instance).await?;
+        driver.fund_default_accounts().await?;
+        Ok(instance)
+    }
+
+    /// Creates new local instance of the OP builder node with the flashblocks builder configuration.
+    /// This method prefunds the default accounts with 1 ETH each.
+    pub async fn flashblocks() -> eyre::Result<Self> {
+        let instance = Self::new::<FlashblocksBuilder>(Default::default()).await?;
+        let driver = ChainDriver::new(&instance).await?;
+        driver.fund_default_accounts().await?;
+        Ok(instance)
+    }
+
+    pub const fn config(&self) -> &NodeConfig<OpChainSpec> {
+        &self.config
+    }
+
+    pub const fn signer(&self) -> &Signer {
+        &self.signer
+    }
+
+    pub fn rpc_ipc(&self) -> &str {
+        &self.config.rpc.ipcpath
+    }
+
+    pub fn auth_ipc(&self) -> &str {
+        &self.config.rpc.auth_ipc_path
+    }
+
+    pub fn engine_api(&self) -> EngineApi<Ipc> {
+        EngineApi::<Ipc>::with_ipc(self.auth_ipc())
+    }
+
+    pub async fn provider(&self) -> eyre::Result<RootProvider<Optimism>> {
+        ProviderBuilder::<Identity, Identity, Optimism>::default()
+            .connect_ipc(self.rpc_ipc().to_string().into())
+            .await
+            .map_err(|e| eyre::eyre!("Failed to connect to provider: {e}"))
+    }
+}
+
+impl Drop for LocalInstance {
+    fn drop(&mut self) {
+        if let Some(task_manager) = self.task_manager.take() {
+            task_manager.graceful_shutdown_with_timeout(Duration::from_secs(3));
+            std::fs::remove_dir_all(self.config().datadir().to_string()).unwrap_or_else(|e| {
+                panic!(
+                    "Failed to remove temporary data directory {}: {e}",
+                    self.config().datadir()
+                )
+            });
+        }
+    }
+}
+
+impl Future for LocalInstance {
+    type Output = eyre::Result<()>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        self.get_mut().exit_future.poll_unpin(cx)
+    }
+}
+
+fn node_config() -> NodeConfig<OpChainSpec> {
+    let tempdir = std::env::temp_dir();
+
+    let data_path = tempdir
+        .join(format!("rbuilder.{}.datadir", nanoid!()))
+        .to_path_buf();
+
+    std::fs::create_dir_all(&data_path).expect("Failed to create temporary data directory");
+
+    let rpc_ipc_path = tempdir
+        .join(format!("rbuilder.{}.rpc-ipc", nanoid!()))
+        .to_path_buf();
+
+    let auth_ipc_path = tempdir
+        .join(format!("rbuilder.{}.auth-ipc", nanoid!()))
+        .to_path_buf();
+
+    let mut rpc = RpcServerArgs::default().with_auth_ipc();
+    rpc.ws = false;
+    rpc.http = false;
+    rpc.auth_port = 0;
+    rpc.ipcpath = rpc_ipc_path.to_string_lossy().into();
+    rpc.auth_ipc_path = auth_ipc_path.to_string_lossy().into();
+
+    let mut network = NetworkArgs::default().with_unused_ports();
+    network.discovery.disable_discovery = true;
+
+    let datadir = DatadirArgs {
+        datadir: data_path
+            .to_string_lossy()
+            .parse()
+            .expect("Failed to parse data dir path"),
+        static_files_path: None,
+    };
+
+    NodeConfig::<OpChainSpec>::new(chain_spec())
+        .with_datadir_args(datadir)
+        .with_rpc(rpc)
+        .with_network(network)
+}
+
+fn chain_spec() -> Arc<OpChainSpec> {
+    static CHAIN_SPEC: LazyLock<Arc<OpChainSpec>> = LazyLock::new(|| {
+        let genesis = include_str!("./artifacts/genesis.json.tmpl");
+        let genesis = serde_json::from_str(genesis).expect("invalid genesis JSON");
+        let chain_spec = OpChainSpec::from_genesis(genesis);
+        Arc::new(chain_spec)
+    });
+
+    CHAIN_SPEC.clone()
+}
+
+fn task_manager() -> TaskManager {
+    TaskManager::new(tokio::runtime::Handle::current())
+}
+
+fn pool_component(args: &OpRbuilderArgs) -> OpPoolBuilder<FBPooledTransaction> {
+    let rollup_args = &args.rollup_args;
+    OpPoolBuilder::<FBPooledTransaction>::default()
+        .with_enable_tx_conditional(
+            // Revert protection uses the same internal pool logic as conditional transactions
+            // to garbage collect transactions out of the bundle range.
+            rollup_args.enable_tx_conditional || args.enable_revert_protection,
+        )
+        .with_supervisor(
+            rollup_args.supervisor_http.clone(),
+            rollup_args.supervisor_safety_level,
+        )
+}

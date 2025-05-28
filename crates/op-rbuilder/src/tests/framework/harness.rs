@@ -3,7 +3,7 @@ use super::{
     blocks::BlockGenerator,
     op::{OpRbuilderConfig, OpRethConfig},
     service::{self, Service, ServiceInstance},
-    TransactionBuilder, BUILDER_PRIVATE_KEY,
+    LocalInstance, TransactionBuilder, BUILDER_PRIVATE_KEY,
 };
 use alloy_eips::BlockNumberOrTag;
 use alloy_network::Network;
@@ -128,7 +128,7 @@ impl TestHarnessBuilder {
         let builder_log_path = builder.log_path.clone();
 
         Ok(TestHarness {
-            framework: framework,
+            framework,
             builder_auth_rpc_port,
             builder_http_port,
             validator_auth_rpc_port,
@@ -139,6 +139,7 @@ impl TestHarnessBuilder {
 
 pub struct TestHarness {
     framework: IntegrationFramework,
+    local_instance: LocalInstance,
     builder_auth_rpc_port: u16,
     builder_http_port: u16,
     validator_auth_rpc_port: u16,
@@ -170,10 +171,8 @@ impl TestHarness {
     }
 
     pub async fn block_generator(&self) -> eyre::Result<BlockGenerator> {
-        let engine_api = EngineApi::new_with_port(self.builder_auth_rpc_port).unwrap();
-        let validation_api = Some(EngineApi::new_with_port(self.validator_auth_rpc_port).unwrap());
-
-        let mut generator = BlockGenerator::new(engine_api, validation_api, false, 1, None);
+        let engine_api = self.local_instance.engine_api();
+        let mut generator = BlockGenerator::new(engine_api, None, false, 1, None);
         generator.init().await?;
 
         Ok(generator)

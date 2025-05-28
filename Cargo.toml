@@ -76,7 +76,8 @@ reth-rpc-layer = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.1" }
 reth-network-peers = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.1" }
 reth-testing-utils = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.1" }
 reth-node-builder = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.1" }
-reth-rpc-eth-types =  { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.1" }
+reth-rpc-eth-types = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.1" }
+reth-ipc = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.1" }
 
 # reth optimism
 reth-optimism-primitives = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.1" }
@@ -105,7 +106,11 @@ alloy-primitives = { version = "1.1.0", default-features = false }
 alloy-rlp = "0.3.10"
 alloy-chains = "0.2.0"
 alloy-evm = { version = "0.8.0", default-features = false }
-alloy-provider = { version = "1.0.3", features = ["ipc", "pubsub", "txpool-api"] }
+alloy-provider = { version = "1.0.3", features = [
+    "ipc",
+    "pubsub",
+    "txpool-api",
+] }
 alloy-pubsub = { version = "1.0.3" }
 alloy-eips = { version = "1.0.3" }
 alloy-rpc-types = { version = "1.0.3" }

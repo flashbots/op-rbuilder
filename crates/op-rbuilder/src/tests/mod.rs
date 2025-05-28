@@ -2,5 +2,5 @@
 mod framework;
 pub use framework::*;
 
-mod flashblocks;
-mod vanilla;
+//mod flashblocks;
+mod standard;

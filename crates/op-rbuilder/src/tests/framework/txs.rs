@@ -4,7 +4,7 @@ use crate::{
 };
 use alloy_consensus::TxEip1559;
 use alloy_eips::{eip2718::Encodable2718, BlockNumberOrTag};
-use alloy_primitives::{hex, Bytes};
+use alloy_primitives::{Address, Bytes, TxKind, U256};
 use alloy_provider::{PendingTransactionBuilder, Provider, RootProvider};
 use core::cmp::max;
 use op_alloy_consensus::{OpTxEnvelope, OpTypedTransaction};
@@ -48,8 +48,23 @@ impl TransactionBuilder {
         }
     }
 
+    pub fn with_to(mut self, to: Address) -> Self {
+        self.tx.to = TxKind::Call(to);
+        self
+    }
+
+    pub fn with_create(mut self) -> Self {
+        self.tx.to = TxKind::Create;
+        self
+    }
+
     pub fn with_key(mut self, key: u64) -> Self {
         self.key = Some(key);
+        self
+    }
+
+    pub fn with_value(mut self, value: u128) -> Self {
+        self.tx.value = U256::from(value);
         self
     }
 
@@ -90,11 +105,6 @@ impl TransactionBuilder {
 
     pub fn with_bundle(mut self, bundle_opts: BundleOpts) -> Self {
         self.bundle_opts = Some(bundle_opts);
-        self
-    }
-
-    pub fn with_revert(mut self) -> Self {
-        self.tx.input = hex!("60006000fd").into();
         self
     }
 
