@@ -5529,6 +5529,7 @@ version = "0.1.0"
 dependencies = [
  "alloy-consensus",
  "alloy-eips 1.0.3",
+ "alloy-json-rpc",
  "alloy-network",
  "alloy-op-evm",
  "alloy-primitives",

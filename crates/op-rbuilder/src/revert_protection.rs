@@ -8,12 +8,15 @@ use jsonrpsee::{
     proc_macros::rpc,
 };
 use op_alloy_rpc_types::OpTransactionReceipt;
-use reth::rpc::api::eth::{types::RpcTypes, RpcReceipt};
+use reth::rpc::api::eth::{types::RpcTypes, FullEthApiTypes, RpcBlock, RpcHeader, RpcReceipt, RpcTransaction};
 use reth_optimism_primitives::OpReceipt;
 use reth_optimism_txpool::{conditional::MaybeConditionalTransaction, OpPooledTransaction};
 use reth_provider::{ReceiptProvider, StateProviderFactory};
 use reth_rpc_eth_types::{utils::recover_raw_transaction, EthApiError};
 use reth_transaction_pool::{PoolTransaction, TransactionOrigin, TransactionPool};
+use alloy_json_rpc::RpcObject;
+use op_alloy_network::Optimism;
+use reth::rpc::eth::EthApiServer;
 
 // Namespace overrides for revert protection support
 #[cfg_attr(not(test), rpc(server, namespace = "eth"))]
@@ -24,10 +27,10 @@ pub trait EthApiOverride {
 }
 
 #[rpc(server, client, namespace = "eth")]
-pub trait EthApiOverrideReplacement<R: RpcTypes> {
+pub trait EthApiOverrideReplacement<R: RpcObject> {
     // Name TBD
     #[method(name = "getTransactionReceipt")]
-    async fn transaction_receipt(&self, hash: B256) -> RpcResult<Option<RpcReceipt<R>>>;
+    async fn transaction_receipt(&self, hash: B256) -> RpcResult<Option<R>>;
 }
 
 pub struct RevertProtectionExt<Pool, Provider, Network = op_alloy_network::Optimism> {
@@ -139,13 +142,12 @@ pub struct RevertProtectionEthAPI<Provider> {
 }
 
 #[async_trait]
-impl<Provider, R> EthApiOverrideReplacementServer<R> for RevertProtectionEthAPI<Provider>
+impl<Provider> EthApiOverrideReplacementServer<RpcReceipt<Optimism>> for RevertProtectionEthAPI<Provider>
 where
     Provider:
         StateProviderFactory + ReceiptProvider<Receipt = OpReceipt> + Send + Sync + Clone + 'static,
-    R: RpcTypes<Receipt = OpTransactionReceipt>,
 {
-    async fn transaction_receipt(&self, hash: B256) -> RpcResult<Option<RpcReceipt<R>>> {
+    async fn transaction_receipt(&self, hash: B256) -> RpcResult<Option<RpcReceipt<Optimism>>> {
         println!("transaction_receipt: {:?}", hash);
 
         panic!("bad");
