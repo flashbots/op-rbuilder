@@ -17,17 +17,21 @@ use reth_transaction_pool::{PoolTransaction, TransactionOrigin, TransactionPool}
 use std::num::NonZeroUsize;
 use std::sync::{Arc, Mutex};
 
+// We have to split the RPC modules in two sets because we have methods that both
+// replace an existing method and add a new one.
+// Tracking change in Reth here to have a single method for both:
+// https://github.com/paradigmxyz/reth/issues/16502
+
 // Namespace overrides for revert protection support
 #[cfg_attr(not(test), rpc(server, namespace = "eth"))]
 #[cfg_attr(test, rpc(server, client, namespace = "eth"))]
-pub trait EthApiOverride {
+pub trait EthApiExt {
     #[method(name = "sendBundle")]
     async fn send_bundle(&self, tx: Bundle) -> RpcResult<BundleResult>;
 }
 
 #[rpc(server, client, namespace = "eth")]
-pub trait EthApiOverrideReplacement<R: RpcObject> {
-    // Name TBD
+pub trait EthApiOverride<R: RpcObject> {
     #[method(name = "getTransactionReceipt")]
     async fn transaction_receipt(&self, hash: B256) -> RpcResult<Option<R>>;
 }
@@ -85,7 +89,7 @@ pub struct RevertProtectionBundleAPI<Pool, Provider> {
 }
 
 #[async_trait]
-impl<Pool, Provider> EthApiOverrideServer for RevertProtectionBundleAPI<Pool, Provider>
+impl<Pool, Provider> EthApiExtServer for RevertProtectionBundleAPI<Pool, Provider>
 where
     Pool: TransactionPool<Transaction = FBPooledTransaction> + Clone + 'static,
     Provider: StateProviderFactory + Send + Sync + Clone + 'static,
@@ -156,8 +160,7 @@ pub struct RevertProtectionEthAPI<Eth> {
 }
 
 #[async_trait]
-impl<Eth> EthApiOverrideReplacementServer<RpcReceipt<Eth::NetworkTypes>>
-    for RevertProtectionEthAPI<Eth>
+impl<Eth> EthApiOverrideServer<RpcReceipt<Eth::NetworkTypes>> for RevertProtectionEthAPI<Eth>
 where
     Eth: FullEthApi + Send + Sync + Clone + 'static,
 {

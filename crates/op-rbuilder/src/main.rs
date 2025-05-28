@@ -24,7 +24,7 @@ use metrics::{
 };
 use monitor_tx_pool::monitor_tx_pool;
 use revert_protection::{
-    create_shared_cache, EthApiOverrideReplacementServer, EthApiOverrideServer, RevertProtectionExt,
+    create_shared_cache, EthApiExtServer, EthApiOverrideServer, RevertProtectionExt,
 };
 use tx::FBPooledTransaction;
 
@@ -116,10 +116,6 @@ where
                         op_alloy_network::Optimism,
                     > = RevertProtectionExt::new(pool, provider, ctx.registry.eth_api().clone());
 
-                    // We have to split the RPC modules in two sets because we have methods that both
-                    // replace an existing method and add a new one.
-                    // Tracking change in Reth here to have a single method for both:
-                    // https://github.com/paradigmxyz/reth/issues/16502
                     ctx.modules
                         .merge_configured(revert_protection_ext.bundle_api().into_rpc())?;
                     ctx.modules.replace_configured(
