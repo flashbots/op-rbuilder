@@ -8,16 +8,13 @@ use jsonrpsee::{
     core::{async_trait, RpcResult},
     proc_macros::rpc,
 };
-use lru::LruCache;
+use moka::future::Cache;
 use reth::rpc::api::eth::{helpers::FullEthApi, RpcReceipt};
 use reth_optimism_txpool::{conditional::MaybeConditionalTransaction, OpPooledTransaction};
 use reth_provider::StateProviderFactory;
 use reth_rpc_eth_types::{utils::recover_raw_transaction, EthApiError};
 use reth_transaction_pool::{PoolTransaction, TransactionOrigin, TransactionPool};
-use std::{
-    num::NonZeroUsize,
-    sync::{Arc, Mutex},
-};
+use std::sync::Arc;
 
 // We have to split the RPC modules in two sets because we have methods that both
 // replace an existing method and add a new one.
@@ -67,7 +64,7 @@ where
         }
     }
 
-    pub fn eth_api(&self, reverted_cache: SharedLruCache<B256, ()>) -> RevertProtectionEthAPI<Eth> {
+    pub fn eth_api(&self, reverted_cache: SharedCache<B256, ()>) -> RevertProtectionEthAPI<Eth> {
         RevertProtectionEthAPI {
             eth_api: self.eth_api.clone(),
             reverted_cache,
@@ -75,14 +72,16 @@ where
     }
 }
 
-pub type SharedLruCache<K, V> = Arc<Mutex<LruCache<K, V>>>;
+// Replace SharedLruCache with Moka's async Cache
+pub type SharedCache<K, V> = Arc<Cache<K, V>>;
 
-pub fn create_shared_cache<K, V>(capacity: usize) -> SharedLruCache<K, V>
+pub fn create_shared_cache<K, V>(capacity: u64) -> SharedCache<K, V>
 where
-    K: std::hash::Hash + Eq,
+    K: std::hash::Hash + Eq + Send + Sync + 'static,
+    V: Clone + Send + Sync + 'static,
 {
-    let cache = LruCache::new(NonZeroUsize::new(capacity).unwrap());
-    Arc::new(Mutex::new(cache))
+    let cache = Cache::builder().max_capacity(capacity).build();
+    Arc::new(cache)
 }
 
 pub struct RevertProtectionBundleAPI<Pool, Provider> {
@@ -158,7 +157,7 @@ where
 
 pub struct RevertProtectionEthAPI<Eth> {
     eth_api: Eth,
-    reverted_cache: SharedLruCache<B256, ()>,
+    reverted_cache: SharedCache<B256, ()>,
 }
 
 #[async_trait]
@@ -174,8 +173,7 @@ where
             Some(receipt) => Ok(Some(receipt)),
             None => {
                 // Try to find the transaction in the reverted cache
-                let reverted_cache = self.reverted_cache.lock().unwrap();
-                if reverted_cache.contains(&hash) {
+                if self.reverted_cache.get(&hash).await.is_some() {
                     return Err(EthApiError::InvalidParams(
                         "the transaction was dropped from the pool".into(),
                     )

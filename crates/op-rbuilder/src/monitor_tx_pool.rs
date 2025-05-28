@@ -1,4 +1,4 @@
-use crate::{revert_protection::SharedLruCache, tx::FBPooledTransaction};
+use crate::{revert_protection::SharedCache, tx::FBPooledTransaction};
 use alloy_primitives::B256;
 use futures_util::StreamExt;
 use reth_transaction_pool::{AllTransactionsEvents, FullTransactionEvent};
@@ -6,16 +6,16 @@ use tracing::info;
 
 pub async fn monitor_tx_pool(
     mut new_transactions: AllTransactionsEvents<FBPooledTransaction>,
-    reverted_cache: SharedLruCache<B256, ()>,
+    reverted_cache: SharedCache<B256, ()>,
 ) {
     while let Some(event) = new_transactions.next().await {
-        transaction_event_log(event, &reverted_cache);
+        transaction_event_log(event, &reverted_cache).await;
     }
 }
 
-fn transaction_event_log(
+async fn transaction_event_log(
     event: FullTransactionEvent<FBPooledTransaction>,
-    reverted_cache: &SharedLruCache<B256, ()>,
+    reverted_cache: &SharedCache<B256, ()>,
 ) {
     match event {
         FullTransactionEvent::Pending(hash) => {
@@ -57,7 +57,7 @@ fn transaction_event_log(
         FullTransactionEvent::Discarded(hash) => {
             // add the transaction hash to the reverted cache to notify the
             // eth get transaction receipt method
-            reverted_cache.lock().unwrap().put(hash, ());
+            reverted_cache.insert(hash, ()).await;
 
             info!(
                 target = "monitoring",
