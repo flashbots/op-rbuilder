@@ -22,10 +22,9 @@ use metrics::{
     VersionInfo, BUILD_PROFILE_NAME, CARGO_PKG_VERSION, VERGEN_BUILD_TIMESTAMP,
     VERGEN_CARGO_FEATURES, VERGEN_CARGO_TARGET_TRIPLE, VERGEN_GIT_SHA,
 };
+use moka::future::Cache;
 use monitor_tx_pool::monitor_tx_pool;
-use revert_protection::{
-    create_shared_cache, EthApiExtServer, EthApiOverrideServer, RevertProtectionExt,
-};
+use revert_protection::{EthApiExtServer, EthApiOverrideServer, RevertProtectionExt};
 use tx::FBPooledTransaction;
 
 // Prefer jemalloc for performance reasons.
@@ -73,7 +72,7 @@ where
         let da_config = builder_config.da_config.clone();
         let rollup_args = builder_args.rollup_args;
         let op_node = OpNode::new(rollup_args.clone());
-        let reverted_cache = create_shared_cache(100);
+        let reverted_cache = Cache::builder().max_capacity(100).build();
         let reverted_cache_copy = reverted_cache.clone();
 
         let handle = builder

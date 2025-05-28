@@ -1,12 +1,13 @@
-use crate::{revert_protection::SharedCache, tx::FBPooledTransaction};
+use crate::tx::FBPooledTransaction;
 use alloy_primitives::B256;
 use futures_util::StreamExt;
+use moka::future::Cache;
 use reth_transaction_pool::{AllTransactionsEvents, FullTransactionEvent};
 use tracing::info;
 
 pub async fn monitor_tx_pool(
     mut new_transactions: AllTransactionsEvents<FBPooledTransaction>,
-    reverted_cache: SharedCache<B256, ()>,
+    reverted_cache: Cache<B256, ()>,
 ) {
     while let Some(event) = new_transactions.next().await {
         transaction_event_log(event, &reverted_cache).await;
@@ -15,7 +16,7 @@ pub async fn monitor_tx_pool(
 
 async fn transaction_event_log(
     event: FullTransactionEvent<FBPooledTransaction>,
-    reverted_cache: &SharedCache<B256, ()>,
+    reverted_cache: &Cache<B256, ()>,
 ) {
     match event {
         FullTransactionEvent::Pending(hash) => {
