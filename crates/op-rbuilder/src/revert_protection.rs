@@ -175,7 +175,7 @@ where
                 let reverted_cache = self.reverted_cache.lock().unwrap();
                 if reverted_cache.contains(&hash) {
                     return Err(EthApiError::InvalidParams(
-                        "the transaction was reverted and dropped from the pool".into(),
+                        "the transaction was dropped from the pool".into(),
                     )
                     .into());
                 } else {
