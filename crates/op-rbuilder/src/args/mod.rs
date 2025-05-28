@@ -1,4 +1,3 @@
-use crate::builders::BuilderMode;
 use clap::Parser;
 pub use op::OpRbuilderArgs;
 use playground::PlaygroundOptions;
@@ -15,9 +14,6 @@ pub trait CliExt {
     /// Populates the default values for the CLI arguments when the user specifies
     /// the `--builder.playground` flag.
     fn populate_defaults(self) -> Self;
-
-    /// Returns the builder mode that the node is started with.
-    fn builder_mode(&self) -> BuilderMode;
 
     /// Returns the Cli instance with the parsed command line arguments
     /// and defaults populated if applicable.
@@ -59,17 +55,6 @@ impl CliExt for Cli {
 
     fn parsed() -> Self {
         Cli::parse().populate_defaults()
-    }
-
-    /// Returns the type of builder implementation that the node is started with.
-    /// Currently supports `Standard` and `Flashblocks` modes.
-    fn builder_mode(&self) -> BuilderMode {
-        if let Commands::Node(ref node_command) = self.command {
-            if node_command.ext.enable_flashblocks {
-                return BuilderMode::Flashblocks;
-            }
-        }
-        BuilderMode::Standard
     }
 }
 

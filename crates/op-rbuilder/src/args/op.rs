@@ -5,7 +5,7 @@
 //! clap [Args](clap::Args) for optimism rollup configuration
 use std::path::PathBuf;
 
-use crate::tx_signer::Signer;
+use crate::{builders::BuilderMode, tx_signer::Signer};
 use reth_optimism_node::args::RollupArgs;
 
 /// Parameters for rollup configuration
@@ -75,6 +75,18 @@ pub struct OpRbuilderArgs {
     /// List or builders in the network that FCU would be propagated to separated by comma
     #[arg(long = "builder.engine-api-peers")]
     pub engine_peers: Option<String>,
+}
+
+impl OpRbuilderArgs {
+    /// Returns the type of builder implementation that the node is started with.
+    /// Currently supports `Standard` and `Flashblocks` modes.
+    pub fn builder_mode(&self) -> BuilderMode {
+        if self.enable_flashblocks {
+            BuilderMode::Flashblocks
+        } else {
+            BuilderMode::Standard
+        }
+    }
 }
 
 fn expand_path(s: &str) -> Result<PathBuf, String> {
