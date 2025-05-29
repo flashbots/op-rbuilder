@@ -1,21 +1,15 @@
 mod apis;
-//mod blocks;
 mod chain;
-//mod harness;
 mod instance;
 mod op;
-mod service;
 mod txs;
 mod utils;
 
 pub use apis::*;
-//pub use blocks::*;
 pub use chain::*;
 
-//pub use harness::*;
 pub use instance::*;
 pub use op::*;
-pub use service::*;
 use tracing_subscriber::{filter::filter_fn, prelude::*};
 pub use txs::*;
 pub use utils::*;
