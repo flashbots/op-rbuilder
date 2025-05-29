@@ -63,52 +63,52 @@ async fn data_availability_block_size_limit() -> eyre::Result<()> {
     Ok(())
 }
 
-// /// This test ensures that block will fill up to the limit.
-// /// Size of each transaction is 100000000
-// /// We will set limit to 3 txs and see that the builder will include 3 transactions.
-// /// We should not forget about builder transaction so we will spawn only 2 regular txs.
-// #[tokio::test]
-// async fn data_availability_block_fill() -> eyre::Result<()> {
-//     let harness = TestHarnessBuilder::new("data_availability_block_fill")
-//         .with_namespaces("admin,eth,miner")
-//         .build()
-//         .await?;
+/// This test ensures that block will fill up to the limit.
+/// Size of each transaction is 100000000
+/// We will set limit to 3 txs and see that the builder will include 3 transactions.
+/// We should not forget about builder transaction so we will spawn only 2 regular txs.
+#[tokio::test]
+async fn data_availability_block_fill() -> eyre::Result<()> {
+    let rbuilder = LocalInstance::standard().await?;
+    let driver = rbuilder.driver().await?;
 
-//     let mut generator = harness.block_generator().await?;
+    // Set block big enough so it could fit 3 transactions without tx size limit
+    let call = rbuilder
+        .provider().await?
+        .raw_request::<(i32, i32), bool>("miner_setMaxDASize".into(), (0, 100000000 * 3))
+        .await?;
+    assert!(call, "miner_setMaxDASize should be executed successfully");
 
-//     // Set block big enough so it could fit 3 transactions without tx size limit
-//     let call = harness
-//         .provider()?
-//         .raw_request::<(i32, i32), bool>("miner_setMaxDASize".into(), (0, 100000000 * 3))
-//         .await?;
-//     assert!(call, "miner_setMaxDASize should be executed successfully");
+    // We already have 2 so we will spawn one more to check that it won't be included (it won't fit
+    // because of builder tx)
+    let fit_tx_1 = driver
+        .transaction()
+        .with_max_priority_fee_per_gas(50)
+        .send()
+        .await?;
+    let fit_tx_2 = driver
+        .transaction()
+        .with_max_priority_fee_per_gas(50)
+        .send()
+        .await?;
+    let unfit_tx_3 = driver
+        .transaction()
+        .random_valid_transfer()
+        .send()
+        .await?;
 
-//     // We already have 2 so we will spawn one more to check that it won't be included (it won't fit
-//     // because of builder tx)
-//     let fit_tx_1 = harness
-//         .create_transaction()
-//         .with_max_priority_fee_per_gas(50)
-//         .send()
-//         .await?;
-//     let fit_tx_2 = harness
-//         .create_transaction()
-//         .with_max_priority_fee_per_gas(50)
-//         .send()
-//         .await?;
-//     let unfit_tx_3 = harness.create_transaction().send().await?;
+    let block = driver.build_new_block().await?;
+    // Now the first 2 txs will fit into the block
+    assert!(block.includes(fit_tx_1.tx_hash()), "tx should be in block");
+    assert!(block.includes(fit_tx_2.tx_hash()), "tx should be in block");
+    assert!(
+        !block.includes(unfit_tx_3.tx_hash()),
+        "unfit tx should not be in block"
+    );
+    assert!(
+        driver.latest().await?.transactions.len() == 4,
+        "builder + deposit + 2 valid txs should be in the block"
+    );
 
-//     let block = generator.generate_block().await?;
-//     // Now the first 2 txs will fit into the block
-//     assert!(block.includes(*fit_tx_1.tx_hash()), "tx should be in block");
-//     assert!(block.includes(*fit_tx_2.tx_hash()), "tx should be in block");
-//     assert!(
-//         block.not_includes(*unfit_tx_3.tx_hash()),
-//         "unfit tx should not be in block"
-//     );
-//     assert!(
-//         harness.latest_block().await.transactions.len() == 4,
-//         "builder + deposit + 2 valid txs should be in the block"
-//     );
-
-//     Ok(())
-// }
+    Ok(())
+}
