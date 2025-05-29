@@ -42,6 +42,7 @@ use super::{
 pub struct LocalInstance {
     signer: Signer,
     config: NodeConfig<OpChainSpec>,
+    args: OpRbuilderArgs,
     task_manager: Option<TaskManager>,
     exit_future: NodeExitFuture,
     _node_handle: Box<dyn Any + Send>,
@@ -143,6 +144,7 @@ impl LocalInstance {
             .expect("Failed to receive txpool ready signal");
 
         Ok(Self {
+            args,
             signer,
             config,
             exit_future,
@@ -172,6 +174,10 @@ impl LocalInstance {
 
     pub const fn config(&self) -> &NodeConfig<OpChainSpec> {
         &self.config
+    }
+
+    pub const fn args(&self) -> &OpRbuilderArgs {
+        &self.args
     }
 
     pub const fn signer(&self) -> &Signer {

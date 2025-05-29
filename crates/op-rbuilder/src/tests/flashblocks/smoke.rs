@@ -1,22 +1,28 @@
 use std::sync::Arc;
-
 use futures::StreamExt;
 use parking_lot::Mutex;
 use tokio::task::JoinHandle;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 use tokio_util::sync::CancellationToken;
-
-use crate::tests::TestHarnessBuilder;
+use crate::{
+    args::OpRbuilderArgs,
+    builders::FlashblocksBuilder,
+    tests::{LocalInstance, TransactionBuilderExt},
+    tx_signer::Signer,
+};
 
 #[tokio::test]
-#[ignore = "Flashblocks tests need more work"]
 async fn chain_produces_blocks() -> eyre::Result<()> {
-    let harness = TestHarnessBuilder::new("flashbots_chain_produces_blocks")
-        .with_flashblocks_ws_url("ws://localhost:1239")
-        .with_chain_block_time(2000)
-        .with_flashbots_block_time(200)
-        .build()
-        .await?;
+    let rbuilder = LocalInstance::new::<FlashblocksBuilder>(OpRbuilderArgs {
+        builder_signer: Some(Signer::random()),
+        enable_flashblocks: true,
+        flashblocks_ws_url: "0.0.0.0:1239".to_string(),
+        chain_block_time: 2000,
+        flashblock_block_time: 200,
+        ..Default::default()
+    })
+    .await?;
+    let driver = rbuilder.driver().await?;
 
     // Create a struct to hold received messages
     let received_messages = Arc::new(Mutex::new(Vec::new()));
@@ -41,15 +47,13 @@ async fn chain_produces_blocks() -> eyre::Result<()> {
         }
     });
 
-    let mut generator = harness.block_generator().await?;
-
     for _ in 0..10 {
         for _ in 0..5 {
             // send a valid transaction
-            let _ = harness.send_valid_transaction().await?;
+            let _ = driver.transaction().random_valid_transfer().send().await?;
         }
 
-        generator.generate_block().await?;
+        driver.build_new_block().await?;
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     }
 

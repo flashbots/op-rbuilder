@@ -10,7 +10,8 @@ async fn data_availability_tx_size_limit() -> eyre::Result<()> {
 
     // Set (max_tx_da_size, max_block_da_size), with this case block won't fit any transaction
     let call = rbuilder
-        .provider().await?
+        .provider()
+        .await?
         .raw_request::<(i32, i32), bool>("miner_setMaxDASize".into(), (1, 0))
         .await?;
     assert!(call, "miner_setMaxDASize should be executed successfully");
@@ -41,7 +42,8 @@ async fn data_availability_block_size_limit() -> eyre::Result<()> {
 
     // Set block da size to be small, so it won't include tx
     let call = rbuilder
-        .provider().await?
+        .provider()
+        .await?
         .raw_request::<(i32, i32), bool>("miner_setMaxDASize".into(), (0, 1))
         .await?;
     assert!(call, "miner_setMaxDASize should be executed successfully");
@@ -74,7 +76,8 @@ async fn data_availability_block_fill() -> eyre::Result<()> {
 
     // Set block big enough so it could fit 3 transactions without tx size limit
     let call = rbuilder
-        .provider().await?
+        .provider()
+        .await?
         .raw_request::<(i32, i32), bool>("miner_setMaxDASize".into(), (0, 100000000 * 3))
         .await?;
     assert!(call, "miner_setMaxDASize should be executed successfully");
@@ -91,11 +94,7 @@ async fn data_availability_block_fill() -> eyre::Result<()> {
         .with_max_priority_fee_per_gas(50)
         .send()
         .await?;
-    let unfit_tx_3 = driver
-        .transaction()
-        .random_valid_transfer()
-        .send()
-        .await?;
+    let unfit_tx_3 = driver.transaction().random_valid_transfer().send().await?;
 
     let block = driver.build_new_block().await?;
     // Now the first 2 txs will fit into the block
