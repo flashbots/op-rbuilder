@@ -1,7 +1,10 @@
-use crate::{builders::StandardBuilder, tests::{
-    default_node_config, BlockTransactionsExt, ChainDriverExt, LocalInstance,
-    TransactionBuilderExt, ONE_ETH,
-}};
+use crate::{
+    builders::StandardBuilder,
+    tests::{
+        default_node_config, BlockTransactionsExt, ChainDriverExt, LocalInstance,
+        TransactionBuilderExt, ONE_ETH,
+    },
+};
 use reth::args::TxPoolArgs;
 use reth_node_builder::NodeConfig;
 use reth_optimism_chainspec::OpChainSpec;

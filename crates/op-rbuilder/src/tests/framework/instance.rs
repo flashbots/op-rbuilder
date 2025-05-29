@@ -87,6 +87,7 @@ impl LocalInstance {
         args.rollup_args.enable_tx_conditional = true;
         let builder_config = BuilderConfig::<P::Config>::try_from(args.clone())
             .expect("Failed to convert rollup args to builder config");
+        let da_config = builder_config.da_config.clone();
 
         let node_builder = NodeBuilder::<_, OpChainSpec>::new(config.clone())
             .testing_node(task_manager.executor())
@@ -101,6 +102,7 @@ impl LocalInstance {
                 OpAddOnsBuilder::default()
                     .with_sequencer(op_node.args.sequencer.clone())
                     .with_enable_tx_conditional(op_node.args.enable_tx_conditional)
+                    .with_da_config(da_config)
                     .build(),
             )
             .extend_rpc_modules(move |ctx| {
