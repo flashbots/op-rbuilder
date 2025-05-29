@@ -1,15 +1,22 @@
 use crate::{
-    primitives::bundle::{Bundle, BundleResult}, tx::FBPooledTransaction, tx_signer::Signer
+    primitives::bundle::{Bundle, BundleResult},
+    tx::FBPooledTransaction,
+    tx_signer::Signer,
 };
 use alloy_consensus::TxEip1559;
 use alloy_eips::{eip2718::Encodable2718, BlockNumberOrTag};
 use alloy_primitives::{Address, Bytes, TxHash, TxKind, U256};
 use alloy_provider::{PendingTransactionBuilder, Provider, RootProvider};
-use reth_transaction_pool::AllTransactionsEvents;
 use core::cmp::max;
+use dashmap::DashMap;
+use futures::StreamExt;
 use op_alloy_consensus::{OpTxEnvelope, OpTypedTransaction};
 use op_alloy_network::Optimism;
 use reth_primitives::Recovered;
+use reth_transaction_pool::{AllTransactionsEvents, FullTransactionEvent, TransactionEvent};
+use std::{collections::VecDeque, sync::Arc};
+use tokio::sync::watch;
+use tracing::debug;
 
 use alloy_eips::eip1559::MIN_PROTOCOL_BASE_FEE;
 
@@ -192,34 +199,132 @@ pub enum TransactionStatus {
     Dropped,
 }
 
+impl TransactionStatus {
+    pub fn is_pending(&self) -> bool {
+        matches!(self, TransactionStatus::Pending)
+    }
 
-pub struct TransactionPoolObserver;
+    pub fn is_queued(&self) -> bool {
+        matches!(self, TransactionStatus::Queued)
+    }
+
+    pub fn is_dropped(&self) -> bool {
+        matches!(self, TransactionStatus::Dropped)
+    }
+}
+
+type ObservationsMap = DashMap<TxHash, VecDeque<TransactionEvent>>;
+
+pub struct TransactionPoolObserver {
+    /// Stores a mapping of all observed transactions to their history of events.
+    observations: Arc<ObservationsMap>,
+
+    /// Fired when this type is dropped, giving a signal to the listener loop
+    /// to stop listening for events.
+    term: Option<watch::Sender<bool>>,
+}
+
+impl Drop for TransactionPoolObserver {
+    fn drop(&mut self) {
+        // Signal the listener loop to stop listening for events
+        if let Some(term) = self.term.take() {
+            let _ = term.send(true);
+        }
+    }
+}
 
 impl TransactionPoolObserver {
     pub fn new(stream: AllTransactionsEvents<FBPooledTransaction>) -> Self {
-        Self
+        let mut stream = stream;
+        let observations = Arc::new(ObservationsMap::new());
+        let observations_clone = Arc::clone(&observations);
+        let (term, mut term_rx) = watch::channel(false);
+
+        tokio::spawn(async move {
+            let observations = observations_clone;
+
+            loop {
+                tokio::select! {
+                    _ = term_rx.changed() => {
+                        if *term_rx.borrow() {
+                            debug!("Transaction pool observer terminated.");
+                            return;
+                        }
+                    }
+                    tx_event = stream.next() => {
+                        match tx_event {
+                            Some(FullTransactionEvent::Pending(hash)) => {
+                                tracing::debug!("Transaction pending: {hash}");
+                                observations.entry(hash).or_default().push_back(TransactionEvent::Pending);
+                            },
+                            Some(FullTransactionEvent::Queued(hash)) => {
+                                tracing::debug!("Transaction queued: {hash}");
+                                observations.entry(hash).or_default().push_back(TransactionEvent::Queued);
+                            },
+                            Some(FullTransactionEvent::Mined { tx_hash, block_hash }) => {
+                                tracing::debug!("Transaction mined: {tx_hash} in block {block_hash}");
+                                observations.entry(tx_hash).or_default().push_back(TransactionEvent::Mined(block_hash));
+                            },
+                            Some(FullTransactionEvent::Replaced { transaction, replaced_by }) => {
+                                tracing::debug!("Transaction replaced: {transaction:?} by {replaced_by}");
+                                observations.entry(*transaction.hash()).or_default().push_back(TransactionEvent::Replaced(replaced_by));
+                            },
+                            Some(FullTransactionEvent::Discarded(hash)) => {
+                                tracing::debug!("Transaction discarded: {hash}");
+                                observations.entry(hash).or_default().push_back(TransactionEvent::Discarded);
+                            },
+                            Some(FullTransactionEvent::Invalid(hash)) => {
+                                tracing::debug!("Transaction invalid: {hash}");
+                                observations.entry(hash).or_default().push_back(TransactionEvent::Invalid);
+                            },
+                            Some(FullTransactionEvent::Propagated(_)) => {},
+                            None => {},
+                        }
+                    }
+                }
+            }
+        });
+
+        Self {
+            observations,
+            term: Some(term),
+        }
     }
 
-    pub fn current_status(&self, _txhash: TxHash) -> TransactionStatus {
-        TransactionStatus::NotFound
+    pub fn tx_status(&self, txhash: TxHash) -> Option<TransactionEvent> {
+        self.observations
+            .get(&txhash)
+            .map(|history| history.back().cloned())
+            .flatten()
     }
 
     pub fn is_pending(&self, txhash: TxHash) -> bool {
-        matches!(self.current_status(txhash), TransactionStatus::Pending)
+        matches!(self.tx_status(txhash), Some(TransactionEvent::Pending))
     }
 
     pub fn is_queued(&self, txhash: TxHash) -> bool {
-        matches!(self.current_status(txhash), TransactionStatus::Queued)
+        matches!(self.tx_status(txhash), Some(TransactionEvent::Queued))
     }
 
     pub fn is_dropped(&self, txhash: TxHash) -> bool {
-        matches!(self.current_status(txhash), TransactionStatus::Dropped)
+        matches!(self.tx_status(txhash), Some(TransactionEvent::Discarded))
+    }
+
+    /// Returns the history of pool events for a transaction.
+    pub fn history(&self, txhash: TxHash) -> Option<Vec<TransactionEvent>> {
+        self.observations
+            .get(&txhash)
+            .map(|history| history.iter().cloned().collect())
+    }
+
+    pub fn print_all(&self) {
+        tracing::debug!("TxPool {:#?}", self.observations);
     }
 
     pub fn exists(&self, txhash: TxHash) -> bool {
         matches!(
-            self.current_status(txhash),
-            TransactionStatus::Pending | TransactionStatus::Queued
+            self.tx_status(txhash),
+            Some(TransactionEvent::Pending) | Some(TransactionEvent::Queued)
         )
     }
 }

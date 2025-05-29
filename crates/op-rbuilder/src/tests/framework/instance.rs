@@ -1,3 +1,4 @@
+use alloy_provider::{Identity, ProviderBuilder, RootProvider};
 use core::{
     any::Any,
     future::Future,
@@ -5,12 +6,11 @@ use core::{
     task::{Context, Poll},
     time::Duration,
 };
-use std::sync::{Arc, LazyLock};
-use reth_transaction_pool::{AllTransactionsEvents, TransactionPool};
-use alloy_provider::{Identity, ProviderBuilder, RootProvider};
 use futures::FutureExt;
 use nanoid::nanoid;
 use op_alloy_network::Optimism;
+use reth_transaction_pool::{AllTransactionsEvents, TransactionPool};
+use std::sync::{Arc, LazyLock};
 use tokio::sync::oneshot;
 
 use reth::{
@@ -26,10 +26,16 @@ use reth_optimism_node::{
 };
 
 use crate::{
-    args::OpRbuilderArgs, builders::{BuilderConfig, FlashblocksBuilder, PayloadBuilder, StandardBuilder}, revert_protection::{EthApiOverrideServer, RevertProtectionExt}, tx::FBPooledTransaction, tx_signer::Signer
+    args::OpRbuilderArgs,
+    builders::{BuilderConfig, FlashblocksBuilder, PayloadBuilder, StandardBuilder},
+    revert_protection::{EthApiOverrideServer, RevertProtectionExt},
+    tx::FBPooledTransaction,
+    tx_signer::Signer,
 };
 
-use super::{ChainDriver, ChainDriverExt, EngineApi, Ipc, TransactionPoolObserver, BUILDER_PRIVATE_KEY};
+use super::{
+    ChainDriver, ChainDriverExt, EngineApi, Ipc, TransactionPoolObserver, BUILDER_PRIVATE_KEY,
+};
 
 /// Represents a type that emulates a local in-process instance of the OP builder node.
 /// This node uses IPC as the communication channel for the RPC server Engine API.
@@ -39,7 +45,7 @@ pub struct LocalInstance {
     task_manager: Option<TaskManager>,
     exit_future: NodeExitFuture,
     _node_handle: Box<dyn Any + Send>,
-    pool_observer: TransactionPoolObserver
+    pool_observer: TransactionPoolObserver,
 }
 
 impl LocalInstance {
@@ -51,7 +57,11 @@ impl LocalInstance {
         let task_manager = task_manager();
         let config = node_config();
         let op_node = OpNode::new(args.rollup_args.clone());
-        let (ready_tx, ready_rx) = oneshot::channel::<()>();
+
+        let (rpc_ready_tx, rpc_ready_rx) = oneshot::channel::<()>();
+        let (txpool_ready_tx, txpool_ready_rx) =
+            oneshot::channel::<AllTransactionsEvents<FBPooledTransaction>>();
+
         let signer = args.builder_signer.clone().unwrap_or_else(|| {
             Signer::try_from_secret(
                 BUILDER_PRIVATE_KEY
@@ -61,6 +71,7 @@ impl LocalInstance {
             .expect("Failed to create signer from private key")
         });
         args.builder_signer = Some(signer.clone());
+        args.rollup_args.enable_tx_conditional = true;
         let builder_config = BuilderConfig::<P::Config>::try_from(args.clone())
             .expect("Failed to convert rollup args to builder config");
         println!("Builder config: {builder_config:#?}");
@@ -94,18 +105,27 @@ impl LocalInstance {
                 Ok(())
             })
             .on_rpc_started(move |_, _| {
-                let _ = ready_tx.send(());
+                let _ = rpc_ready_tx.send(());
+                Ok(())
+            })
+            .on_node_started(move |ctx| {
+                let _ = txpool_ready_tx
+                    .send(ctx.pool.all_transactions_event_listener())
+                    .expect("Failed to send txpool ready signal");
+
                 Ok(())
             });
 
         let node_handle = node_builder.launch().await?;
         let exit_future = node_handle.node_exit_future;
         let boxed_handle = Box::new(node_handle.node);
-        let pool_monitor: AllTransactionsEvents<FBPooledTransaction> = boxed_handle.pool.all_transactions_event_listener();
         let node_handle: Box<dyn Any + Send> = boxed_handle;
 
-        // don't give the user an instance before we have a functioning RPC server
-        ready_rx.await.expect("Failed to receive ready signal");
+        // Wait for all required components to be ready
+        rpc_ready_rx.await.expect("Failed to receive ready signal");
+        let pool_monitor = txpool_ready_rx
+            .await
+            .expect("Failed to receive txpool ready signal");
 
         Ok(Self {
             signer,
@@ -195,19 +215,20 @@ impl Future for LocalInstance {
 
 fn node_config() -> NodeConfig<OpChainSpec> {
     let tempdir = std::env::temp_dir();
+    let random_id = nanoid!();
 
     let data_path = tempdir
-        .join(format!("rbuilder.{}.datadir", nanoid!()))
+        .join(format!("rbuilder.{random_id}.datadir"))
         .to_path_buf();
 
     std::fs::create_dir_all(&data_path).expect("Failed to create temporary data directory");
 
     let rpc_ipc_path = tempdir
-        .join(format!("rbuilder.{}.rpc-ipc", nanoid!()))
+        .join(format!("rbuilder.{random_id}.rpc-ipc"))
         .to_path_buf();
 
     let auth_ipc_path = tempdir
-        .join(format!("rbuilder.{}.auth-ipc", nanoid!()))
+        .join(format!("rbuilder.{random_id}.auth-ipc"))
         .to_path_buf();
 
     let mut rpc = RpcServerArgs::default().with_auth_ipc();

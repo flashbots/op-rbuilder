@@ -16,6 +16,7 @@ pub use chain::*;
 pub use instance::*;
 pub use op::*;
 pub use service::*;
+use tracing_subscriber::{filter::filter_fn, prelude::*};
 pub use txs::*;
 pub use utils::*;
 
@@ -45,9 +46,17 @@ fn init_tests_logging() {
             _ => return,
         };
 
-        tracing_subscriber::fmt()
-            .with_max_level(level)
-            .with_test_writer()
+        // let prefix_blacklist = &["alloy_transport_ipc", "storage::db::mdbx"];
+        let prefix_blacklist = &["storage::db::mdbx"];
+
+        tracing_subscriber::registry()
+            .with(tracing_subscriber::fmt::layer())
+            .with(filter_fn(move |metadata| {
+                metadata.level() <= &level
+                    && !prefix_blacklist
+                        .iter()
+                        .any(|prefix| metadata.target().starts_with(prefix))
+            }))
             .init();
     }
 }
