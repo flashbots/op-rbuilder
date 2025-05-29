@@ -4,4 +4,4 @@
 mod ordering;
 mod revert;
 mod smoke;
-//mod txpool;
+mod txpool;

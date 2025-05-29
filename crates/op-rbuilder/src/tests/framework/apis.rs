@@ -2,7 +2,6 @@ use super::DEFAULT_JWT_TOKEN;
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::B256;
 use alloy_rpc_types_engine::{ExecutionPayloadV3, ForkchoiceUpdated, PayloadStatus};
-use tracing::debug;
 use core::{future::Future, marker::PhantomData};
 use jsonrpsee::{
     core::{client::SubscriptionClientT, RpcResult},
@@ -14,6 +13,7 @@ use reth_optimism_node::OpEngineTypes;
 use reth_payload_builder::PayloadId;
 use reth_rpc_layer::{AuthClientLayer, JwtSecret};
 use serde_json::Value;
+use tracing::debug;
 
 #[derive(Clone, Debug)]
 pub enum Address {

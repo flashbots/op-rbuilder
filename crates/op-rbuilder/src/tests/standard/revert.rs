@@ -3,7 +3,13 @@ use op_alloy_network::Optimism;
 use reth_transaction_pool::TransactionEvent;
 
 use crate::{
-    args::OpRbuilderArgs, builders::StandardBuilder, primitives::bundle::MAX_BLOCK_RANGE_BLOCKS, tests::{BlockTransactionsExt, BundleOpts, ChainDriver, ChainDriverExt, LocalInstance, TransactionBuilderExt, ONE_ETH}
+    args::OpRbuilderArgs,
+    builders::StandardBuilder,
+    primitives::bundle::MAX_BLOCK_RANGE_BLOCKS,
+    tests::{
+        BlockTransactionsExt, BundleOpts, ChainDriver, ChainDriverExt, LocalInstance,
+        TransactionBuilderExt, ONE_ETH,
+    },
 };
 
 /// If revert protection is disabled, the transactions that revert are included in the block.
@@ -144,7 +150,10 @@ async fn revert_protection_bundle() -> eyre::Result<()> {
         .await?;
 
     let block2 = driver.build_new_block().await?; // Block 2
-    assert!(block2.transactions.hashes().includes(valid_bundle.tx_hash()));
+    assert!(block2
+        .transactions
+        .hashes()
+        .includes(valid_bundle.tx_hash()));
 
     let bundle_opts = BundleOpts {
         block_number_max: Some(4),
@@ -170,7 +179,7 @@ async fn revert_protection_bundle() -> eyre::Result<()> {
 
     driver.build_new_block().await?; // Block 5
     assert!(rbuilder.pool().is_dropped(*reverted_bundle.tx_hash()));
-    
+
     Ok(())
 }
 
@@ -235,7 +244,11 @@ async fn revert_protection_allow_reverted_transactions_without_bundle() -> eyre:
 
     for _ in 0..10 {
         let valid_tx = driver.transaction().random_valid_transfer().send().await?;
-        let reverting_tx = driver.transaction().random_reverting_transaction().send().await?;
+        let reverting_tx = driver
+            .transaction()
+            .random_reverting_transaction()
+            .send()
+            .await?;
         let block = driver.build_new_block().await?;
 
         assert!(block.includes(valid_tx.tx_hash()));

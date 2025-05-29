@@ -49,13 +49,26 @@ pub struct LocalInstance {
 }
 
 impl LocalInstance {
-    /// Creates a new local instance of the OP builder node with the given arguments.
+    /// Creates a new local instance of the OP builder node with the given arguments,
+    /// with the default Reth node configuration.
+    ///
     /// This method does not prefund any accounts, so before sending any transactions
     /// make sure that sender accounts are funded.
     pub async fn new<P: PayloadBuilder>(args: OpRbuilderArgs) -> eyre::Result<Self> {
+        Self::new_with_config::<P>(args, default_node_config()).await
+    }
+
+    /// Creates a new local instance of the OP builder node with the given arguments,
+    /// with a given Reth node configuration.
+    ///
+    /// This method does not prefund any accounts, so before sending any transactions
+    /// make sure that sender accounts are funded.
+    pub async fn new_with_config<P: PayloadBuilder>(
+        args: OpRbuilderArgs,
+        config: NodeConfig<OpChainSpec>,
+    ) -> eyre::Result<Self> {
         let mut args = args;
         let task_manager = task_manager();
-        let config = node_config();
         let op_node = OpNode::new(args.rollup_args.clone());
 
         let (rpc_ready_tx, rpc_ready_rx) = oneshot::channel::<()>();
@@ -74,7 +87,7 @@ impl LocalInstance {
         args.rollup_args.enable_tx_conditional = true;
         let builder_config = BuilderConfig::<P::Config>::try_from(args.clone())
             .expect("Failed to convert rollup args to builder config");
-        
+
         let node_builder = NodeBuilder::<_, OpChainSpec>::new(config.clone())
             .testing_node(task_manager.executor())
             .with_types::<OpNode>()
@@ -213,7 +226,7 @@ impl Future for LocalInstance {
     }
 }
 
-fn node_config() -> NodeConfig<OpChainSpec> {
+pub fn default_node_config() -> NodeConfig<OpChainSpec> {
     let tempdir = std::env::temp_dir();
     let random_id = nanoid!();
 

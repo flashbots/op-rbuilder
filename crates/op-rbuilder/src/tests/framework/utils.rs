@@ -1,9 +1,9 @@
 use alloy_eips::Encodable2718;
 use alloy_primitives::{hex, Address, TxKind, B256, U256};
 use alloy_rpc_types_eth::{Block, BlockTransactionHashes};
-use op_alloy_rpc_types::Transaction;
 use core::future::Future;
 use op_alloy_consensus::{OpTypedTransaction, TxDeposit};
+use op_alloy_rpc_types::Transaction;
 
 use crate::{tests::ONE_ETH, tx_signer::Signer};
 
@@ -79,7 +79,6 @@ impl ChainDriverExt for super::ChainDriver {
         Ok(())
     }
 }
-
 
 pub trait BlockTransactionsExt {
     fn includes(&self, tx_hash: &B256) -> bool;

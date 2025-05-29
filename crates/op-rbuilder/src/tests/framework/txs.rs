@@ -310,6 +310,25 @@ impl TransactionPoolObserver {
         matches!(self.tx_status(txhash), Some(TransactionEvent::Discarded))
     }
 
+    pub fn count(&self, status: TransactionEvent) -> usize {
+        self.observations
+            .iter()
+            .filter(|tx| tx.value().back() == Some(&status))
+            .count()
+    }
+
+    pub fn pending_count(&self) -> usize {
+        self.count(TransactionEvent::Pending)
+    }
+
+    pub fn queued_count(&self) -> usize {
+        self.count(TransactionEvent::Queued)
+    }
+
+    pub fn dropped_count(&self) -> usize {
+        self.count(TransactionEvent::Discarded)
+    }
+
     /// Returns the history of pool events for a transaction.
     pub fn history(&self, txhash: TxHash) -> Option<Vec<TransactionEvent>> {
         self.observations
