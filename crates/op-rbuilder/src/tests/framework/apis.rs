@@ -2,6 +2,7 @@ use super::DEFAULT_JWT_TOKEN;
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::B256;
 use alloy_rpc_types_engine::{ExecutionPayloadV3, ForkchoiceUpdated, PayloadStatus};
+use tracing::debug;
 use core::{future::Future, marker::PhantomData};
 use jsonrpsee::{
     core::{client::SubscriptionClientT, RpcResult},
@@ -142,7 +143,7 @@ impl<P: Protocol> EngineApi<P> {
         &self,
         payload_id: PayloadId,
     ) -> eyre::Result<<OpEngineTypes as EngineTypes>::ExecutionPayloadEnvelopeV3> {
-        println!(
+        debug!(
             "Fetching payload with id: {} at {}",
             payload_id,
             chrono::Utc::now()
@@ -160,7 +161,7 @@ impl<P: Protocol> EngineApi<P> {
         versioned_hashes: Vec<B256>,
         parent_beacon_block_root: B256,
     ) -> eyre::Result<PayloadStatus> {
-        println!("Submitting new payload at {}...", chrono::Utc::now());
+        debug!("Submitting new payload at {}...", chrono::Utc::now());
         Ok(EngineApiClient::<OpEngineTypes>::new_payload_v3(
             &self.client().await,
             payload,
@@ -176,7 +177,7 @@ impl<P: Protocol> EngineApi<P> {
         new_head: B256,
         payload_attributes: Option<<OpEngineTypes as PayloadTypes>::PayloadAttributes>,
     ) -> eyre::Result<ForkchoiceUpdated> {
-        println!("Updating forkchoice at {}...", chrono::Utc::now());
+        debug!("Updating forkchoice at {}...", chrono::Utc::now());
         Ok(EngineApiClient::<OpEngineTypes>::fork_choice_updated_v3(
             &self.client().await,
             ForkchoiceState {
@@ -217,9 +218,9 @@ pub async fn generate_genesis(output: Option<String>) -> eyre::Result<()> {
     // Write the result to the output file
     if let Some(output) = output {
         std::fs::write(&output, serde_json::to_string_pretty(&genesis)?)?;
-        println!("Generated genesis file at: {output}");
+        debug!("Generated genesis file at: {output}");
     } else {
-        println!("{}", serde_json::to_string_pretty(&genesis)?);
+        debug!("{}", serde_json::to_string_pretty(&genesis)?);
     }
 
     Ok(())

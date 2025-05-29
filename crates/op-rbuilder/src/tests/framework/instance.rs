@@ -74,7 +74,7 @@ impl LocalInstance {
         args.rollup_args.enable_tx_conditional = true;
         let builder_config = BuilderConfig::<P::Config>::try_from(args.clone())
             .expect("Failed to convert rollup args to builder config");
-        println!("Builder config: {builder_config:#?}");
+        
         let node_builder = NodeBuilder::<_, OpChainSpec>::new(config.clone())
             .testing_node(task_manager.executor())
             .with_types::<OpNode>()
