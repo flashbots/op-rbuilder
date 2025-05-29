@@ -1,5 +1,4 @@
 use alloy_provider::{Identity, ProviderBuilder, RootProvider};
-use reth_optimism_cli::chainspec::OpChainSpecParser;
 use core::{
     any::Any,
     future::Future,
@@ -15,11 +14,13 @@ use std::sync::{Arc, LazyLock};
 use tokio::sync::oneshot;
 
 use reth::{
-    args::{DatadirArgs, NetworkArgs, RpcServerArgs}, core::exit::NodeExitFuture, tasks::TaskManager
+    args::{DatadirArgs, NetworkArgs, RpcServerArgs},
+    core::exit::NodeExitFuture,
+    tasks::TaskManager,
 };
-use reth_optimism_cli::commands::Commands;
 use reth_node_builder::{NodeBuilder, NodeConfig};
 use reth_optimism_chainspec::OpChainSpec;
+use reth_optimism_cli::commands::Commands;
 use reth_optimism_node::{
     node::{OpAddOnsBuilder, OpPoolBuilder},
     OpNode,

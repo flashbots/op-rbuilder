@@ -1,15 +1,15 @@
-use std::sync::Arc;
-use futures::StreamExt;
-use parking_lot::Mutex;
-use tokio::task::JoinHandle;
-use tokio_tungstenite::{connect_async, tungstenite::Message};
-use tokio_util::sync::CancellationToken;
 use crate::{
     args::OpRbuilderArgs,
     builders::FlashblocksBuilder,
     tests::{LocalInstance, TransactionBuilderExt},
     tx_signer::Signer,
 };
+use futures::StreamExt;
+use parking_lot::Mutex;
+use std::sync::Arc;
+use tokio::task::JoinHandle;
+use tokio_tungstenite::{connect_async, tungstenite::Message};
+use tokio_util::sync::CancellationToken;
 
 #[tokio::test]
 async fn chain_produces_blocks() -> eyre::Result<()> {
