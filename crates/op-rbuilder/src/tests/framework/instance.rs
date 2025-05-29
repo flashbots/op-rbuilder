@@ -1,4 +1,5 @@
 use alloy_provider::{Identity, ProviderBuilder, RootProvider};
+use reth_optimism_cli::chainspec::OpChainSpecParser;
 use core::{
     any::Any,
     future::Future,
@@ -14,10 +15,9 @@ use std::sync::{Arc, LazyLock};
 use tokio::sync::oneshot;
 
 use reth::{
-    args::{DatadirArgs, NetworkArgs, RpcServerArgs},
-    core::exit::NodeExitFuture,
-    tasks::TaskManager,
+    args::{DatadirArgs, NetworkArgs, RpcServerArgs}, core::exit::NodeExitFuture, tasks::TaskManager
 };
+use reth_optimism_cli::commands::Commands;
 use reth_node_builder::{NodeBuilder, NodeConfig};
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_node::{
@@ -32,6 +32,8 @@ use crate::{
     tx::FBPooledTransaction,
     tx_signer::Signer,
 };
+
+use clap::Parser;
 
 use super::{
     ChainDriver, ChainDriverExt, EngineApi, Ipc, TransactionPoolObserver, BUILDER_PRIVATE_KEY,
@@ -157,7 +159,11 @@ impl LocalInstance {
     /// Creates new local instance of the OP builder node with the standard builder configuration.
     /// This method prefunds the default accounts with 1 ETH each.
     pub async fn standard() -> eyre::Result<Self> {
-        let instance = Self::new::<StandardBuilder>(Default::default()).await?;
+        let args = crate::args::Cli::parse_from(["dummy", "node"]);
+        let Commands::Node(ref node_command) = args.command else {
+            unreachable!()
+        };
+        let instance = Self::new::<StandardBuilder>(node_command.ext.clone()).await?;
         let driver = ChainDriver::new(&instance).await?;
         driver.fund_default_accounts().await?;
         Ok(instance)
@@ -166,7 +172,11 @@ impl LocalInstance {
     /// Creates new local instance of the OP builder node with the flashblocks builder configuration.
     /// This method prefunds the default accounts with 1 ETH each.
     pub async fn flashblocks() -> eyre::Result<Self> {
-        let instance = Self::new::<FlashblocksBuilder>(Default::default()).await?;
+        let args = crate::args::Cli::parse_from(["dummy", "node"]);
+        let Commands::Node(ref node_command) = args.command else {
+            unreachable!()
+        };
+        let instance = Self::new::<FlashblocksBuilder>(node_command.ext.clone()).await?;
         let driver = ChainDriver::new(&instance).await?;
         driver.fund_default_accounts().await?;
         Ok(instance)

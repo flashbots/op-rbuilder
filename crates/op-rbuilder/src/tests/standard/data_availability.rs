@@ -33,6 +33,38 @@ async fn data_availability_tx_size_limit() -> eyre::Result<()> {
     Ok(())
 }
 
+/// This test ensures that the transaction size limit is respected.
+/// We will set limit to 1 byte and see that the builder will not include any transactions.
+#[tokio::test]
+async fn data_availability_tx_size_limit_fb() -> eyre::Result<()> {
+    let rbuilder = LocalInstance::flashblocks().await?;
+    let driver = rbuilder.driver().await?;
+
+    // Set (max_tx_da_size, max_block_da_size), with this case block won't fit any transaction
+    let call = rbuilder
+        .provider()
+        .await?
+        .raw_request::<(i32, i32), bool>("miner_setMaxDASize".into(), (1, 0))
+        .await?;
+    assert!(call, "miner_setMaxDASize should be executed successfully");
+
+    let unfit_tx = driver
+        .transaction()
+        .random_valid_transfer()
+        .with_max_priority_fee_per_gas(50)
+        .send()
+        .await?;
+    let block = driver.build_new_block().await?;
+
+    // tx should not be included because we set the tx_size_limit to 1
+    assert!(
+        !block.includes(unfit_tx.tx_hash()),
+        "transaction should not be included in the block"
+    );
+
+    Ok(())
+}
+
 /// This test ensures that the block size limit is respected.
 /// We will set limit to 1 byte and see that the builder will not include any transactions.
 #[tokio::test]
