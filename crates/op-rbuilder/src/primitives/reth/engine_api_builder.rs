@@ -43,17 +43,13 @@ use url::Url;
 pub struct EnginePeer {
     pub url: Url,
     pub jwt: JwtSecret,
-    // Flag the indicates if FCU was successfully received
-    // Caution: could be subjected to race conditions in case 2 FCU issued in short time
-    pub healthy: Arc<AtomicBool>,
 }
 
 impl EnginePeer {
     pub fn new(url: Url, jwt_path: JwtSecret) -> Self {
         Self {
             url,
-            jwt: jwt_path,
-            healthy: Arc::new(AtomicBool::new(false)),
+            jwt: jwt_path
         }
     }
 
@@ -218,7 +214,7 @@ where
         parent_beacon_block_root: B256,
         execution_requests: Requests,
     ) -> RpcResult<PayloadStatus> {
-        self.new_payload_v4(
+        self.inner.new_payload_v4(
             payload,
             versioned_hashes,
             parent_beacon_block_root,
