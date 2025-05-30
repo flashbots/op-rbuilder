@@ -1,6 +1,23 @@
+#![cfg(any(test, feature = "testing"))]
+
 // base
 mod framework;
 pub use framework::*;
 
+#[cfg(test)]
 mod flashblocks;
-mod standard;
+
+#[cfg(test)]
+mod data_availability;
+
+#[cfg(test)]
+mod ordering;
+
+#[cfg(test)]
+mod revert;
+
+#[cfg(test)]
+mod smoke;
+
+#[cfg(test)]
+mod txpool;
