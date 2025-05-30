@@ -1,12 +1,10 @@
 use core::time::Duration;
 use std::time::SystemTime;
 
-use alloy_eips::{BlockNumberOrTag, Encodable2718};
+use alloy_eips::{eip7685::Requests, BlockNumberOrTag, Encodable2718};
 use alloy_primitives::{address, hex, Bytes, TxKind, B256, U256};
 use alloy_provider::{Provider, RootProvider};
-use alloy_rpc_types_engine::{
-    ExecutionPayload, ForkchoiceUpdated, PayloadAttributes, PayloadStatusEnum,
-};
+use alloy_rpc_types_engine::{ForkchoiceUpdated, PayloadAttributes, PayloadStatusEnum};
 use alloy_rpc_types_eth::Block;
 use op_alloy_consensus::{OpTypedTransaction, TxDeposit};
 use op_alloy_network::Optimism;
@@ -127,15 +125,15 @@ impl ChainDriver {
             .ok_or_else(|| eyre::eyre!("Forkchoice update did not return a payload ID"))?;
 
         let payload =
-            OpExecutionPayloadEnvelope::V3(self.engine_api.get_payload_v3(payload_id).await?);
-
-        let ExecutionPayload::V3(payload) = payload.into() else {
-            return Err(eyre::eyre!("Expected V3 payload, got something else"));
+            OpExecutionPayloadEnvelope::V4(self.engine_api.get_payload(payload_id).await?);
+        let OpExecutionPayloadEnvelope::V4(payload) = payload else {
+            return Err(eyre::eyre!("Expected V4 payload, got something else"));
         };
+        let payload = payload.execution_payload;
 
         if self
             .engine_api
-            .new_payload(payload.clone(), vec![], B256::ZERO)
+            .new_payload(payload.clone(), vec![], B256::ZERO, Requests::default())
             .await?
             .status
             != PayloadStatusEnum::Valid
@@ -143,7 +141,7 @@ impl ChainDriver {
             return Err(eyre::eyre!("Invalid validation status from builder"));
         }
 
-        let new_block_hash = payload.payload_inner.payload_inner.block_hash;
+        let new_block_hash = payload.payload_inner.payload_inner.payload_inner.block_hash;
         self.engine_api
             .update_forkchoice(latest.header.hash, new_block_hash, None)
             .await?;

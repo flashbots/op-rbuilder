@@ -2,17 +2,15 @@ use alloy_provider::{Identity, ProviderBuilder, RootProvider};
 use core::{
     any::Any,
     future::Future,
+    net::Ipv4Addr,
     pin::Pin,
     task::{Context, Poll},
     time::Duration,
 };
 use futures::FutureExt;
+use moka::future::Cache;
 use nanoid::nanoid;
 use op_alloy_network::Optimism;
-use reth_transaction_pool::{AllTransactionsEvents, TransactionPool};
-use std::sync::{Arc, LazyLock};
-use tokio::sync::oneshot;
-
 use reth::{
     args::{DatadirArgs, NetworkArgs, RpcServerArgs},
     core::exit::NodeExitFuture,
@@ -25,11 +23,14 @@ use reth_optimism_node::{
     node::{OpAddOnsBuilder, OpPoolBuilder},
     OpNode,
 };
+use reth_transaction_pool::{AllTransactionsEvents, TransactionPool};
+use std::sync::{Arc, LazyLock};
+use tokio::sync::oneshot;
 
 use crate::{
     args::OpRbuilderArgs,
     builders::{BuilderConfig, FlashblocksBuilder, PayloadBuilder, StandardBuilder},
-    revert_protection::{EthApiOverrideServer, RevertProtectionExt},
+    revert_protection::{EthApiExtServer, EthApiOverrideServer, RevertProtectionExt},
     tx::FBPooledTransaction,
     tx_signer::Signer,
 };
@@ -74,6 +75,8 @@ impl LocalInstance {
         let mut args = args;
         let task_manager = task_manager();
         let op_node = OpNode::new(args.rollup_args.clone());
+        let reverted_cache = Cache::builder().max_capacity(100).build();
+        let reverted_cache_clone = reverted_cache.clone();
 
         let (rpc_ready_tx, rpc_ready_rx) = oneshot::channel::<()>();
         let (txpool_ready_tx, txpool_ready_rx) =
@@ -115,10 +118,19 @@ impl LocalInstance {
 
                     let pool = ctx.pool().clone();
                     let provider = ctx.provider().clone();
-                    let revert_protection_ext = RevertProtectionExt::new(pool, provider);
+                    let revert_protection_ext: RevertProtectionExt<
+                        _,
+                        _,
+                        _,
+                        op_alloy_network::Optimism,
+                    > = RevertProtectionExt::new(pool, provider, ctx.registry.eth_api().clone());
 
                     ctx.modules
-                        .merge_configured(revert_protection_ext.into_rpc())?;
+                        .merge_configured(revert_protection_ext.bundle_api().into_rpc())?;
+
+                    ctx.modules.replace_configured(
+                        revert_protection_ext.eth_api(reverted_cache).into_rpc(),
+                    )?;
                 }
 
                 Ok(())
@@ -153,7 +165,7 @@ impl LocalInstance {
             exit_future,
             _node_handle: node_handle,
             task_manager: Some(task_manager),
-            pool_observer: TransactionPoolObserver::new(pool_monitor),
+            pool_observer: TransactionPoolObserver::new(pool_monitor, reverted_cache_clone),
         })
     }
 
@@ -177,8 +189,8 @@ impl LocalInstance {
         let Commands::Node(ref mut node_command) = args.command else {
             unreachable!()
         };
-        node_command.ext.enable_flashblocks = true;
-        node_command.ext.flashblocks_ws_url = "0.0.0.0:0".to_string();
+        node_command.ext.flashblocks.enabled = true;
+        node_command.ext.flashblocks.flashblocks_port = 0; // use random os assigned port
         let instance = Self::new::<FlashblocksBuilder>(node_command.ext.clone()).await?;
         let driver = ChainDriver::new(&instance).await?;
         driver.fund_default_accounts().await?;
@@ -195,6 +207,25 @@ impl LocalInstance {
 
     pub const fn signer(&self) -> &Signer {
         &self.signer
+    }
+
+    pub fn flashblocks_ws_url(&self) -> String {
+        let ipaddr: Ipv4Addr = self
+            .args
+            .flashblocks
+            .flashblocks_addr
+            .parse()
+            .expect("Failed to parse flashblocks IP address");
+
+        let ipaddr = if ipaddr.is_unspecified() {
+            Ipv4Addr::LOCALHOST
+        } else {
+            ipaddr
+        };
+
+        let port = self.args.flashblocks.flashblocks_port;
+
+        format!("ws://{ipaddr}:{port}/")
     }
 
     pub fn rpc_ipc(&self) -> &str {

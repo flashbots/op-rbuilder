@@ -1,9 +1,7 @@
 use alloy_consensus::{
     constants::EMPTY_WITHDRAWALS, proofs, BlockBody, Header, EMPTY_OMMER_ROOT_HASH,
 };
-use alloy_eips::{
-    eip7623::TOTAL_COST_FLOOR_PER_TOKEN, eip7685::EMPTY_REQUESTS_HASH, merge::BEACON_NONCE,
-};
+use alloy_eips::{eip7685::EMPTY_REQUESTS_HASH, merge::BEACON_NONCE};
 use alloy_primitives::U256;
 use reth::payload::PayloadBuilderAttributes;
 use reth_basic_payload_builder::{BuildOutcome, BuildOutcomeKind, MissingPayloadBehaviour};
@@ -38,7 +36,7 @@ use crate::{
     traits::{ClientBounds, NodeBounds, PayloadTxsBounds, PoolBounds},
 };
 
-use super::super::context::OpPayloadBuilderCtx;
+use super::super::context::{estimate_gas_for_builder_tx, OpPayloadBuilderCtx};
 
 pub struct StandardPayloadBuilderBuilder(pub BuilderConfig<()>);
 
@@ -203,6 +201,8 @@ where
         args: BuildArguments<OpPayloadBuilderAttributes<OpTransactionSigned>, OpBuiltPayload>,
         best: impl FnOnce(BestTransactionsAttributes) -> Txs + Send + Sync + 'a,
     ) -> Result<BuildOutcome<OpBuiltPayload>, PayloadBuilderError> {
+        let block_build_start_time = Instant::now();
+
         let BuildArguments {
             mut cached_reads,
             config,
@@ -254,6 +254,7 @@ where
 
         let state_provider = self.client.state_by_block_hash(ctx.parent().hash())?;
         let state = StateProviderDatabase::new(state_provider);
+        let metrics = ctx.metrics.clone();
 
         if ctx.attributes().no_tx_pool {
             let db = State::builder()
@@ -269,7 +270,13 @@ where
                 .build();
             builder.build(db, ctx)
         }
-        .map(|out| out.with_cached_reads(cached_reads))
+        .map(|out| {
+            metrics
+                .total_block_built_duration
+                .record(block_build_start_time.elapsed());
+
+            out.with_cached_reads(cached_reads)
+        })
     }
 }
 
@@ -556,25 +563,4 @@ impl<Txs: PayloadTxsBounds> OpBuilder<'_, Txs> {
             Ok(BuildOutcomeKind::Better { payload })
         }
     }
-}
-
-fn estimate_gas_for_builder_tx(input: Vec<u8>) -> u64 {
-    // Count zero and non-zero bytes
-    let (zero_bytes, nonzero_bytes) = input.iter().fold((0, 0), |(zeros, nonzeros), &byte| {
-        if byte == 0 {
-            (zeros + 1, nonzeros)
-        } else {
-            (zeros, nonzeros + 1)
-        }
-    });
-
-    // Calculate gas cost (4 gas per zero byte, 16 gas per non-zero byte)
-    let zero_cost = zero_bytes * 4;
-    let nonzero_cost = nonzero_bytes * 16;
-
-    // Tx gas should be not less than floor gas https://eips.ethereum.org/EIPS/eip-7623
-    let tokens_in_calldata = zero_bytes + nonzero_bytes * 4;
-    let floor_gas = 21_000 + tokens_in_calldata * TOTAL_COST_FLOOR_PER_TOKEN;
-
-    std::cmp::max(zero_cost + nonzero_cost + 21_000, floor_gas)
 }

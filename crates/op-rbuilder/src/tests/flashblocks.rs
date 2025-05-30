@@ -12,10 +12,7 @@ use tokio_util::sync::CancellationToken;
 
 #[macros::rb_test(flashblocks, args = OpRbuilderArgs {
     builder_signer: Some(Signer::random()),
-    enable_flashblocks: true,
-    flashblocks_ws_url: "0.0.0.0:1239".to_string(),
     chain_block_time: 2000,
-    flashblock_block_time: 200,
     ..Default::default()
 })]
 async fn chain_produces_blocks(rbuilder: LocalInstance) -> eyre::Result<()> {
@@ -29,7 +26,7 @@ async fn chain_produces_blocks(rbuilder: LocalInstance) -> eyre::Result<()> {
     // Spawn WebSocket listener task
     let cancellation_token_clone = cancellation_token.clone();
     let ws_handle: JoinHandle<eyre::Result<()>> = tokio::spawn(async move {
-        let (ws_stream, _) = connect_async("ws://localhost:1239").await?;
+        let (ws_stream, _) = connect_async(rbuilder.flashblocks_ws_url()).await?;
         let (_, mut read) = ws_stream.split();
 
         loop {
@@ -50,13 +47,15 @@ async fn chain_produces_blocks(rbuilder: LocalInstance) -> eyre::Result<()> {
             let _ = driver.transaction().random_valid_transfer().send().await?;
         }
 
-        driver.build_new_block().await?;
+        let block = driver.build_new_block().await?;
+        assert_eq!(block.transactions.len(), 7); // 5 normal txn + deposit + builder txn
+
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     }
 
     cancellation_token.cancel();
     assert!(ws_handle.await.is_ok(), "WebSocket listener task failed");
-    
+
     assert!(
         !received_messages
             .lock()

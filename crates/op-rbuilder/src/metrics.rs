@@ -45,4 +45,8 @@ pub struct OpRBuilderMetrics {
     pub tx_simulation_duration: Histogram,
     /// Byte size of transactions
     pub tx_byte_size: Histogram,
+    /// Da block size limit
+    pub da_block_size_limit: Histogram,
+    /// Da tx size limit
+    pub da_tx_size_limit: Histogram,
 }

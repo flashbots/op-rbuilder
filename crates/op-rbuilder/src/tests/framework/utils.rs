@@ -96,3 +96,15 @@ impl<'a> BlockTransactionsExt for BlockTransactionHashes<'a, Transaction> {
         iter.any(|tx| tx == *tx_hash)
     }
 }
+
+pub trait OpRbuilderArgsTestExt {
+    fn test_default() -> Self;
+}
+
+impl OpRbuilderArgsTestExt for crate::args::OpRbuilderArgs {
+    fn test_default() -> Self {
+        let mut default = Self::default();
+        default.flashblocks.flashblocks_port = 0; // randomize port
+        default
+    }
+}

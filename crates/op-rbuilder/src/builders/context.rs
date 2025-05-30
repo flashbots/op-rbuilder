@@ -1,11 +1,11 @@
 use alloy_consensus::{Eip658Value, Transaction, TxEip1559};
-use alloy_eips::{Encodable2718, Typed2718};
+use alloy_eips::{eip7623::TOTAL_COST_FLOOR_PER_TOKEN, Encodable2718, Typed2718};
 use alloy_op_evm::block::receipt_builder::OpReceiptBuilder;
 use alloy_primitives::{Address, Bytes, TxKind, U256};
 use alloy_rpc_types_eth::Withdrawals;
 use core::fmt::Debug;
 use op_alloy_consensus::{OpDepositReceipt, OpTypedTransaction};
-use op_revm::OpSpecId;
+use op_revm::{OpSpecId, OpTransactionError};
 use reth::payload::PayloadBuilderAttributes;
 use reth_basic_payload_builder::PayloadConfig;
 use reth_chainspec::{EthChainSpec, EthereumHardforks};
@@ -187,6 +187,33 @@ impl OpPayloadBuilderCtx {
     }
 }
 
+#[derive(Debug)]
+enum TxnExecutionResult {
+    InvalidDASize,
+    SequencerTransaction,
+    NonceTooLow,
+    InternalError(OpTransactionError),
+    EvmError,
+    Success,
+    Reverted,
+    RevertedAndExcluded,
+}
+
+impl std::fmt::Display for TxnExecutionResult {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TxnExecutionResult::InvalidDASize => write!(f, "InvalidDASize"),
+            TxnExecutionResult::SequencerTransaction => write!(f, "SequencerTransaction"),
+            TxnExecutionResult::NonceTooLow => write!(f, "NonceTooLow"),
+            TxnExecutionResult::InternalError(err) => write!(f, "InternalError({err})"),
+            TxnExecutionResult::EvmError => write!(f, "EvmError"),
+            TxnExecutionResult::Success => write!(f, "Success"),
+            TxnExecutionResult::Reverted => write!(f, "Reverted"),
+            TxnExecutionResult::RevertedAndExcluded => write!(f, "RevertedAndExcluded"),
+        }
+    }
+}
+
 impl OpPayloadBuilderCtx {
     /// Constructs a receipt for the given transaction.
     fn build_receipt<E: Evm>(
@@ -328,11 +355,27 @@ impl OpPayloadBuilderCtx {
         let tx_da_limit = self.da_config.max_da_tx_size();
         let mut evm = self.evm_config.evm_with_env(&mut *db, self.evm_env.clone());
 
+        info!(target: "payload_builder", block_da_limit = ?block_da_limit, tx_da_size = ?tx_da_limit, block_gas_limit = ?block_gas_limit, "DA limits");
+
+        // Remove once we merge Reth 1.4.4
+        // Fixed in https://github.com/paradigmxyz/reth/pull/16514
+        self.metrics
+            .da_block_size_limit
+            .record(block_da_limit.map_or(-1.0, |v| v as f64));
+        self.metrics
+            .da_tx_size_limit
+            .record(tx_da_limit.map_or(-1.0, |v| v as f64));
+
         while let Some(tx) = best_txs.next(()) {
             let exclude_reverting_txs = tx.exclude_reverting_txs();
             let tx_da_size = tx.estimated_da_size();
-
             let tx = tx.into_consensus();
+            let tx_hash = tx.tx_hash();
+
+            let log_txn = |result: TxnExecutionResult| {
+                info!(target: "payload_builder", tx_hash = ?tx_hash, tx_da_size = ?tx_da_size, exclude_reverting_txs = ?exclude_reverting_txs, result = %result, "Considering transaction");
+            };
+
             num_txs_considered += 1;
             // ensure we still have capacity for this transaction
             if info.is_tx_over_limits(
@@ -345,12 +388,14 @@ impl OpPayloadBuilderCtx {
                 // we can't fit this transaction into the block, so we need to mark it as
                 // invalid which also removes all dependent transaction from
                 // the iterator before we can continue
+                log_txn(TxnExecutionResult::InvalidDASize);
                 best_txs.mark_invalid(tx.signer(), tx.nonce());
                 continue;
             }
 
             // A sequencer's block should never contain blob or deposit transactions from the pool.
             if tx.is_eip4844() || tx.is_deposit() {
+                log_txn(TxnExecutionResult::SequencerTransaction);
                 best_txs.mark_invalid(tx.signer(), tx.nonce());
                 continue;
             }
@@ -367,10 +412,12 @@ impl OpPayloadBuilderCtx {
                     if let Some(err) = err.as_invalid_tx_err() {
                         if err.is_nonce_too_low() {
                             // if the nonce is too low, we can skip this transaction
+                            log_txn(TxnExecutionResult::NonceTooLow);
                             trace!(target: "payload_builder", %err, ?tx, "skipping nonce too low transaction");
                         } else {
                             // if the transaction is invalid, we can skip it and all of its
                             // descendants
+                            log_txn(TxnExecutionResult::InternalError(err.clone()));
                             trace!(target: "payload_builder", %err, ?tx, "skipping invalid transaction and its descendants");
                             best_txs.mark_invalid(tx.signer(), tx.nonce());
                         }
@@ -378,6 +425,7 @@ impl OpPayloadBuilderCtx {
                         continue;
                     }
                     // this is an error that we should treat as fatal for this attempt
+                    log_txn(TxnExecutionResult::EvmError);
                     return Err(PayloadBuilderError::EvmExecutionError(Box::new(err)));
                 }
             };
@@ -388,13 +436,17 @@ impl OpPayloadBuilderCtx {
             self.metrics.tx_byte_size.record(tx.inner().size() as f64);
             num_txs_simulated += 1;
             if result.is_success() {
+                log_txn(TxnExecutionResult::Success);
                 num_txs_simulated_success += 1;
             } else {
                 num_txs_simulated_fail += 1;
                 if exclude_reverting_txs {
+                    log_txn(TxnExecutionResult::RevertedAndExcluded);
                     info!(target: "payload_builder", tx_hash = ?tx.tx_hash(), "skipping reverted transaction");
                     best_txs.mark_invalid(tx.signer(), tx.nonce());
                     continue;
+                } else {
+                    log_txn(TxnExecutionResult::Reverted);
                 }
             }
 
@@ -448,9 +500,9 @@ impl OpPayloadBuilderCtx {
         Ok(None)
     }
 
-    pub fn add_builder_tx<DB>(
+    pub fn add_builder_tx<DB, Extra: Debug + Default>(
         &self,
-        info: &mut ExecutionInfo,
+        info: &mut ExecutionInfo<Extra>,
         db: &mut State<DB>,
         builder_tx_gas: u64,
         message: Vec<u8>,
@@ -519,7 +571,7 @@ impl OpPayloadBuilderCtx {
                 // Create and sign the transaction
                 let builder_tx =
                     signed_builder_tx(db, builder_tx_gas, message, signer, base_fee, chain_id)?;
-                Ok(op_alloy_flz::tx_estimated_size_fjord(
+                Ok(op_alloy_flz::data_gas_fjord(
                     builder_tx.encoded_2718().as_slice(),
                 ))
             })
@@ -529,6 +581,27 @@ impl OpPayloadBuilderCtx {
                 None
             })
     }
+}
+
+pub fn estimate_gas_for_builder_tx(input: Vec<u8>) -> u64 {
+    // Count zero and non-zero bytes
+    let (zero_bytes, nonzero_bytes) = input.iter().fold((0, 0), |(zeros, nonzeros), &byte| {
+        if byte == 0 {
+            (zeros + 1, nonzeros)
+        } else {
+            (zeros, nonzeros + 1)
+        }
+    });
+
+    // Calculate gas cost (4 gas per zero byte, 16 gas per non-zero byte)
+    let zero_cost = zero_bytes * 4;
+    let nonzero_cost = nonzero_bytes * 16;
+
+    // Tx gas should be not less than floor gas https://eips.ethereum.org/EIPS/eip-7623
+    let tokens_in_calldata = zero_bytes + nonzero_bytes * 4;
+    let floor_gas = 21_000 + tokens_in_calldata * TOTAL_COST_FLOOR_PER_TOKEN;
+
+    std::cmp::max(zero_cost + nonzero_cost + 21_000, floor_gas)
 }
 
 /// Creates signed builder tx to Address::ZERO and specified message as input

@@ -123,16 +123,23 @@ impl<S: Debug + Clone> core::fmt::Debug for BuilderConfig<S> {
     }
 }
 
-impl<S: Default + Clone> Default for BuilderConfig<S> {
+impl<S: Default + Clone + TryFrom<OpRbuilderArgs>> Default for BuilderConfig<S>
+where
+    S: TryFrom<OpRbuilderArgs, Error: Debug> + Clone,
+{
     fn default() -> Self {
-        Self {
-            builder_signer: None,
-            revert_protection: false,
-            block_time: Duration::from_secs(2),
-            block_time_leeway: Duration::from_millis(500),
-            da_config: OpDAConfig::default(),
-            specific: S::default(),
-        }
+        use clap::Parser;
+        use reth_optimism_cli::commands::Commands;
+
+        let args = crate::args::Cli::parse_from(["dummy", "node"]);
+        let Commands::Node(node_command) = args.command else {
+            unreachable!()
+        };
+
+        node_command
+            .ext
+            .try_into()
+            .expect("default cli args should always be valid")
     }
 }
 
@@ -147,7 +154,7 @@ where
             builder_signer: args.builder_signer,
             revert_protection: args.enable_revert_protection,
             block_time: Duration::from_millis(args.chain_block_time),
-            block_time_leeway: Duration::from_millis(500),
+            block_time_leeway: Duration::from_secs(args.extra_block_deadline_secs),
             da_config: Default::default(),
             specific: S::try_from(args)?,
         })

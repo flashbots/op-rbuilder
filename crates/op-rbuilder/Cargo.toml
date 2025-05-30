@@ -45,10 +45,7 @@ reth-testing-utils.workspace = true
 reth-optimism-forks.workspace = true
 reth-node-builder.workspace = true
 reth-rpc-eth-types.workspace = true
-reth-ipc = { workspace = true, optional = true }
 reth-db-api.workspace = true
-
-alloy-primitives.workspace = true
 alloy-consensus.workspace = true
 alloy-eips.workspace = true
 alloy-rpc-types-beacon.workspace = true
@@ -56,10 +53,13 @@ alloy-rpc-types-engine.workspace = true
 alloy-transport-http.workspace = true
 alloy-rpc-types-eth.workspace = true
 alloy-rpc-client.workspace = true
+reth-ipc = { workspace = true, optional = true }
 alloy-transport.workspace = true
 alloy-network.workspace = true
 alloy-provider.workspace = true
 alloy-serde.workspace = true
+alloy-json-rpc.workspace = true
+alloy-primitives.workspace = true
 
 # op
 alloy-op-evm.workspace = true
@@ -68,6 +68,7 @@ op-alloy-rpc-types-engine.workspace = true
 op-alloy-rpc-types.workspace = true
 op-alloy-network.workspace = true
 op-alloy-flz.workspace = true
+
 
 revm.workspace = true
 op-revm.workspace = true
@@ -90,8 +91,11 @@ tokio-util.workspace = true
 thiserror.workspace = true
 parking_lot.workspace = true
 url.workspace = true
+nanoid = { version = "0.4", optional = true }
+tower = { version = "0.5", optional = true }
 
-tower = "0.5"
+
+# `msozin/flashblocks-v1.4.1` branch based on `flashblocks-rebase`tower = "0.5"
 futures = "0.3"
 futures-util = "0.3.31"
 time = { version = "0.3.36", features = ["macros", "formatting", "parsing"] }
@@ -102,11 +106,9 @@ rand = "0.9.0"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter", "json"] }
 shellexpand = "3.1"
 serde_yaml = { version = "0.9" }
-nanoid = { version = "0.4", optional = true }
 dashmap = { version = "6.1", optional = true }
 macros = { path = "src/tests/macros", optional = true }
-
-# `msozin/flashblocks-v1.4.1` branch based on `flashblocks-rebase`
+moka = "0.12"
 rollup-boost = { git = "http://github.com/flashbots/rollup-boost", rev = "8506dfb7d84c65746f7c88d250983658438f59e8" }
 
 [target.'cfg(unix)'.dependencies]
@@ -120,6 +122,10 @@ vergen-git2.workspace = true
 alloy-provider = { workspace = true, default-features = true, features = [
 	"txpool-api",
 ] }
+
+#reth-provider = { workspace = true, features = ["test-utils"] }
+
+tower = "0.5"
 nanoid = "0.4"
 reth-node-builder = { workspace = true, features = ["test-utils"] }
 reth-ipc.workspace = true
@@ -154,7 +160,9 @@ testing = [
 	"reth-node-builder/test-utils",
 	"reth-ipc",
 	"dashmap",
+	"tower",
 	"macros",
+	#"reth-provider/test-utils",
 ]
 
 [[bin]]

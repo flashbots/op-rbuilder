@@ -5,11 +5,12 @@ use crate::{
 };
 use alloy_consensus::TxEip1559;
 use alloy_eips::{eip2718::Encodable2718, BlockNumberOrTag};
-use alloy_primitives::{Address, Bytes, TxHash, TxKind, U256};
+use alloy_primitives::{Address, Bytes, TxHash, TxKind, B256, U256};
 use alloy_provider::{PendingTransactionBuilder, Provider, RootProvider};
 use core::cmp::max;
 use dashmap::DashMap;
 use futures::StreamExt;
+use moka::future::Cache;
 use op_alloy_consensus::{OpTxEnvelope, OpTypedTransaction};
 use op_alloy_network::Optimism;
 use reth_primitives::Recovered;
@@ -234,7 +235,10 @@ impl Drop for TransactionPoolObserver {
 }
 
 impl TransactionPoolObserver {
-    pub fn new(stream: AllTransactionsEvents<FBPooledTransaction>) -> Self {
+    pub fn new(
+        stream: AllTransactionsEvents<FBPooledTransaction>,
+        reverts: Cache<B256, ()>,
+    ) -> Self {
         let mut stream = stream;
         let observations = Arc::new(ObservationsMap::new());
         let observations_clone = Arc::clone(&observations);
@@ -272,6 +276,7 @@ impl TransactionPoolObserver {
                             Some(FullTransactionEvent::Discarded(hash)) => {
                                 tracing::debug!("Transaction discarded: {hash}");
                                 observations.entry(hash).or_default().push_back(TransactionEvent::Discarded);
+                                reverts.insert(hash, ()).await;
                             },
                             Some(FullTransactionEvent::Invalid(hash)) => {
                                 tracing::debug!("Transaction invalid: {hash}");

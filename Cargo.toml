@@ -57,9 +57,7 @@ reth-basic-payload-builder = { git = "https://github.com/paradigmxyz/reth", tag 
 reth-node-core = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.1" }
 reth-primitives = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.1" }
 reth-primitives-traits = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.1" }
-reth-provider = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.1", features = [
-    "test-utils",
-] }
+reth-provider = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.1" }
 reth-chainspec = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.1" }
 reth-evm = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.1" }
 reth-evm-ethereum = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.1" }
@@ -81,7 +79,7 @@ reth-rpc-eth-types = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.
 reth-ipc = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.1" }
 
 # reth optimism
-reth-optimism-primitives = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.1" }
+# compatible with reth "v1.4.1 dependenciesreth-optimism-primitives = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.1" }
 reth-optimism-consensus = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.1" }
 reth-optimism-cli = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.1" }
 reth-optimism-forks = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.1" }
@@ -90,9 +88,10 @@ reth-optimism-node = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.
 reth-optimism-payload-builder = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.1" }
 reth-optimism-chainspec = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.1" }
 reth-optimism-txpool = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.1" }
-reth-optimism-rpc = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.1" }
-
-# compatible with reth "v1.4.1 dependencies
+reth-optimism-primitives = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.1" }
+reth-optimism-rpc = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.1", features = [
+    "client",
+] }
 revm = { version = "23.1.0", features = [
     "std",
     "secp256k1",

@@ -32,7 +32,6 @@ async fn data_availability_tx_size_limit(rbuilder: LocalInstance) -> eyre::Resul
     Ok(())
 }
 
-
 /// This test ensures that the block size limit is respected.
 /// We will set limit to 1 byte and see that the builder will not include any transactions.
 #[macros::rb_test]
@@ -76,7 +75,7 @@ async fn data_availability_block_fill(rbuilder: LocalInstance) -> eyre::Result<(
     let call = rbuilder
         .provider()
         .await?
-        .raw_request::<(i32, i32), bool>("miner_setMaxDASize".into(), (0, 100000000 * 3))
+        .raw_request::<(i32, i32), bool>("miner_setMaxDASize".into(), (0, 1600 * 3))
         .await?;
     assert!(call, "miner_setMaxDASize should be executed successfully");
 

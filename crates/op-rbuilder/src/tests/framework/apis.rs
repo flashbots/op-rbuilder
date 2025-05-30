@@ -1,15 +1,18 @@
 use super::DEFAULT_JWT_TOKEN;
-use alloy_eips::BlockNumberOrTag;
+use alloy_eips::{eip7685::Requests, BlockNumberOrTag};
 use alloy_primitives::B256;
-use alloy_rpc_types_engine::{ExecutionPayloadV3, ForkchoiceUpdated, PayloadStatus};
+
+use alloy_rpc_types_engine::{ForkchoiceUpdated, PayloadStatus};
 use core::{future::Future, marker::PhantomData};
 use jsonrpsee::{
     core::{client::SubscriptionClientT, RpcResult},
     proc_macros::rpc,
 };
-use reth::rpc::{api::EngineApiClient, types::engine::ForkchoiceState};
+use op_alloy_rpc_types_engine::OpExecutionPayloadV4;
+use reth::rpc::types::engine::ForkchoiceState;
 use reth_node_api::{EngineTypes, PayloadTypes};
 use reth_optimism_node::OpEngineTypes;
+use reth_optimism_rpc::engine::OpEngineApiClient;
 use reth_payload_builder::PayloadId;
 use reth_rpc_layer::{AuthClientLayer, JwtSecret};
 use serde_json::Value;
@@ -139,34 +142,35 @@ impl EngineApi<Ipc> {
 }
 
 impl<P: Protocol> EngineApi<P> {
-    pub async fn get_payload_v3(
+    pub async fn get_payload(
         &self,
         payload_id: PayloadId,
-    ) -> eyre::Result<<OpEngineTypes as EngineTypes>::ExecutionPayloadEnvelopeV3> {
+    ) -> eyre::Result<<OpEngineTypes as EngineTypes>::ExecutionPayloadEnvelopeV4> {
         debug!(
             "Fetching payload with id: {} at {}",
             payload_id,
             chrono::Utc::now()
         );
-
         Ok(
-            EngineApiClient::<OpEngineTypes>::get_payload_v3(&self.client().await, payload_id)
+            OpEngineApiClient::<OpEngineTypes>::get_payload_v4(&self.client().await, payload_id)
                 .await?,
         )
     }
 
     pub async fn new_payload(
         &self,
-        payload: ExecutionPayloadV3,
+        payload: OpExecutionPayloadV4,
         versioned_hashes: Vec<B256>,
         parent_beacon_block_root: B256,
+        execution_requests: Requests,
     ) -> eyre::Result<PayloadStatus> {
         debug!("Submitting new payload at {}...", chrono::Utc::now());
-        Ok(EngineApiClient::<OpEngineTypes>::new_payload_v3(
+        Ok(OpEngineApiClient::<OpEngineTypes>::new_payload_v4(
             &self.client().await,
             payload,
             versioned_hashes,
             parent_beacon_block_root,
+            execution_requests,
         )
         .await?)
     }
@@ -178,7 +182,7 @@ impl<P: Protocol> EngineApi<P> {
         payload_attributes: Option<<OpEngineTypes as PayloadTypes>::PayloadAttributes>,
     ) -> eyre::Result<ForkchoiceUpdated> {
         debug!("Updating forkchoice at {}...", chrono::Utc::now());
-        Ok(EngineApiClient::<OpEngineTypes>::fork_choice_updated_v3(
+        Ok(OpEngineApiClient::<OpEngineTypes>::fork_choice_updated_v3(
             &self.client().await,
             ForkchoiceState {
                 head_block_hash: new_head,

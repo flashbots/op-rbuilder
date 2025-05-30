@@ -1,11 +1,12 @@
 use crate::builders::BuilderMode;
 use clap::Parser;
-pub use op::OpRbuilderArgs;
 use playground::PlaygroundOptions;
 use reth_optimism_cli::{chainspec::OpChainSpecParser, commands::Commands};
 
 mod op;
 mod playground;
+
+pub use op::{FlashblocksArgs, OpRbuilderArgs};
 
 /// This trait is used to extend Reth's CLI with additional functionality that
 /// are specific to the OP builder, such as populating default values for CLI arguments
@@ -65,7 +66,7 @@ impl CliExt for Cli {
     /// Currently supports `Standard` and `Flashblocks` modes.
     fn builder_mode(&self) -> BuilderMode {
         if let Commands::Node(ref node_command) = self.command {
-            if node_command.ext.enable_flashblocks {
+            if node_command.ext.flashblocks.enabled {
                 return BuilderMode::Flashblocks;
             }
         }
