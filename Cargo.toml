@@ -154,6 +154,7 @@ reqwest = { version = "0.12.8" }
 serde = { version = "1.0.210" }
 serde_json = { version = "1.0.128" }
 serde_with = { version = "3.8.1" }
+toml = { version = "0.8" }
 secp256k1 = { version = "0.30" }
 derive_more = { version = "2" }
 tokio-stream = "0.1.16"

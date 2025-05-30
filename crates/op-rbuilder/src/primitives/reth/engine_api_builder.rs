@@ -9,6 +9,7 @@ use reth_optimism_rpc::engine::OP_ENGINE_CAPABILITIES;
 pub use reth_optimism_rpc::OpEngineApi;
 use reth_payload_builder::PayloadStore;
 use reth_rpc_engine_api::EngineCapabilities;
+use std::sync::{atomic::AtomicBool, Arc};
 
 use crate::traits::NodeComponents;
 use alloy_eips::eip7685::Requests;
@@ -38,15 +39,22 @@ use tracing::{self, log::warn};
 use url::Url;
 
 /// Configuration for an engine peer with JWT authentication
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct EnginePeer {
     pub url: Url,
     pub jwt: JwtSecret,
+    // Flag the indicates if FCU was successfully received
+    // Caution: could be subjected to race conditions in case 2 FCU issued in short time
+    pub healthy: Arc<AtomicBool>,
 }
 
 impl EnginePeer {
     pub fn new(url: Url, jwt_path: JwtSecret) -> Self {
-        Self { url, jwt: jwt_path }
+        Self {
+            url,
+            jwt: jwt_path,
+            healthy: Arc::new(AtomicBool::new(false)),
+        }
     }
 
     pub fn http_client(&self) -> impl SubscriptionClientT + Clone + Send + Sync + Unpin + 'static {

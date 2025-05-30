@@ -80,6 +80,7 @@ tracing.workspace = true
 eyre.workspace = true
 serde_with.workspace = true
 serde.workspace = true
+toml.workspace = true
 secp256k1.workspace = true
 tokio.workspace = true
 jsonrpsee = { workspace = true }
@@ -124,6 +125,7 @@ vergen-git2.workspace = true
 alloy-provider = { workspace = true, default-features = true, features = [
 	"txpool-api",
 ] }
+tempfile = "3.8"
 
 [features]
 default = ["jemalloc"]

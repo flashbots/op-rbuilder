@@ -72,7 +72,7 @@ where
         let builder_config = BuilderConfig::<B::Config>::try_from(builder_args.clone())
             .expect("Failed to convert rollup args to builder config");
 
-        // Engine peers are already parsed in the config
+        // Engine peers from configuration
         let engine_peers = builder_args.engine_peers;
 
         let engine_builder: OpEngineApiBuilder<OpEngineValidatorBuilder> =

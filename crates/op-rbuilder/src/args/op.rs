@@ -7,11 +7,30 @@ use crate::{primitives::reth::engine_api_builder::EnginePeer, tx_signer::Signer}
 use alloy_rpc_types_engine::JwtSecret;
 use anyhow::{anyhow, Result};
 use reth_optimism_node::args::RollupArgs;
+use serde::Deserialize;
 use std::path::PathBuf;
 use url::Url;
 
+/// Configuration structure for engine peers loaded from TOML
+#[derive(Debug, Clone, Deserialize)]
+pub struct EnginePeersConfig {
+    /// Default JWT file path used by all peers unless overridden
+    pub default_jwt_path: PathBuf,
+    /// List of engine peers
+    pub peers: Vec<EnginePeerConfig>,
+}
+
+/// Configuration for a single engine peer
+#[derive(Debug, Clone, Deserialize)]
+pub struct EnginePeerConfig {
+    /// URL of the engine peer
+    pub url: Url,
+    /// Optional JWT path override for this peer
+    pub jwt_path: Option<PathBuf>,
+}
+
 /// Parameters for rollup configuration
-#[derive(Debug, Clone, Default, PartialEq, Eq, clap::Args)]
+#[derive(Debug, Clone, Default, clap::Args)]
 #[command(next_help_heading = "Rollup")]
 pub struct OpRbuilderArgs {
     /// Rollup configuration
@@ -51,8 +70,8 @@ pub struct OpRbuilderArgs {
     pub playground: Option<PathBuf>,
     #[command(flatten)]
     pub flashblocks: FlashblocksArgs,
-    /// List or builders in the network that FCU would be propagated to
-    #[arg(long = "builder.engine-api-peer", value_parser = parse_engine_peer_arg, action = clap::ArgAction::Append)]
+    /// Path to TOML configuration file for engine peers
+    #[arg(long = "builder.engine-peers-config", env = "ENGINE_PEERS_CONFIG", value_parser = parse_engine_peers_config)]
     pub engine_peers: Vec<EnginePeer>,
 }
 
@@ -62,39 +81,6 @@ fn expand_path(s: &str) -> Result<PathBuf> {
         .into_owned()
         .parse()
         .map_err(|e| anyhow!("invalid path after expansion: {e}"))
-}
-
-/// Parse engine peer configuration string for clap argument parsing.
-///
-/// Format: "url@jwt_path" (JWT path is required)
-/// - url: HTTP/HTTPS endpoint of the peer builder
-/// - jwt_path: File path to JWT token for authentication (required after @)
-fn parse_engine_peer_arg(s: &str) -> Result<EnginePeer> {
-    let s = s.trim();
-
-    if s.is_empty() {
-        return Err(anyhow!("Engine peer cannot be empty"));
-    }
-
-    // Find the @ delimiter - it's required
-    // Caution: this will misshandle cases when pathname contains `@` symbols, we do not expect such filenames tho
-    let (url_part, jwt_path_part) = s.rsplit_once('@').ok_or_else(|| anyhow!("Engine peer must include JWT path after '@' (format: url@jwt_path). Urls with @ in the path are not accepted."))?;
-
-    if url_part.is_empty() {
-        return Err(anyhow!("URL part cannot be empty"));
-    }
-
-    if jwt_path_part.is_empty() {
-        return Err(anyhow!("JWT path cannot be empty (format: url@jwt_path)"));
-    }
-
-    let url = Url::parse(url_part)?;
-
-    let jwt_path = PathBuf::from(jwt_path_part);
-
-    let jwt_secret = JwtSecret::from_file(&jwt_path)?;
-
-    Ok(EnginePeer::new(url, jwt_secret))
 }
 
 /// Parameters for Flashblocks configuration
@@ -138,4 +124,135 @@ pub struct FlashblocksArgs {
         env = "FLASHBLOCK_BLOCK_TIME"
     )]
     pub flashblocks_block_time: u64,
+}
+
+impl EnginePeersConfig {
+    /// Load configuration from a TOML file
+    pub fn from_file(path: &PathBuf) -> Result<Self> {
+        let content = std::fs::read_to_string(path).map_err(|e| {
+            anyhow!(
+                "Failed to read engine peers config file {}: {}",
+                path.display(),
+                e
+            )
+        })?;
+
+        let config: Self = toml::from_str(&content).map_err(|e| {
+            anyhow!(
+                "Failed to parse engine peers config file {}: {}",
+                path.display(),
+                e
+            )
+        })?;
+
+        Ok(config)
+    }
+
+    /// Convert to vector of EnginePeer instances
+    pub fn to_engine_peers(&self) -> Result<Vec<EnginePeer>> {
+        let mut engine_peers = Vec::new();
+
+        for peer in &self.peers {
+            let jwt_path = peer.jwt_path.as_ref().unwrap_or(&self.default_jwt_path);
+            let jwt_secret = JwtSecret::from_file(jwt_path)
+                .map_err(|e| anyhow!("Failed to load JWT from {}: {}", jwt_path.display(), e))?;
+
+            engine_peers.push(EnginePeer::new(peer.url.clone(), jwt_secret));
+        }
+
+        Ok(engine_peers)
+    }
+}
+
+/// Parse engine peers configuration from TOML file for clap
+fn parse_engine_peers_config(s: &str) -> Result<Vec<EnginePeer>> {
+    let path = PathBuf::from(s);
+    let config = EnginePeersConfig::from_file(&path)?;
+    config.to_engine_peers()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use tempfile::NamedTempFile;
+
+    #[test]
+    fn test_engine_peers_config_parsing() -> Result<()> {
+        // Create temporary JWT files for testing
+        let mut temp_default_jwt = NamedTempFile::new()?;
+        let mut temp_custom_jwt = NamedTempFile::new()?;
+
+        // Write dummy JWT content (for testing purposes)
+        temp_default_jwt.write_all(b"dummy.jwt.token")?;
+        temp_custom_jwt.write_all(b"custom.jwt.token")?;
+        temp_default_jwt.flush()?;
+        temp_custom_jwt.flush()?;
+
+        let toml_content = format!(
+            r#"
+default_jwt_path = "{}"
+
+[[peers]]
+url = "http://builder1.example.com:8551"
+
+[[peers]]
+url = "http://builder2.example.com:8551"
+jwt_path = "{}"
+"#,
+            temp_default_jwt.path().display(),
+            temp_custom_jwt.path().display()
+        );
+
+        let config: EnginePeersConfig = toml::from_str(&toml_content)?;
+
+        assert_eq!(config.peers.len(), 2);
+
+        // First peer should use default JWT
+        assert_eq!(
+            config.peers[0].url.as_str(),
+            "http://builder1.example.com:8551"
+        );
+
+        // Second peer should have custom JWT
+        assert_eq!(
+            config.peers[1].url.as_str(),
+            "http://builder2.example.com:8551"
+        );
+
+        // Test that we can convert to engine peers successfully
+        let engine_peers = config.to_engine_peers()?;
+        assert_eq!(engine_peers.len(), 2);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_engine_peers_config_from_file() -> Result<()> {
+        // Create temporary JWT file
+        let mut temp_jwt = NamedTempFile::new()?;
+        temp_jwt.write_all(b"test.jwt.token")?;
+        temp_jwt.flush()?;
+
+        let toml_content = format!(
+            r#"
+default_jwt_path = "{}"
+
+[[peers]]
+url = "http://test.example.com:8551"
+"#,
+            temp_jwt.path().display()
+        );
+
+        let mut temp_file = NamedTempFile::new()?;
+        temp_file.write_all(toml_content.as_bytes())?;
+        temp_file.flush()?;
+
+        let config = EnginePeersConfig::from_file(&temp_file.path().to_path_buf())?;
+
+        assert_eq!(config.peers.len(), 1);
+        assert_eq!(config.peers[0].url.as_str(), "http://test.example.com:8551");
+
+        Ok(())
+    }
 }
