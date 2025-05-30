@@ -1,6 +1,5 @@
 use crate::{
     args::OpRbuilderArgs,
-    builders::FlashblocksBuilder,
     tests::{LocalInstance, TransactionBuilderExt},
     tx_signer::Signer,
 };
@@ -11,17 +10,15 @@ use tokio::task::JoinHandle;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 use tokio_util::sync::CancellationToken;
 
-#[tokio::test]
-async fn chain_produces_blocks() -> eyre::Result<()> {
-    let rbuilder = LocalInstance::new::<FlashblocksBuilder>(OpRbuilderArgs {
-        builder_signer: Some(Signer::random()),
-        enable_flashblocks: true,
-        flashblocks_ws_url: "0.0.0.0:1239".to_string(),
-        chain_block_time: 2000,
-        flashblock_block_time: 200,
-        ..Default::default()
-    })
-    .await?;
+#[macros::rb_test(flashblocks, args = OpRbuilderArgs {
+    builder_signer: Some(Signer::random()),
+    enable_flashblocks: true,
+    flashblocks_ws_url: "0.0.0.0:1239".to_string(),
+    chain_block_time: 2000,
+    flashblock_block_time: 200,
+    ..Default::default()
+})]
+async fn chain_produces_blocks(rbuilder: LocalInstance) -> eyre::Result<()> {
     let driver = rbuilder.driver().await?;
 
     // Create a struct to hold received messages
@@ -59,6 +56,7 @@ async fn chain_produces_blocks() -> eyre::Result<()> {
 
     cancellation_token.cancel();
     assert!(ws_handle.await.is_ok(), "WebSocket listener task failed");
+    
     assert!(
         !received_messages
             .lock()
