@@ -45,6 +45,7 @@ reth-chain-state = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.1"
 reth-cli = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.1" }
 reth-cli-util = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.1" }
 reth-db = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.1" }
+reth-db-api = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.1" }
 reth-db-common = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.1" }
 reth-errors = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.1" }
 reth-payload-builder = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.1" }
@@ -56,9 +57,7 @@ reth-basic-payload-builder = { git = "https://github.com/paradigmxyz/reth", tag 
 reth-node-core = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.1" }
 reth-primitives = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.1" }
 reth-primitives-traits = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.1" }
-reth-provider = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.1", features = [
-    "test-utils",
-] }
+reth-provider = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.1" }
 reth-chainspec = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.1" }
 reth-evm = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.1" }
 reth-evm-ethereum = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.1" }
@@ -77,9 +76,10 @@ reth-network-peers = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.
 reth-testing-utils = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.1" }
 reth-node-builder = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.1" }
 reth-rpc-eth-types = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.1" }
+reth-ipc = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.1" }
 
 # reth optimism
-reth-optimism-primitives = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.1" }
+# compatible with reth "v1.4.1 dependenciesreth-optimism-primitives = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.1" }
 reth-optimism-consensus = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.1" }
 reth-optimism-cli = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.1" }
 reth-optimism-forks = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.1" }
@@ -88,11 +88,10 @@ reth-optimism-node = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.
 reth-optimism-payload-builder = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.1" }
 reth-optimism-chainspec = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.1" }
 reth-optimism-txpool = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.1" }
+reth-optimism-primitives = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.1" }
 reth-optimism-rpc = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.1", features = [
     "client",
 ] }
-
-# compatible with reth "v1.4.1 dependencies
 revm = { version = "23.1.0", features = [
     "std",
     "secp256k1",

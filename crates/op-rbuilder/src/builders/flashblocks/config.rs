@@ -1,8 +1,5 @@
 use crate::{args::OpRbuilderArgs, builders::BuilderConfig};
-use core::{
-    net::{Ipv4Addr, SocketAddr},
-    time::Duration,
-};
+use core::{net::SocketAddr, time::Duration};
 
 /// Configuration values that are specific to the flashblocks builder.
 #[derive(Debug, Clone)]
@@ -15,15 +12,6 @@ pub struct FlashblocksConfig {
     /// Each block will contain one or more flashblocks. On average, the number of flashblocks
     /// per block is equal to the block time divided by the flashblock interval.
     pub interval: Duration,
-}
-
-impl Default for FlashblocksConfig {
-    fn default() -> Self {
-        Self {
-            ws_addr: SocketAddr::new(Ipv4Addr::UNSPECIFIED.into(), 1111),
-            interval: Duration::from_millis(250),
-        }
-    }
 }
 
 impl TryFrom<OpRbuilderArgs> for FlashblocksConfig {

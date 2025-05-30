@@ -1,21 +1,22 @@
-use std::sync::Arc;
-
+use crate::{
+    args::OpRbuilderArgs,
+    tests::{LocalInstance, TransactionBuilderExt},
+    tx_signer::Signer,
+};
 use futures::StreamExt;
 use parking_lot::Mutex;
+use std::sync::Arc;
 use tokio::task::JoinHandle;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 use tokio_util::sync::CancellationToken;
 
-use crate::tests::TestHarnessBuilder;
-
-#[tokio::test]
-async fn chain_produces_blocks() -> eyre::Result<()> {
-    let harness = TestHarnessBuilder::new("flashbots_chain_produces_blocks")
-        .with_flashblocks_port(1239)
-        .with_chain_block_time(2000)
-        .with_flashbots_block_time(200)
-        .build()
-        .await?;
+#[macros::rb_test(flashblocks, args = OpRbuilderArgs {
+    builder_signer: Some(Signer::random()),
+    chain_block_time: 2000,
+    ..Default::default()
+})]
+async fn chain_produces_blocks(rbuilder: LocalInstance) -> eyre::Result<()> {
+    let driver = rbuilder.driver().await?;
 
     // Create a struct to hold received messages
     let received_messages = Arc::new(Mutex::new(Vec::new()));
@@ -25,7 +26,7 @@ async fn chain_produces_blocks() -> eyre::Result<()> {
     // Spawn WebSocket listener task
     let cancellation_token_clone = cancellation_token.clone();
     let ws_handle: JoinHandle<eyre::Result<()>> = tokio::spawn(async move {
-        let (ws_stream, _) = connect_async("ws://localhost:1239").await?;
+        let (ws_stream, _) = connect_async(rbuilder.flashblocks_ws_url()).await?;
         let (_, mut read) = ws_stream.split();
 
         loop {
@@ -40,22 +41,21 @@ async fn chain_produces_blocks() -> eyre::Result<()> {
         }
     });
 
-    let mut generator = harness.block_generator().await?;
-
     for _ in 0..10 {
         for _ in 0..5 {
             // send a valid transaction
-            let _ = harness.send_valid_transaction().await?;
+            let _ = driver.transaction().random_valid_transfer().send().await?;
         }
 
-        let generated_block = generator.generate_block().await?;
-        assert_eq!(generated_block.num_transactions(), 7); // 5 normal txn + deposit + builder txn
+        let block = driver.build_new_block().await?;
+        assert_eq!(block.transactions.len(), 7); // 5 normal txn + deposit + builder txn
 
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     }
 
     cancellation_token.cancel();
     assert!(ws_handle.await.is_ok(), "WebSocket listener task failed");
+
     assert!(
         !received_messages
             .lock()

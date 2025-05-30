@@ -1,11 +1,12 @@
 use crate::builders::BuilderMode;
 use clap::Parser;
-pub use op::OpRbuilderArgs;
 use playground::PlaygroundOptions;
 use reth_optimism_cli::{chainspec::OpChainSpecParser, commands::Commands};
 
 mod op;
 mod playground;
+
+pub use op::{FlashblocksArgs, OpRbuilderArgs};
 
 /// This trait is used to extend Reth's CLI with additional functionality that
 /// are specific to the OP builder, such as populating default values for CLI arguments
