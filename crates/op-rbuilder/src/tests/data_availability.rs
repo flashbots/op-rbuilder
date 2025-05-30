@@ -1,9 +1,10 @@
 use crate::tests::{BlockTransactionsExt, LocalInstance, TransactionBuilderExt};
 use alloy_provider::Provider;
+use macros::*;
 
 /// This test ensures that the transaction size limit is respected.
 /// We will set limit to 1 byte and see that the builder will not include any transactions.
-#[macros::rb_test]
+#[rb_test]
 async fn data_availability_tx_size_limit(rbuilder: LocalInstance) -> eyre::Result<()> {
     let driver = rbuilder.driver().await?;
 
@@ -34,7 +35,7 @@ async fn data_availability_tx_size_limit(rbuilder: LocalInstance) -> eyre::Resul
 
 /// This test ensures that the block size limit is respected.
 /// We will set limit to 1 byte and see that the builder will not include any transactions.
-#[macros::rb_test]
+#[rb_test]
 async fn data_availability_block_size_limit(rbuilder: LocalInstance) -> eyre::Result<()> {
     let driver = rbuilder.driver().await?;
 
@@ -67,7 +68,7 @@ async fn data_availability_block_size_limit(rbuilder: LocalInstance) -> eyre::Re
 /// Size of each transaction is 100000000
 /// We will set limit to 3 txs and see that the builder will include 3 transactions.
 /// We should not forget about builder transaction so we will spawn only 2 regular txs.
-#[macros::rb_test]
+#[rb_test]
 async fn data_availability_block_fill(rbuilder: LocalInstance) -> eyre::Result<()> {
     let driver = rbuilder.driver().await?;
 

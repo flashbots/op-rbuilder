@@ -2,13 +2,14 @@ use core::sync::atomic::AtomicBool;
 use std::collections::HashSet;
 
 use alloy_primitives::TxHash;
+use macros::*;
 use tokio::join;
 
 use crate::tests::{ChainDriver, LocalInstance, TransactionBuilderExt};
 
 /// This is a smoke test that ensures that transactions are included in blocks
 /// and that the block generator is functioning correctly.
-#[macros::rb_test]
+#[rb_test]
 async fn chain_produces_blocks(rbuilder: LocalInstance) -> eyre::Result<()> {
     let driver = ChainDriver::new(&rbuilder).await?;
 
@@ -68,7 +69,7 @@ async fn chain_produces_blocks(rbuilder: LocalInstance) -> eyre::Result<()> {
 
 /// Ensures that payloads are generated correctly even when the builder is busy
 /// with other requests, such as fcu or getPayload.
-#[macros::rb_test]
+#[rb_test]
 async fn produces_blocks_under_load_within_deadline(rbuilder: LocalInstance) -> eyre::Result<()> {
     let driver = ChainDriver::new(&rbuilder).await?;
 

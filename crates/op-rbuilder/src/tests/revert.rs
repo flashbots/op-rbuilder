@@ -1,4 +1,6 @@
 use alloy_provider::{PendingTransactionBuilder, Provider};
+use macros::if_flashblocks;
+use macros::*;
 use op_alloy_network::Optimism;
 use reth_transaction_pool::TransactionEvent;
 
@@ -12,7 +14,7 @@ use crate::{
 };
 
 /// If revert protection is disabled, the transactions that revert are included in the block.
-#[macros::rb_test]
+#[rb_test]
 async fn revert_protection_disabled(rbuilder: LocalInstance) -> eyre::Result<()> {
     let driver = rbuilder.driver().await?;
 
@@ -40,7 +42,7 @@ async fn revert_protection_disabled(rbuilder: LocalInstance) -> eyre::Result<()>
 
 /// If revert protection is disabled, it should not be possible to send a revert bundle
 /// since the revert RPC endpoint is not available.
-#[macros::rb_test]
+#[rb_test]
 async fn revert_protection_disabled_bundle_endpoint_error(
     rbuilder: LocalInstance,
 ) -> eyre::Result<()> {
@@ -56,13 +58,18 @@ async fn revert_protection_disabled_bundle_endpoint_error(
         res.is_err(),
         "Expected error because method is not available"
     );
+
+    if_flashblocks! {
+        println!("I am in flashblocks mode");
+    }
+
     Ok(())
 }
 
 /// This test ensures that the transactions that get reverted and not included in the block,
 /// are eventually dropped from the pool once their block range is reached.
 /// This test creates N transactions with different block ranges.
-#[macros::rb_test(args = OpRbuilderArgs {
+#[rb_test(args = OpRbuilderArgs {
     enable_revert_protection: true,
     ..Default::default()
 })]
@@ -126,7 +133,7 @@ async fn revert_protection_monitor_transaction_gc(rbuilder: LocalInstance) -> ey
 /// the transaction is included in the block. If the bundle reverts, the transaction
 /// is not included in the block and tried again for the next bundle range blocks
 /// when it will be dropped from the pool.
-#[macros::rb_test(args = OpRbuilderArgs {
+#[rb_test(args = OpRbuilderArgs {
     enable_revert_protection: true,
     ..Default::default()
 })]
@@ -177,7 +184,7 @@ async fn revert_protection_bundle(rbuilder: LocalInstance) -> eyre::Result<()> {
 }
 
 /// Test the range limits for the revert protection bundle.
-#[macros::rb_test(args = OpRbuilderArgs {
+#[rb_test(args = OpRbuilderArgs {
     enable_revert_protection: true,
     ..Default::default()
 })]
@@ -222,7 +229,7 @@ async fn revert_protection_bundle_range_limits(rbuilder: LocalInstance) -> eyre:
 /// If a transaction reverts and was sent as a normal transaction through the eth_sendRawTransaction
 /// bundle, the transaction should be included in the block.
 /// This behaviour is the same as the 'revert_protection_disabled' test.
-#[macros::rb_test(args = OpRbuilderArgs {
+#[rb_test(args = OpRbuilderArgs {
     enable_revert_protection: true,
     ..Default::default()
 })]
@@ -249,7 +256,7 @@ async fn revert_protection_allow_reverted_transactions_without_bundle(
 
 /// If a transaction reverts and gets dropped it, the eth_getTransactionReceipt should return
 /// an error message that it was dropped.
-#[macros::rb_test(args = OpRbuilderArgs {
+#[rb_test(args = OpRbuilderArgs {
     enable_revert_protection: true,
     ..OpRbuilderArgs::test_default()
 })]
@@ -280,7 +287,7 @@ async fn revert_protection_check_transaction_receipt_status_message(
     // Dropped
     let _ = driver.build_new_block().await?;
     let receipt = provider.get_transaction_receipt(*tx_hash).await;
-    
+
     assert!(receipt.is_err());
 
     Ok(())

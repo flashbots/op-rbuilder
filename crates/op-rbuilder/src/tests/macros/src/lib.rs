@@ -212,3 +212,15 @@ fn validate_signature(item_fn: &ItemFn) {
         );
     }
 }
+// in cargo tests threads are named after the test function that
+// is running, so we can check if the current thread is a flashblocks test
+#[proc_macro]
+pub fn if_flashblocks(input: TokenStream) -> TokenStream {
+    let input = proc_macro2::TokenStream::from(input);
+
+    TokenStream::from(quote! {
+        if std::thread::current().name().unwrap_or("").ends_with("_flashblocks") {
+            #input
+        }
+    })
+}

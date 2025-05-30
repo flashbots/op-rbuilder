@@ -4,13 +4,14 @@ use crate::{
     tx_signer::Signer,
 };
 use futures::StreamExt;
+use macros::*;
 use parking_lot::Mutex;
 use std::sync::Arc;
 use tokio::task::JoinHandle;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 use tokio_util::sync::CancellationToken;
 
-#[macros::rb_test(flashblocks, args = OpRbuilderArgs {
+#[rb_test(flashblocks, args = OpRbuilderArgs {
     builder_signer: Some(Signer::random()),
     chain_block_time: 2000,
     ..Default::default()
