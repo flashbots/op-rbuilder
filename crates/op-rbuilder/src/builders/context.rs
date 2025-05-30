@@ -329,6 +329,7 @@ impl OpPayloadBuilderCtx {
         let mut evm = self.evm_config.evm_with_env(&mut *db, self.evm_env.clone());
 
         while let Some(tx) = best_txs.next(()) {
+            info!(target: "payload_builder", tx_hash = ?tx.hash(), "executing best transaction");
             let exclude_reverting_txs = tx.exclude_reverting_txs();
             let tx_da_size = tx.estimated_da_size();
 
@@ -367,11 +368,11 @@ impl OpPayloadBuilderCtx {
                     if let Some(err) = err.as_invalid_tx_err() {
                         if err.is_nonce_too_low() {
                             // if the nonce is too low, we can skip this transaction
-                            trace!(target: "payload_builder", %err, ?tx, "skipping nonce too low transaction");
+                            info!(target: "payload_builder", %err, ?tx, "skipping nonce too low transaction");
                         } else {
                             // if the transaction is invalid, we can skip it and all of its
                             // descendants
-                            trace!(target: "payload_builder", %err, ?tx, "skipping invalid transaction and its descendants");
+                            info!(target: "payload_builder", %err, ?tx, "skipping invalid transaction and its descendants");
                             best_txs.mark_invalid(tx.signer(), tx.nonce());
                         }
 
