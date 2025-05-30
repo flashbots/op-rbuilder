@@ -364,8 +364,11 @@ impl<Txs: PayloadTxsBounds> OpBuilder<'_, Txs> {
         let block_da_limit = ctx
             .da_config
             .max_da_block_size()
-            .map(|da_size| da_size.saturating_sub(builder_tx_da_size));
-
+            .map(|da_size: u64| da_size.saturating_sub(builder_tx_da_size));
+        info!(target: "payload_builder", block_da_limit = ?ctx
+        .da_config
+        .max_da_block_size(), builder_tx_da_size = builder_tx_da_size, "block da limit");
+        info!(target: "payload_builder", builder_tx_da_size = builder_tx_da_size, "builder tx da size");
         if !ctx.attributes().no_tx_pool {
             let best_txs_start_time = Instant::now();
             let best_txs = best(ctx.best_transaction_attributes());
