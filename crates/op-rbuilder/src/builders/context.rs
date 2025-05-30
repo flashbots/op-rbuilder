@@ -346,12 +346,14 @@ impl OpPayloadBuilderCtx {
                 // we can't fit this transaction into the block, so we need to mark it as
                 // invalid which also removes all dependent transaction from
                 // the iterator before we can continue
+                info!(target: "payload_builder", tx_hash = ?tx.hash(), "skipping transaction over limits");
                 best_txs.mark_invalid(tx.signer(), tx.nonce());
                 continue;
             }
 
             // A sequencer's block should never contain blob or deposit transactions from the pool.
             if tx.is_eip4844() || tx.is_deposit() {
+                info!(target: "payload_builder", tx_hash = ?tx.hash(), "skipping blob or deposit transaction");
                 best_txs.mark_invalid(tx.signer(), tx.nonce());
                 continue;
             }
