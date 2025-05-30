@@ -173,10 +173,12 @@ impl LocalInstance {
     /// Creates new local instance of the OP builder node with the flashblocks builder configuration.
     /// This method prefunds the default accounts with 1 ETH each.
     pub async fn flashblocks() -> eyre::Result<Self> {
-        let args = crate::args::Cli::parse_from(["dummy", "node"]);
-        let Commands::Node(ref node_command) = args.command else {
+        let mut args = crate::args::Cli::parse_from(["dummy", "node"]);
+        let Commands::Node(ref mut node_command) = args.command else {
             unreachable!()
         };
+        node_command.ext.enable_flashblocks = true;
+        node_command.ext.flashblocks_ws_url = "0.0.0.0:0".to_string();
         let instance = Self::new::<FlashblocksBuilder>(node_command.ext.clone()).await?;
         let driver = ChainDriver::new(&instance).await?;
         driver.fund_default_accounts().await?;

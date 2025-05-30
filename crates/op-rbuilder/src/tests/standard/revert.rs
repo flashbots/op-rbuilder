@@ -13,9 +13,8 @@ use crate::{
 };
 
 /// If revert protection is disabled, the transactions that revert are included in the block.
-#[tokio::test]
-async fn revert_protection_disabled() -> eyre::Result<()> {
-    let rbuilder = LocalInstance::standard().await?;
+#[macros::rb_test]
+async fn revert_protection_disabled(rbuilder: LocalInstance) -> eyre::Result<()> {
     let driver = rbuilder.driver().await?;
 
     for _ in 0..10 {
@@ -63,14 +62,12 @@ async fn revert_protection_disabled_bundle_endpoint_error() -> eyre::Result<()> 
 /// This test ensures that the transactions that get reverted and not included in the block,
 /// are eventually dropped from the pool once their block range is reached.
 /// This test creates N transactions with different block ranges.
-#[tokio::test]
-async fn revert_protection_monitor_transaction_gc() -> eyre::Result<()> {
-    let rbuilder = LocalInstance::new::<StandardBuilder>(OpRbuilderArgs {
-        enable_revert_protection: true,
-        ..Default::default()
-    })
-    .await?;
-
+#[macros::rb_test(args = OpRbuilderArgs {
+    enable_flashblocks: true,
+    enable_revert_protection: true,
+    ..Default::default()
+})]
+async fn revert_protection_monitor_transaction_gc(rbuilder: LocalInstance) -> eyre::Result<()> {
     let driver = rbuilder.driver().await?;
     let accounts = driver.fund_accounts(10, ONE_ETH).await?;
     let latest_block_number = driver.latest().await?.header.number;

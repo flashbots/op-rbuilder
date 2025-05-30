@@ -104,6 +104,7 @@ shellexpand = "3.1"
 serde_yaml = { version = "0.9" }
 nanoid = { version = "0.4", optional = true }
 dashmap = { version = "6.1", optional = true }
+macros = { path = "src/tests/macros", optional = true }
 
 # `msozin/flashblocks-v1.4.1` branch based on `flashblocks-rebase`
 rollup-boost = { git = "http://github.com/flashbots/rollup-boost", rev = "8506dfb7d84c65746f7c88d250983658438f59e8" }
@@ -125,6 +126,7 @@ reth-ipc.workspace = true
 reth-rpc-eth-types.workspace = true
 ctor = "0.4.2"
 dashmap = "6.1"
+macros = { path = "src/tests/macros" }
 
 [features]
 default = ["jemalloc"]
@@ -147,7 +149,13 @@ min-info-logs = ["tracing/release_max_level_info"]
 min-debug-logs = ["tracing/release_max_level_debug"]
 min-trace-logs = ["tracing/release_max_level_trace"]
 
-testing = ["nanoid", "reth-node-builder/test-utils", "reth-ipc", "dashmap"]
+testing = [
+	"nanoid",
+	"reth-node-builder/test-utils",
+	"reth-ipc",
+	"dashmap",
+	"macros",
+]
 
 [[bin]]
 name = "op-rbuilder"

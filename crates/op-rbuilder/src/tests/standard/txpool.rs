@@ -1,5 +1,5 @@
 use crate::{
-    builders::StandardBuilder,
+    builders::{StandardBuilder, FlashblocksBuilder},
     tests::{
         default_node_config, BlockTransactionsExt, ChainDriverExt, LocalInstance,
         TransactionBuilderExt, ONE_ETH,
@@ -8,11 +8,11 @@ use crate::{
 use reth::args::TxPoolArgs;
 use reth_node_builder::NodeConfig;
 use reth_optimism_chainspec::OpChainSpec;
+use crate::args::OpRbuilderArgs;
 
 /// This test ensures that pending pool custom limit is respected and priority tx would be included even when pool if full.
-#[tokio::test]
-async fn pending_pool_limit() -> eyre::Result<()> {
-    let rbuilder = LocalInstance::new_with_config::<StandardBuilder>(
+#[macros::rb_test(
+    standard = LocalInstance::new_with_config::<StandardBuilder>(
         Default::default(),
         NodeConfig::<OpChainSpec> {
             txpool: TxPoolArgs {
@@ -22,8 +22,23 @@ async fn pending_pool_limit() -> eyre::Result<()> {
             ..default_node_config()
         },
     )
-    .await?;
+    .await?,
 
+    flashblocks = LocalInstance::new_with_config::<FlashblocksBuilder>(
+        OpRbuilderArgs {
+            enable_flashblocks: true,
+            ..Default::default()
+        },
+        NodeConfig::<OpChainSpec> {
+            txpool: TxPoolArgs {
+                pending_max_count: 50,
+                ..Default::default()
+            },
+            ..default_node_config()
+        },
+    ).await?
+)]
+async fn pending_pool_limit(rbuilder: LocalInstance) -> eyre::Result<()> {
     let driver = rbuilder.driver().await?;
     let accounts = driver.fund_accounts(2, ONE_ETH).await?;
 

@@ -3,13 +3,14 @@
 //! Copied from OptimismNode to allow easy extension.
 
 //! clap [Args](clap::Args) for optimism rollup configuration
+use crate::tx_signer::Signer;
+use clap::Parser;
+use reth_optimism_cli::commands::Commands;
+use reth_optimism_node::args::RollupArgs;
 use std::path::PathBuf;
 
-use crate::tx_signer::Signer;
-use reth_optimism_node::args::RollupArgs;
-
 /// Parameters for rollup configuration
-#[derive(Debug, Clone, Default, PartialEq, Eq, clap::Args)]
+#[derive(Debug, Clone, PartialEq, Eq, clap::Args)]
 #[command(next_help_heading = "Rollup")]
 pub struct OpRbuilderArgs {
     /// Rollup configuration
@@ -71,6 +72,16 @@ pub struct OpRbuilderArgs {
         env = "PLAYGROUND_DIR",
     )]
     pub playground: Option<PathBuf>,
+}
+
+impl Default for OpRbuilderArgs {
+    fn default() -> Self {
+        let args = crate::args::Cli::parse_from(["dummy", "node"]);
+        let Commands::Node(node_command) = args.command else {
+            unreachable!()
+        };
+        node_command.ext
+    }
 }
 
 fn expand_path(s: &str) -> Result<PathBuf, String> {

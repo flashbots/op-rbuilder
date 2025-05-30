@@ -3,9 +3,8 @@ use alloy_provider::Provider;
 
 /// This test ensures that the transaction size limit is respected.
 /// We will set limit to 1 byte and see that the builder will not include any transactions.
-#[tokio::test]
-async fn data_availability_tx_size_limit() -> eyre::Result<()> {
-    let rbuilder = LocalInstance::standard().await?;
+#[macros::rb_test]
+async fn data_availability_tx_size_limit(rbuilder: LocalInstance) -> eyre::Result<()> {
     let driver = rbuilder.driver().await?;
 
     // Set (max_tx_da_size, max_block_da_size), with this case block won't fit any transaction
@@ -33,43 +32,11 @@ async fn data_availability_tx_size_limit() -> eyre::Result<()> {
     Ok(())
 }
 
-/// This test ensures that the transaction size limit is respected.
-/// We will set limit to 1 byte and see that the builder will not include any transactions.
-#[tokio::test]
-async fn data_availability_tx_size_limit_fb() -> eyre::Result<()> {
-    let rbuilder = LocalInstance::flashblocks().await?;
-    let driver = rbuilder.driver().await?;
-
-    // Set (max_tx_da_size, max_block_da_size), with this case block won't fit any transaction
-    let call = rbuilder
-        .provider()
-        .await?
-        .raw_request::<(i32, i32), bool>("miner_setMaxDASize".into(), (1, 0))
-        .await?;
-    assert!(call, "miner_setMaxDASize should be executed successfully");
-
-    let unfit_tx = driver
-        .transaction()
-        .random_valid_transfer()
-        .with_max_priority_fee_per_gas(50)
-        .send()
-        .await?;
-    let block = driver.build_new_block().await?;
-
-    // tx should not be included because we set the tx_size_limit to 1
-    assert!(
-        !block.includes(unfit_tx.tx_hash()),
-        "transaction should not be included in the block"
-    );
-
-    Ok(())
-}
 
 /// This test ensures that the block size limit is respected.
 /// We will set limit to 1 byte and see that the builder will not include any transactions.
-#[tokio::test]
-async fn data_availability_block_size_limit() -> eyre::Result<()> {
-    let rbuilder = LocalInstance::standard().await?;
+#[macros::rb_test]
+async fn data_availability_block_size_limit(rbuilder: LocalInstance) -> eyre::Result<()> {
     let driver = rbuilder.driver().await?;
 
     // Set block da size to be small, so it won't include tx
@@ -101,9 +68,8 @@ async fn data_availability_block_size_limit() -> eyre::Result<()> {
 /// Size of each transaction is 100000000
 /// We will set limit to 3 txs and see that the builder will include 3 transactions.
 /// We should not forget about builder transaction so we will spawn only 2 regular txs.
-#[tokio::test]
-async fn data_availability_block_fill() -> eyre::Result<()> {
-    let rbuilder = LocalInstance::standard().await?;
+#[macros::rb_test]
+async fn data_availability_block_fill(rbuilder: LocalInstance) -> eyre::Result<()> {
     let driver = rbuilder.driver().await?;
 
     // Set block big enough so it could fit 3 transactions without tx size limit
@@ -129,6 +95,7 @@ async fn data_availability_block_fill() -> eyre::Result<()> {
     let unfit_tx_3 = driver.transaction().random_valid_transfer().send().await?;
 
     let block = driver.build_new_block().await?;
+
     // Now the first 2 txs will fit into the block
     assert!(block.includes(fit_tx_1.tx_hash()), "tx should be in block");
     assert!(block.includes(fit_tx_2.tx_hash()), "tx should be in block");

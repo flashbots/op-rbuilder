@@ -235,6 +235,7 @@ where
         // Spawn the timer task that signals when to build a new flashblock
         let cancel_clone = ctx.cancel.clone();
         let interval = self.config.specific.interval;
+        
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(interval);
             loop {

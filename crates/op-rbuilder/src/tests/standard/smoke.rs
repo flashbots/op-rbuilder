@@ -6,12 +6,10 @@ use tokio::join;
 
 use crate::tests::{ChainDriver, LocalInstance, TransactionBuilderExt};
 
-#[tokio::test]
-
 /// This is a smoke test that ensures that transactions are included in blocks
 /// and that the block generator is functioning correctly.
-async fn chain_produces_blocks() -> eyre::Result<()> {
-    let rbuilder = LocalInstance::standard().await?;
+#[macros::rb_test]
+async fn chain_produces_blocks(rbuilder: LocalInstance) -> eyre::Result<()> {
     let driver = ChainDriver::new(&rbuilder).await?;
 
     const SAMPLE_SIZE: usize = 10;
@@ -70,9 +68,8 @@ async fn chain_produces_blocks() -> eyre::Result<()> {
 
 /// Ensures that payloads are generated correctly even when the builder is busy
 /// with other requests, such as fcu or getPayload.
-#[tokio::test]
-async fn produces_blocks_under_load_within_deadline() -> eyre::Result<()> {
-    let rbuilder = LocalInstance::standard().await?;
+#[macros::rb_test]
+async fn produces_blocks_under_load_within_deadline(rbuilder: LocalInstance) -> eyre::Result<()> {
     let driver = ChainDriver::new(&rbuilder).await?;
 
     let done = AtomicBool::new(false);

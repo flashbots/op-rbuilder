@@ -1,7 +1,6 @@
 mod apis;
 mod chain;
 mod instance;
-mod op;
 mod txs;
 mod utils;
 
@@ -9,8 +8,6 @@ pub use apis::*;
 pub use chain::*;
 
 pub use instance::*;
-pub use op::*;
-use tracing_subscriber::{filter::filter_fn, prelude::*};
 pub use txs::*;
 pub use utils::*;
 
@@ -29,6 +26,7 @@ pub const ONE_ETH: u128 = 1_000_000_000_000_000_000;
 /// It injects itself into
 #[ctor::ctor]
 fn init_tests_logging() {
+    use tracing_subscriber::{filter::filter_fn, prelude::*};
     if let Ok(v) = std::env::var("TEST_TRACE") {
         let level = match v.as_str() {
             "false" | "off" => return,
