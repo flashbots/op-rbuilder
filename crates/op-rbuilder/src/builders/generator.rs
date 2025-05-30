@@ -171,10 +171,6 @@ where
         // (not just 0.5s) because of that.
         let deadline = job_deadline(attributes.timestamp()) + self.extra_block_deadline;
 
-        println!("deadline: {:?}", deadline);
-        println!("attributes.timestamp(): {}", attributes.timestamp());
-        println!("extra_block_deadline: {:?}", self.extra_block_deadline);
-
         let deadline = Box::pin(tokio::time::sleep(deadline));
         let config = PayloadConfig::new(Arc::new(parent_header.clone()), attributes);
 
