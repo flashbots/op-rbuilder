@@ -1,5 +1,6 @@
 //! Heavily influenced by [reth](https://github.com/paradigmxyz/reth/blob/1e965caf5fa176f244a31c0d2662ba1b590938db/crates/optimism/payload/src/builder.rs#L570)
 use alloy_primitives::{Address, U256};
+use tracing::info;
 use core::fmt::Debug;
 use reth_optimism_primitives::{OpReceipt, OpTransactionSigned};
 
@@ -50,15 +51,22 @@ impl<T: Debug + Default> ExecutionInfo<T> {
         tx_gas_limit: u64,
     ) -> bool {
         if tx_data_limit.is_some_and(|da_limit| tx_da_size > da_limit) {
+            info!(target: "payload_builder", tx_da_size = tx_da_size, da_limit = tx_data_limit, "tx data limit exceeded");
             return true;
         }
 
         if block_data_limit
             .is_some_and(|da_limit| self.cumulative_da_bytes_used + tx_da_size > da_limit)
         {
+            info!(target: "payload_builder", tx_da_size = tx_da_size, da_limit = block_data_limit, "block data limit exceeded");
             return true;
         }
 
-        self.cumulative_gas_used + tx_gas_limit > block_gas_limit
+        if self.cumulative_gas_used + tx_gas_limit > block_gas_limit {
+            info!(target: "payload_builder", tx_gas_limit = tx_gas_limit, block_gas_limit = block_gas_limit, "tx gas limit exceeded");
+            return true;
+        }
+
+        false
     }
 }
