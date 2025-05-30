@@ -205,7 +205,7 @@ impl std::fmt::Display for TxnExecutionResult {
             TxnExecutionResult::InvalidDASize => write!(f, "InvalidDASize"),
             TxnExecutionResult::SequencerTransaction => write!(f, "SequencerTransaction"),
             TxnExecutionResult::NonceTooLow => write!(f, "NonceTooLow"),
-            TxnExecutionResult::InternalError(err) => write!(f, "InternalError({})", err),
+            TxnExecutionResult::InternalError(err) => write!(f, "InternalError({err})"),
             TxnExecutionResult::EvmError => write!(f, "EvmError"),
             TxnExecutionResult::Success => write!(f, "Success"),
             TxnExecutionResult::Reverted => write!(f, "Reverted"),
