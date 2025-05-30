@@ -283,6 +283,7 @@ impl OpPayloadBuilderCtx {
 
             // add gas used by the transaction to cumulative gas used, before creating the receipt
             let gas_used = result.gas_used();
+            info!(target: "payload_builder", tx_hash = ?sequencer_tx.tx_hash(), gas_used = %gas_used);
             info.cumulative_gas_used += gas_used;
 
             let ctx = ReceiptBuilderCtx {
@@ -404,6 +405,7 @@ impl OpPayloadBuilderCtx {
             // add gas used by the transaction to cumulative gas used, before creating the
             // receipt
             let gas_used = result.gas_used();
+            info!(target: "payload_builder", tx_hash = ?tx.tx_hash(), gas_used = %gas_used);
             info.cumulative_gas_used += gas_used;
             // record tx da size
             info.cumulative_da_bytes_used += tx_da_size;

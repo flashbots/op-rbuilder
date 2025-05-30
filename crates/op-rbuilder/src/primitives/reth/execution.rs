@@ -63,7 +63,12 @@ impl<T: Debug + Default> ExecutionInfo<T> {
         }
 
         if self.cumulative_gas_used + tx_gas_limit > block_gas_limit {
-            info!(target: "payload_builder", tx_gas_limit = tx_gas_limit, block_gas_limit = block_gas_limit, "tx gas limit exceeded");
+            info!(target: "payload_builder",
+                tx_gas_limit = tx_gas_limit,
+                block_gas_limit = block_gas_limit,
+                gas_used = self.cumulative_gas_used,
+                "tx gas limit exceeded"
+            );
             return true;
         }
 
