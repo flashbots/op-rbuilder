@@ -334,10 +334,10 @@ impl OpPayloadBuilderCtx {
         // Fixed in https://github.com/paradigmxyz/reth/pull/16514
         self.metrics
             .da_block_size_limit
-            .record(block_da_limit.map_or(0.0, |v| v as f64));
+            .record(block_da_limit.map_or(-1, |v| v as f64));
         self.metrics
             .da_tx_size_limit
-            .record(tx_da_limit.map_or(0.0, |v| v as f64));
+            .record(tx_da_limit.map_or(-1, |v| v as f64));
 
         while let Some(tx) = best_txs.next(()) {
             let exclude_reverting_txs = tx.exclude_reverting_txs();
