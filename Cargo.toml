@@ -40,55 +40,55 @@ codegen-units = 1
 incremental = false
 
 [workspace.dependencies]
-reth = { git = "https://github.com/avalonche/reth", rev = "b82970f25bb45de0af98a562b1d621deeb725417" }
-reth-chain-state = { git = "https://github.com/avalonche/reth", rev = "b82970f25bb45de0af98a562b1d621deeb725417" }
-reth-cli = { git = "https://github.com/avalonche/reth", rev = "b82970f25bb45de0af98a562b1d621deeb725417" }
-reth-cli-util = { git = "https://github.com/avalonche/reth", rev = "b82970f25bb45de0af98a562b1d621deeb725417" }
-reth-db = { git = "https://github.com/avalonche/reth", rev = "b82970f25bb45de0af98a562b1d621deeb725417" }
-reth-db-common = { git = "https://github.com/avalonche/reth", rev = "b82970f25bb45de0af98a562b1d621deeb725417" }
-reth-errors = { git = "https://github.com/avalonche/reth", rev = "b82970f25bb45de0af98a562b1d621deeb725417" }
-reth-payload-builder = { git = "https://github.com/avalonche/reth", rev = "b82970f25bb45de0af98a562b1d621deeb725417" }
-reth-node-api = { git = "https://github.com/avalonche/reth", rev = "b82970f25bb45de0af98a562b1d621deeb725417" }
-reth-node-ethereum = { git = "https://github.com/avalonche/reth", rev = "b82970f25bb45de0af98a562b1d621deeb725417" }
-reth-trie = { git = "https://github.com/avalonche/reth", rev = "b82970f25bb45de0af98a562b1d621deeb725417" }
-reth-trie-parallel = { git = "https://github.com/avalonche/reth", rev = "b82970f25bb45de0af98a562b1d621deeb725417" }
-reth-basic-payload-builder = { git = "https://github.com/avalonche/reth", rev = "b82970f25bb45de0af98a562b1d621deeb725417" }
-reth-node-core = { git = "https://github.com/avalonche/reth", rev = "b82970f25bb45de0af98a562b1d621deeb725417" }
-reth-primitives = { git = "https://github.com/avalonche/reth", rev = "b82970f25bb45de0af98a562b1d621deeb725417" }
-reth-primitives-traits = { git = "https://github.com/avalonche/reth", rev = "b82970f25bb45de0af98a562b1d621deeb725417" }
-reth-provider = { git = "https://github.com/avalonche/reth", rev = "b82970f25bb45de0af98a562b1d621deeb725417", features = [
+reth = { git = "https://github.com/avalonche/reth", rev = "620b7ad27231dcecacc4e0d340ba5b2c26baa64a" }
+reth-chain-state = { git = "https://github.com/avalonche/reth", rev = "620b7ad27231dcecacc4e0d340ba5b2c26baa64a" }
+reth-cli = { git = "https://github.com/avalonche/reth", rev = "620b7ad27231dcecacc4e0d340ba5b2c26baa64a" }
+reth-cli-util = { git = "https://github.com/avalonche/reth", rev = "620b7ad27231dcecacc4e0d340ba5b2c26baa64a" }
+reth-db = { git = "https://github.com/avalonche/reth", rev = "620b7ad27231dcecacc4e0d340ba5b2c26baa64a" }
+reth-db-common = { git = "https://github.com/avalonche/reth", rev = "620b7ad27231dcecacc4e0d340ba5b2c26baa64a" }
+reth-errors = { git = "https://github.com/avalonche/reth", rev = "620b7ad27231dcecacc4e0d340ba5b2c26baa64a" }
+reth-payload-builder = { git = "https://github.com/avalonche/reth", rev = "620b7ad27231dcecacc4e0d340ba5b2c26baa64a" }
+reth-node-api = { git = "https://github.com/avalonche/reth", rev = "620b7ad27231dcecacc4e0d340ba5b2c26baa64a" }
+reth-node-ethereum = { git = "https://github.com/avalonche/reth", rev = "620b7ad27231dcecacc4e0d340ba5b2c26baa64a" }
+reth-trie = { git = "https://github.com/avalonche/reth", rev = "620b7ad27231dcecacc4e0d340ba5b2c26baa64a" }
+reth-trie-parallel = { git = "https://github.com/avalonche/reth", rev = "620b7ad27231dcecacc4e0d340ba5b2c26baa64a" }
+reth-basic-payload-builder = { git = "https://github.com/avalonche/reth", rev = "620b7ad27231dcecacc4e0d340ba5b2c26baa64a" }
+reth-node-core = { git = "https://github.com/avalonche/reth", rev = "620b7ad27231dcecacc4e0d340ba5b2c26baa64a" }
+reth-primitives = { git = "https://github.com/avalonche/reth", rev = "620b7ad27231dcecacc4e0d340ba5b2c26baa64a" }
+reth-primitives-traits = { git = "https://github.com/avalonche/reth", rev = "620b7ad27231dcecacc4e0d340ba5b2c26baa64a" }
+reth-provider = { git = "https://github.com/avalonche/reth", rev = "620b7ad27231dcecacc4e0d340ba5b2c26baa64a", features = [
     "test-utils",
 ] }
-reth-chainspec = { git = "https://github.com/avalonche/reth", rev = "b82970f25bb45de0af98a562b1d621deeb725417" }
-reth-evm = { git = "https://github.com/avalonche/reth", rev = "b82970f25bb45de0af98a562b1d621deeb725417" }
-reth-evm-ethereum = { git = "https://github.com/avalonche/reth", rev = "b82970f25bb45de0af98a562b1d621deeb725417" }
-reth-execution-errors = { git = "https://github.com/avalonche/reth", rev = "b82970f25bb45de0af98a562b1d621deeb725417" }
-reth-exex = { git = "https://github.com/avalonche/reth", rev = "b82970f25bb45de0af98a562b1d621deeb725417" }
-reth-metrics = { git = "https://github.com/avalonche/reth", rev = "b82970f25bb45de0af98a562b1d621deeb725417" }
-reth-trie-db = { git = "https://github.com/avalonche/reth", rev = "b82970f25bb45de0af98a562b1d621deeb725417" }
-reth-payload-primitives = { git = "https://github.com/avalonche/reth", rev = "b82970f25bb45de0af98a562b1d621deeb725417" }
-reth-transaction-pool = { git = "https://github.com/avalonche/reth", rev = "b82970f25bb45de0af98a562b1d621deeb725417" }
-reth-execution-types = { git = "https://github.com/avalonche/reth", rev = "b82970f25bb45de0af98a562b1d621deeb725417" }
-reth-revm = { git = "https://github.com/avalonche/reth", rev = "b82970f25bb45de0af98a562b1d621deeb725417" }
-reth-payload-builder-primitives = { git = "https://github.com/avalonche/reth", rev = "b82970f25bb45de0af98a562b1d621deeb725417" }
-reth-payload-util = { git = "https://github.com/avalonche/reth", rev = "b82970f25bb45de0af98a562b1d621deeb725417" }
-reth-rpc-layer = { git = "https://github.com/avalonche/reth", rev = "b82970f25bb45de0af98a562b1d621deeb725417" }
-reth-network-peers = { git = "https://github.com/avalonche/reth", rev = "b82970f25bb45de0af98a562b1d621deeb725417" }
-reth-testing-utils = { git = "https://github.com/avalonche/reth", rev = "b82970f25bb45de0af98a562b1d621deeb725417" }
-reth-node-builder = { git = "https://github.com/avalonche/reth", rev = "b82970f25bb45de0af98a562b1d621deeb725417" }
-reth-rpc-eth-types = { git = "https://github.com/avalonche/reth", rev = "b82970f25bb45de0af98a562b1d621deeb725417" }
+reth-chainspec = { git = "https://github.com/avalonche/reth", rev = "620b7ad27231dcecacc4e0d340ba5b2c26baa64a" }
+reth-evm = { git = "https://github.com/avalonche/reth", rev = "620b7ad27231dcecacc4e0d340ba5b2c26baa64a" }
+reth-evm-ethereum = { git = "https://github.com/avalonche/reth", rev = "620b7ad27231dcecacc4e0d340ba5b2c26baa64a" }
+reth-execution-errors = { git = "https://github.com/avalonche/reth", rev = "620b7ad27231dcecacc4e0d340ba5b2c26baa64a" }
+reth-exex = { git = "https://github.com/avalonche/reth", rev = "620b7ad27231dcecacc4e0d340ba5b2c26baa64a" }
+reth-metrics = { git = "https://github.com/avalonche/reth", rev = "620b7ad27231dcecacc4e0d340ba5b2c26baa64a" }
+reth-trie-db = { git = "https://github.com/avalonche/reth", rev = "620b7ad27231dcecacc4e0d340ba5b2c26baa64a" }
+reth-payload-primitives = { git = "https://github.com/avalonche/reth", rev = "620b7ad27231dcecacc4e0d340ba5b2c26baa64a" }
+reth-transaction-pool = { git = "https://github.com/avalonche/reth", rev = "620b7ad27231dcecacc4e0d340ba5b2c26baa64a" }
+reth-execution-types = { git = "https://github.com/avalonche/reth", rev = "620b7ad27231dcecacc4e0d340ba5b2c26baa64a" }
+reth-revm = { git = "https://github.com/avalonche/reth", rev = "620b7ad27231dcecacc4e0d340ba5b2c26baa64a" }
+reth-payload-builder-primitives = { git = "https://github.com/avalonche/reth", rev = "620b7ad27231dcecacc4e0d340ba5b2c26baa64a" }
+reth-payload-util = { git = "https://github.com/avalonche/reth", rev = "620b7ad27231dcecacc4e0d340ba5b2c26baa64a" }
+reth-rpc-layer = { git = "https://github.com/avalonche/reth", rev = "620b7ad27231dcecacc4e0d340ba5b2c26baa64a" }
+reth-network-peers = { git = "https://github.com/avalonche/reth", rev = "620b7ad27231dcecacc4e0d340ba5b2c26baa64a" }
+reth-testing-utils = { git = "https://github.com/avalonche/reth", rev = "620b7ad27231dcecacc4e0d340ba5b2c26baa64a" }
+reth-node-builder = { git = "https://github.com/avalonche/reth", rev = "620b7ad27231dcecacc4e0d340ba5b2c26baa64a" }
+reth-rpc-eth-types = { git = "https://github.com/avalonche/reth", rev = "620b7ad27231dcecacc4e0d340ba5b2c26baa64a" }
 
 # reth optimism
-reth-optimism-primitives = { git = "https://github.com/avalonche/reth", rev = "b82970f25bb45de0af98a562b1d621deeb725417" }
-reth-optimism-consensus = { git = "https://github.com/avalonche/reth", rev = "b82970f25bb45de0af98a562b1d621deeb725417" }
-reth-optimism-cli = { git = "https://github.com/avalonche/reth", rev = "b82970f25bb45de0af98a562b1d621deeb725417" }
-reth-optimism-forks = { git = "https://github.com/avalonche/reth", rev = "b82970f25bb45de0af98a562b1d621deeb725417" }
-reth-optimism-evm = { git = "https://github.com/avalonche/reth", rev = "b82970f25bb45de0af98a562b1d621deeb725417" }
-reth-optimism-node = { git = "https://github.com/avalonche/reth", rev = "b82970f25bb45de0af98a562b1d621deeb725417" }
-reth-optimism-payload-builder = { git = "https://github.com/avalonche/reth", rev = "b82970f25bb45de0af98a562b1d621deeb725417" }
-reth-optimism-chainspec = { git = "https://github.com/avalonche/reth", rev = "b82970f25bb45de0af98a562b1d621deeb725417" }
-reth-optimism-txpool = { git = "https://github.com/avalonche/reth", rev = "b82970f25bb45de0af98a562b1d621deeb725417" }
-reth-optimism-rpc = { git = "https://github.com/avalonche/reth", rev = "b82970f25bb45de0af98a562b1d621deeb725417", features = [
+reth-optimism-primitives = { git = "https://github.com/avalonche/reth", rev = "620b7ad27231dcecacc4e0d340ba5b2c26baa64a" }
+reth-optimism-consensus = { git = "https://github.com/avalonche/reth", rev = "620b7ad27231dcecacc4e0d340ba5b2c26baa64a" }
+reth-optimism-cli = { git = "https://github.com/avalonche/reth", rev = "620b7ad27231dcecacc4e0d340ba5b2c26baa64a" }
+reth-optimism-forks = { git = "https://github.com/avalonche/reth", rev = "620b7ad27231dcecacc4e0d340ba5b2c26baa64a" }
+reth-optimism-evm = { git = "https://github.com/avalonche/reth", rev = "620b7ad27231dcecacc4e0d340ba5b2c26baa64a" }
+reth-optimism-node = { git = "https://github.com/avalonche/reth", rev = "620b7ad27231dcecacc4e0d340ba5b2c26baa64a" }
+reth-optimism-payload-builder = { git = "https://github.com/avalonche/reth", rev = "620b7ad27231dcecacc4e0d340ba5b2c26baa64a" }
+reth-optimism-chainspec = { git = "https://github.com/avalonche/reth", rev = "620b7ad27231dcecacc4e0d340ba5b2c26baa64a" }
+reth-optimism-txpool = { git = "https://github.com/avalonche/reth", rev = "620b7ad27231dcecacc4e0d340ba5b2c26baa64a" }
+reth-optimism-rpc = { git = "https://github.com/avalonche/reth", rev = "620b7ad27231dcecacc4e0d340ba5b2c26baa64a", features = [
     "client",
 ] }
 
