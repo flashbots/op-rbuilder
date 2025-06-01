@@ -14,10 +14,12 @@ use crate::{
 };
 
 mod context;
+mod fb_next;
 mod flashblocks;
 mod generator;
 mod standard;
 
+pub use fb_next::FlashblocksExperimentalBuilder;
 pub use flashblocks::FlashblocksBuilder;
 pub use standard::StandardBuilder;
 
@@ -31,6 +33,11 @@ pub enum BuilderMode {
     /// block every short interval and makes it available through a websocket update
     /// then merges them into a full block every chain block time.
     Flashblocks,
+
+    /// Uses the experimental implementation of the flashblocks builder that builds
+    /// chunks of a block every short interval and makes it available through a
+    /// websocket update, then merges them into a full block every chain block time.
+    Experimental,
 }
 
 /// Defines the interface for any block builder implementation API entry point.

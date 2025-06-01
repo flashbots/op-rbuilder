@@ -29,7 +29,10 @@ use tokio::sync::oneshot;
 
 use crate::{
     args::OpRbuilderArgs,
-    builders::{BuilderConfig, FlashblocksBuilder, PayloadBuilder, StandardBuilder},
+    builders::{
+        BuilderConfig, FlashblocksBuilder, FlashblocksExperimentalBuilder, PayloadBuilder,
+        StandardBuilder,
+    },
     revert_protection::{EthApiExtServer, EthApiOverrideServer, RevertProtectionExt},
     tx::FBPooledTransaction,
     tx_signer::Signer,
@@ -192,6 +195,22 @@ impl LocalInstance {
         node_command.ext.flashblocks.enabled = true;
         node_command.ext.flashblocks.flashblocks_port = 0; // use random os assigned port
         let instance = Self::new::<FlashblocksBuilder>(node_command.ext.clone()).await?;
+        let driver = ChainDriver::new(&instance).await?;
+        driver.fund_default_accounts().await?;
+        Ok(instance)
+    }
+
+    /// Creates new local instance of the OP builder node with the experimental flashblocks
+    /// builder configuration. This method prefunds the default accounts with 1 ETH each.
+    pub async fn experimental() -> eyre::Result<Self> {
+        let mut args = crate::args::Cli::parse_from(["dummy", "node"]);
+        let Commands::Node(ref mut node_command) = args.command else {
+            unreachable!()
+        };
+        node_command.ext.flashblocks.enabled = true;
+        node_command.ext.flashblocks.flashblocks_port = 0; // use random os assigned port
+        let instance =
+            Self::new::<FlashblocksExperimentalBuilder>(node_command.ext.clone()).await?;
         let driver = ChainDriver::new(&instance).await?;
         driver.fund_default_accounts().await?;
         Ok(instance)

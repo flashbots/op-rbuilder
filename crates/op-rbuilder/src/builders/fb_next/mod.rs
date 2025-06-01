@@ -1,18 +1,23 @@
 use super::BuilderConfig;
 use crate::traits::{NodeBounds, PoolBounds};
 use config::FlashblocksConfig;
+use reth_optimism_node::OpPayloadBuilderAttributes;
+use reth_optimism_primitives::OpTransactionSigned;
 use service::FlashblocksServiceBuilder;
 
+mod builder;
 mod config;
-mod payload;
+mod context;
+mod empty;
+mod job;
 mod service;
 mod wspub;
 
 /// Block building strategy that progressively builds chunks of a block and makes them available
 /// through a websocket update, then merges them into a full block every chain block time.
-pub struct FlashblocksBuilder;
+pub struct FlashblocksExperimentalBuilder;
 
-impl super::PayloadBuilder for FlashblocksBuilder {
+impl super::PayloadBuilder for FlashblocksExperimentalBuilder {
     type Config = FlashblocksConfig;
 
     type ServiceBuilder<Node, Pool>
@@ -31,3 +36,5 @@ impl super::PayloadBuilder for FlashblocksBuilder {
         Ok(FlashblocksServiceBuilder(config))
     }
 }
+
+type PayloadAttributes = OpPayloadBuilderAttributes<OpTransactionSigned>;

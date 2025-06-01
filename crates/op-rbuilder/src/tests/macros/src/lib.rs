@@ -5,6 +5,7 @@ use syn::{Expr, ItemFn, Meta, Token, parse_macro_input, punctuated::Punctuated};
 struct TestConfig {
     standard: Option<Option<Expr>>, // None = not specified, Some(None) = default, Some(Some(expr)) = custom
     flashblocks: Option<Option<Expr>>, // Same as above
+    experimental: Option<Option<Expr>>, // Same as above
     args: Option<Expr>,             // Expression to pass to LocalInstance::new()
     config: Option<Expr>,           // NodeConfig<OpChainSpec> for new_with_config
 }
@@ -14,14 +15,16 @@ impl syn::parse::Parse for TestConfig {
         let mut config = TestConfig {
             standard: None,
             flashblocks: None,
+            experimental: None,
             args: None,
             config: None,
         };
 
         if input.is_empty() {
-            // No arguments provided, generate both with defaults
+            // No arguments provided, generate all three with defaults
             config.standard = Some(None);
             config.flashblocks = Some(None);
+            config.experimental = Some(None);
             return Ok(config);
         }
 
@@ -35,11 +38,17 @@ impl syn::parse::Parse for TestConfig {
                 Meta::Path(path) if path.is_ident("flashblocks") => {
                     config.flashblocks = Some(None);
                 }
+                Meta::Path(path) if path.is_ident("experimental") => {
+                    config.experimental = Some(None);
+                }
                 Meta::NameValue(nv) if nv.path.is_ident("standard") => {
                     config.standard = Some(Some(nv.value));
                 }
                 Meta::NameValue(nv) if nv.path.is_ident("flashblocks") => {
                     config.flashblocks = Some(Some(nv.value));
+                }
+                Meta::NameValue(nv) if nv.path.is_ident("experimental") => {
+                    config.experimental = Some(Some(nv.value));
                 }
                 Meta::NameValue(nv) if nv.path.is_ident("args") => {
                     config.args = Some(nv.value);
@@ -50,7 +59,7 @@ impl syn::parse::Parse for TestConfig {
                 _ => {
                     return Err(syn::Error::new_spanned(
                         arg,
-                        "Unknown attribute. Use 'standard', 'flashblocks', 'args', or 'config'",
+                        "Unknown attribute. Use 'standard', 'flashblocks', 'experimental', 'args', or 'config'",
                     ));
                 }
             }
@@ -75,18 +84,30 @@ impl syn::parse::Parse for TestConfig {
             }
         }
 
-        // If only args/config is specified, generate both standard and flashblocks tests
+        if let Some(Some(_)) = &config.experimental {
+            if config.args.is_some() || config.config.is_some() {
+                return Err(syn::Error::new_spanned(
+                    config.args.as_ref().or(config.config.as_ref()).unwrap(),
+                    "Cannot use 'args' or 'config' with custom 'experimental' expression. Use either 'experimental = expression' or 'args/config' parameters, not both.",
+                ));
+            }
+        }
+
+        // If only args/config is specified, generate all three tests
         if config.standard.is_none()
             && config.flashblocks.is_none()
+            && config.experimental.is_none()
             && (config.args.is_some() || config.config.is_some())
         {
             config.standard = Some(None);
             config.flashblocks = Some(None);
+            config.experimental = Some(None);
         }
 
         Ok(config)
     }
 }
+
 #[proc_macro_attribute]
 pub fn rb_test(args: TokenStream, input: TokenStream) -> TokenStream {
     let input_fn = parse_macro_input!(input as ItemFn);
@@ -143,7 +164,6 @@ pub fn rb_test(args: TokenStream, input: TokenStream) -> TokenStream {
         let instance_init = match (flashblocks_init, &config.args, &config.config) {
             (None, None, None) => quote! { crate::tests::LocalInstance::flashblocks().await? },
             (None, Some(args_expr), None) => {
-                // Use custom flashblocks args with enabled=true and flashblocks_port=0
                 quote! {
                     crate::tests::LocalInstance::new::<crate::builders::FlashblocksBuilder>({
                         let mut args = #args_expr;
@@ -185,6 +205,57 @@ pub fn rb_test(args: TokenStream, input: TokenStream) -> TokenStream {
         });
     }
 
+    // Generate experimental test if requested
+    if let Some(experimental_init) = config.experimental {
+        let experimental_test_name = syn::Ident::new(
+            &format!("{}_experimental", original_name),
+            original_name.span(),
+        );
+
+        let instance_init = match (experimental_init, &config.args, &config.config) {
+            (None, None, None) => quote! { crate::tests::LocalInstance::experimental().await? },
+            (None, Some(args_expr), None) => {
+                quote! {
+                    crate::tests::LocalInstance::new::<crate::builders::FlashblocksExperimentalBuilder>({
+                        let mut args = #args_expr;
+                        args.flashblocks.enabled = true;
+                        args.flashblocks.flashblocks_port = 0;
+                        args
+                    }).await?
+                }
+            }
+            (None, None, Some(config_expr)) => {
+                quote! {
+                    crate::tests::LocalInstance::new_with_config::<crate::builders::FlashblocksExperimentalBuilder>({
+                        let mut args = crate::args::OpRbuilderArgs::default();
+                        args.flashblocks.enabled = true;
+                        args.flashblocks.flashblocks_port = 0;
+                        args
+                    }, #config_expr).await?
+                }
+            }
+            (None, Some(args_expr), Some(config_expr)) => {
+                quote! {
+                    crate::tests::LocalInstance::new_with_config::<crate::builders::FlashblocksExperimentalBuilder>({
+                        let mut args = #args_expr;
+                        args.flashblocks.enabled = true;
+                        args.flashblocks.flashblocks_port = 0;
+                        args
+                    }, #config_expr).await?
+                }
+            }
+            (Some(expr), _, _) => quote! { #expr },
+        };
+
+        generated_functions.push(quote! {
+            #[tokio::test]
+            async fn #experimental_test_name() -> eyre::Result<()> {
+                let instance = #instance_init;
+                #original_name(instance).await
+            }
+        });
+    }
+
     TokenStream::from(quote! {
         #(#generated_functions)*
     })
@@ -212,14 +283,35 @@ fn validate_signature(item_fn: &ItemFn) {
         );
     }
 }
-// in cargo tests threads are named after the test function that
-// is running, so we can check if the current thread is a flashblocks test
+
 #[proc_macro]
 pub fn if_flashblocks(input: TokenStream) -> TokenStream {
     let input = proc_macro2::TokenStream::from(input);
 
     TokenStream::from(quote! {
         if std::thread::current().name().unwrap_or("").ends_with("_flashblocks") {
+            #input
+        }
+    })
+}
+
+#[proc_macro]
+pub fn if_standard(input: TokenStream) -> TokenStream {
+    let input = proc_macro2::TokenStream::from(input);
+
+    TokenStream::from(quote! {
+        if std::thread::current().name().unwrap_or("").ends_with("_standard") {
+            #input
+        }
+    })
+}
+
+#[proc_macro]
+pub fn if_experimental(input: TokenStream) -> TokenStream {
+    let input = proc_macro2::TokenStream::from(input);
+
+    TokenStream::from(quote! {
+        if std::thread::current().name().unwrap_or("").ends_with("_experimental") {
             #input
         }
     })
