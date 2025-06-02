@@ -1,6 +1,7 @@
 use args::*;
 use builders::{
-    BlockBuilderSystem, BuilderConfig, BuilderMode, FlashblocksBuilder, FlashblocksExperimentalBuilder, StandardBuilder
+    BlockBuilderSystem, BuilderConfig, BuilderMode, FlashblocksBuilder,
+    FlashblocksExperimentalBuilder, StandardBuilder,
 };
 use core::fmt::Debug;
 use reth_optimism_node::{
@@ -56,8 +57,7 @@ fn main() {
 fn start_builder_node<B: BlockBuilderSystem>(cli: Cli)
 where
     BuilderConfig<<B as BlockBuilderSystem>::Config>: TryFrom<OpRbuilderArgs>,
-    <BuilderConfig<<B as BlockBuilderSystem>::Config> as TryFrom<OpRbuilderArgs>>::Error:
-        Debug,
+    <BuilderConfig<<B as BlockBuilderSystem>::Config> as TryFrom<OpRbuilderArgs>>::Error: Debug,
 {
     cli.run(|builder, builder_args| async move {
         let builder_config = BuilderConfig::<B::Config>::try_from(builder_args.clone())

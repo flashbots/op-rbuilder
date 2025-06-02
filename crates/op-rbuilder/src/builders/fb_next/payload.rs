@@ -5,24 +5,32 @@
 
 use super::block::{BlockContext, EvmInstance, PayloadState};
 use crate::traits::ClientBounds;
-use alloy_consensus::{Eip658Value, Receipt};
-use alloy_eips::Typed2718;
+use alloy_consensus::{
+    constants::EMPTY_WITHDRAWALS, proofs, Block, BlockBody, Eip658Value, Header, Receipt,
+    EMPTY_OMMER_ROOT_HASH,
+};
+use alloy_eips::{eip7685::EMPTY_REQUESTS_HASH, merge::BEACON_NONCE, Typed2718};
 use alloy_op_evm::block::receipt_builder::OpReceiptBuilder;
 use alloy_primitives::{Address, U256};
 use op_alloy_consensus::{OpDepositReceipt, OpTxEnvelope};
 use op_revm::OpHaltReason;
+use reth_chain_state::{ExecutedBlock, ExecutedBlockWithTrieUpdates};
 use reth_evm::{eth::receipt_builder::ReceiptBuilderCtx, ConfigureEvm, Evm};
-use reth_node_api::PayloadBuilderError;
+use reth_node_api::{Block as _, PayloadBuilderError};
+use reth_optimism_consensus::{calculate_receipt_root_no_memo_optimism, isthmus};
 use reth_optimism_node::OpBuiltPayload;
 use reth_optimism_payload_builder::error::OpPayloadBuilderError;
-use reth_optimism_primitives::{OpReceipt, OpTransactionSigned};
-use reth_primitives::Recovered;
+use reth_optimism_primitives::{OpPrimitives, OpReceipt, OpTransactionSigned};
+use reth_primitives::{Recovered, RecoveredBlock};
 use reth_primitives_traits::{SignedTransaction, SignerRecoverable};
+use reth_provider::ExecutionOutcome;
+use reth_revm::db::states::bundle_state::BundleRetention;
 use revm::{
     context::{result::ResultAndState, ContextTr},
     DatabaseCommit,
 };
 use std::sync::Arc;
+use tracing::warn;
 
 /// An instance of this type is instantiated when building a new block payload version.
 /// There may be multiple instances of this type created for one parent block. Each instance
@@ -60,6 +68,7 @@ impl<Client: ClientBounds> PayloadBuilderContext<Client> {
     /// are executed and their state changes are applied.
     pub fn new(block_ctx: Arc<BlockContext<Client>>) -> Result<Self, PayloadBuilderError> {
         let evm = block_ctx.create_evm()?;
+
         let mut instance = Self {
             evm,
             block_ctx,
@@ -226,7 +235,136 @@ impl<Client: ClientBounds> TryFrom<PayloadBuilderContext<Client>> for OpBuiltPay
     /// This is usually the final step in the payload building process and is
     /// called when we are ready to convert the interim payload builder state
     /// into a final payload that can be submitted to the chain.
-    fn try_from(_context: PayloadBuilderContext<Client>) -> Result<Self, Self::Error> {
-        todo!()
+    fn try_from(context: PayloadBuilderContext<Client>) -> Result<Self, Self::Error> {
+        let mut context = context;
+        let evm_env = context.block_ctx.evm_env()?;
+        let state = context.evm.db_mut();
+        state.merge_transitions(BundleRetention::Reverts);
+
+        let senders = context.senders()?;
+        let block_number = context.block_ctx.parent().number.saturating_add(1);
+        let receipts_root = proofs::calculate_receipt_root(&context.receipts);
+        let transactions_root = proofs::calculate_transaction_root(&context.transactions);
+        let chain_spec = context.block_ctx.chain_spec();
+        let timestamp = context.block_ctx.attributes().timestamp;
+
+        let execution_outcome = ExecutionOutcome::new(
+            state.take_bundle(),
+            vec![context.receipts],
+            block_number,
+            Vec::new(),
+        );
+        let receipts_root = execution_outcome
+            .generic_receipts_root_slow(block_number, |receipts| {
+                calculate_receipt_root_no_memo_optimism(receipts, chain_spec, timestamp)
+            })
+            .expect("number is in range");
+
+        let logs_bloom = execution_outcome
+            .block_logs_bloom(block_number)
+            .expect("number is in range");
+
+        let hashed_state = state
+            .database
+            .as_ref()
+            .hashed_post_state(execution_outcome.state());
+
+        let (state_root, trie_output) = {
+            state
+                .database
+                .as_ref()
+                .state_root_with_updates(hashed_state.clone())
+                .inspect_err(|err| {
+                    warn!(target: "payload_builder",
+                    parent_header=%context.block_ctx.parent().hash(),
+                        %err,
+                        "failed to calculate state root for payload"
+                    );
+                })?
+        };
+
+        // withdrawals root field in block header is used for storage root of L2 predeploy
+        // `l2tol1-message-passer`
+        let (withdrawals_root, requests_hash) = if context.block_ctx.is_isthmus_active() {
+            (
+                Some(
+                    isthmus::withdrawals_root(execution_outcome.state(), state.database.as_ref())
+                        .map_err(PayloadBuilderError::other)?,
+                ),
+                Some(EMPTY_REQUESTS_HASH),
+            )
+        } else if context.block_ctx.is_canyon_active() {
+            (Some(EMPTY_WITHDRAWALS), None)
+        } else {
+            (None, None)
+        };
+
+        // OP doesn't support blobs/EIP-4844.
+        // https://specs.optimism.io/protocol/exec-engine.html#ecotone-disable-blob-transactions
+        // Need [Some] or [None] based on hardfork to match block hash.
+        let (excess_blob_gas, blob_gas_used) = if context.block_ctx.is_ecotone_active() {
+            (Some(0), Some(0))
+        } else {
+            (None, None)
+        };
+
+        let extra_data = context.block_ctx.holocene_extra_data()?;
+
+        let header = Header {
+            parent_hash: context.block_ctx.parent().hash(),
+            ommers_hash: EMPTY_OMMER_ROOT_HASH,
+            beneficiary: evm_env.block_env.beneficiary,
+            state_root,
+            transactions_root,
+            receipts_root,
+            withdrawals_root,
+            logs_bloom,
+            timestamp,
+            mix_hash: context.block_ctx.attributes().prev_randao,
+            nonce: BEACON_NONCE.into(),
+            base_fee_per_gas: Some(evm_env.block_env.basefee),
+            number: block_number,
+            gas_limit: evm_env.block_env.gas_limit,
+            difficulty: U256::ZERO,
+            gas_used: context.gas_used,
+            extra_data,
+            parent_beacon_block_root: context.block_ctx.attributes().parent_beacon_block_root,
+            blob_gas_used,
+            excess_blob_gas,
+            requests_hash,
+        };
+
+        // seal the block
+        let block = Block::<OpTransactionSigned>::new(
+            header,
+            BlockBody {
+                transactions: context.transactions,
+                ommers: vec![],
+                withdrawals: context.block_ctx.withdrawals().cloned(),
+            },
+        );
+
+        let sealed_block = Arc::new(block.seal_slow());
+
+        let executed: ExecutedBlockWithTrieUpdates<OpPrimitives> = ExecutedBlockWithTrieUpdates {
+            block: ExecutedBlock {
+                recovered_block: Arc::new(RecoveredBlock::<
+                    alloy_consensus::Block<OpTransactionSigned>,
+                >::new_sealed(
+                    sealed_block.as_ref().clone(), senders
+                )),
+                execution_output: Arc::new(execution_outcome),
+                hashed_state: Arc::new(hashed_state),
+            },
+            trie: Arc::new(trie_output),
+        };
+
+        let payload_id = todo!();
+        Ok(OpBuiltPayload::new(
+            payload_id
+            sealed_block,
+            context.total_fees,
+            Some(executed),
+        ))
     }
 }

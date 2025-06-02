@@ -30,7 +30,7 @@ use tokio::sync::oneshot;
 use crate::{
     args::OpRbuilderArgs,
     builders::{
-        BuilderConfig, FlashblocksBuilder, FlashblocksExperimentalBuilder, BlockBuilderSystem,
+        BlockBuilderSystem, BuilderConfig, FlashblocksBuilder, FlashblocksExperimentalBuilder,
         StandardBuilder,
     },
     revert_protection::{EthApiExtServer, EthApiOverrideServer, RevertProtectionExt},

@@ -9,10 +9,13 @@ use super::{payload::PayloadBuilderContext, service::ServiceContext};
 use crate::traits::ClientBounds;
 use alloy_consensus::Header;
 use alloy_op_evm::OpEvm;
-use alloy_primitives::B64;
+use alloy_primitives::{Bytes, B64};
+use alloy_rpc_types_eth::Withdrawals;
+use op_revm::OpSpecId;
 use reth_chainspec::EthereumHardforks;
-use reth_evm::{execute::BlockBuilder, precompiles::PrecompilesMap, ConfigureEvm};
+use reth_evm::{execute::BlockBuilder, precompiles::PrecompilesMap, ConfigureEvm, EvmEnv};
 use reth_node_api::PayloadBuilderError;
+use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
 use reth_optimism_forks::OpHardforks;
 use reth_optimism_node::OpPayloadBuilderAttributes;
@@ -84,9 +87,19 @@ impl<Client: ClientBounds> BlockContext<Client> {
         self.attribs.gas_limit
     }
 
+    /// Returns the withdrawals if shanghai is active.
+    pub fn withdrawals(&self) -> Option<&Withdrawals> {
+        self.is_shanghai_active()
+            .then(|| &self.attributes().withdrawals)
+    }
+
     /// EIP-1559 parameters for the generated payload
     pub const fn eip_1559_params(&self) -> Option<B64> {
         self.attribs.eip_1559_params
+    }
+
+    pub fn chain_spec(&self) -> Arc<OpChainSpec> {
+        self.service.chain_spec().clone()
     }
 
     /// Returns a new state instance rooted at the parent block that
@@ -121,12 +134,14 @@ impl<Client: ClientBounds> BlockContext<Client> {
     /// create2deployer and EIP-2935.
     pub fn create_evm(&self) -> Result<EvmInstance, PayloadBuilderError> {
         let state = self.state()?;
-        let evm_env = self
-            .evm_config()
-            .next_evm_env(self.parent().header(), &self.next_block_env_attributes())
-            .map_err(PayloadBuilderError::other)?;
+        Ok(self.evm_config().evm_with_env(state, self.evm_env()?))
+    }
 
-        Ok(self.evm_config().evm_with_env(state, evm_env))
+    /// Returns the EVM environment metadata for the this block context.
+    pub fn evm_env(&self) -> Result<EvmEnv<OpSpecId>, PayloadBuilderError> {
+        self.evm_config()
+            .next_evm_env(self.parent().header(), &self.next_block_env_attributes())
+            .map_err(PayloadBuilderError::other)
     }
 
     /// Returns parts of the next block header values that can be deduced from the
@@ -150,6 +165,20 @@ impl<Client: ClientBounds> BlockContext<Client> {
             } else {
                 Default::default()
             },
+        }
+    }
+
+    pub fn holocene_extra_data(&self) -> Result<Bytes, PayloadBuilderError> {
+        if self.is_holocene_active() {
+            self.attribs
+                .get_holocene_extra_data(
+                    self.service
+                        .chain_spec()
+                        .base_fee_params_at_timestamp(self.attributes().timestamp),
+                )
+                .map_err(PayloadBuilderError::other)
+        } else {
+            Ok(Default::default())
         }
     }
 }
@@ -189,5 +218,11 @@ where
         self.service
             .chain_spec()
             .is_shanghai_active_at_timestamp(self.attributes().timestamp)
+    }
+
+    pub fn is_ecotone_active(&self) -> bool {
+        self.service
+            .chain_spec()
+            .is_ecotone_active_at_timestamp(self.attributes().timestamp)
     }
 }

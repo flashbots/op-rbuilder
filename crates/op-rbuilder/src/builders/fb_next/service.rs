@@ -1,9 +1,9 @@
 //! Builder Service Management
-//! 
+//!
 //! This module contains types that are an interface between Reth node and the block building
-//! service. This is where we acquire references to various node components and pass them 
+//! service. This is where we acquire references to various node components and pass them
 //! to parts of the block building service implementation.
-//! 
+//!
 //! This is also the entrypoint for Reth to spawn the service and signal various system events
 //! such as node startup, payload job requests, and others.
 
@@ -24,12 +24,12 @@ use tracing::info;
 
 /// This type is used by reth during node construction to create *one* instance of the
 /// [`PayloadBuilderHandle`] for the flashblocks experimental builder.
-/// 
-/// `spawn_payload_builder_service` is called by the node builder to spawn once and here we 
-/// have all the logic necessary to create a self-contained instance of the block building 
+///
+/// `spawn_payload_builder_service` is called by the node builder to spawn once and here we
+/// have all the logic necessary to create a self-contained instance of the block building
 /// service. This is where we take references to other components of the node, such as the
 /// data provider, the pool, evm config and others.
-/// 
+///
 /// The type that interfaces with the node is called `PayloadJobGenerator`, which is called
 /// by Reth whenever the CL wants to start building a new payload. In case of Optimism L2,
 /// this is done by the sequencer for every new block that is produced.
@@ -66,7 +66,7 @@ where
 
 /// This type is stored inside the [`PayloadBuilderService`] type in Reth. There's one instance of this
 /// type per node and it is instantiated during the node startup inside `spawn_payload_builder_service`.
-/// 
+///
 /// The responsibility of this type is to respond to new payload requests when FCU calls come from the
 /// CL Node. Each FCU call will generate a new PayloadID on its side and will pass it to the  
 /// `new_payload_job` method.
@@ -99,15 +99,11 @@ where
 {
     type Job = PayloadJob<Client>;
 
-    fn new_payload_job(
-        &self,
-        attr: PayloadAttributes,
-    ) -> Result<Self::Job, PayloadBuilderError> {
+    fn new_payload_job(&self, attr: PayloadAttributes) -> Result<Self::Job, PayloadBuilderError> {
         info!("PayloadJobGenerator::new_payload_job {attr:#?}");
         Ok(PayloadJob::new(attr, Arc::clone(&self.ctx)))
     }
 }
-
 
 /// Holds types that give access to the reth instance we're running in, that is relevant throughout
 /// the whole block building service lifecycle. One instance of this type is created during system
@@ -126,7 +122,10 @@ where
 {
     /// Create a new builder context.
     pub fn new(client: Client, evm_config: OpEvmConfig) -> Self {
-        Self { provider: client, evm_config }
+        Self {
+            provider: client,
+            evm_config,
+        }
     }
 
     /// Access to the underlying chain state provider of the node.
