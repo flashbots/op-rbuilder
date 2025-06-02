@@ -24,7 +24,7 @@ pub struct TestHarnessBuilder {
     use_revert_protection: bool,
     flashblocks_port: Option<u16>,
     chain_block_time: Option<u64>,
-    flashbots_block_time: Option<u64>,
+    flashblocks_per_block: Option<u64>,
     namespaces: Option<String>,
     extra_params: Option<String>,
 }
@@ -36,7 +36,7 @@ impl TestHarnessBuilder {
             use_revert_protection: false,
             flashblocks_port: None,
             chain_block_time: None,
-            flashbots_block_time: None,
+            flashblocks_per_block: None,
             namespaces: None,
             extra_params: None,
         }
@@ -57,8 +57,8 @@ impl TestHarnessBuilder {
         self
     }
 
-    pub fn with_flashbots_block_time(mut self, block_time: u64) -> Self {
-        self.flashbots_block_time = Some(block_time);
+    pub fn with_flashblocks_per_block(mut self, flashblocks_per_block: u64) -> Self {
+        self.flashblocks_per_block = Some(flashblocks_per_block);
         self
     }
 
@@ -104,8 +104,8 @@ impl TestHarnessBuilder {
             op_rbuilder_config = op_rbuilder_config.with_chain_block_time(chain_block_time);
         }
 
-        if let Some(flashbots_block_time) = self.flashbots_block_time {
-            op_rbuilder_config = op_rbuilder_config.with_flashbots_block_time(flashbots_block_time);
+        if let Some(flashblocks_per_block) = self.flashblocks_per_block {
+            op_rbuilder_config = op_rbuilder_config.with_flashbots_per_block(flashblocks_per_block);
         }
 
         // create the validation reth node
@@ -128,7 +128,7 @@ impl TestHarnessBuilder {
         let builder_log_path = builder.log_path.clone();
 
         Ok(TestHarness {
-            framework: framework,
+            framework,
             builder_auth_rpc_port,
             builder_http_port,
             validator_auth_rpc_port,

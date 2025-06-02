@@ -25,7 +25,7 @@ pub struct OpRbuilderConfig {
     builder_private_key: Option<String>,
     flashblocks_port: Option<u16>,
     chain_block_time: Option<u64>,
-    flashbots_block_time: Option<u64>,
+    flashblocks_per_block: Option<u64>,
     with_revert_protection: Option<bool>,
     namespaces: Option<String>,
     extra_params: Option<String>,
@@ -81,8 +81,8 @@ impl OpRbuilderConfig {
         self
     }
 
-    pub fn with_flashbots_block_time(mut self, time: u64) -> Self {
-        self.flashbots_block_time = Some(time);
+    pub fn with_flashbots_per_block(mut self, count: u64) -> Self {
+        self.flashblocks_per_block = Some(count);
         self
     }
 
@@ -164,9 +164,9 @@ impl Service for OpRbuilderConfig {
                 .arg(chain_block_time.to_string());
         }
 
-        if let Some(flashbots_block_time) = self.flashbots_block_time {
-            cmd.arg("--flashblocks.block-time")
-                .arg(flashbots_block_time.to_string());
+        if let Some(flashblocks_per_block) = self.flashblocks_per_block {
+            cmd.arg("--flashblocks.per-block")
+                .arg(flashblocks_per_block.to_string());
         }
 
         if let Some(namespaces) = &self.namespaces {
