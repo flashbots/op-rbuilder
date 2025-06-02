@@ -1,4 +1,4 @@
-use super::{context::BuilderContext, PayloadAttributes};
+use super::{block::PayloadAttributes, service::ServiceContext};
 use crate::{builders::fb_next::empty::EmptyBlockPayload, traits::ClientBounds};
 use alloy_consensus::{Block, BlockBody, Header};
 use alloy_eips::eip7685::EMPTY_REQUESTS_HASH;
@@ -38,7 +38,7 @@ where
     Client: ClientBounds,
 {
     attribs: PayloadAttributes,
-    builder_ctx: Arc<BuilderContext<Client>>,
+    builder_ctx: Arc<ServiceContext<Client>>,
     cancel: CancellationToken,
 }
 
@@ -47,7 +47,7 @@ where
     Client: ClientBounds,
 {
     /// Create a new job context for a given payload attributes from FCU call.
-    pub fn new(attribs: PayloadAttributes, builder_ctx: Arc<BuilderContext<Client>>) -> Self {
+    pub fn new(attribs: PayloadAttributes, builder_ctx: Arc<ServiceContext<Client>>) -> Self {
         Self {
             attribs,
             builder_ctx,
@@ -75,7 +75,7 @@ where
     }
 
     /// Get the builder context.
-    pub const fn builder_context(&self) -> &Arc<BuilderContext<Client>> {
+    pub const fn builder_context(&self) -> &Arc<ServiceContext<Client>> {
         &self.builder_ctx
     }
 
@@ -189,12 +189,12 @@ where
     pub fn parent_header(&self) -> Result<SealedHeader<Header>, PayloadBuilderError> {
         if self.parent().is_zero() {
             self.builder_ctx
-                .client()
+                .provider()
                 .latest_header()?
                 .ok_or_else(|| PayloadBuilderError::MissingParentHeader(self.parent()))
         } else {
             self.builder_ctx
-                .client()
+                .provider()
                 .sealed_header_by_hash(self.parent())?
                 .ok_or_else(|| PayloadBuilderError::MissingParentHeader(self.parent()))
         }
@@ -246,7 +246,7 @@ where
         Ok(State::builder()
             .with_database(StateProviderDatabase(
                 self.builder_context()
-                    .client()
+                    .provider()
                     .state_by_block_hash(self.parent())?,
             ))
             .with_bundle_update()
@@ -316,7 +316,7 @@ impl<Client> PayloadJob<Client>
 where
     Client: ClientBounds,
 {
-    pub fn new(attr: PayloadAttributes, ctx: Arc<BuilderContext<Client>>) -> Self {
+    pub fn new(attr: PayloadAttributes, ctx: Arc<ServiceContext<Client>>) -> Self {
         Self {
             job_ctx: JobContext::new(attr, ctx),
         }
@@ -328,7 +328,7 @@ where
     }
 
     /// Get the builder context.
-    pub const fn builder_context(&self) -> &Arc<BuilderContext<Client>> {
+    pub const fn builder_context(&self) -> &Arc<ServiceContext<Client>> {
         self.job_ctx.builder_context()
     }
 }

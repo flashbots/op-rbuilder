@@ -1,8 +1,9 @@
 use alloy_consensus::Header;
+use op_alloy_consensus::OpBlock;
 use reth_node_api::{FullNodeTypes, NodeTypes};
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_node::OpEngineTypes;
-use reth_optimism_primitives::{OpPrimitives, OpTransactionSigned};
+use reth_optimism_primitives::{OpPrimitives, OpReceipt, OpTransactionSigned};
 use reth_payload_util::PayloadTransactions;
 use reth_provider::{BlockReaderIdExt, ChainSpecProvider, StateProviderFactory};
 use reth_transaction_pool::TransactionPool;
@@ -46,16 +47,24 @@ where
 pub trait ClientBounds:
     StateProviderFactory
     + ChainSpecProvider<ChainSpec = OpChainSpec>
-    + BlockReaderIdExt<Header = Header>
-    + Clone
+    + BlockReaderIdExt<
+        Header = Header,
+        Block = OpBlock,
+        Receipt = OpReceipt,
+        Transaction = OpTransactionSigned,
+    > + Clone
 {
 }
 
 impl<T> ClientBounds for T where
     T: StateProviderFactory
         + ChainSpecProvider<ChainSpec = OpChainSpec>
-        + BlockReaderIdExt<Header = Header>
-        + Clone
+        + BlockReaderIdExt<
+            Header = Header,
+            Block = OpBlock,
+            Receipt = OpReceipt,
+            Transaction = OpTransactionSigned,
+        > + Clone
 {
 }
 

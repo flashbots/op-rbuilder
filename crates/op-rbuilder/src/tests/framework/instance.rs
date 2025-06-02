@@ -30,7 +30,7 @@ use tokio::sync::oneshot;
 use crate::{
     args::OpRbuilderArgs,
     builders::{
-        BuilderConfig, FlashblocksBuilder, FlashblocksExperimentalBuilder, PayloadBuilder,
+        BuilderConfig, FlashblocksBuilder, FlashblocksExperimentalBuilder, BlockBuilderSystem,
         StandardBuilder,
     },
     revert_protection::{EthApiExtServer, EthApiOverrideServer, RevertProtectionExt},
@@ -62,7 +62,7 @@ impl LocalInstance {
     ///
     /// This method does not prefund any accounts, so before sending any transactions
     /// make sure that sender accounts are funded.
-    pub async fn new<P: PayloadBuilder>(args: OpRbuilderArgs) -> eyre::Result<Self> {
+    pub async fn new<P: BlockBuilderSystem>(args: OpRbuilderArgs) -> eyre::Result<Self> {
         Self::new_with_config::<P>(args, default_node_config()).await
     }
 
@@ -71,7 +71,7 @@ impl LocalInstance {
     ///
     /// This method does not prefund any accounts, so before sending any transactions
     /// make sure that sender accounts are funded.
-    pub async fn new_with_config<P: PayloadBuilder>(
+    pub async fn new_with_config<P: BlockBuilderSystem>(
         args: OpRbuilderArgs,
         config: NodeConfig<OpChainSpec>,
     ) -> eyre::Result<Self> {

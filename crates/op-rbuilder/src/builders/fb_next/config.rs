@@ -1,3 +1,8 @@
+//! Builder specific configuration extensions to `BuilderConfig`.
+//!
+//! Here we store configuration that are relevant only to the flashblocks builder,
+//! such as the websocket address and the flashblock interval.
+
 use crate::{args::OpRbuilderArgs, builders::BuilderConfig};
 use core::{net::SocketAddr, time::Duration};
 

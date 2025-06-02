@@ -1,6 +1,6 @@
 use args::*;
 use builders::{
-    BuilderConfig, BuilderMode, FlashblocksBuilder, FlashblocksExperimentalBuilder, StandardBuilder,
+    BlockBuilderSystem, BuilderConfig, BuilderMode, FlashblocksBuilder, FlashblocksExperimentalBuilder, StandardBuilder
 };
 use core::fmt::Debug;
 use reth_optimism_node::{
@@ -53,10 +53,10 @@ fn main() {
 }
 
 /// Starts the OP builder node with a given payload builder implementation.
-fn start_builder_node<B: builders::PayloadBuilder>(cli: Cli)
+fn start_builder_node<B: BlockBuilderSystem>(cli: Cli)
 where
-    BuilderConfig<<B as builders::PayloadBuilder>::Config>: TryFrom<OpRbuilderArgs>,
-    <BuilderConfig<<B as builders::PayloadBuilder>::Config> as TryFrom<OpRbuilderArgs>>::Error:
+    BuilderConfig<<B as BlockBuilderSystem>::Config>: TryFrom<OpRbuilderArgs>,
+    <BuilderConfig<<B as BlockBuilderSystem>::Config> as TryFrom<OpRbuilderArgs>>::Error:
         Debug,
 {
     cli.run(|builder, builder_args| async move {

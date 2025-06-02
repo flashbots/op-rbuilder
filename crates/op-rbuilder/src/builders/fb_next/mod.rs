@@ -1,15 +1,22 @@
-use super::BuilderConfig;
+//! Flashblocks experimental block builder
+//!
+//! This is an experimental implementation of the flashblocks builder that builds
+//! chunks of a block every short interval and makes them available through a
+//! websocket update, then merges them into a full block every chain block time.
+//!
+//! TODO:
+//! Once it is stabilized we will need to merge it into the main flashblocks builder.
+
+use super::{BlockBuilderSystem, BuilderConfig};
 use crate::traits::{NodeBounds, PoolBounds};
 use config::FlashblocksConfig;
-use reth_optimism_node::OpPayloadBuilderAttributes;
-use reth_optimism_primitives::OpTransactionSigned;
 use service::FlashblocksServiceBuilder;
 
-mod builder;
+mod block;
 mod config;
-mod context;
 mod empty;
 mod job;
+mod payload;
 mod service;
 mod wspub;
 
@@ -17,7 +24,7 @@ mod wspub;
 /// through a websocket update, then merges them into a full block every chain block time.
 pub struct FlashblocksExperimentalBuilder;
 
-impl super::PayloadBuilder for FlashblocksExperimentalBuilder {
+impl BlockBuilderSystem for FlashblocksExperimentalBuilder {
     type Config = FlashblocksConfig;
 
     type ServiceBuilder<Node, Pool>
@@ -36,5 +43,3 @@ impl super::PayloadBuilder for FlashblocksExperimentalBuilder {
         Ok(FlashblocksServiceBuilder(config))
     }
 }
-
-type PayloadAttributes = OpPayloadBuilderAttributes<OpTransactionSigned>;

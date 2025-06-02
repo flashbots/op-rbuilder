@@ -1,4 +1,4 @@
-use super::BuilderConfig;
+use super::{BlockBuilderSystem, BuilderConfig};
 use crate::traits::{NodeBounds, PoolBounds};
 use config::FlashblocksConfig;
 use service::FlashblocksServiceBuilder;
@@ -12,7 +12,7 @@ mod wspub;
 /// through a websocket update, then merges them into a full block every chain block time.
 pub struct FlashblocksBuilder;
 
-impl super::PayloadBuilder for FlashblocksBuilder {
+impl BlockBuilderSystem for FlashblocksBuilder {
     type Config = FlashblocksConfig;
 
     type ServiceBuilder<Node, Pool>

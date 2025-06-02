@@ -3,7 +3,7 @@ use reth_node_builder::components::BasicPayloadServiceBuilder;
 
 use crate::traits::{NodeBounds, PoolBounds};
 
-use super::BuilderConfig;
+use super::{BlockBuilderSystem, BuilderConfig};
 
 mod payload;
 
@@ -11,7 +11,7 @@ mod payload;
 /// producing blocks every chain block time.
 pub struct StandardBuilder;
 
-impl super::PayloadBuilder for StandardBuilder {
+impl BlockBuilderSystem for StandardBuilder {
     type Config = ();
 
     type ServiceBuilder<Node, Pool>

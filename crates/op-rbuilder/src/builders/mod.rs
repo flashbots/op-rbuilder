@@ -45,7 +45,7 @@ pub enum BuilderMode {
 /// Instances of this trait are used during Reth node construction as an argument
 /// to the `NodeBuilder::with_components` method to construct the payload builder
 /// service that gets called whenver the current node is asked to build a block.
-pub trait PayloadBuilder: Send + Sync + 'static {
+pub trait BlockBuilderSystem: Send + Sync + 'static {
     /// The type that has an implementation specific variant of the Config<T> struct.
     /// This is used to configure the payload builder service during startup.
     type Config: TryFrom<OpRbuilderArgs, Error: Debug> + Clone + Debug + Send + Sync + 'static;
