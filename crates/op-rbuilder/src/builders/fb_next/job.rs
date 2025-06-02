@@ -1,27 +1,36 @@
 use super::{context::BuilderContext, PayloadAttributes};
 use crate::{builders::fb_next::empty::EmptyBlockPayload, traits::ClientBounds};
-use alloy_consensus::Header;
-use alloy_primitives::{B256, B64};
+use alloy_consensus::{Block, BlockBody, Header};
+use alloy_eips::eip7685::EMPTY_REQUESTS_HASH;
+use alloy_primitives::{Bytes, B256, B64};
 use core::{
     future::Future,
     pin::Pin,
     task::{Context, Poll},
 };
+use op_alloy_consensus::OpTxEnvelope;
 use op_revm::OpSpecId;
+use reth_chainspec::EthereumHardforks;
 use reth_evm::{ConfigureEvm, EvmEnv};
-use reth_node_api::{PayloadBuilderError, PayloadKind};
+use reth_node_api::{Block as _, PayloadBuilderError, PayloadKind};
+use reth_optimism_consensus::isthmus;
 use reth_optimism_evm::OpNextBlockEnvAttributes;
 use reth_optimism_forks::OpHardforks;
 use reth_optimism_node::OpBuiltPayload;
+use reth_optimism_payload_builder::error::OpPayloadBuilderError;
 use reth_optimism_primitives::OpTransactionSigned;
 use reth_payload_builder::{EthPayloadBuilderAttributes, KeepPayloadJobAlive, PayloadId};
-use reth_primitives::SealedHeader;
+use reth_primitives::{Recovered, SealedBlock, SealedHeader};
 use reth_primitives_traits::WithEncoded;
-use reth_provider::StateProvider;
-use reth_revm::{database::StateProviderDatabase, State};
+use reth_provider::{
+    HashedPostStateProvider, StateProvider, StateRootProvider, StorageRootProvider,
+};
+use reth_revm::{database::StateProviderDatabase, db::BundleState, State};
+use reth_trie::{updates::TrieUpdates, HashedPostState};
+use revm::Database;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
-use tracing::info;
+use tracing::{info, warn};
 
 /// Context for a specific job initiated by FCU call into the node.
 pub struct JobContext<Client>
@@ -89,12 +98,93 @@ where
     pub fn cancellation_token(&self) -> CancellationToken {
         self.cancel.clone()
     }
-}
 
-impl<Client> JobContext<Client>
-where
-    Client: ClientBounds,
-{
+    pub fn deposit_nonce(
+        &self,
+        tx: &Recovered<OpTxEnvelope>,
+        db: &mut State<impl Database>,
+    ) -> Result<Option<u64>, PayloadBuilderError> {
+        // Cache the depositor account prior to the state transition for the deposit nonce.
+        //
+        // Note that this *only* needs to be done post-regolith hardfork, as deposit nonces
+        // were not introduced in Bedrock. In addition, regular transactions don't have deposit
+        // nonces, so we don't need to touch the DB for those.
+        (self.is_regolith_active() && tx.is_deposit())
+            .then(|| {
+                db.load_cache_account(tx.signer())
+                    .map(|acc| acc.account_info().unwrap_or_default().nonce)
+            })
+            .transpose()
+            .map_err(|_| {
+                PayloadBuilderError::other(OpPayloadBuilderError::AccountLoadFailed(tx.signer()))
+            })
+    }
+
+    pub fn state_root_with_updates<D>(
+        &self,
+        state: D,
+        bundle: &BundleState,
+    ) -> Result<(B256, TrieUpdates, HashedPostState), PayloadBuilderError>
+    where
+        D: StateRootProvider + HashedPostStateProvider,
+    {
+        let hashed_state = state.hashed_post_state(bundle);
+        let (root, updates) = state
+            .state_root_with_updates(hashed_state.clone())
+            .inspect_err(|err| {
+                warn!(parent_header=%self.parent(), %err, "failed to calculate state root for payload");
+            }).map_err(PayloadBuilderError::other)?;
+
+        Ok((root, updates, hashed_state))
+    }
+
+    pub fn seal_block(
+        &self,
+        header: Header,
+        transactions: Vec<OpTxEnvelope>,
+    ) -> SealedBlock<Block<OpTxEnvelope>> {
+        let block = Block::<OpTransactionSigned>::new(
+            header,
+            BlockBody {
+                transactions,
+                withdrawals: self
+                    .is_shanghai_active()
+                    .then(|| self.attributes().withdrawals.clone()),
+                ommers: vec![],
+            },
+        );
+
+        block.seal_slow()
+    }
+
+    /// withdrawals root field in block header is used for storage root of L2 predeploy
+    /// `l2tol1-message-passer`
+    pub fn withdrawals_and_requests_root(
+        &self,
+        bundle_state: &BundleState,
+        state: impl StorageRootProvider,
+    ) -> Result<(Option<B256>, Option<B256>), PayloadBuilderError> {
+        if self.is_isthmus_active() {
+            Ok((
+                Some(isthmus::withdrawals_root(bundle_state, state)?),
+                Some(EMPTY_REQUESTS_HASH),
+            ))
+        } else {
+            Ok((None, None))
+        }
+    }
+
+    /// OP doesn't support blobs/EIP-4844.
+    /// https://specs.optimism.io/protocol/exec-engine.html#ecotone-disable-blob-transactions
+    /// Need [Some] or [None] based on hardfork to match block hash.
+    pub fn blob_gas_used(&self) -> (Option<u64>, Option<u64>) {
+        if self.is_canyon_active() {
+            (Some(0), Some(0))
+        } else {
+            (None, None)
+        }
+    }
+
     /// Header of the block that this job is building on top of.
     pub fn parent_header(&self) -> Result<SealedHeader<Header>, PayloadBuilderError> {
         if self.parent().is_zero() {
@@ -161,6 +251,57 @@ where
             ))
             .with_bundle_update()
             .build())
+    }
+
+    pub fn extra_data(&self) -> Bytes {
+        if self.is_holocene_active() {
+            self.attribs
+                .get_holocene_extra_data(
+                    self.builder_context()
+                        .chain_spec()
+                        .base_fee_params_at_timestamp(self.attributes().timestamp),
+                )
+                .unwrap_or_default()
+        } else {
+            Bytes::default()
+        }
+    }
+}
+
+impl<Client> JobContext<Client>
+where
+    Client: ClientBounds,
+{
+    /// Returns true if the regolith hardfork is active at the job's timestamp.
+    pub fn is_regolith_active(&self) -> bool {
+        self.builder_context()
+            .chain_spec()
+            .is_regolith_active_at_timestamp(self.attributes().timestamp)
+    }
+
+    /// Returns true if the isthmus hardfork is active at the job's timestamp.
+    pub fn is_isthmus_active(&self) -> bool {
+        self.builder_context()
+            .chain_spec()
+            .is_isthmus_active_at_timestamp(self.attributes().timestamp)
+    }
+
+    pub fn is_canyon_active(&self) -> bool {
+        self.builder_context()
+            .chain_spec()
+            .is_canyon_active_at_timestamp(self.attributes().timestamp)
+    }
+
+    pub fn is_holocene_active(&self) -> bool {
+        self.builder_context()
+            .chain_spec()
+            .is_holocene_active_at_timestamp(self.attributes().timestamp)
+    }
+
+    pub fn is_shanghai_active(&self) -> bool {
+        self.builder_context()
+            .chain_spec()
+            .is_shanghai_active_at_timestamp(self.attributes().timestamp)
     }
 }
 

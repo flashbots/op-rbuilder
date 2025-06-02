@@ -1,32 +1,27 @@
+use super::job::JobContext;
 use crate::{primitives::reth::ExecutionInfo, traits::ClientBounds};
-use alloy_consensus::{
-    constants::EMPTY_WITHDRAWALS, proofs, Block, BlockBody, Eip658Value, Header,
-    EMPTY_OMMER_ROOT_HASH,
-};
-use alloy_eips::{eip7685::EMPTY_REQUESTS_HASH, merge::BEACON_NONCE, Typed2718};
+use alloy_consensus::{Eip658Value, Header, EMPTY_OMMER_ROOT_HASH};
+use alloy_eips::{merge::BEACON_NONCE, Typed2718};
 use alloy_op_evm::block::receipt_builder::OpReceiptBuilder;
 use alloy_primitives::U256;
 use op_alloy_consensus::OpDepositReceipt;
 use reth_chain_state::{ExecutedBlock, ExecutedBlockWithTrieUpdates};
-use reth_chainspec::EthereumHardforks;
 use reth_evm::{
     eth::receipt_builder::ReceiptBuilderCtx, execute::BlockBuilder, ConfigureEvm, Evm, EvmError,
 };
 use reth_node_api::PayloadBuilderError;
-use reth_optimism_consensus::{calculate_receipt_root_no_memo_optimism, isthmus};
+use reth_optimism_consensus::calculate_receipt_root_no_memo_optimism;
 use reth_optimism_forks::OpHardforks;
 use reth_optimism_node::OpBuiltPayload;
 use reth_optimism_payload_builder::error::OpPayloadBuilderError;
 use reth_optimism_primitives::{OpPrimitives, OpTransactionSigned};
 use reth_primitives::RecoveredBlock;
-use reth_primitives_traits::{Block as _, SignedTransaction};
+use reth_primitives_traits::SignedTransaction;
 use reth_provider::ExecutionOutcome;
 use reth_revm::db::states::bundle_state::BundleRetention;
 use revm::{context::result::ResultAndState, DatabaseCommit};
 use std::sync::Arc;
-use tracing::{debug, trace, warn};
-
-use super::job::JobContext;
+use tracing::{debug, trace};
 
 pub struct EmptyBlockPayload(OpBuiltPayload);
 
@@ -54,6 +49,7 @@ impl EmptyBlockPayload {
             .builder_context()
             .evm_config()
             .evm_with_env(&mut *state, evm_env.clone());
+
         let mut exec_info =
             ExecutionInfo::<()>::with_capacity(job_ctx.sequencer_transactions().len());
 
@@ -76,28 +72,7 @@ impl EmptyBlockPayload {
                     PayloadBuilderError::other(OpPayloadBuilderError::TransactionEcRecoverFailed)
                 })?;
 
-            // Cache the depositor account prior to the state transition for the deposit nonce.
-            //
-            // Note that this *only* needs to be done post-regolith hardfork, as deposit nonces
-            // were not introduced in Bedrock. In addition, regular transactions don't have deposit
-            // nonces, so we don't need to touch the DB for those.
-            let is_regolith_active = job_ctx
-                .builder_context()
-                .chain_spec()
-                .is_regolith_active_at_timestamp(job_ctx.parent_header()?.timestamp);
-
-            let deposit_nonce = (is_regolith_active && sequencer_tx.is_deposit())
-                .then(|| {
-                    evm.db_mut()
-                        .load_cache_account(sequencer_tx.signer())
-                        .map(|acc| acc.account_info().unwrap_or_default().nonce)
-                })
-                .transpose()
-                .map_err(|_| {
-                    PayloadBuilderError::other(OpPayloadBuilderError::AccountLoadFailed(
-                        sequencer_tx.signer(),
-                    ))
-                })?;
+            let deposit_nonce = job_ctx.deposit_nonce(&sequencer_tx, evm.db_mut())?;
 
             let ResultAndState { result, state } = match evm.transact(&sequencer_tx) {
                 Ok(res) => res,
@@ -173,7 +148,8 @@ impl EmptyBlockPayload {
         // and 4788 contract call
         state.merge_transitions(BundleRetention::Reverts);
         let block_number = job_ctx.parent_header()?.number.saturating_add(1);
-
+        let transactions_root = exec_info.transactions_root();
+        let extra_data = job_ctx.extra_data();
         let execution_outcome = ExecutionOutcome::new(
             state.take_bundle(),
             vec![exec_info.receipts],
@@ -191,82 +167,16 @@ impl EmptyBlockPayload {
             })
             .expect("number is in range");
 
-        // calculate state root
         let logs_bloom = execution_outcome
             .block_logs_bloom(block_number)
             .expect("number is in range");
 
-        let hashed_state = state.database.hashed_post_state(execution_outcome.state());
-        let (state_root, trie_output) = {
-            state
-                .database
-                .as_ref()
-                .state_root_with_updates(hashed_state.clone())
-                .inspect_err(|err| {
-                    warn!(target: "payload_builder",
-                    parent_header=%job_ctx.parent(),
-                        %err,
-                        "failed to calculate state root for payload"
-                    );
-                })?
-        };
+        let (state_root, trie_output, hashed_state) =
+            job_ctx.state_root_with_updates(&*state.database, execution_outcome.state())?;
 
-        let (withdrawals_root, requests_hash) = if job_ctx
-            .builder_context()
-            .chain_spec()
-            .is_isthmus_active_at_timestamp(job_ctx.attributes().timestamp)
-        {
-            // withdrawals root field in block header is used for storage root of L2 predeploy
-            // `l2tol1-message-passer`
-            (
-                Some(
-                    isthmus::withdrawals_root(execution_outcome.state(), state.database.as_ref())
-                        .map_err(PayloadBuilderError::other)?,
-                ),
-                Some(EMPTY_REQUESTS_HASH),
-            )
-        } else if job_ctx
-            .builder_context()
-            .chain_spec()
-            .is_canyon_active_at_timestamp(job_ctx.attributes().timestamp)
-        {
-            (Some(EMPTY_WITHDRAWALS), None)
-        } else {
-            (None, None)
-        };
-
-        let transactions_root =
-            proofs::calculate_transaction_root(&exec_info.executed_transactions);
-
-        // OP doesn't support blobs/EIP-4844.
-        // https://specs.optimism.io/protocol/exec-engine.html#ecotone-disable-blob-transactions
-        // Need [Some] or [None] based on hardfork to match block hash.
-        let (excess_blob_gas, blob_gas_used) = if job_ctx
-            .builder_context()
-            .chain_spec()
-            .is_canyon_active_at_timestamp(job_ctx.attributes().timestamp)
-        {
-            (Some(0), Some(0))
-        } else {
-            (None, None)
-        };
-        let extra_data = if job_ctx
-            .builder_context()
-            .chain_spec()
-            .is_holocene_active_at_timestamp(job_ctx.attributes().timestamp)
-        {
-            job_ctx
-                .payload_attributes()
-                .get_holocene_extra_data(
-                    job_ctx
-                        .builder_context()
-                        .chain_spec()
-                        .base_fee_params_at_timestamp(job_ctx.attributes().timestamp),
-                )
-                .map_err(PayloadBuilderError::other)?
-        } else {
-            Default::default()
-        };
+        let (withdrawals_root, requests_hash) = job_ctx
+            .withdrawals_and_requests_root(execution_outcome.state(), state.database.as_ref())?;
+        let (excess_blob_gas, blob_gas_used) = job_ctx.blob_gas_used();
 
         let header = Header {
             parent_hash: job_ctx.parent(),
@@ -292,21 +202,8 @@ impl EmptyBlockPayload {
             requests_hash,
         };
 
-        let block = Block::<OpTransactionSigned>::new(
-            header,
-            BlockBody {
-                transactions: exec_info.executed_transactions,
-                withdrawals: job_ctx
-                    .builder_context()
-                    .chain_spec()
-                    .is_shanghai_active_at_timestamp(job_ctx.attributes().timestamp)
-                    .then(|| job_ctx.attributes().withdrawals.clone()),
-                ommers: vec![],
-            },
-        );
-
-        let sealed_block = Arc::new(block.seal_slow());
-        debug!(target: "experimental_payload_builder", ?sealed_block, "sealed built block");
+        let sealed_block = job_ctx.seal_block(header, exec_info.executed_transactions);
+        debug!(target: "experimental_payload_builder", "sealed built block: {sealed_block:#?}");
 
         // create the executed block data
         let executed: ExecutedBlockWithTrieUpdates<OpPrimitives> = ExecutedBlockWithTrieUpdates {
@@ -314,8 +211,7 @@ impl EmptyBlockPayload {
                 recovered_block: Arc::new(RecoveredBlock::<
                     alloy_consensus::Block<OpTransactionSigned>,
                 >::new_sealed(
-                    sealed_block.as_ref().clone(),
-                    exec_info.executed_senders,
+                    sealed_block.clone(), exec_info.executed_senders
                 )),
                 execution_output: Arc::new(execution_outcome),
                 hashed_state: Arc::new(hashed_state),
@@ -325,7 +221,7 @@ impl EmptyBlockPayload {
 
         Ok(Self(OpBuiltPayload::new(
             job_ctx.payload_id(),
-            sealed_block,
+            sealed_block.into(),
             exec_info.total_fees,
             Some(executed),
         )))
