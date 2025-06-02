@@ -221,7 +221,7 @@ impl MaybeInteropTransaction for FBPooledTransaction {
 
 impl DataAvailabilitySized for FBPooledTransaction {
     fn estimated_da_size(&self) -> u64 {
-        op_alloy_flz::data_gas_fjord(self.inner.encoded_2718())
+        op_alloy_flz::tx_estimated_size_fjord(self.inner.encoded_2718()).wrapping_div(1_000_000)
     }
 }
 
