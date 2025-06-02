@@ -99,13 +99,13 @@ cargo run -p op-rbuilder --bin op-rbuilder -- node \
 ```bash
 git clone https://github.com/flashbots/contender
 cd contender
-cargo run -- setup ./scenarios/simple.toml http://localhost:2222
+cargo run -- setup ./scenarios/simple.toml -r http://localhost:2222
 ```
 
 6. Run `contender`:
 
 ```bash
-cargo run -- spam ./scenarios/simple.toml http://localhost:2222 --tpb 10 --duration 10
+cargo run -- spam ./scenarios/simple.toml -r http://localhost:2222 --tpb 10 --duration 10
 ```
 
 And you should start to see blocks being built and landed on-chain with `contender` transactions.
