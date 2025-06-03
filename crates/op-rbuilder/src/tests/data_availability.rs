@@ -68,7 +68,7 @@ async fn data_availability_block_size_limit(rbuilder: LocalInstance) -> eyre::Re
 /// Size of each transaction is 100000000
 /// We will set limit to 3 txs and see that the builder will include 3 transactions.
 /// We should not forget about builder transaction so we will spawn only 2 regular txs.
-#[rb_test]
+#[rb_test(standard)]
 async fn data_availability_block_fill(rbuilder: LocalInstance) -> eyre::Result<()> {
     let driver = rbuilder.driver().await?;
 
