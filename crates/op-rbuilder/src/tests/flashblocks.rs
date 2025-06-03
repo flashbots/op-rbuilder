@@ -12,7 +12,6 @@ use tokio_tungstenite::{connect_async, tungstenite::Message};
 use tokio_util::sync::CancellationToken;
 
 #[rb_test(flashblocks, args = OpRbuilderArgs {
-    builder_signer: Some(Signer::random()),
     chain_block_time: 2000,
     ..Default::default()
 })]
@@ -23,11 +22,12 @@ async fn chain_produces_blocks(rbuilder: LocalInstance) -> eyre::Result<()> {
     let received_messages = Arc::new(Mutex::new(Vec::new()));
     let messages_clone = received_messages.clone();
     let cancellation_token = CancellationToken::new();
+    let ws_url = rbuilder.flashblocks_ws_url();
 
     // Spawn WebSocket listener task
     let cancellation_token_clone = cancellation_token.clone();
     let ws_handle: JoinHandle<eyre::Result<()>> = tokio::spawn(async move {
-        let (ws_stream, _) = connect_async(rbuilder.flashblocks_ws_url()).await?;
+        let (ws_stream, _) = connect_async(ws_url).await?;
         let (_, mut read) = ws_stream.split();
 
         loop {
@@ -49,6 +49,7 @@ async fn chain_produces_blocks(rbuilder: LocalInstance) -> eyre::Result<()> {
         }
 
         let block = driver.build_new_block().await?;
+        println!("Block built with hash: {block:#?}");
         assert_eq!(block.transactions.len(), 7); // 5 normal txn + deposit + builder txn
 
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
