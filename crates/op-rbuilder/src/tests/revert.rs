@@ -1,5 +1,4 @@
 use alloy_provider::{PendingTransactionBuilder, Provider};
-use macros::if_flashblocks;
 use macros::*;
 use op_alloy_network::Optimism;
 use reth_transaction_pool::TransactionEvent;
@@ -58,10 +57,6 @@ async fn revert_protection_disabled_bundle_endpoint_error(
         res.is_err(),
         "Expected error because method is not available"
     );
-
-    if_flashblocks! {
-        println!("I am in flashblocks mode");
-    }
 
     Ok(())
 }

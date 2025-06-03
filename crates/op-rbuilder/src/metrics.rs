@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use reth_metrics::{
     metrics::{gauge, Counter, Gauge, Histogram},
     Metrics,
