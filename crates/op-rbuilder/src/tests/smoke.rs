@@ -95,7 +95,7 @@ async fn produces_blocks_under_load_within_deadline(rbuilder: LocalInstance) -> 
                 // Ensure that the builder can still produce blocks under
                 // heavy load of incoming transactions.
                 let _ = tokio::time::timeout(
-                    std::time::Duration::from_secs(1),
+                    std::time::Duration::from_secs(rbuilder.args().chain_block_time + 1),
                     driver.build_new_block(),
                 )
                 .await
