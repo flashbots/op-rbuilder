@@ -189,6 +189,29 @@ where
             .with_bundle_update()
             .build();
 
+        // We subtract gas limit and da limit for builder transaction from the whole limit
+        // TODO: we could optimise this and subtract this only for the last flashblocks
+        let message = format!("Block Number: {}", ctx.block_number())
+            .as_bytes()
+            .to_vec();
+        let builder_tx_gas = ctx
+            .builder_signer()
+            .map_or(0, |_| estimate_gas_for_builder_tx(message.clone()));
+        let builder_tx_da_size = ctx
+            .estimate_builder_tx_da_size(&mut db, builder_tx_gas, message.clone())
+            .unwrap_or(0);
+        let adjusted_block_gas_limit = ctx.block_gas_limit() - builder_tx_gas;
+        let adjusted_max_da_block_limit = ctx
+            .da_config
+            .max_da_block_size()
+            .map(|da_limit| {
+                let da_limit = da_limit.saturating_sub(builder_tx_da_size);
+                if da_limit == 0 {
+                    error!("Builder tx da size subtraction caused max_da_block_size to be 0. No transaction would be included.");
+                }
+                da_limit
+            });
+
         let mut info = execute_pre_steps(&mut db, &ctx)?;
         ctx.metrics
             .sequencer_tx_duration
@@ -219,12 +242,9 @@ where
             // return early since we don't need to build a block with transactions from the pool
             return Ok(());
         }
-
-        let gas_per_batch = ctx.block_gas_limit() / self.config.flashblocks_per_block();
+        let gas_per_batch = adjusted_block_gas_limit / self.config.flashblocks_per_block();
         let mut total_gas_per_batch = gas_per_batch;
-        let da_per_batch = ctx
-            .da_config
-            .max_da_block_size()
+        let da_per_batch = adjusted_max_da_block_limit
             .map(|da_limit| da_limit / self.config.flashblocks_per_block());
         let mut total_da_per_batch = da_per_batch;
 
@@ -256,13 +276,6 @@ where
                 }
             }
         });
-
-        let message = format!("Block Number: {}", ctx.block_number())
-            .as_bytes()
-            .to_vec();
-        let builder_tx_gas = ctx
-            .builder_signer()
-            .map_or(0, |_| estimate_gas_for_builder_tx(message.clone()));
 
         // Process flashblocks in a blocking loop
         loop {
@@ -331,7 +344,7 @@ where
                         &mut info,
                         &mut db,
                         best_txs,
-                        total_gas_per_batch.min(ctx.block_gas_limit()),
+                        total_gas_per_batch.min(adjusted_block_gas_limit),
                         total_da_per_batch,
                     )?;
                     ctx.metrics
