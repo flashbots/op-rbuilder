@@ -12,7 +12,7 @@ use op_alloy_rpc_types::Transaction;
 use reth_optimism_node::OpPayloadAttributes;
 use rollup_boost::OpExecutionPayloadEnvelope;
 
-use crate::tx_signer::Signer;
+use crate::{args::OpRbuilderArgs, tx_signer::Signer};
 
 use super::{EngineApi, Ipc, LocalInstance, TransactionBuilder};
 
@@ -26,6 +26,7 @@ pub struct ChainDriver {
     provider: RootProvider<Optimism>,
     signer: Option<Signer>,
     gas_limit: Option<u64>,
+    args: OpRbuilderArgs,
 }
 
 // instantiation and configuration
@@ -38,6 +39,7 @@ impl ChainDriver {
             provider: instance.provider().await?,
             signer: Default::default(),
             gas_limit: None,
+            args: instance.args().clone(),
         })
     }
 
@@ -123,6 +125,9 @@ impl ChainDriver {
         let payload_id = fcu_result
             .payload_id
             .ok_or_else(|| eyre::eyre!("Forkchoice update did not return a payload ID"))?;
+
+        // give the builder some time to build the block
+        tokio::time::sleep(Duration::from_millis(self.args.chain_block_time)).await;
 
         let payload =
             OpExecutionPayloadEnvelope::V4(self.engine_api.get_payload(payload_id).await?);
