@@ -191,9 +191,7 @@ where
 
         // We subtract gas limit and da limit for builder transaction from the whole limit
         // TODO: we could optimise this and subtract this only for the last flashblocks
-        let message = format!("Block Number: {}", ctx.block_number())
-            .as_bytes()
-            .to_vec();
+        let message = format!("Block Number: {}", ctx.block_number()).into_bytes();
         let builder_tx_gas = ctx
             .builder_signer()
             .map_or(0, |_| estimate_gas_for_builder_tx(message.clone()));
