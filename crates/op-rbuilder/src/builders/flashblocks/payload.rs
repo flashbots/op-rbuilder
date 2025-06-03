@@ -246,7 +246,7 @@ where
         }
         let mut total_da_per_batch = da_per_batch;
 
-        let last_flashblock = self.config.flashblocks_per_block() - 1;
+        let last_flashblock = self.config.flashblocks_per_block().saturating_sub(1);
         let mut flashblock_count = 0;
         // Create a channel to coordinate flashblock building
         let (build_tx, mut build_rx) = mpsc::channel(1);
