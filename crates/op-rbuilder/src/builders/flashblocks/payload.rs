@@ -303,10 +303,13 @@ where
                     // Continue with flashblock building
                     tracing::info!(
                         target: "payload_builder",
-                        "Building flashblock idx={} target_gas={} taget_da={}",
+                        "Building flashblock block_number={} idx={} target_gas={} gas_used={} taget_da={} da_used={}",
+                        ctx.block_number(),
                         flashblock_count,
                         total_gas_per_batch,
+                        info.cumulative_gas_used,
                         total_da_per_batch.unwrap_or(0),
+                        info.cumulative_da_bytes_used,
                     );
                     let flashblock_build_start_time = Instant::now();
                     let state = StateProviderDatabase::new(&state_provider);
