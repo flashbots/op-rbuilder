@@ -1,14 +1,8 @@
-<<<<<<< HEAD
-use crate::builders::BuilderMode;
-use clap::Parser;
-=======
 use crate::{
     builders::BuilderMode,
     metrics::{CARGO_PKG_VERSION, VERGEN_GIT_SHA},
 };
 use clap_builder::{CommandFactory, FromArgMatches};
-pub use op::OpRbuilderArgs;
->>>>>>> 0df5b0873925773662576f96218b17b35a8f7063
 use playground::PlaygroundOptions;
 use reth_optimism_cli::{chainspec::OpChainSpecParser, commands::Commands};
 
