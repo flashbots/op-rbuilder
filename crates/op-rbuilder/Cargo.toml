@@ -165,6 +165,8 @@ testing = [
 	#"reth-provider/test-utils",
 ]
 
+interop = []
+
 [[bin]]
 name = "op-rbuilder"
 path = "src/main.rs"

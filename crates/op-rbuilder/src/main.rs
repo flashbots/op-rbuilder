@@ -18,6 +18,7 @@ mod traits;
 mod tx;
 mod tx_signer;
 
+use metrics::VERSION;
 use moka::future::Cache;
 use monitor_tx_pool::monitor_tx_pool;
 use revert_protection::{EthApiExtServer, EthApiOverrideServer, RevertProtectionExt};

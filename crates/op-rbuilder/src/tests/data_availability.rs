@@ -76,7 +76,7 @@ async fn data_availability_block_fill(rbuilder: LocalInstance) -> eyre::Result<(
     let call = rbuilder
         .provider()
         .await?
-        .raw_request::<(i32, i32), bool>("miner_setMaxDASize".into(), (0, 1600 * 3))
+        .raw_request::<(i32, i32), bool>("miner_setMaxDASize".into(), (0, 100 * 3))
         .await?;
     assert!(call, "miner_setMaxDASize should be executed successfully");
 

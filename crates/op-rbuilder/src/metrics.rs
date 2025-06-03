@@ -1,6 +1,33 @@
 use reth_metrics::{
-    metrics::{Counter, Histogram},
+    metrics::{gauge, Counter, Gauge, Histogram},
     Metrics,
+};
+
+/// The latest version from Cargo.toml.
+pub const CARGO_PKG_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// The 8 character short SHA of the latest commit.
+pub const VERGEN_GIT_SHA: &str = env!("VERGEN_GIT_SHA_SHORT");
+
+/// The build timestamp.
+pub const VERGEN_BUILD_TIMESTAMP: &str = env!("VERGEN_BUILD_TIMESTAMP");
+
+/// The target triple.
+pub const VERGEN_CARGO_TARGET_TRIPLE: &str = env!("VERGEN_CARGO_TARGET_TRIPLE");
+
+/// The build features.
+pub const VERGEN_CARGO_FEATURES: &str = env!("VERGEN_CARGO_FEATURES");
+
+/// The build profile name.
+pub const BUILD_PROFILE_NAME: &str = env!("OP_RBUILDER_BUILD_PROFILE");
+
+pub const VERSION: VersionInfo = VersionInfo {
+    version: CARGO_PKG_VERSION,
+    build_timestamp: VERGEN_BUILD_TIMESTAMP,
+    cargo_features: VERGEN_CARGO_FEATURES,
+    git_sha: VERGEN_GIT_SHA,
+    target_triple: VERGEN_CARGO_TARGET_TRIPLE,
+    build_profile: BUILD_PROFILE_NAME,
 };
 
 /// op-rbuilder metrics
@@ -46,7 +73,7 @@ pub struct OpRBuilderMetrics {
     /// Byte size of transactions
     pub tx_byte_size: Histogram,
     /// Da block size limit
-    pub da_block_size_limit: Histogram,
+    pub da_block_size_limit: Gauge,
     /// Da tx size limit
-    pub da_tx_size_limit: Histogram,
+    pub da_tx_size_limit: Gauge,
 }

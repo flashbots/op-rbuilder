@@ -141,7 +141,7 @@ op-alloy-consensus = { version = "0.16.0", default-features = false }
 op-alloy-flz = { version = "0.13.0", default-features = false }
 
 async-trait = { version = "0.1.83" }
-clap = { version = "4.4.3", features = ["derive", "env"] }
+clap = { version = "4.4.3", features = ["derive", "env", "string"] }
 clap_builder = { version = "4.5.19" }
 thiserror = { version = "1.0.64" }
 eyre = { version = "0.6.12" }
