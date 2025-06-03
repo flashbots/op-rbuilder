@@ -293,9 +293,10 @@ where
                     if flashblock_count >= self.config.flashblocks_per_block() {
                         tracing::info!(
                             target: "payload_builder",
-                            "Skipping flashblock reached target={} idx={}",
+                            "Skipping flashblock reached target={} idx={} block_number={}",
                             self.config.flashblocks_per_block(),
-                            flashblock_count
+                            flashblock_count,
+                            ctx.block_number(),
                         );
                         continue;
                     }
