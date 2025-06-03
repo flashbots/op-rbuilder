@@ -14,17 +14,17 @@ use service::FlashblocksServiceBuilder;
 
 mod block;
 mod config;
-mod empty;
 mod job;
 mod payload;
+mod prologue;
 mod service;
 mod wspub;
 
 /// Block building strategy that progressively builds chunks of a block and makes them available
 /// through a websocket update, then merges them into a full block every chain block time.
-pub struct FlashblocksExperimentalBuilder;
+pub struct ExperimentalBuilder;
 
-impl BlockBuilderSystem for FlashblocksExperimentalBuilder {
+impl BlockBuilderSystem for ExperimentalBuilder {
     type Config = FlashblocksConfig;
 
     type ServiceBuilder<Node, Pool>

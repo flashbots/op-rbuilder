@@ -20,16 +20,16 @@ use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
 use reth_optimism_forks::OpHardforks;
 use reth_optimism_node::OpPayloadBuilderAttributes;
 use reth_optimism_primitives::OpTransactionSigned;
-use reth_payload_builder::EthPayloadBuilderAttributes;
+use reth_payload_builder::{EthPayloadBuilderAttributes, PayloadId};
 use reth_primitives::SealedHeader;
 use reth_primitives_traits::WithEncoded;
 use reth_provider::StateProvider;
 use reth_revm::{database::StateProviderDatabase, State};
 use revm::inspector::NoOpInspector;
 
+pub type EvmInstance = OpEvm<PayloadState, NoOpInspector, PrecompilesMap>;
 pub type PayloadAttributes = OpPayloadBuilderAttributes<OpTransactionSigned>;
 pub type PayloadState = State<StateProviderDatabase<Box<dyn StateProvider>>>;
-pub type EvmInstance = OpEvm<PayloadState, NoOpInspector, PrecompilesMap>;
 
 /// Instances of this type are created for each new block building request triggered by an
 /// FCU call from the CL node. It contains all the necessary information to spawn individual
@@ -41,32 +41,82 @@ pub struct BlockContext<Client: ClientBounds> {
     service: Arc<ServiceContext<Client>>,
 
     /// The parent block full header that is all payloads built on top of this block.
-    header: SealedHeader<Header>,
+    parent: SealedHeader<Header>,
 
     /// The payload attributes that were sent by the CL through FCU
     attribs: PayloadAttributes,
 }
 
+/// Apis used by
 impl<Client: ClientBounds> BlockContext<Client> {
+    /// Creates a new context for building payloads on top of a specific parent block
+    /// as a response to a CL node FCU request.
+    ///
+    /// The workflow is as follows:
+    ///  - `PayloadJobGenerator::new_payload_job` is called with the payload attributes
+    ///    by Reth as a response to a CL node FCU request.
+    ///  - `PayloadJobGenerator::new_payload_job` creates a new instance of `PayloadJob`
+    ///    that is responsible for responding to they FCU payload job request.
+    ///  - `PayloadJob` creates one instance of `BlockContext`.
+    ///  - `BlockContext` is used to create potentially multiple instances of
+    ///    `PayloadBuilderContext` each representing a different attempt to build a
+    ///    payload for the same parent block.
+    ///  - Some of the `PayloadBuilderContext` instances will result in a valid
+    ///    `BuiltPayload`.
+    ///  - One of the `BuiltPayload`s will be selected by the `PayloadJob` and returned
+    ///    to Reth as a response to the FCU request.
+    pub fn new(
+        service: Arc<ServiceContext<Client>>,
+        attribs: PayloadAttributes,
+    ) -> Result<Self, PayloadBuilderError> {
+        let header = if attribs.payload_attributes.parent.is_zero() {
+            // If the parent is zero, we use the latest block header as the parent.
+            service.provider().latest_header()?.ok_or_else(|| {
+                PayloadBuilderError::MissingParentBlock(attribs.payload_attributes.parent)
+            })?
+        } else {
+            // Otherwise, we use the parent block header provided in the attributes.
+            service
+                .provider()
+                .sealed_header_by_hash(attribs.payload_attributes.parent)?
+                .ok_or_else(|| {
+                    PayloadBuilderError::MissingParentBlock(attribs.payload_attributes.parent)
+                })?
+        };
+
+        Ok(Self {
+            service,
+            parent: header,
+            attribs,
+        })
+    }
+
     /// Creates a new payload builder context that can be used to build a new payload
     /// version for the current block. A single block context may create many payload
     /// builder contexts, each representing a different attempt to build a payload
     /// for the same parent block.
-    pub fn create_payload_builder(&self) -> PayloadBuilderContext<Client> {
-        todo!()
+    pub fn create_payload_builder(
+        self: &Arc<Self>,
+    ) -> Result<PayloadBuilderContext<Client>, PayloadBuilderError> {
+        PayloadBuilderContext::new(Arc::clone(&self))
     }
 }
 
-/// APIs used by payload builders
+/// APIs used by payload builder context
 impl<Client: ClientBounds> BlockContext<Client> {
     /// Parent block full header
     pub const fn parent(&self) -> &SealedHeader<Header> {
-        todo!()
+        &self.parent
     }
 
     /// Get the payload attributes for this job that were sent through FCU.
     pub const fn attributes(&self) -> &EthPayloadBuilderAttributes {
         &self.attribs.payload_attributes
+    }
+
+    /// Get the payload attributes for this job that were sent through FCU.
+    pub const fn fcu_attributes(&self) -> &PayloadAttributes {
+        &self.attribs
     }
 
     /// Decoded transactions and the original EIP-2718 encoded bytes as received in the payload
@@ -98,8 +148,15 @@ impl<Client: ClientBounds> BlockContext<Client> {
         self.attribs.eip_1559_params
     }
 
+    /// Doesn't change between blocks, Its defined at startup time.
     pub fn chain_spec(&self) -> Arc<OpChainSpec> {
         self.service.chain_spec().clone()
+    }
+
+    /// Returns the payload id that was assigned by the CL node
+    /// during the FCU call.
+    pub const fn payload_id(&self) -> PayloadId {
+        self.attributes().payload_id()
     }
 
     /// Returns a new state instance rooted at the parent block that

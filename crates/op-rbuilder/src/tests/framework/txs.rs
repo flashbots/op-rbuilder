@@ -134,7 +134,7 @@ impl TransactionBuilder {
                 .get_transaction_count(signer.address)
                 .pending()
                 .await
-                .expect("Failed to get transaction count"),
+                .unwrap_or_default(),
         };
 
         let base_fee = match self.base_fee {

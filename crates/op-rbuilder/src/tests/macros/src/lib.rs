@@ -216,7 +216,7 @@ pub fn rb_test(args: TokenStream, input: TokenStream) -> TokenStream {
             (None, None, None) => quote! { crate::tests::LocalInstance::experimental().await? },
             (None, Some(args_expr), None) => {
                 quote! {
-                    crate::tests::LocalInstance::new::<crate::builders::FlashblocksExperimentalBuilder>({
+                    crate::tests::LocalInstance::new::<crate::builders::ExperimentalBuilder>({
                         let mut args = #args_expr;
                         args.flashblocks.enabled = true;
                         args.flashblocks.flashblocks_port = 0;
@@ -226,7 +226,7 @@ pub fn rb_test(args: TokenStream, input: TokenStream) -> TokenStream {
             }
             (None, None, Some(config_expr)) => {
                 quote! {
-                    crate::tests::LocalInstance::new_with_config::<crate::builders::FlashblocksExperimentalBuilder>({
+                    crate::tests::LocalInstance::new_with_config::<crate::builders::ExperimentalBuilder>({
                         let mut args = crate::args::OpRbuilderArgs::default();
                         args.flashblocks.enabled = true;
                         args.flashblocks.flashblocks_port = 0;
@@ -236,7 +236,7 @@ pub fn rb_test(args: TokenStream, input: TokenStream) -> TokenStream {
             }
             (None, Some(args_expr), Some(config_expr)) => {
                 quote! {
-                    crate::tests::LocalInstance::new_with_config::<crate::builders::FlashblocksExperimentalBuilder>({
+                    crate::tests::LocalInstance::new_with_config::<crate::builders::ExperimentalBuilder>({
                         let mut args = #args_expr;
                         args.flashblocks.enabled = true;
                         args.flashblocks.flashblocks_port = 0;

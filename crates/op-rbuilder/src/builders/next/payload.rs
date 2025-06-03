@@ -89,9 +89,9 @@ impl<Client: ClientBounds> PayloadBuilderContext<Client> {
 
         for tx in sequencer_txs {
             // in include all mandatory sequencer transactions at the top of the payload.
-            instance.insert_transaction(tx.value().try_clone_into_recovered().map_err(
-                |_| PayloadBuilderError::other(OpPayloadBuilderError::TransactionEcRecoverFailed),
-            )?)?;
+            instance.insert(tx.value().try_clone_into_recovered().map_err(|_| {
+                PayloadBuilderError::other(OpPayloadBuilderError::TransactionEcRecoverFailed)
+            })?)?;
         }
 
         Ok(instance)
@@ -105,7 +105,7 @@ impl<Client: ClientBounds> PayloadBuilderContext<Client> {
     ///
     /// This can be used to implement various filters and checks such as revert protection,
     /// builder payments, gas usage, etc.
-    pub fn simulate_transaction(
+    pub fn simulate(
         &mut self,
         transaction: &Recovered<OpTxEnvelope>,
     ) -> Result<ResultAndState<OpHaltReason>, PayloadBuilderError> {
@@ -124,12 +124,26 @@ impl<Client: ClientBounds> PayloadBuilderContext<Client> {
     /// Adds a transaction to the payload being built and commits to its state.
     /// Any state changes caused by this transaction will affect the next simulated or
     /// included transaction.
-    pub fn insert_transaction(
+    pub fn insert(
         &mut self,
         transaction: Recovered<OpTxEnvelope>,
     ) -> Result<(), PayloadBuilderError> {
-        // Run the transaction
-        let ResultAndState { result, state } = self.simulate_transaction(&transaction)?;
+        let simulation = self.simulate(&transaction)?;
+        self.insert_presimulated_unchecked(transaction, simulation)
+    }
+
+    /// Adds a presimulated transaction to the payload being built and commits to its state
+    /// changes. This method will not execute the transaction, instead it assumes that
+    /// the transaction has been already correctly simulated on the latest state.
+    ///
+    /// It is up to the caller to ensure that no other transaction was inserted into the
+    /// payload between the transactiop simulation and this call.
+    pub fn insert_presimulated_unchecked(
+        &mut self,
+        transaction: Recovered<OpTxEnvelope>,
+        simulation: ResultAndState<OpHaltReason>,
+    ) -> Result<(), PayloadBuilderError> {
+        let ResultAndState { result, state } = simulation;
 
         // accumulate used gas and fees regardless of the result
         self.gas_used += result.gas_used();
@@ -234,16 +248,16 @@ impl<Client: ClientBounds> TryFrom<PayloadBuilderContext<Client>> for OpBuiltPay
     type Error = PayloadBuilderError;
     /// This is usually the final step in the payload building process and is
     /// called when we are ready to convert the interim payload builder state
-    /// into a final payload that can be submitted to the chain.
+    /// into a final payload that can be submitted to the sequencer.
     fn try_from(context: PayloadBuilderContext<Client>) -> Result<Self, Self::Error> {
         let mut context = context;
+        let payload_id = context.block_ctx.payload_id();
+        let senders = context.senders()?;
         let evm_env = context.block_ctx.evm_env()?;
         let state = context.evm.db_mut();
         state.merge_transitions(BundleRetention::Reverts);
 
-        let senders = context.senders()?;
         let block_number = context.block_ctx.parent().number.saturating_add(1);
-        let receipts_root = proofs::calculate_receipt_root(&context.receipts);
         let transactions_root = proofs::calculate_transaction_root(&context.transactions);
         let chain_spec = context.block_ctx.chain_spec();
         let timestamp = context.block_ctx.attributes().timestamp;
@@ -359,9 +373,8 @@ impl<Client: ClientBounds> TryFrom<PayloadBuilderContext<Client>> for OpBuiltPay
             trie: Arc::new(trie_output),
         };
 
-        let payload_id = todo!();
         Ok(OpBuiltPayload::new(
-            payload_id
+            payload_id,
             sealed_block,
             context.total_fees,
             Some(executed),

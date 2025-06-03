@@ -14,13 +14,13 @@ use crate::{
 };
 
 mod context;
-mod fb_next;
 mod flashblocks;
 mod generator;
+mod next;
 mod standard;
 
-pub use fb_next::FlashblocksExperimentalBuilder;
 pub use flashblocks::FlashblocksBuilder;
+pub use next::ExperimentalBuilder;
 pub use standard::StandardBuilder;
 
 /// Defines the payload building mode for the OP builder.

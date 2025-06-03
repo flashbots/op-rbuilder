@@ -30,8 +30,7 @@ use tokio::sync::oneshot;
 use crate::{
     args::OpRbuilderArgs,
     builders::{
-        BlockBuilderSystem, BuilderConfig, FlashblocksBuilder, FlashblocksExperimentalBuilder,
-        StandardBuilder,
+        BlockBuilderSystem, BuilderConfig, ExperimentalBuilder, FlashblocksBuilder, StandardBuilder,
     },
     revert_protection::{EthApiExtServer, EthApiOverrideServer, RevertProtectionExt},
     tx::FBPooledTransaction,
@@ -209,8 +208,7 @@ impl LocalInstance {
         };
         node_command.ext.flashblocks.enabled = true;
         node_command.ext.flashblocks.flashblocks_port = 0; // use random os assigned port
-        let instance =
-            Self::new::<FlashblocksExperimentalBuilder>(node_command.ext.clone()).await?;
+        let instance = Self::new::<ExperimentalBuilder>(node_command.ext.clone()).await?;
         let driver = ChainDriver::new(&instance).await?;
         driver.fund_default_accounts().await?;
         Ok(instance)

@@ -1,7 +1,7 @@
 use args::*;
 use builders::{
-    BlockBuilderSystem, BuilderConfig, BuilderMode, FlashblocksBuilder,
-    FlashblocksExperimentalBuilder, StandardBuilder,
+    BlockBuilderSystem, BuilderConfig, BuilderMode, ExperimentalBuilder, FlashblocksBuilder,
+    StandardBuilder,
 };
 use core::fmt::Debug;
 use reth_optimism_node::{
@@ -48,7 +48,7 @@ fn main() {
         }
         BuilderMode::Experimental => {
             tracing::info!("Starting OP builder in experimental flashblocks mode");
-            start_builder_node::<FlashblocksExperimentalBuilder>(cli);
+            start_builder_node::<ExperimentalBuilder>(cli);
         }
     };
 }

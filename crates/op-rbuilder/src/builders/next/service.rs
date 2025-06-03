@@ -50,6 +50,7 @@ where
             pool,
             ctx.provider().clone(),
             OpEvmConfig::optimism(ctx.chain_spec()),
+            self.0.clone(),
         );
 
         let (payload_service, payload_builder) =
@@ -84,10 +85,15 @@ where
     Pool: PoolBounds,
     Client: ClientBounds,
 {
-    pub fn new(pool: Pool, client: Client, evm_config: OpEvmConfig) -> Self {
+    pub fn new(
+        pool: Pool,
+        client: Client,
+        evm_config: OpEvmConfig,
+        builder_config: BuilderConfig<FlashblocksConfig>,
+    ) -> Self {
         Self {
             pool,
-            ctx: Arc::new(ServiceContext::new(client, evm_config)),
+            ctx: Arc::new(ServiceContext::new(client, evm_config, builder_config)),
         }
     }
 }
@@ -101,7 +107,7 @@ where
 
     fn new_payload_job(&self, attr: PayloadAttributes) -> Result<Self::Job, PayloadBuilderError> {
         info!("PayloadJobGenerator::new_payload_job {attr:#?}");
-        Ok(PayloadJob::new(attr, Arc::clone(&self.ctx)))
+        Ok(PayloadJob::new(attr, Arc::clone(&self.ctx))?)
     }
 }
 
@@ -114,6 +120,7 @@ where
 {
     provider: Client,
     evm_config: OpEvmConfig,
+    builder_config: BuilderConfig<FlashblocksConfig>,
 }
 
 impl<Client> ServiceContext<Client>
@@ -121,21 +128,31 @@ where
     Client: ClientBounds,
 {
     /// Create a new builder context.
-    pub fn new(client: Client, evm_config: OpEvmConfig) -> Self {
+    pub fn new(
+        client: Client,
+        evm_config: OpEvmConfig,
+        builder_config: BuilderConfig<FlashblocksConfig>,
+    ) -> Self {
         Self {
             provider: client,
             evm_config,
+            builder_config,
         }
     }
 
     /// Access to the underlying chain state provider of the node.
-    pub fn provider(&self) -> &Client {
+    pub const fn provider(&self) -> &Client {
         &self.provider
     }
 
     /// Get the EVM configuration associated with this node.
-    pub fn evm_config(&self) -> &OpEvmConfig {
+    pub const fn evm_config(&self) -> &OpEvmConfig {
         &self.evm_config
+    }
+
+    /// Get the builder configuration associated with this node.
+    pub const fn builder_config(&self) -> &BuilderConfig<FlashblocksConfig> {
+        &self.builder_config
     }
 }
 
