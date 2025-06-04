@@ -371,15 +371,13 @@ impl OpPayloadBuilderCtx {
 
             num_txs_considered += 1;
             // ensure we still have capacity for this transaction
-            let (is_over_limits, result) = info.is_tx_over_limits(
+            if let Err(result) = info.is_tx_over_limits(
                 tx_da_size,
                 block_gas_limit,
                 tx_da_limit,
                 block_da_limit,
                 tx.gas_limit(),
-            );
-
-            if is_over_limits {
+            ) {
                 // we can't fit this transaction into the block, so we need to mark it as
                 // invalid which also removes all dependent transaction from
                 // the iterator before we can continue

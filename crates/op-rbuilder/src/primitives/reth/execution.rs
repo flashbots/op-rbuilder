@@ -66,21 +66,20 @@ impl<T: Debug + Default> ExecutionInfo<T> {
         tx_data_limit: Option<u64>,
         block_data_limit: Option<u64>,
         tx_gas_limit: u64,
-    ) -> (bool, TxnExecutionResult) {
+    ) -> Result<(), TxnExecutionResult> {
         if tx_data_limit.is_some_and(|da_limit| tx_da_size > da_limit) {
-            return (true, TxnExecutionResult::TransactionDALimitExceeded);
+            return Err(TxnExecutionResult::TransactionDALimitExceeded);
         }
 
         if block_data_limit
             .is_some_and(|da_limit| self.cumulative_da_bytes_used + tx_da_size > da_limit)
         {
-            return (true, TxnExecutionResult::BlockDALimitExceeded);
+            return Err(TxnExecutionResult::BlockDALimitExceeded);
         }
 
         if self.cumulative_gas_used + tx_gas_limit > block_gas_limit {
-            return (true, TxnExecutionResult::TransactionGasLimitExceeded);
+            return Err(TxnExecutionResult::TransactionGasLimitExceeded);
         }
-
-        (false, TxnExecutionResult::Success)
+        Ok(())
     }
 }
