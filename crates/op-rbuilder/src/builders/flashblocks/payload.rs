@@ -38,7 +38,7 @@ use reth_revm::{
     State,
 };
 use revm::Database;
-use rollup_boost::primitives::{
+use rollup_boost::{
     ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, FlashblocksPayloadV1,
 };
 use serde::{Deserialize, Serialize};
@@ -303,9 +303,10 @@ where
                     if flashblock_count >= self.config.flashblocks_per_block() {
                         tracing::info!(
                             target: "payload_builder",
-                            "Skipping flashblock reached target={} idx={}",
-                            self.config.flashblocks_per_block(),
-                            flashblock_count
+                            target = self.config.flashblocks_per_block(),
+                            flashblock_count = flashblock_count,
+                            block_number = ctx.block_number(),
+                            "Skipping flashblock reached target",
                         );
                         continue;
                     }
@@ -313,10 +314,13 @@ where
                     // Continue with flashblock building
                     tracing::info!(
                         target: "payload_builder",
-                        "Building flashblock idx={} target_gas={} taget_da={}",
-                        flashblock_count,
-                        total_gas_per_batch,
-                        total_da_per_batch.unwrap_or(0),
+                        block_number = ctx.block_number(),
+                        flashblock_count = flashblock_count,
+                        target_gas = total_gas_per_batch,
+                        gas_used = info.cumulative_gas_used,
+                        target_da = total_da_per_batch.unwrap_or(0),
+                        da_used = info.cumulative_da_bytes_used,
+                        "Building flashblock",
                     );
                     let flashblock_build_start_time = Instant::now();
                     let state = StateProviderDatabase::new(&state_provider);
@@ -664,7 +668,7 @@ where
             block_hash,
             transactions: new_transactions_encoded,
             withdrawals: ctx.withdrawals().cloned().unwrap_or_default().to_vec(),
-            withdrawals_root,
+            withdrawals_root: withdrawals_root.unwrap_or_default(),
         },
         metadata: serde_json::to_value(&metadata).unwrap_or_default(),
     };
