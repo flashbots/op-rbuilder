@@ -2,9 +2,10 @@ use args::*;
 use builders::{BuilderConfig, BuilderMode, FlashblocksBuilder, StandardBuilder};
 use core::fmt::Debug;
 use reth_optimism_node::{
-    node::{OpAddOnsBuilder, OpPoolBuilder},
+    node::{OpAddOnsBuilder, OpEngineValidatorBuilder, OpPoolBuilder},
     OpNode,
 };
+
 use reth_transaction_pool::TransactionPool;
 
 /// CLI argument parsing.
@@ -21,6 +22,7 @@ mod tx_signer;
 use metrics::VERSION;
 use moka::future::Cache;
 use monitor_tx_pool::monitor_tx_pool;
+use primitives::reth::engine_api_builder::OpEngineApiBuilder;
 use revert_protection::{EthApiExtServer, EthApiOverrideServer, RevertProtectionExt};
 use tx::FBPooledTransaction;
 
@@ -57,6 +59,12 @@ where
     cli.run(|builder, builder_args| async move {
         let builder_config = BuilderConfig::<B::Config>::try_from(builder_args.clone())
             .expect("Failed to convert rollup args to builder config");
+
+        // Engine peers from configuration
+        let engine_peers = builder_args.engine_peers;
+
+        let engine_builder: OpEngineApiBuilder<OpEngineValidatorBuilder> =
+            OpEngineApiBuilder::default().with_engine_peers(engine_peers);
         let da_config = builder_config.da_config.clone();
         let rollup_args = builder_args.rollup_args;
         let op_node = OpNode::new(rollup_args.clone());
@@ -88,7 +96,8 @@ where
                     .with_sequencer(rollup_args.sequencer.clone())
                     .with_enable_tx_conditional(rollup_args.enable_tx_conditional)
                     .with_da_config(da_config)
-                    .build(),
+                    .build()
+                    .with_engine_api(engine_builder),
             )
             .extend_rpc_modules(move |ctx| {
                 if builder_args.enable_revert_protection {

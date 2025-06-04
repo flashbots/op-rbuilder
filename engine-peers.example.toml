@@ -1,0 +1,15 @@
+# Default JWT file path used by all peers unless overridden
+default_jwt_path = "/path/to/default.jwt"
+
+# List of engine peers
+[[peers]]
+url = "http://builder1.example.com:8551"
+# This peer will use the default JWT
+
+[[peers]]
+url = "http://builder2.example.com:8551"
+jwt_path = "/path/to/custom.jwt"  # Override default JWT for this peer
+
+[[peers]]
+url = "https://builder3.example.com:8551"
+jwt_path = "/path/to/another.jwt"  # Another custom JWT 
