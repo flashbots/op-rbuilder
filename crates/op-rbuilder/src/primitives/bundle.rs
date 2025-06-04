@@ -9,6 +9,9 @@ pub struct Bundle {
     #[serde(rename = "txs")]
     pub transactions: Vec<Bytes>,
 
+    #[serde(rename = "reverting_tx_hashes")]
+    pub reverted_hashes: Vec<B256>,
+
     #[serde(rename = "maxBlockNumber")]
     pub block_number_max: Option<u64>,
 }

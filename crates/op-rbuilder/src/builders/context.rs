@@ -359,10 +359,16 @@ impl OpPayloadBuilderCtx {
 
         while let Some(tx) = best_txs.next(()) {
             let interop = tx.interop_deadline();
-            let exclude_reverting_txs = tx.exclude_reverting_txs();
+            let reverted_hashes = tx.reverted_hashes().clone();
+
             let tx_da_size = tx.estimated_da_size();
             let tx = tx.into_consensus();
             let tx_hash = tx.tx_hash();
+
+            // exclude reverting transaction if:
+            // - the transaction comes from a bundle and the hash **is not** in reverted hashes
+            let exclude_reverting_txs =
+                reverted_hashes.is_some() && !reverted_hashes.unwrap().contains(&tx_hash);
 
             let log_txn = |result: TxnExecutionResult| {
                 info!(target: "payload_builder", tx_hash = ?tx_hash, tx_da_size = ?tx_da_size, exclude_reverting_txs = ?exclude_reverting_txs, result = %result, "Considering transaction");

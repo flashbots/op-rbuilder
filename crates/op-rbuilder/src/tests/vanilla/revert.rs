@@ -123,36 +123,50 @@ async fn revert_protection_bundle() -> eyre::Result<()> {
     assert!(block_generated.includes(*valid_bundle.tx_hash()));
 
     let bundle_opts = BundleOpts {
-        block_number_max: Some(4),
+        block_number_max: Some(5),
     };
 
-    let reverted_bundle = harness
+    let reverted_bundle_0 = harness
+        .create_transaction()
+        .with_revert()
+        .with_reverted_hash()
+        .with_bundle(bundle_opts)
+        .send()
+        .await?;
+
+    // Test 2: Bundle reverts. It is included in the block since the transaction
+    // includes the reverted_hashes field
+    let block_generated = generator.generate_block().await?; // Block 3
+    assert!(block_generated.includes(*reverted_bundle_0.tx_hash()));
+
+    let reverted_bundle_1 = harness
         .create_transaction()
         .with_revert()
         .with_bundle(bundle_opts)
         .send()
         .await?;
 
-    // Test 2: Bundle reverts. It is not included in the block
-    let block_generated = generator.generate_block().await?; // Block 3
-    assert!(block_generated.not_includes(*reverted_bundle.tx_hash()));
+    // Test 3: Bundle reverts. It is not included in the block since it reverts
+    // and the hash is not in the reverted_hashes field.
+    let block_generated = generator.generate_block().await?; // Block 4
+    assert!(block_generated.not_includes(*reverted_bundle_1.tx_hash()));
 
     // After the block the transaction is still pending in the pool
     assert!(harness
-        .check_tx_in_pool(*reverted_bundle.tx_hash())
+        .check_tx_in_pool(*reverted_bundle_1.tx_hash())
         .await?
         .is_pending());
 
     // Test 3: Chain progresses beyond the bundle range. The transaction is dropped from the pool
-    generator.generate_block().await?; // Block 4
+    generator.generate_block().await?; // Block 5
     assert!(harness
-        .check_tx_in_pool(*reverted_bundle.tx_hash())
+        .check_tx_in_pool(*reverted_bundle_1.tx_hash())
         .await?
         .is_pending());
 
-    generator.generate_block().await?; // Block 5
+    generator.generate_block().await?; // Block 6
     assert!(harness
-        .check_tx_in_pool(*reverted_bundle.tx_hash())
+        .check_tx_in_pool(*reverted_bundle_1.tx_hash())
         .await?
         .is_dropped());
 
