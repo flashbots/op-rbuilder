@@ -355,7 +355,7 @@ impl BlockGenerator {
             source_hash: B256::default(),
             from: address, // Set the sender to the address of the account to seed
             to: TxKind::Create,
-            mint: value, // Amount to deposit
+            mint: 0, // Amount to deposit
             value: U256::default(),
             gas_limit: 210000,
             is_system_transaction: false,
