@@ -19,6 +19,7 @@ use reth_optimism_forks::OpHardforks;
 use reth_optimism_node::OpPayloadBuilderAttributes;
 use reth_optimism_payload_builder::{config::OpDAConfig, error::OpPayloadBuilderError};
 use reth_optimism_primitives::{OpReceipt, OpTransactionSigned};
+use reth_optimism_txpool::conditional::MaybeConditionalTransaction;
 use reth_optimism_txpool::{
     estimated_da_size::DataAvailabilitySized,
     interop::{is_valid_interop, MaybeInteropTransaction},
@@ -345,6 +346,7 @@ impl OpPayloadBuilderCtx {
         while let Some(tx) = best_txs.next(()) {
             let interop = tx.interop_deadline();
             let reverted_hashes = tx.reverted_hashes().clone();
+            let conditional = tx.conditional().cloned();
 
             let tx_da_size = tx.estimated_da_size();
             let tx = tx.into_consensus();
@@ -358,6 +360,15 @@ impl OpPayloadBuilderCtx {
             let log_txn = |result: TxnExecutionResult| {
                 info!(target: "payload_builder", tx_hash = ?tx_hash, tx_da_size = ?tx_da_size, exclude_reverting_txs = ?exclude_reverting_txs, result = %result, "Considering transaction");
             };
+
+            if let Some(conditional) = conditional {
+                // TODO: ideally we should get this from the txpool stream
+                if let Some(min_block_number) = conditional.block_number_min {
+                    if min_block_number > self.block_number() {
+                        continue;
+                    }
+                }
+            }
 
             // TODO: remove this condition and feature once we are comfortable enabling interop for everything
             if cfg!(feature = "interop") {

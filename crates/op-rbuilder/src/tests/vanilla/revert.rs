@@ -27,6 +27,7 @@ async fn revert_protection_monitor_transaction_gc() -> eyre::Result<()> {
             .with_revert()
             .with_bundle(BundleOpts {
                 block_number_max: Some(i),
+                block_number_min: None,
             })
             .send()
             .await?;
@@ -124,6 +125,7 @@ async fn revert_protection_bundle() -> eyre::Result<()> {
 
     let bundle_opts = BundleOpts {
         block_number_max: Some(5),
+        block_number_min: None,
     };
 
     let reverted_bundle_0 = harness
@@ -173,6 +175,55 @@ async fn revert_protection_bundle() -> eyre::Result<()> {
     Ok(())
 }
 
+/// Test the behaviour of the revert protection bundle with a min block number.
+#[tokio::test]
+async fn revert_protection_bundle_min_block_number() -> eyre::Result<()> {
+    let harness = TestHarnessBuilder::new("revert_protection_bundle_min_block_number")
+        .with_revert_protection()
+        .build()
+        .await?;
+
+    let mut generator = harness.block_generator().await?;
+
+    // The bundle is valid when the min block number is equal to the current block
+    let bundle_with_min_block = harness
+        .create_transaction()
+        .with_revert() // the transaction reverts but it is included in the block
+        .with_reverted_hash()
+        .with_bundle(BundleOpts {
+            block_number_max: None,
+            block_number_min: Some(2),
+        })
+        .send()
+        .await?;
+
+    let block = generator.generate_block().await?; // Block 1, bundle still not valid
+    assert!(block.not_includes(*bundle_with_min_block.tx_hash()));
+
+    let block = generator.generate_block().await?; // Block 2, bundle is valid
+    assert!(block.includes(*bundle_with_min_block.tx_hash()));
+
+    // Send a bundle with a match of min and max block number
+    let bundle_with_min_and_max_block = harness
+        .create_transaction()
+        .with_revert()
+        .with_reverted_hash()
+        .with_bundle(BundleOpts {
+            block_number_max: Some(4),
+            block_number_min: Some(4),
+        })
+        .send()
+        .await?;
+
+    let block = generator.generate_block().await?; // Block 3, bundle still not valid
+    assert!(block.not_includes(*bundle_with_min_and_max_block.tx_hash()));
+
+    let block = generator.generate_block().await?; // Block 4, bundle is valid
+    assert!(block.includes(*bundle_with_min_and_max_block.tx_hash()));
+
+    Ok(())
+}
+
 /// Test the range limits for the revert protection bundle.
 #[tokio::test]
 async fn revert_protection_bundle_range_limits() -> eyre::Result<()> {
@@ -190,31 +241,54 @@ async fn revert_protection_bundle_range_limits() -> eyre::Result<()> {
     async fn send_bundle(
         harness: &TestHarness,
         block_number_max: u64,
+        block_number_min: Option<u64>,
     ) -> eyre::Result<PendingTransactionBuilder<Optimism>> {
         harness
             .create_transaction()
             .with_bundle(BundleOpts {
                 block_number_max: Some(block_number_max),
+                block_number_min: block_number_min,
             })
             .send()
             .await
     }
 
     // Max block cannot be a past block
-    assert!(send_bundle(&harness, 1).await.is_err());
+    assert!(send_bundle(&harness, 1, None).await.is_err());
 
     // Bundles are valid if their max block in in between the current block and the max block range
-    let next_valid_block = 3;
+    let current_block = 2;
+    let next_valid_block = current_block + 1;
 
     for i in next_valid_block..next_valid_block + MAX_BLOCK_RANGE_BLOCKS {
-        assert!(send_bundle(&harness, i).await.is_ok());
+        assert!(send_bundle(&harness, i, None).await.is_ok());
     }
 
     // A bundle with a block out of range is invalid
+    assert!(send_bundle(
+        &harness,
+        next_valid_block + MAX_BLOCK_RANGE_BLOCKS + 1,
+        None
+    )
+    .await
+    .is_err());
+
+    // A bundle with a min block number higher than the max block is invalid
+    assert!(send_bundle(&harness, 1, Some(2)).await.is_err());
+
+    // A bundle with a min block number lower or equal to the current block is valid
+    assert!(send_bundle(&harness, next_valid_block, Some(current_block))
+        .await
+        .is_ok());
+    assert!(send_bundle(&harness, next_valid_block, Some(0))
+        .await
+        .is_ok());
+
+    // A bundle with a min block equal to max block is valid
     assert!(
-        send_bundle(&harness, next_valid_block + MAX_BLOCK_RANGE_BLOCKS + 1)
+        send_bundle(&harness, next_valid_block, Some(next_valid_block))
             .await
-            .is_err()
+            .is_ok()
     );
 
     Ok(())
@@ -263,6 +337,7 @@ async fn revert_protection_check_transaction_receipt_status_message() -> eyre::R
         .with_revert()
         .with_bundle(BundleOpts {
             block_number_max: Some(3),
+            block_number_min: None,
         })
         .send()
         .await?;

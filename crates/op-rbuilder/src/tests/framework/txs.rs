@@ -18,6 +18,7 @@ use super::FUNDED_PRIVATE_KEYS;
 #[derive(Clone, Copy, Default)]
 pub struct BundleOpts {
     pub block_number_max: Option<u64>,
+    pub block_number_min: Option<u64>,
 }
 
 #[derive(Clone)]
@@ -169,6 +170,7 @@ impl TransactionBuilder {
                     vec![]
                 },
                 block_number_max: bundle_opts.block_number_max,
+                block_number_min: bundle_opts.block_number_min,
             };
 
             let result: BundleResult = provider

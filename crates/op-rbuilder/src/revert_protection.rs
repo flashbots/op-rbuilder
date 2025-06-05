@@ -106,6 +106,15 @@ where
         };
 
         if let Some(block_number_max) = bundle.block_number_max {
+            if let Some(block_number_min) = bundle.block_number_min {
+                if block_number_min > block_number_max {
+                    return Err(EthApiError::InvalidParams(
+                        "block_number_min is greater than block_number_max".into(),
+                    )
+                    .into());
+                }
+            }
+
             // The max block cannot be a past block
             if block_number_max <= last_block_number {
                 return Err(
@@ -127,6 +136,8 @@ where
         let recovered = recover_raw_transaction(&bundle_transaction)?;
         let mut pool_transaction: FBPooledTransaction =
             OpPooledTransaction::from_pooled(recovered).into();
+
+        println!("conditional: {:?}", bundle.conditional());
 
         pool_transaction.set_reverted_hashes(bundle.reverted_hashes.clone());
         pool_transaction.set_conditional(bundle.conditional());
