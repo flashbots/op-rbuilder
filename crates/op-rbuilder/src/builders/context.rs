@@ -19,8 +19,8 @@ use reth_optimism_forks::OpHardforks;
 use reth_optimism_node::OpPayloadBuilderAttributes;
 use reth_optimism_payload_builder::{config::OpDAConfig, error::OpPayloadBuilderError};
 use reth_optimism_primitives::{OpReceipt, OpTransactionSigned};
-use reth_optimism_txpool::conditional::MaybeConditionalTransaction;
 use reth_optimism_txpool::{
+    conditional::MaybeConditionalTransaction,
     estimated_da_size::DataAvailabilitySized,
     interop::{is_valid_interop, MaybeInteropTransaction},
 };
