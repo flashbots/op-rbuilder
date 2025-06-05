@@ -74,7 +74,7 @@ pub struct BuilderConfig<Specific: Clone> {
     pub revert_protection: bool,
 
     /// The interval at which blocks are added to the chain.
-    /// This is also the frequency at which the builder will be receiving FCU rquests from the
+    /// This is also the frequency at which the builder will be receiving FCU requests from the
     /// sequencer.
     pub block_time: Duration,
 
