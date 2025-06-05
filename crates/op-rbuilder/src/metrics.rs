@@ -79,7 +79,7 @@ pub struct OpRBuilderMetrics {
     /// Desired number of flashblocks
     pub target_flashblock: Histogram,
     /// Time drift that we account for in the beginning of block building
-    pub flashblock_time_drife: Histogram,
+    pub flashblock_time_drift: Histogram,
     /// Time offset we used for first flashblock
     pub first_flashblock_time_offset: Histogram,
 }

@@ -155,7 +155,7 @@ where
             None => error!("FCU arrived too late or system clock are unsynced"),
             Some(time_drift) => self
                 .metrics
-                .flashblock_time_drife
+                .flashblock_time_drift
                 .record(time_drift.as_millis() as f64),
         }
         let block_env_attributes = OpNextBlockEnvAttributes {
@@ -256,8 +256,15 @@ where
             Some(time_drift) => {
                 let interval = self.config.specific.interval.as_millis();
                 let time_drift = time_drift.as_millis();
-                let flashblocks_per_block = time_drift.div(interval);
                 let first_flashblock_offset = time_drift.rem(interval);
+                let flashblocks_per_block = if first_flashblock_offset == 0 {
+                    // In this case all flashblock are full and they all in division
+                    time_drift.div(interval)
+                } else {
+                    // If we have any reminder that mean the first flashblock won't be in division
+                    // so we add it manually.
+                    time_drift.div(interval) + 1
+                };
                 // We won't have any problems because of casting
                 (
                     flashblocks_per_block as u64,
@@ -299,21 +306,25 @@ where
         tokio::spawn(async move {
             // We handle first flashblock separately, because it could be shrunk to fit everything
             let mut first_interval = tokio::time::interval(first_flashblock_offset);
-            let cancelled = cancel_clone
-                .run_until_cancelled(async {
-                    // First tick completes immediately
-                    first_interval.tick().await;
-                    first_interval.tick().await;
-                    // TODO: maybe return None if cancelled
+            // If first_flashblock_offset == 0 that means all flashblock are proper, and we just
+            // skip this cusom logic
+            if first_flashblock_offset.as_millis() != 0 {
+                let cancelled = cancel_clone
+                    .run_until_cancelled(async {
+                        // First tick completes immediately
+                        first_interval.tick().await;
+                        first_interval.tick().await;
+                        // TODO: maybe return None if cancelled
+                        if let Err(err) = build_tx.send(()).await {
+                            error!(target: "payload_builder", "Error sending build signal: {}", err);
+                        }
+                    })
+                    .await;
+                if cancelled.is_none() {
+                    tracing::info!(target: "payload_builder", "Building job cancelled, stopping payload building");
                     if let Err(err) = build_tx.send(()).await {
                         error!(target: "payload_builder", "Error sending build signal: {}", err);
                     }
-                })
-                .await;
-            if cancelled.is_none() {
-                tracing::info!(target: "payload_builder", "Building job cancelled, stopping payload building");
-                if let Err(err) = build_tx.send(()).await {
-                    error!(target: "payload_builder", "Error sending build signal: {}", err);
                 }
             }
             // Handle rest of fbs in steady rate
@@ -486,9 +497,7 @@ where
                 None => {
                     // Exit loop if channel closed or cancelled
                     ctx.metrics.block_built_success.increment(1);
-                    ctx.metrics
-                        .flashblock_count
-                        .record(flashblock_count as f64);
+                    ctx.metrics.flashblock_count.record(flashblock_count as f64);
                     return Ok(());
                 }
             }
