@@ -22,7 +22,7 @@ pub struct FBPooledTransaction {
     /// reverted hashes for the transaction. If the transaction is a bundle,
     /// this is the list of hashes of the transactions that reverted. If the
     /// transaction is not a bundle, this is `None`.
-    pub reverted_hashes: Option<Vec<B256>>,
+    pub reverted_hashes: Vec<B256>,
 }
 
 impl FBPoolTransaction for FBPooledTransaction {}
@@ -35,15 +35,15 @@ impl OpPooledTx for FBPooledTransaction {
 
 pub trait MaybeRevertingTransaction {
     fn set_reverted_hashes(&mut self, reverted_hashes: Vec<B256>);
-    fn reverted_hashes(&self) -> Option<Vec<B256>>;
+    fn reverted_hashes(&self) -> Vec<B256>;
 }
 
 impl MaybeRevertingTransaction for FBPooledTransaction {
     fn set_reverted_hashes(&mut self, reverted_hashes: Vec<B256>) {
-        self.reverted_hashes = Some(reverted_hashes);
+        self.reverted_hashes = reverted_hashes;
     }
 
-    fn reverted_hashes(&self) -> Option<Vec<B256>> {
+    fn reverted_hashes(&self) -> Vec<B256> {
         self.reverted_hashes.clone()
     }
 }
@@ -72,7 +72,7 @@ impl PoolTransaction for FBPooledTransaction {
         let inner = OpPooledTransaction::from_pooled(tx);
         Self {
             inner,
-            reverted_hashes: None,
+            reverted_hashes: vec![],
         }
     }
 
@@ -232,7 +232,7 @@ impl From<OpPooledTransaction> for FBPooledTransaction {
     fn from(tx: OpPooledTransaction) -> Self {
         Self {
             inner: tx,
-            reverted_hashes: None,
+            reverted_hashes: vec![],
         }
     }
 }

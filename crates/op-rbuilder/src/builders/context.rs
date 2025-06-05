@@ -361,8 +361,7 @@ impl OpPayloadBuilderCtx {
 
             // exclude reverting transaction if:
             // - the transaction comes from a bundle and the hash **is not** in reverted hashes
-            let exclude_reverting_txs =
-                reverted_hashes.is_some() && !reverted_hashes.unwrap().contains(&tx_hash);
+            let exclude_reverting_txs = !reverted_hashes.contains(&tx_hash);
 
             let log_txn = |result: TxnExecutionResult| {
                 info!(target: "payload_builder", tx_hash = ?tx_hash, tx_da_size = ?tx_da_size, exclude_reverting_txs = ?exclude_reverting_txs, result = %result, "Considering transaction");
