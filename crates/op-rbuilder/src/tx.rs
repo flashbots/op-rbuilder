@@ -34,13 +34,13 @@ impl OpPooledTx for FBPooledTransaction {
 }
 
 pub trait MaybeRevertingTransaction {
-    fn set_reverted_hashes(&mut self, reverted_hashes: Vec<B256>);
+    fn set_reverted_hashes(&mut self, reverted_hashes: Option<Vec<B256>>);
     fn reverted_hashes(&self) -> Option<Vec<B256>>;
 }
 
 impl MaybeRevertingTransaction for FBPooledTransaction {
-    fn set_reverted_hashes(&mut self, reverted_hashes: Vec<B256>) {
-        self.reverted_hashes = Some(reverted_hashes);
+    fn set_reverted_hashes(&mut self, reverted_hashes: Option<Vec<B256>>) {
+        self.reverted_hashes = reverted_hashes;
     }
 
     fn reverted_hashes(&self) -> Option<Vec<B256>> {
