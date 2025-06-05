@@ -371,6 +371,7 @@ impl OpPayloadBuilderCtx {
             if let Some(conditional) = conditional {
                 // TODO: ideally we should get this from the txpool stream
                 if !conditional.matches_block_attributes(&block_attr) {
+                    best_txs.mark_invalid(tx.signer(), tx.nonce());
                     continue;
                 }
             }
