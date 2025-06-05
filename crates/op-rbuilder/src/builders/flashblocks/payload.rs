@@ -149,7 +149,8 @@ where
         // FCU(a) could arrive with `block_time - fb_time < delay`. In this case we could only produce 1 flashblock
         // FCU(a) could arrive with `delay < fb_time` - in this case we will shrink first flashblock
         // FCU(a) could arrive with `fb_time < delay < block_time - fb_time` - in this case we will issue less flashblocks
-        let time = std::time::SystemTime::UNIX_EPOCH + Duration::from_secs(timestamp);
+        let time = std::time::SystemTime::UNIX_EPOCH + Duration::from_secs(timestamp)
+            - Duration::from_millis(50);
         let time_drift = time.duration_since(std::time::SystemTime::now()).ok();
         match time_drift {
             None => error!("FCU arrived too late or system clock are unsynced"),
@@ -311,25 +312,26 @@ where
             if first_flashblock_offset.as_millis() != 0 {
                 let cancelled = cancel_clone
                     .run_until_cancelled(async {
-                        // First tick completes immediately
-                        first_interval.tick().await;
-                        first_interval.tick().await;
-                        // TODO: maybe return None if cancelled
-                        if let Err(err) = build_tx.send(()).await {
-                            error!(target: "payload_builder", "Error sending build signal: {}", err);
+                        // We send first signal straight away and then wait first_interval duration
+                        // to send second signal and start building normal blocks
+                        for _ in 0..2 {
+                            first_interval.tick().await;
+                            // TODO: maybe return None if cancelled
+                            if let Err(err) = build_tx.send(()).await {
+                                error!(target: "payload_builder", "Error sending build signal: {}", err);
+                            }
                         }
                     })
                     .await;
                 if cancelled.is_none() {
                     tracing::info!(target: "payload_builder", "Building job cancelled, stopping payload building");
-                    if let Err(err) = build_tx.send(()).await {
-                        error!(target: "payload_builder", "Error sending build signal: {}", err);
-                    }
+                    drop(build_tx);
+                    return;
                 }
             }
             // Handle rest of fbs in steady rate
             let mut interval = tokio::time::interval(interval);
-            cancel_clone.run_until_cancelled(async {
+            let cancelled = cancel_clone.run_until_cancelled(async {
                 // First tick completes immediately
                 interval.tick().await;
                 loop {
@@ -340,9 +342,9 @@ where
                     }
                 }
             }).await;
-            // TODO: probably should cover this on rollup-boost side, so make sure we cleared the channel
-            if let Err(err) = build_tx.send(()).await {
-                error!(target: "payload_builder", "Error sending build signal: {}", err);
+            if cancelled.is_none() {
+                tracing::info!(target: "payload_builder", "Building job cancelled, stopping payload building");
+                drop(build_tx);
             }
         });
 
@@ -419,18 +421,14 @@ where
                         .record(best_txs_start_time.elapsed());
 
                     let tx_execution_start_time = Instant::now();
-                    ctx.execute_best_transactions(
+                    if let Some(()) = ctx.execute_best_transactions(
                         &mut info,
                         &mut db,
                         best_txs,
                         total_gas_per_batch.min(ctx.block_gas_limit()),
                         total_da_per_batch,
-                    )?;
-                    ctx.metrics
-                        .payload_tx_simulation_duration
-                        .record(tx_execution_start_time.elapsed());
-
-                    if ctx.cancel.is_cancelled() {
+                    )? {
+                        // Handles job cancellation
                         tracing::info!(
                             target: "payload_builder",
                             "Job cancelled, stopping payload building",
@@ -438,6 +436,9 @@ where
                         // if the job was cancelled, stop
                         return Ok(());
                     }
+                    ctx.metrics
+                        .payload_tx_simulation_duration
+                        .record(tx_execution_start_time.elapsed());
 
                     // If it is the last flashblocks, add the builder txn to the block if enabled
                     invoke_on_last_flashblock(flashblock_count, last_flashblock, || {
