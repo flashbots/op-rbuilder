@@ -13,6 +13,12 @@ pub struct Bundle {
     pub reverted_hashes: Vec<B256>,
 
     #[serde(rename = "maxBlockNumber")]
+    #[serde(
+        default,
+        rename = "maxBlockNumber",
+        with = "alloy_serde::quantity::opt",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub block_number_max: Option<u64>,
 }
 

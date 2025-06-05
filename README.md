@@ -46,7 +46,13 @@ To see the full list of op-rbuilder metrics, see [`src/metrics.rs`](./src/metric
 
 op-rbuilder has an integration test framework that runs the builder against mock engine api payloads and ensures that the builder produces valid blocks.
 
-To run the integration tests, run:
+You can run the tests using the command
+
+```bash
+just run-tests
+```
+
+or the following sequence:
 
 ```bash
 # Ensure you have op-reth installed in your path,
@@ -60,7 +66,7 @@ cargo run -p op-rbuilder --features="testing" --bin tester -- genesis --output g
 cargo build -p op-rbuilder --bin op-rbuilder
 
 # Run the integration tests
-cargo test --package op-rbuilder --lib --features integration -- integration::integration_test::tests
+cargo test --package op-rbuilder --lib
 ```
 
 ## Local Devnet
