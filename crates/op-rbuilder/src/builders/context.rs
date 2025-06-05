@@ -1,4 +1,6 @@
-use alloy_consensus::{Eip658Value, Transaction, TxEip1559};
+use alloy_consensus::{
+    conditional::BlockConditionalAttributes, Eip658Value, Transaction, TxEip1559,
+};
 use alloy_eips::{eip7623::TOTAL_COST_FLOOR_PER_TOKEN, Encodable2718, Typed2718};
 use alloy_op_evm::block::receipt_builder::OpReceiptBuilder;
 use alloy_primitives::{Address, Bytes, TxKind, U256};
@@ -343,6 +345,11 @@ impl OpPayloadBuilderCtx {
             .da_tx_size_limit
             .set(tx_da_limit.map_or(-1.0, |v| v as f64));
 
+        let block_attr = BlockConditionalAttributes {
+            number: self.block_number(),
+            timestamp: self.attributes().timestamp(),
+        };
+
         while let Some(tx) = best_txs.next(()) {
             let interop = tx.interop_deadline();
             let reverted_hashes = tx.reverted_hashes().clone();
@@ -363,10 +370,8 @@ impl OpPayloadBuilderCtx {
 
             if let Some(conditional) = conditional {
                 // TODO: ideally we should get this from the txpool stream
-                if let Some(min_block_number) = conditional.block_number_min {
-                    if min_block_number > self.block_number() {
-                        continue;
-                    }
+                if !conditional.matches_block_attributes(&block_attr) {
+                    continue;
                 }
             }
 
