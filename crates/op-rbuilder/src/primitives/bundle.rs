@@ -10,7 +10,7 @@ pub struct Bundle {
     pub transactions: Vec<Bytes>,
 
     #[serde(rename = "reverting_tx_hashes")]
-    pub reverted_hashes: Vec<B256>,
+    pub reverting_hashes: Vec<B256>,
 
     #[serde(
         default,

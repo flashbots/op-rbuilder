@@ -164,7 +164,7 @@ impl TransactionBuilder {
             // Send the transaction as a bundle with the bundle options
             let bundle = Bundle {
                 transactions: vec![transaction_encoded.into()],
-                reverted_hashes: if with_reverted_hash {
+                reverting_hashes: if with_reverted_hash {
                     vec![txn_hash]
                 } else {
                     vec![]

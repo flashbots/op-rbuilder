@@ -137,7 +137,7 @@ where
         let mut pool_transaction: FBPooledTransaction =
             OpPooledTransaction::from_pooled(recovered).into();
 
-        pool_transaction.set_reverted_hashes(bundle.reverted_hashes.clone());
+        pool_transaction.set_reverted_hashes(bundle.reverting_hashes.clone());
         pool_transaction.set_conditional(bundle.conditional());
 
         let hash = self
