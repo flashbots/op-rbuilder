@@ -10,6 +10,7 @@ use crate::{
 /// are eventually dropped from the pool once their block range is reached.
 /// This test creates N transactions with different block ranges.
 #[tokio::test]
+#[cfg(feature = "integration_tests")]
 async fn revert_protection_monitor_transaction_gc() -> eyre::Result<()> {
     let harness = TestHarnessBuilder::new("revert_protection_monitor_transaction_gc")
         .with_revert_protection()
@@ -59,6 +60,7 @@ async fn revert_protection_monitor_transaction_gc() -> eyre::Result<()> {
 
 /// If revert protection is disabled, the transactions that revert are included in the block.
 #[tokio::test]
+#[cfg(feature = "integration_tests")]
 async fn revert_protection_disabled() -> eyre::Result<()> {
     let harness = TestHarnessBuilder::new("revert_protection_disabled")
         .build()
@@ -81,6 +83,7 @@ async fn revert_protection_disabled() -> eyre::Result<()> {
 /// If revert protection is disabled, it should not be possible to send a revert bundle
 /// since the revert RPC endpoint is not available.
 #[tokio::test]
+#[cfg(feature = "integration_tests")]
 async fn revert_protection_disabled_bundle_endpoint_error() -> eyre::Result<()> {
     let harness = TestHarnessBuilder::new("revert_protection_disabled_bundle_endpoint_error")
         .build()
@@ -104,6 +107,7 @@ async fn revert_protection_disabled_bundle_endpoint_error() -> eyre::Result<()> 
 /// is not included in the block and tried again for the next bundle range blocks
 /// when it will be dropped from the pool.
 #[tokio::test]
+#[cfg(feature = "integration_tests")]
 async fn revert_protection_bundle() -> eyre::Result<()> {
     let harness = TestHarnessBuilder::new("revert_protection_bundle")
         .with_revert_protection()
@@ -177,6 +181,7 @@ async fn revert_protection_bundle() -> eyre::Result<()> {
 
 /// Test the behaviour of the revert protection bundle with a min block number.
 #[tokio::test]
+#[cfg(feature = "integration_tests")]
 async fn revert_protection_bundle_min_block_number() -> eyre::Result<()> {
     let harness = TestHarnessBuilder::new("revert_protection_bundle_min_block_number")
         .with_revert_protection()
@@ -226,6 +231,7 @@ async fn revert_protection_bundle_min_block_number() -> eyre::Result<()> {
 
 /// Test the range limits for the revert protection bundle.
 #[tokio::test]
+#[cfg(feature = "integration_tests")]
 async fn revert_protection_bundle_range_limits() -> eyre::Result<()> {
     let harness = TestHarnessBuilder::new("revert_protection_bundle_range_limits")
         .with_revert_protection()
@@ -297,6 +303,7 @@ async fn revert_protection_bundle_range_limits() -> eyre::Result<()> {
 /// If a transaction reverts and was sent as a normal transaction through the eth_sendRawTransaction
 /// bundle, the transaction should be included in the block.
 /// This behaviour is the same as the 'revert_protection_disabled' test.
+#[cfg(feature = "integration_tests")]
 #[tokio::test]
 async fn revert_protection_allow_reverted_transactions_without_bundle() -> eyre::Result<()> {
     let harness =
@@ -321,6 +328,7 @@ async fn revert_protection_allow_reverted_transactions_without_bundle() -> eyre:
 
 /// If a transaction reverts and gets dropped it, the eth_getTransactionReceipt should return
 /// an error message that it was dropped.
+#[cfg(feature = "integration_tests")]
 #[tokio::test]
 async fn revert_protection_check_transaction_receipt_status_message() -> eyre::Result<()> {
     let harness =

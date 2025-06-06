@@ -130,7 +130,8 @@ alloy-provider = { workspace = true, default-features = true, features = [
 tempfile = "3.8"
 
 [features]
-default = ["jemalloc"]
+integration_tests = []
+default = ["jemalloc", "integration_tests"]
 
 jemalloc = [
 	"dep:tikv-jemallocator",

@@ -8,6 +8,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::tests::TestHarnessBuilder;
 
+#[cfg(feature = "integration_tests")]
 #[tokio::test]
 async fn chain_produces_blocks() -> eyre::Result<()> {
     let harness = TestHarnessBuilder::new("flashbots_chain_produces_blocks")

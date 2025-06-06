@@ -3,6 +3,7 @@ use alloy_provider::Provider;
 
 /// This test ensures that the transaction size limit is respected.
 /// We will set limit to 1 byte and see that the builder will not include any transactions.
+#[cfg(feature = "integration_tests")]
 #[tokio::test]
 async fn data_availability_tx_size_limit() -> eyre::Result<()> {
     let harness = TestHarnessBuilder::new("data_availability_tx_size_limit")
@@ -36,6 +37,7 @@ async fn data_availability_tx_size_limit() -> eyre::Result<()> {
 
 /// This test ensures that the block size limit is respected.
 /// We will set limit to 1 byte and see that the builder will not include any transactions.
+#[cfg(feature = "integration_tests")]
 #[tokio::test]
 async fn data_availability_block_size_limit() -> eyre::Result<()> {
     let harness = TestHarnessBuilder::new("data_availability_block_size_limit")
@@ -67,6 +69,7 @@ async fn data_availability_block_size_limit() -> eyre::Result<()> {
 /// Size of each transaction is 100000000
 /// We will set limit to 3 txs and see that the builder will include 3 transactions.
 /// We should not forget about builder transaction so we will spawn only 2 regular txs.
+#[cfg(feature = "integration_tests")]
 #[tokio::test]
 async fn data_availability_block_fill() -> eyre::Result<()> {
     let harness = TestHarnessBuilder::new("data_availability_block_fill")
