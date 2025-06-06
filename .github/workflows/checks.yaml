@@ -77,6 +77,9 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Try pulling the image manually
+        run: docker pull ghcr.io/paradigmxyz/op-reth:latest
+
       - name: Test
         run: make test
         env:
