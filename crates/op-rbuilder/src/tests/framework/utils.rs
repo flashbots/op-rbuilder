@@ -29,7 +29,11 @@ impl TransactionBuilderExt for TransactionBuilder {
 
 pub trait ChainDriverExt {
     fn fund_default_accounts(&self) -> impl Future<Output = eyre::Result<()>>;
-    fn fund_many(&self, addresses: Vec<Address>, amount: u128) -> impl Future<Output = eyre::Result<()>>;
+    fn fund_many(
+        &self,
+        addresses: Vec<Address>,
+        amount: u128,
+    ) -> impl Future<Output = eyre::Result<()>>;
     fn fund(&self, address: Address, amount: u128) -> impl Future<Output = eyre::Result<()>>;
     fn first_funded_address(&self) -> Address {
         FUNDED_PRIVATE_KEYS[0]
@@ -44,7 +48,8 @@ pub trait ChainDriverExt {
     ) -> impl Future<Output = eyre::Result<Vec<Signer>>> {
         async move {
             let accounts = (0..count).map(|_| Signer::random()).collect::<Vec<_>>();
-            self.fund_many(accounts.iter().map(|a| a.address).collect(), amount).await?;
+            self.fund_many(accounts.iter().map(|a| a.address).collect(), amount)
+                .await?;
             Ok(accounts)
         }
     }
@@ -73,7 +78,7 @@ impl ChainDriverExt for ChainDriver {
                 is_system_transaction: false,
                 input: Default::default(), // No input data for the deposit
             };
-    
+
             let signer = Signer::random();
             let signed_tx = signer.sign_tx(OpTypedTransaction::Deposit(deposit))?;
             let signed_tx_rlp = signed_tx.encoded_2718();

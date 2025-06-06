@@ -1,7 +1,8 @@
 use crate::{
     builders::StandardBuilder,
     tests::{
-        default_node_config, BlockTransactionsExt, ChainDriver, ChainDriverExt, LocalInstance, ONE_ETH
+        default_node_config, BlockTransactionsExt, ChainDriver, ChainDriverExt, LocalInstance,
+        ONE_ETH,
     },
 };
 use reth::args::TxPoolArgs;
@@ -26,7 +27,6 @@ async fn pending_pool_limit() -> eyre::Result<()> {
     let driver = ChainDriver::new(&rbuilder).await?;
     let accounts = driver.fund_accounts(50, ONE_ETH).await?;
 
-
     // Send 50 txs from different addrs
     let acc_no_priority = accounts.first().unwrap();
     let acc_with_priority = accounts.last().unwrap();
@@ -40,7 +40,8 @@ async fn pending_pool_limit() -> eyre::Result<()> {
     }
 
     assert_eq!(
-        rbuilder.pool().pending_count(), 50,
+        rbuilder.pool().pending_count(),
+        50,
         "Pending pool must contain at max 50 txs {:?}",
         rbuilder.pool().pending_count()
     );
@@ -58,7 +59,8 @@ async fn pending_pool_limit() -> eyre::Result<()> {
     }
 
     assert_eq!(
-        rbuilder.pool().pending_count(), 50,
+        rbuilder.pool().pending_count(),
+        50,
         "Pending pool must contain at max 50 txs {:?}",
         rbuilder.pool().pending_count()
     );

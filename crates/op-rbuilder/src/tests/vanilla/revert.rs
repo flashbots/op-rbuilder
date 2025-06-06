@@ -2,7 +2,13 @@ use alloy_provider::{PendingTransactionBuilder, Provider};
 use op_alloy_network::Optimism;
 
 use crate::{
-    args::OpRbuilderArgs, builders::StandardBuilder, primitives::bundle::MAX_BLOCK_RANGE_BLOCKS, tests::{BundleOpts, ChainDriver, ChainDriverExt, LocalInstance, TestHarness, TestHarnessBuilder, TransactionBuilderExt, ONE_ETH}
+    args::OpRbuilderArgs,
+    builders::StandardBuilder,
+    primitives::bundle::MAX_BLOCK_RANGE_BLOCKS,
+    tests::{
+        BundleOpts, ChainDriver, ChainDriverExt, LocalInstance, TestHarness, TestHarnessBuilder,
+        TransactionBuilderExt, ONE_ETH,
+    },
 };
 
 /// This test ensures that the transactions that get reverted and not included in the block,
@@ -13,7 +19,8 @@ async fn revert_protection_monitor_transaction_gc() -> eyre::Result<()> {
     let rbuilder = LocalInstance::new::<StandardBuilder>(OpRbuilderArgs {
         enable_revert_protection: true,
         ..Default::default()
-    }).await?;
+    })
+    .await?;
 
     let driver = ChainDriver::new(&rbuilder).await?;
     let accounts = driver.fund_accounts(10, ONE_ETH).await?;
@@ -57,26 +64,38 @@ async fn revert_protection_monitor_transaction_gc() -> eyre::Result<()> {
     Ok(())
 }
 
-// /// If revert protection is disabled, the transactions that revert are included in the block.
-// #[tokio::test]
-// async fn revert_protection_disabled() -> eyre::Result<()> {
-//     let harness = TestHarnessBuilder::new("revert_protection_disabled")
-//         .build()
-//         .await?;
+/// If revert protection is disabled, the transactions that revert are included in the block.
+#[tokio::test]
+async fn revert_protection_disabled() -> eyre::Result<()> {
+    let rbuilder = LocalInstance::standard().await?;
+    let driver = rbuilder.driver().await?;
 
-//     let mut generator = harness.block_generator().await?;
+    for _ in 0..10 {
+        let valid_tx = driver
+            .create_transaction()
+            .random_valid_transfer()
+            .send()
+            .await?;
 
-//     for _ in 0..10 {
-//         let valid_tx = harness.send_valid_transaction().await?;
-//         let reverting_tx = harness.send_revert_transaction().await?;
-//         let block_generated = generator.generate_block().await?;
+        let reverting_tx = driver
+            .create_transaction()
+            .random_reverting_transaction()
+            .send()
+            .await?;
+        let block = driver.build_new_block().await?;
 
-//         assert!(block_generated.includes(*valid_tx.tx_hash()));
-//         assert!(block_generated.includes(*reverting_tx.tx_hash()));
-//     }
+        assert!(block
+            .transactions
+            .hashes()
+            .any(|hash| hash == *valid_tx.tx_hash()));
+        assert!(block
+            .transactions
+            .hashes()
+            .any(|hash| hash == *reverting_tx.tx_hash()));
+    }
 
-//     Ok(())
-// }
+    Ok(())
+}
 
 // /// If revert protection is disabled, it should not be possible to send a revert bundle
 // /// since the revert RPC endpoint is not available.
