@@ -1,13 +1,8 @@
 use crate::{
-    args::OpRbuilderArgs,
-    builders::{BuilderConfig, FlashblocksBuilder, PayloadBuilder, StandardBuilder},
-    revert_protection::{EthApiExtServer, EthApiOverrideServer, RevertProtectionExt},
-    tests::{
+    args::OpRbuilderArgs, builders::{BuilderConfig, FlashblocksBuilder, PayloadBuilder, StandardBuilder}, primitives::reth::engine_api_builder::OpEngineApiBuilder, revert_protection::{EthApiExtServer, EthApiOverrideServer, RevertProtectionExt}, tests::{
         framework::{driver::ChainDriver, BUILDER_PRIVATE_KEY},
         ChainDriverExt, EngineApi, Ipc, TransactionPoolObserver,
-    },
-    tx::FBPooledTransaction,
-    tx_signer::Signer,
+    }, tx::FBPooledTransaction, tx_signer::Signer
 };
 use alloy_provider::{Identity, ProviderBuilder, RootProvider};
 use clap::Parser;
@@ -32,7 +27,7 @@ use reth_node_builder::{NodeBuilder, NodeConfig};
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_cli::commands::Commands;
 use reth_optimism_node::{
-    node::{OpAddOnsBuilder, OpPoolBuilder},
+    node::{OpAddOns, OpAddOnsBuilder, OpEngineValidatorBuilder, OpPoolBuilder},
     OpNode,
 };
 use reth_transaction_pool::{AllTransactionsEvents, TransactionPool};
@@ -95,6 +90,17 @@ impl LocalInstance {
             .expect("Failed to convert rollup args to builder config");
         let da_config = builder_config.da_config.clone();
 
+        let addons: OpAddOns<
+            _,
+            _,
+            OpEngineValidatorBuilder,
+            OpEngineApiBuilder<OpEngineValidatorBuilder>,
+        > = OpAddOnsBuilder::default()
+            .with_sequencer(args.rollup_args.sequencer.clone())
+            .with_enable_tx_conditional(args.rollup_args.enable_tx_conditional)
+            .with_da_config(da_config)
+            .build();
+
         let node_builder = NodeBuilder::<_, OpChainSpec>::new(config.clone())
             .testing_node(task_manager.executor())
             .with_types::<OpNode>()
@@ -104,13 +110,7 @@ impl LocalInstance {
                     .pool(pool_component(&args))
                     .payload(P::new_service(builder_config)?),
             )
-            .with_add_ons(
-                OpAddOnsBuilder::default()
-                    .with_sequencer(op_node.args.sequencer.clone())
-                    .with_enable_tx_conditional(op_node.args.enable_tx_conditional)
-                    .with_da_config(da_config)
-                    .build(),
-            )
+            .with_add_ons(addons)
             .extend_rpc_modules(move |ctx| {
                 if args.enable_revert_protection {
                     tracing::info!("Revert protection enabled");
