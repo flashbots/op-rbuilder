@@ -1,8 +1,6 @@
 use alloy_consensus::constants::EMPTY_WITHDRAWALS;
-use alloy_eips::Encodable2718;
-use alloy_eips::{eip7685::Requests, BlockNumberOrTag};
-use alloy_primitives::private::alloy_rlp::Encodable;
-use alloy_primitives::{keccak256, B256, U256};
+use alloy_eips::{eip7685::Requests, BlockNumberOrTag, Encodable2718};
+use alloy_primitives::{keccak256, private::alloy_rlp::Encodable, B256, U256};
 use alloy_provider::{Identity, Provider, ProviderBuilder, RootProvider};
 use alloy_rpc_types_engine::{
     ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPayloadV3, PayloadStatusEnum,
@@ -50,7 +48,11 @@ impl ExternalNode {
     pub async fn reth_version(version_tag: &str) -> eyre::Result<Self> {
         let docker = Docker::connect_with_local_defaults()?;
 
-        let tempdir = std::env::temp_dir().join(format!("reth-shared-{}", nanoid::nanoid!()));
+        let tempdir = std::env::var("TESTS_TEMP_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| std::env::temp_dir());
+
+        let tempdir = tempdir.join(format!("reth-shared-{}", nanoid::nanoid!()));
         let auth_ipc = tempdir.join("auth.ipc").to_string_lossy().to_string();
         let rpc_ipc = tempdir.join("rpc.ipc").to_string_lossy().to_string();
 
@@ -281,26 +283,23 @@ impl Drop for ExternalNode {
         let docker = self.docker.clone();
         let container_id = self.container_id.clone();
 
-        if tokio::runtime::Handle::try_current().is_ok() {
-            let _ = tokio::task::spawn_blocking(move || {
-                let rt = tokio::runtime::Runtime::new().unwrap();
-                rt.block_on(async move {
-                    let _ = docker
-                        .stop_container(&container_id, None::<StopContainerOptions>)
-                        .await;
+        tokio::spawn(async move {
+            docker
+                .stop_container(&container_id, None::<StopContainerOptions>)
+                .await
+                .expect("Failed to stop container");
 
-                    let _ = docker
-                        .remove_container(
-                            &container_id,
-                            Some(RemoveContainerOptions {
-                                force: true,
-                                ..Default::default()
-                            }),
-                        )
-                        .await;
-                });
-            });
-        }
+            docker
+                .remove_container(
+                    &container_id,
+                    Some(RemoveContainerOptions {
+                        force: true,
+                        ..Default::default()
+                    }),
+                )
+                .await
+                .expect("Failed to remove container");
+        });
     }
 }
 
@@ -370,7 +369,7 @@ async fn await_ipc_readiness(docker: &Docker, container: &str) -> eyre::Result<(
                 }
 
                 if message.to_lowercase().contains("error") {
-                    return Err(eyre::eyre!("Failed to start op-reth container: {message}"));
+                    return Err(eyre::eyre!("Failed to start op-reth container: {message}."));
                 }
             }
             LogOutput::StdIn { .. } | LogOutput::Console { .. } => {}
@@ -394,10 +393,6 @@ trait OptimismProviderExt {
     async fn hash_at_height(&self, height: u64) -> eyre::Result<B256>;
     async fn latest_block_hash_and_number(&self) -> eyre::Result<(B256, u64)>;
     async fn execution_payload_for_block(&self, number: u64) -> eyre::Result<OpExecutionPayloadV4>;
-
-    async fn genesis_hash(&self) -> eyre::Result<B256> {
-        Ok(self.hash_at_height(0).await?)
-    }
 }
 
 impl OptimismProviderExt for RootProvider<Optimism> {

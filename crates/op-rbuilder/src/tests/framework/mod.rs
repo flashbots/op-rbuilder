@@ -1,20 +1,14 @@
 mod apis;
 mod driver;
 mod external;
-mod harness;
 mod instance;
-mod op;
-mod service;
 mod txs;
 mod utils;
 
 pub use apis::*;
 pub use driver::*;
 pub use external::*;
-pub use harness::*;
 pub use instance::*;
-pub use op::*;
-pub use service::*;
 pub use txs::*;
 pub use utils::*;
 

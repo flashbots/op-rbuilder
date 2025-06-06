@@ -1,9 +1,6 @@
 use crate::{
     builders::StandardBuilder,
-    tests::{
-        default_node_config, BlockTransactionsExt, ChainDriver, ChainDriverExt, LocalInstance,
-        ONE_ETH,
-    },
+    tests::{default_node_config, BlockTransactionsExt, ChainDriverExt, LocalInstance, ONE_ETH},
 };
 use reth::args::TxPoolArgs;
 use reth_node_builder::NodeConfig;
@@ -24,7 +21,7 @@ async fn pending_pool_limit() -> eyre::Result<()> {
     )
     .await?;
 
-    let driver = ChainDriver::new(&rbuilder).await?;
+    let driver = rbuilder.driver().await?;
     let accounts = driver.fund_accounts(50, ONE_ETH).await?;
 
     // Send 50 txs from different addrs

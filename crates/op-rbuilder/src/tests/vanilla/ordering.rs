@@ -1,7 +1,4 @@
-use crate::tests::{
-    framework::{TestHarnessBuilder, ONE_ETH},
-    ChainDriverExt, LocalInstance,
-};
+use crate::tests::{framework::ONE_ETH, ChainDriverExt, LocalInstance};
 use alloy_consensus::Transaction;
 use futures::{future::join_all, stream, StreamExt};
 

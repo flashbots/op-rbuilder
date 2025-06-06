@@ -9,8 +9,7 @@ use tokio_util::sync::CancellationToken;
 use crate::{
     args::{FlashblocksArgs, OpRbuilderArgs},
     builders::FlashblocksBuilder,
-    tests::{ChainDriverExt, LocalInstance, TestHarnessBuilder, TransactionBuilderExt},
-    tx_signer::Signer,
+    tests::{ChainDriverExt, LocalInstance, TransactionBuilderExt},
 };
 
 #[tokio::test]

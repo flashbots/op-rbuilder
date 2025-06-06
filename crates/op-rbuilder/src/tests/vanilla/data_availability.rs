@@ -1,6 +1,4 @@
-use crate::tests::{
-    framework::TestHarnessBuilder, BlockTransactionsExt, LocalInstance, TransactionBuilderExt,
-};
+use crate::tests::{BlockTransactionsExt, LocalInstance, TransactionBuilderExt};
 use alloy_provider::Provider;
 
 /// This test ensures that the transaction size limit is respected.

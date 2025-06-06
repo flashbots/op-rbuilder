@@ -114,6 +114,7 @@ nanoid = { version = "0.4", optional = true }
 reth-ipc = { workspace = true, optional = true }
 bollard = { version = "0.19", optional = true }
 tar = { version = "0.4", optional = true }
+ctor = { version = "0.4.2", optional = true }
 
 [target.'cfg(unix)'.dependencies]
 tikv-jemallocator = { version = "0.6", optional = true }
@@ -133,7 +134,6 @@ reth-ipc = { workspace = true }
 reth-node-builder = { workspace = true, features = ["test-utils"] }
 bollard = "0.19"
 ctor = "0.4.2"
-tar = "0.4"
 
 [features]
 default = ["jemalloc"]
@@ -163,6 +163,7 @@ testing = [
 	"reth-ipc",
 	"reth-node-builder/test-utils",
 	"bollard",
+	"ctor",
 ]
 
 

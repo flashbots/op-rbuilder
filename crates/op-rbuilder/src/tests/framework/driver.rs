@@ -13,15 +13,19 @@ use reth_optimism_node::OpPayloadAttributes;
 use rollup_boost::OpExecutionPayloadEnvelope;
 
 use super::{EngineApi, Ipc, LocalInstance, TransactionBuilder};
-use crate::{args::OpRbuilderArgs, tests::ExternalNode, tx_signer::Signer};
+use crate::{
+    args::OpRbuilderArgs,
+    tests::{ExternalNode, Protocol},
+    tx_signer::Signer,
+};
 
 const DEFAULT_GAS_LIMIT: u64 = 10_000_000;
 
 /// The ChainDriver is a type that allows driving the op builder node to build new blocks manually
 /// by calling the `build_new_block` method. It uses the Engine API to interact with the node
 /// and the provider to fetch blocks and transactions.
-pub struct ChainDriver {
-    engine_api: EngineApi<Ipc>,
+pub struct ChainDriver<RpcProtocol: Protocol = Ipc> {
+    engine_api: EngineApi<RpcProtocol>,
     provider: RootProvider<Optimism>,
     signer: Option<Signer>,
     gas_limit: Option<u64>,
@@ -30,11 +34,13 @@ pub struct ChainDriver {
 }
 
 // instantiation and configuration
-impl ChainDriver {
+impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
     const MIN_BLOCK_TIME: Duration = Duration::from_secs(1);
 
-    pub async fn new(instance: &LocalInstance) -> eyre::Result<Self> {
-        Ok(Self {
+    /// Creates a new ChainDriver instance for a local instance of RBuilder running in-process
+    /// communicating over IPC.
+    pub async fn local(instance: &LocalInstance) -> eyre::Result<ChainDriver<Ipc>> {
+        Ok(ChainDriver::<Ipc> {
             engine_api: instance.engine_api(),
             provider: instance.provider().await?,
             signer: Default::default(),
@@ -42,6 +48,21 @@ impl ChainDriver {
             args: instance.args().clone(),
             validation_nodes: vec![],
         })
+    }
+
+    /// Creates a new ChainDriver for some EL node instance.
+    pub fn remote(
+        provider: RootProvider<Optimism>,
+        engine_api: EngineApi<RpcProtocol>,
+    ) -> ChainDriver<RpcProtocol> {
+        ChainDriver {
+            engine_api,
+            provider,
+            signer: Default::default(),
+            gas_limit: None,
+            args: OpRbuilderArgs::default(),
+            validation_nodes: vec![],
+        }
     }
 
     /// Specifies the block builder signing key used to sign builder transactions.
@@ -73,7 +94,7 @@ impl ChainDriver {
 }
 
 // public test api
-impl ChainDriver {
+impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
     /// Builds a new block using the current state of the chain and the transactions in the pool.
     pub async fn build_new_block(&self) -> eyre::Result<Block<Transaction>> {
         self.build_new_block_with_txs(vec![]).await
@@ -145,7 +166,10 @@ impl ChainDriver {
             .ok_or_else(|| eyre::eyre!("Forkchoice update did not return a payload ID"))?;
 
         // wait for the block to be built for the specified chain block time
-        tokio::time::sleep(Duration::from_millis(self.args.chain_block_time)).await;
+        tokio::time::sleep(
+            Duration::from_millis(self.args.chain_block_time).max(Self::MIN_BLOCK_TIME),
+        )
+        .await;
 
         let payload =
             OpExecutionPayloadEnvelope::V4(self.engine_api.get_payload(payload_id).await?);
@@ -241,7 +265,7 @@ impl ChainDriver {
 }
 
 // internal methods
-impl ChainDriver {
+impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
     async fn fcu(&self, attribs: OpPayloadAttributes) -> eyre::Result<ForkchoiceUpdated> {
         let latest = self.latest().await?.header.hash;
         let response = self

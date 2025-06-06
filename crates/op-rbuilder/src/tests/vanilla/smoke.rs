@@ -1,4 +1,4 @@
-use crate::tests::{ChainDriver, ExternalNode, LocalInstance, TransactionBuilderExt};
+use crate::tests::{ExternalNode, LocalInstance, TransactionBuilderExt};
 use alloy_primitives::TxHash;
 use core::{
     sync::atomic::{AtomicBool, Ordering},
@@ -16,7 +16,8 @@ use tracing::info;
 #[tokio::test]
 async fn chain_produces_blocks() -> eyre::Result<()> {
     let rbuilder = LocalInstance::standard().await?;
-    let driver = ChainDriver::new(&rbuilder)
+    let driver = rbuilder
+        .driver()
         .await?
         .with_validation_node(ExternalNode::reth().await?)
         .await?;
@@ -80,7 +81,7 @@ async fn chain_produces_blocks() -> eyre::Result<()> {
 #[tokio::test(flavor = "multi_thread")]
 async fn produces_blocks_under_load_within_deadline() -> eyre::Result<()> {
     let rbuilder = LocalInstance::standard().await?;
-    let driver = ChainDriver::new(&rbuilder).await?.with_gas_limit(10_00_000);
+    let driver = rbuilder.driver().await?.with_gas_limit(10_00_000);
 
     let done = AtomicBool::new(false);
 

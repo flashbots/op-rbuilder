@@ -188,7 +188,7 @@ impl TransactionBuilder {
             let bundle = Bundle {
                 transactions: vec![transaction_encoded.into()],
                 reverting_hashes: if with_reverted_hash {
-                    Some(vec![txn_hash.into()])
+                    Some(vec![txn_hash])
                 } else {
                     None
                 },

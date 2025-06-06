@@ -6,8 +6,8 @@ use crate::{
     builders::StandardBuilder,
     primitives::bundle::MAX_BLOCK_RANGE_BLOCKS,
     tests::{
-        BlockTransactionsExt, BundleOpts, ChainDriver, ChainDriverExt, LocalInstance, TestHarness,
-        TestHarnessBuilder, TransactionBuilderExt, ONE_ETH,
+        BlockTransactionsExt, BundleOpts, ChainDriver, ChainDriverExt, LocalInstance,
+        TransactionBuilderExt, ONE_ETH,
     },
 };
 
@@ -22,7 +22,7 @@ async fn monitor_transaction_gc() -> eyre::Result<()> {
     })
     .await?;
 
-    let driver = ChainDriver::new(&rbuilder).await?;
+    let driver = rbuilder.driver().await?;
     let accounts = driver.fund_accounts(10, ONE_ETH).await?;
     let latest_block_number = driver.latest().await?.header.number;
 

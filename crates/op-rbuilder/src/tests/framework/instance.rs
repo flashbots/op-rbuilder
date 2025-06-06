@@ -1,8 +1,7 @@
-use crate::revert_protection::EthApiOverrideServer;
 use crate::{
     args::OpRbuilderArgs,
     builders::{BuilderConfig, FlashblocksBuilder, PayloadBuilder, StandardBuilder},
-    revert_protection::{EthApiExtServer, RevertProtectionExt},
+    revert_protection::{EthApiExtServer, EthApiOverrideServer, RevertProtectionExt},
     tests::{
         framework::{driver::ChainDriver, BUILDER_PRIVATE_KEY},
         ChainDriverExt, EngineApi, Ipc, TransactionPoolObserver,
@@ -12,9 +11,9 @@ use crate::{
 };
 use alloy_provider::{Identity, ProviderBuilder, RootProvider};
 use clap::Parser;
-use core::future::Future;
 use core::{
     any::Any,
+    future::Future,
     net::Ipv4Addr,
     pin::Pin,
     task::{Context, Poll},
@@ -36,8 +35,7 @@ use reth_optimism_node::{
     node::{OpAddOnsBuilder, OpPoolBuilder},
     OpNode,
 };
-use reth_transaction_pool::AllTransactionsEvents;
-use reth_transaction_pool::TransactionPool;
+use reth_transaction_pool::{AllTransactionsEvents, TransactionPool};
 use std::sync::{Arc, LazyLock};
 use tokio::sync::oneshot;
 
@@ -178,7 +176,7 @@ impl LocalInstance {
             unreachable!()
         };
         let instance = Self::new::<StandardBuilder>(node_command.ext.clone()).await?;
-        let driver = ChainDriver::new(&instance).await?;
+        let driver = ChainDriver::<Ipc>::local(&instance).await?;
         driver.fund_default_accounts().await?;
         Ok(instance)
     }
@@ -193,7 +191,7 @@ impl LocalInstance {
         node_command.ext.flashblocks.enabled = true;
         node_command.ext.flashblocks.flashblocks_port = 0; // use random os assigned port
         let instance = Self::new::<FlashblocksBuilder>(node_command.ext.clone()).await?;
-        let driver = ChainDriver::new(&instance).await?;
+        let driver = ChainDriver::<Ipc>::local(&instance).await?;
         driver.fund_default_accounts().await?;
         Ok(instance)
     }
@@ -245,8 +243,8 @@ impl LocalInstance {
         &self.pool_observer
     }
 
-    pub async fn driver(&self) -> eyre::Result<ChainDriver> {
-        ChainDriver::new(self).await
+    pub async fn driver(&self) -> eyre::Result<ChainDriver<Ipc>> {
+        ChainDriver::<Ipc>::local(self).await
     }
 
     pub async fn provider(&self) -> eyre::Result<RootProvider<Optimism>> {

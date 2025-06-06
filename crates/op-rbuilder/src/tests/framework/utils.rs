@@ -1,12 +1,12 @@
 use alloy_eips::Encodable2718;
-use alloy_primitives::{hex, Address, TxKind, B256, U256};
+use alloy_primitives::{hex, Address, BlockHash, TxKind, B256, U256};
 use alloy_rpc_types_eth::{Block, BlockTransactionHashes};
 use core::future::Future;
 use op_alloy_consensus::{OpTypedTransaction, TxDeposit};
 use op_alloy_rpc_types::Transaction;
 
 use crate::{
-    tests::{framework::driver::ChainDriver, ONE_ETH},
+    tests::{framework::driver::ChainDriver, Protocol, ONE_ETH},
     tx_signer::Signer,
 };
 
@@ -33,8 +33,9 @@ pub trait ChainDriverExt {
         &self,
         addresses: Vec<Address>,
         amount: u128,
-    ) -> impl Future<Output = eyre::Result<()>>;
-    fn fund(&self, address: Address, amount: u128) -> impl Future<Output = eyre::Result<()>>;
+    ) -> impl Future<Output = eyre::Result<BlockHash>>;
+    fn fund(&self, address: Address, amount: u128)
+        -> impl Future<Output = eyre::Result<BlockHash>>;
     fn first_funded_address(&self) -> Address {
         FUNDED_PRIVATE_KEYS[0]
             .parse()
@@ -55,7 +56,7 @@ pub trait ChainDriverExt {
     }
 }
 
-impl ChainDriverExt for ChainDriver {
+impl<P: Protocol> ChainDriverExt for ChainDriver<P> {
     async fn fund_default_accounts(&self) -> eyre::Result<()> {
         for key in FUNDED_PRIVATE_KEYS {
             let signer: Signer = key.parse()?;
@@ -64,7 +65,7 @@ impl ChainDriverExt for ChainDriver {
         Ok(())
     }
 
-    async fn fund_many(&self, addresses: Vec<Address>, amount: u128) -> eyre::Result<()> {
+    async fn fund_many(&self, addresses: Vec<Address>, amount: u128) -> eyre::Result<BlockHash> {
         let mut txs = Vec::with_capacity(addresses.len());
 
         for address in addresses {
@@ -85,11 +86,10 @@ impl ChainDriverExt for ChainDriver {
             txs.push(signed_tx_rlp.into());
         }
 
-        self.build_new_block_with_txs(txs).await?;
-        Ok(())
+        Ok(self.build_new_block_with_txs(txs).await?.header.hash)
     }
 
-    async fn fund(&self, address: Address, amount: u128) -> eyre::Result<()> {
+    async fn fund(&self, address: Address, amount: u128) -> eyre::Result<BlockHash> {
         let deposit = TxDeposit {
             source_hash: B256::default(),
             from: address, // Set the sender to the address of the account to seed
@@ -104,9 +104,11 @@ impl ChainDriverExt for ChainDriver {
         let signer = Signer::random();
         let signed_tx = signer.sign_tx(OpTypedTransaction::Deposit(deposit))?;
         let signed_tx_rlp = signed_tx.encoded_2718();
-        self.build_new_block_with_txs(vec![signed_tx_rlp.into()])
-            .await?;
-        Ok(())
+        Ok(self
+            .build_new_block_with_txs(vec![signed_tx_rlp.into()])
+            .await?
+            .header
+            .hash)
     }
 }
 
