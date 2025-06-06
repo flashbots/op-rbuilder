@@ -130,7 +130,7 @@ mod tests {
     fn test_bundle_conditional_no_bounds() {
         let bundle = Bundle {
             transactions: vec![],
-            reverting_hashes: vec![],
+            reverting_hashes: None,
             block_number_max: None,
             block_number_min: None,
         };
@@ -149,7 +149,7 @@ mod tests {
     fn test_bundle_conditional_with_valid_bounds() {
         let bundle = Bundle {
             transactions: vec![],
-            reverting_hashes: vec![],
+            reverting_hashes: None,
             block_number_max: Some(1005),
             block_number_min: Some(1002),
         };
@@ -165,7 +165,7 @@ mod tests {
     fn test_bundle_conditional_min_greater_than_max() {
         let bundle = Bundle {
             transactions: vec![],
-            reverting_hashes: vec![],
+            reverting_hashes: None,
             block_number_max: Some(1005),
             block_number_min: Some(1010),
         };
@@ -186,7 +186,7 @@ mod tests {
     fn test_bundle_conditional_max_in_past() {
         let bundle = Bundle {
             transactions: vec![],
-            reverting_hashes: vec![],
+            reverting_hashes: None,
             block_number_max: Some(999),
             block_number_min: None,
         };
@@ -207,7 +207,7 @@ mod tests {
     fn test_bundle_conditional_max_too_high() {
         let bundle = Bundle {
             transactions: vec![],
-            reverting_hashes: vec![],
+            reverting_hashes: None,
             block_number_max: Some(1020),
             block_number_min: None,
         };
@@ -229,7 +229,7 @@ mod tests {
     fn test_bundle_conditional_min_too_high_for_default_range() {
         let bundle = Bundle {
             transactions: vec![],
-            reverting_hashes: vec![],
+            reverting_hashes: None,
             block_number_max: None,
             block_number_min: Some(1015),
         };
@@ -250,7 +250,7 @@ mod tests {
     fn test_bundle_conditional_with_only_min() {
         let bundle = Bundle {
             transactions: vec![],
-            reverting_hashes: vec![],
+            reverting_hashes: None,
             block_number_max: None,
             block_number_min: Some(1005),
         };
@@ -266,7 +266,7 @@ mod tests {
     fn test_bundle_conditional_with_only_max() {
         let bundle = Bundle {
             transactions: vec![],
-            reverting_hashes: vec![],
+            reverting_hashes: None,
             block_number_max: Some(1008),
             block_number_min: None,
         };
@@ -282,7 +282,7 @@ mod tests {
     fn test_bundle_conditional_min_lower_than_last_block() {
         let bundle = Bundle {
             transactions: vec![],
-            reverting_hashes: vec![],
+            reverting_hashes: None,
             block_number_max: None,
             block_number_min: Some(999),
         };
