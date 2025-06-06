@@ -277,4 +277,20 @@ mod tests {
         assert_eq!(result.block_number_min, None);
         assert_eq!(result.block_number_max, Some(1008));
     }
+
+    #[test]
+    fn test_bundle_conditional_min_lower_than_last_block() {
+        let bundle = Bundle {
+            transactions: vec![],
+            reverting_hashes: vec![],
+            block_number_max: None,
+            block_number_min: Some(999),
+        };
+
+        let last_block = 1000;
+        let result = bundle.conditional(last_block).unwrap();
+
+        assert_eq!(result.block_number_min, Some(999));
+        assert_eq!(result.block_number_max, Some(1010));
+    }
 }
