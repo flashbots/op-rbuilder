@@ -26,6 +26,7 @@ use super::FUNDED_PRIVATE_KEYS;
 #[derive(Clone, Copy, Default)]
 pub struct BundleOpts {
     pub block_number_max: Option<u64>,
+    pub block_number_min: Option<u64>,
 }
 
 #[derive(Clone)]
@@ -36,6 +37,7 @@ pub struct TransactionBuilder {
     base_fee: Option<u128>,
     tx: TxEip1559,
     bundle_opts: Option<BundleOpts>,
+    with_reverted_hash: bool,
     key: Option<u64>,
 }
 
@@ -52,6 +54,7 @@ impl TransactionBuilder {
                 ..Default::default()
             },
             bundle_opts: None,
+            with_reverted_hash: false,
             key: None,
         }
     }
@@ -116,6 +119,11 @@ impl TransactionBuilder {
         self
     }
 
+    pub fn with_reverted_hash(mut self) -> Self {
+        self.with_reverted_hash = true;
+        self
+    }
+
     pub fn with_revert(mut self) -> Self {
         self.tx.input = hex!("60006000fd").into();
         self
@@ -168,16 +176,24 @@ impl TransactionBuilder {
     }
 
     pub async fn send(self) -> eyre::Result<PendingTransactionBuilder<Optimism>> {
+        let with_reverted_hash = self.with_reverted_hash;
         let bundle_opts = self.bundle_opts;
         let provider = self.provider.clone();
         let transaction = self.build().await;
+        let txn_hash = transaction.tx_hash();
         let transaction_encoded = transaction.encoded_2718();
 
         if let Some(bundle_opts) = bundle_opts {
             // Send the transaction as a bundle with the bundle options
             let bundle = Bundle {
                 transactions: vec![transaction_encoded.into()],
+                reverting_hashes: if with_reverted_hash {
+                    Some(vec![txn_hash.into()])
+                } else {
+                    None
+                },
                 block_number_max: bundle_opts.block_number_max,
+                block_number_min: bundle_opts.block_number_min,
             };
 
             let result: BundleResult = provider

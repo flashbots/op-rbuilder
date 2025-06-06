@@ -43,6 +43,7 @@ incremental = false
 reth = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.7" }
 reth-chain-state = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.7" }
 reth-cli = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.7" }
+reth-cli-commands = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.7" }
 reth-cli-util = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.7" }
 reth-db = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.7" }
 reth-db-common = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.7" }
@@ -77,7 +78,8 @@ reth-network-peers = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.
 reth-testing-utils = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.7" }
 reth-node-builder = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.7" }
 reth-rpc-eth-types = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.7" }
-reth-ipc = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.1" }
+reth-ipc = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.7" }
+reth-tracing-otlp = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.7" }
 
 # reth optimism
 reth-optimism-primitives = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.7" }

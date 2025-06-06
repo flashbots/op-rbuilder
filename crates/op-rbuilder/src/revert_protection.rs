@@ -106,6 +106,15 @@ where
         };
 
         if let Some(block_number_max) = bundle.block_number_max {
+            if let Some(block_number_min) = bundle.block_number_min {
+                if block_number_min > block_number_max {
+                    return Err(EthApiError::InvalidParams(
+                        "block_number_min is greater than block_number_max".into(),
+                    )
+                    .into());
+                }
+            }
+
             // The max block cannot be a past block
             if block_number_max <= last_block_number {
                 return Err(
@@ -122,13 +131,21 @@ where
         } else {
             // If no upper bound is set, use the maximum block range
             bundle.block_number_max = Some(last_block_number + MAX_BLOCK_RANGE_BLOCKS);
+            // Ensure that the new max is not smaller than the min
+            if let Some(block_number_min) = bundle.block_number_min {
+                if block_number_min > bundle.block_number_max.unwrap() {
+                    return Err(
+                        EthApiError::InvalidParams("block_number_min is too high".into()).into(),
+                    );
+                }
+            }
         }
 
         let recovered = recover_raw_transaction(&bundle_transaction)?;
         let mut pool_transaction: FBPooledTransaction =
             OpPooledTransaction::from_pooled(recovered).into();
 
-        pool_transaction.set_exclude_reverting_txs(true);
+        pool_transaction.set_reverted_hashes(bundle.reverting_hashes.clone().unwrap_or_default());
         pool_transaction.set_conditional(bundle.conditional());
 
         let hash = self
