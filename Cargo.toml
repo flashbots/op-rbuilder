@@ -61,6 +61,7 @@ reth-primitives-traits = { git = "https://github.com/paradigmxyz/reth", tag = "v
 reth-provider = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.8", features = [
     "test-utils",
 ] }
+
 reth-chainspec = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.8" }
 reth-storage-api = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.8" }
 reth-rpc-api = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.8" }
@@ -83,6 +84,7 @@ reth-testing-utils = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.
 reth-node-builder = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.8" }
 reth-rpc-eth-types = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.8" }
 reth-tracing-otlp = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.8" }
+reth-ipc = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.8" }
 
 # reth optimism
 reth-optimism-primitives = { git = "https://github.com/paradigmxyz/reth", tag = "v1.4.8" }

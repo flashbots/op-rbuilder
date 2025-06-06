@@ -23,9 +23,13 @@ jobs:
           - nightly
         features:
           - ""
+
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
+
+      - name: Try pulling the image manually
+        run: docker pull ghcr.io/paradigmxyz/op-reth:latest
 
       # https://github.com/dtolnay/rust-toolchain
       - name: Setup rust toolchain
@@ -66,13 +70,18 @@ jobs:
       - name: Compile op-rbuilder
         run: cargo build -p op-rbuilder --bin op-rbuilder
 
-      - name: Download op-reth
-        run: |
-          ./scripts/ci/download-op-reth.sh
-          echo "$(pwd)" >> $GITHUB_PATH
-
       - name: Lint
         run: make lint
+      
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
 
       - name: Test
         run: make test
+        env:
+          TESTS_TEMP_DIR: ${{ github.workspace }}
