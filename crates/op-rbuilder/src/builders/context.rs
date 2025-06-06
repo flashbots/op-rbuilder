@@ -32,7 +32,7 @@ use reth_transaction_pool::{BestTransactionsAttributes, PoolTransaction};
 use revm::{context::result::ResultAndState, Database, DatabaseCommit};
 use std::{sync::Arc, time::Instant};
 use tokio_util::sync::CancellationToken;
-use tracing::{info, trace, warn};
+use tracing::{debug, info, trace, warn};
 
 use crate::{
     metrics::OpRBuilderMetrics,
@@ -350,7 +350,7 @@ impl OpPayloadBuilderCtx {
             let tx_hash = tx.tx_hash();
 
             let log_txn = |result: TxnExecutionResult| {
-                info!(target: "payload_builder", tx_hash = ?tx_hash, tx_da_size = ?tx_da_size, exclude_reverting_txs = ?exclude_reverting_txs, result = %result, "Considering transaction");
+                debug!(target: "payload_builder", tx_hash = ?tx_hash, tx_da_size = ?tx_da_size, exclude_reverting_txs = ?exclude_reverting_txs, result = %result, "Considering transaction");
             };
 
             // TODO: remove this condition and feature once we are comfortable enabling interop for everything

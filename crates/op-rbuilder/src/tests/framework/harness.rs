@@ -1,6 +1,5 @@
 use super::{
     apis::EngineApi,
-    blocks::BlockGenerator,
     op::{OpRbuilderConfig, OpRethConfig},
     service::{self, Service, ServiceInstance},
     TransactionBuilder, BUILDER_PRIVATE_KEY,
@@ -128,7 +127,7 @@ impl TestHarnessBuilder {
         let builder_log_path = builder.log_path.clone();
 
         Ok(TestHarness {
-            framework: framework,
+            framework,
             builder_auth_rpc_port,
             builder_http_port,
             validator_auth_rpc_port,
@@ -169,22 +168,6 @@ impl TestHarness {
             ProviderBuilder::<Identity, Identity, Optimism>::default().connect_http(url.parse()?);
 
         Ok(provider)
-    }
-
-    pub async fn block_generator(&self) -> eyre::Result<BlockGenerator> {
-        let engine_api = EngineApi::new_with_port(self.builder_auth_rpc_port).unwrap();
-        let validation_api = Some(EngineApi::new_with_port(self.validator_auth_rpc_port).unwrap());
-
-        let mut generator = BlockGenerator::new(
-            engine_api,
-            validation_api,
-            false,
-            self.chain_block_time.map_or(1, |time| time / 1000), // in seconds
-            None,
-        );
-        generator.init().await?;
-
-        Ok(generator)
     }
 
     pub fn create_transaction(&self) -> TransactionBuilder {
