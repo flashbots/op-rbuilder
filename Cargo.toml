@@ -8,7 +8,7 @@ repository = "https://github.com/flashbots/op-rbuilder"
 exclude = [".github/"]
 
 [workspace]
-members = ["crates/op-rbuilder"]
+members = [ "crates/op-rbuilder"]
 default-members = ["crates/op-rbuilder"]
 resolver = "2"
 
