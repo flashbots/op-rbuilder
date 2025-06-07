@@ -2,6 +2,7 @@ use crate::tests::{framework::TestHarnessBuilder, ONE_ETH};
 use alloy_provider::ext::TxPoolApi;
 
 /// This test ensures that pending pool custom limit is respected and priority tx would be included even when pool if full.
+#[cfg(feature = "integration_tests")]
 #[tokio::test]
 async fn pending_pool_limit() -> eyre::Result<()> {
     let harness = TestHarnessBuilder::new("pending_pool_limit")

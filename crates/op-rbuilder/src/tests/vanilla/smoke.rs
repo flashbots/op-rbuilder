@@ -4,6 +4,7 @@ use std::collections::HashSet;
 
 /// This is a smoke test that ensures that transactions are included in blocks
 /// and that the block generator is functioning correctly.
+#[cfg(feature = "integration_tests")]
 #[tokio::test]
 async fn chain_produces_blocks() -> eyre::Result<()> {
     let harness = TestHarnessBuilder::new("chain_produces_blocks")
@@ -69,6 +70,7 @@ async fn chain_produces_blocks() -> eyre::Result<()> {
 /// Ensures that payloads are generated correctly even when the builder is busy
 /// with other requests, such as fcu or getPayload.
 #[tokio::test]
+#[cfg(feature = "integration_tests")]
 async fn get_payload_close_to_fcu() -> eyre::Result<()> {
     let test_harness = TestHarnessBuilder::new("get_payload_close_to_fcu")
         .build()
@@ -100,6 +102,7 @@ async fn get_payload_close_to_fcu() -> eyre::Result<()> {
 /// This test validates that if we flood the builder with many transactions
 /// and we request short block times, the builder can still eventually resolve all the transactions
 #[tokio::test]
+#[cfg(feature = "integration_tests")]
 async fn transaction_flood_no_sleep() -> eyre::Result<()> {
     let test_harness = TestHarnessBuilder::new("transaction_flood_no_sleep")
         .build()

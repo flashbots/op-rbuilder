@@ -3,6 +3,7 @@ use alloy_consensus::Transaction;
 use futures::{future::join_all, stream, StreamExt};
 
 /// This test ensures that the transactions are ordered by fee priority in the block.
+#[cfg(feature = "integration_tests")]
 #[tokio::test]
 async fn fee_priority_ordering() -> eyre::Result<()> {
     let harness = TestHarnessBuilder::new("integration_test_fee_priority_ordering")
