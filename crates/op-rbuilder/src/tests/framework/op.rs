@@ -6,15 +6,21 @@ use std::{
     process::Command,
 };
 
+use std::thread::JoinHandle;
 use std::time::Duration;
 use tokio::time::sleep;
+use tracing::subscriber::DefaultGuard;
+use tracing_subscriber::fmt;
+
+use crate::{args::Cli, launcher::launch};
+use clap::Parser;
 
 use super::{
     service::{self, Service},
     DEFAULT_JWT_TOKEN,
 };
 
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Clone)]
 pub struct OpRbuilderConfig {
     auth_rpc_port: Option<u16>,
     jwt_secret_path: Option<PathBuf>,
@@ -29,11 +35,17 @@ pub struct OpRbuilderConfig {
     with_revert_protection: Option<bool>,
     namespaces: Option<String>,
     extra_params: Option<String>,
+    log_file: PathBuf,
 }
 
 impl OpRbuilderConfig {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn log_file(mut self, path: PathBuf) -> Self {
+        self.log_file = path;
+        self
     }
 
     pub fn auth_rpc_port(mut self, port: u16) -> Self {
@@ -94,6 +106,54 @@ impl OpRbuilderConfig {
     pub fn with_extra_params(mut self, extra_params: Option<String>) -> Self {
         self.extra_params = extra_params;
         self
+    }
+}
+
+pub struct OpRbuilder {
+    pub _handle: JoinHandle<eyre::Result<()>>,
+    pub _tracing_guard: DefaultGuard,
+}
+
+impl OpRbuilderConfig {
+    pub fn start(self) -> eyre::Result<OpRbuilder> {
+        // Create a custom log subscriber only for this task
+        let file = File::create(self.log_file.clone()).unwrap();
+
+        let subscriber = fmt::Subscriber::builder()
+            .with_writer(file)
+            .with_max_level(tracing::Level::DEBUG)
+            .with_ansi(false)
+            .finish();
+
+        let guard = tracing::subscriber::set_default(subscriber);
+
+        let cmd = self.command();
+        let cmd_args = cmd
+            .get_args()
+            .map(|a| a.to_string_lossy().to_string())
+            .collect::<Vec<_>>();
+
+        // preppend the op-rbuilder binary name to the args, otherwise the parser will fail
+        let mut args = vec!["op-rbuilder".to_string()];
+        args.extend(cmd_args.clone());
+
+        let cli_args = Cli::try_parse_from(args)?;
+
+        let _handle = std::thread::Builder::new()
+            .name("op-rbuilder-main".to_string())
+            .stack_size(16 * 1024 * 1024) // 16MB - generous stack
+            .spawn(move || {
+                let rt = tokio::runtime::Runtime::new().unwrap();
+                rt.block_on(async { launch(cli_args) })
+            })?;
+
+        // sleep 5 seconds
+        std::thread::sleep(Duration::from_secs(5));
+
+        Ok(OpRbuilder {
+            _handle,
+            _tracing_guard: guard,
+        })
     }
 }
 

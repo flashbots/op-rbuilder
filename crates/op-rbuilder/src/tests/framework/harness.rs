@@ -1,3 +1,5 @@
+use crate::tests::OpRbuilder;
+
 use super::{
     apis::EngineApi,
     blocks::BlockGenerator,
@@ -120,12 +122,16 @@ impl TestHarnessBuilder {
 
         framework.start("op-reth", &reth).await.unwrap();
 
-        let builder = framework
-            .start("op-rbuilder", &op_rbuilder_config)
-            .await
-            .unwrap();
+        let builder_log_path = framework.test_dir.join("op-rbuilder.log");
+        op_rbuilder_config = op_rbuilder_config.log_file(builder_log_path.clone());
+        let builder = op_rbuilder_config.clone().start().unwrap();
 
-        let builder_log_path = builder.log_path.clone();
+        //let builder = framework
+        //    .start("op-rbuilder", &op_rbuilder_config)
+        //    .await
+        //    .unwrap();
+
+        // let builder_log_path = builder.log_path.clone();
 
         Ok(TestHarness {
             framework: framework,
@@ -134,6 +140,7 @@ impl TestHarnessBuilder {
             validator_auth_rpc_port,
             builder_log_path,
             chain_block_time: self.chain_block_time,
+            _builder: builder,
         })
     }
 }
@@ -145,6 +152,7 @@ pub struct TestHarness {
     validator_auth_rpc_port: u16,
     builder_log_path: PathBuf,
     chain_block_time: Option<u64>,
+    _builder: OpRbuilder,
 }
 
 impl TestHarness {

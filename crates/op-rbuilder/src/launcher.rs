@@ -27,8 +27,7 @@ use std::{marker::PhantomData, sync::Arc};
 #[global_allocator]
 static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
-pub fn launch() -> Result<()> {
-    let cli = Cli::parsed();
+pub fn launch(cli: Cli) -> Result<()> {
     let mode = cli.builder_mode();
     let mut cli_app = cli.configure();
 
