@@ -23,11 +23,6 @@ use reth_optimism_node::{
 use reth_transaction_pool::TransactionPool;
 use std::{marker::PhantomData, sync::Arc};
 
-// Prefer jemalloc for performance reasons.
-#[cfg(all(feature = "jemalloc", unix))]
-#[global_allocator]
-static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
-
 pub fn launch(cli: Cli) -> Result<()> {
     let mode = cli.builder_mode();
     let mut cli_app = cli.configure();
