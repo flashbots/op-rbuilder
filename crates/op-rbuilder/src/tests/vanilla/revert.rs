@@ -240,34 +240,75 @@ async fn bundle_range_limits() -> eyre::Result<()> {
 
     async fn send_bundle(
         driver: &ChainDriver,
-        block_number_max: u64,
+        block_number_max: Option<u64>,
+        block_number_min: Option<u64>,
     ) -> eyre::Result<PendingTransactionBuilder<Optimism>> {
         driver
             .create_transaction()
             .with_bundle(BundleOpts {
-                block_number_max: Some(block_number_max),
-                ..Default::default()
+                block_number_max,
+                block_number_min,
             })
             .send()
             .await
     }
 
     // Max block cannot be a past block
-    assert!(send_bundle(&driver, 1).await.is_err());
+    assert!(send_bundle(&driver, Some(1), None).await.is_err());
 
     // Bundles are valid if their max block in in between the current block and the max block range
-    let next_valid_block = 3;
+    let current_block = 2;
+    let next_valid_block = current_block + 1;
 
     for i in next_valid_block..next_valid_block + MAX_BLOCK_RANGE_BLOCKS {
-        assert!(send_bundle(&driver, i).await.is_ok());
+        assert!(send_bundle(&driver, Some(i), None).await.is_ok());
     }
 
     // A bundle with a block out of range is invalid
+    assert!(send_bundle(
+        &driver,
+        Some(next_valid_block + MAX_BLOCK_RANGE_BLOCKS + 1),
+        None
+    )
+    .await
+    .is_err());
+
+    // A bundle with a min block number higher than the max block is invalid
+    assert!(send_bundle(&driver, Some(1), Some(2)).await.is_err());
+
+    // A bundle with a min block number lower or equal to the current block is valid
     assert!(
-        send_bundle(&driver, next_valid_block + MAX_BLOCK_RANGE_BLOCKS + 1)
+        send_bundle(&driver, Some(next_valid_block), Some(current_block))
             .await
-            .is_err()
+            .is_ok()
     );
+    assert!(send_bundle(&driver, Some(next_valid_block), Some(0))
+        .await
+        .is_ok());
+
+    // A bundle with a min block equal to max block is valid
+    assert!(
+        send_bundle(&driver, Some(next_valid_block), Some(next_valid_block))
+            .await
+            .is_ok()
+    );
+
+    // Test min-only cases (no max specified)
+    // A bundle with only min block that's within the default range is valid
+    let default_max = current_block + MAX_BLOCK_RANGE_BLOCKS;
+    assert!(send_bundle(&driver, None, Some(current_block))
+        .await
+        .is_ok());
+    assert!(send_bundle(&driver, None, Some(default_max - 1))
+        .await
+        .is_ok());
+    assert!(send_bundle(&driver, None, Some(default_max)).await.is_ok());
+
+    // A bundle with only min block that exceeds the default max range is invalid
+    assert!(send_bundle(&driver, None, Some(default_max + 1))
+        .await
+        .is_err());
+
 
     Ok(())
 }
