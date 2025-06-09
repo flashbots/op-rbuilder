@@ -257,13 +257,15 @@ impl Service for OpRbuilderConfig {
             .arg("--datadir")
             .arg(self.data_dir.as_ref().expect("data_dir not set"))
             .arg("--disable-discovery")
+            // TODO: These flag cannot be run with the in-process builder, I believe they are part
+            // of some general logging setting flags that are not being set in the in-process builder.
             //.arg("--color")
             //.arg("never")
+            //.arg("--vvvv")
             .arg("--builder.log-pool-transactions")
             .arg("--port")
             .arg(self.network_port.expect("network_port not set").to_string())
             .arg("--ipcdisable");
-        // .arg("-vvvv");
 
         if let Some(revert_protection) = self.with_revert_protection {
             if revert_protection {
