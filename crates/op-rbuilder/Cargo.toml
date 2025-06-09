@@ -150,6 +150,8 @@ min-info-logs = ["tracing/release_max_level_info"]
 min-debug-logs = ["tracing/release_max_level_debug"]
 min-trace-logs = ["tracing/release_max_level_trace"]
 
+testing = []
+
 interop = []
 
 telemetry = ["reth-tracing-otlp"]
