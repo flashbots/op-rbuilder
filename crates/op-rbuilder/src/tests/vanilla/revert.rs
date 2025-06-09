@@ -188,6 +188,8 @@ async fn bundle_min_block_number() -> eyre::Result<()> {
         .with_bundle(BundleOpts {
             block_number_max: None,
             block_number_min: Some(2),
+            min_timestamp: None,
+            max_timestamp: None,
         })
         .send()
         .await?;
@@ -206,6 +208,8 @@ async fn bundle_min_block_number() -> eyre::Result<()> {
         .with_bundle(BundleOpts {
             block_number_max: Some(4),
             block_number_min: Some(4),
+            min_timestamp: None,
+            max_timestamp: None,
         })
         .send()
         .await?;
@@ -242,6 +246,8 @@ async fn bundle_range_limits() -> eyre::Result<()> {
             .with_bundle(BundleOpts {
                 block_number_max,
                 block_number_min,
+                min_timestamp: None,
+                max_timestamp: None,
             })
             .send()
             .await
