@@ -1,16 +1,14 @@
-use crate::args::*;
-use crate::builders::{BuilderMode, FlashblocksBuilder, StandardBuilder};
+use crate::{
+    args::*,
+    builders::{BuilderConfig, BuilderMode, FlashblocksBuilder, PayloadBuilder, StandardBuilder},
+    metrics::VERSION,
+    monitor_tx_pool::monitor_tx_pool,
+    primitives::reth::engine_api_builder::OpEngineApiBuilder,
+    revert_protection::{EthApiExtServer, EthApiOverrideServer, RevertProtectionExt},
+    tx::FBPooledTransaction,
+};
+use core::{any::Any, fmt::Debug};
 use eyre::Result;
-use reth_db::test_utils::TempDatabase;
-
-use crate::builders::{BuilderConfig, PayloadBuilder};
-use crate::metrics::VERSION;
-use crate::monitor_tx_pool::monitor_tx_pool;
-use crate::primitives::reth::engine_api_builder::OpEngineApiBuilder;
-use crate::revert_protection::{EthApiExtServer, EthApiOverrideServer, RevertProtectionExt};
-use crate::tx::FBPooledTransaction;
-use core::any::Any;
-use core::fmt::Debug;
 use moka::future::Cache;
 use reth_cli_commands::launcher::Launcher;
 use reth_db::mdbx::DatabaseEnv;
