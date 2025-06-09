@@ -8,23 +8,17 @@ use std::{
 };
 
 use core::any::Any;
-use reth::CliContext;
 use reth_cli_commands::NodeCommand;
 use reth_db::init_db;
 use reth_node_builder::{NodeBuilder, NodeConfig};
 use reth_optimism_cli::chainspec::OpChainSpecParser;
 use reth_tasks::TaskManager;
 use std::time::Duration;
-use tokio::task::JoinHandle;
 use tokio::time::sleep;
 use tracing::subscriber::DefaultGuard;
 use tracing_subscriber::fmt;
 
-use crate::{
-    args::{Cli, OpRbuilderArgs},
-    builders::StandardBuilder,
-    launcher::BuilderLauncher,
-};
+use crate::{args::OpRbuilderArgs, builders::StandardBuilder, launcher::BuilderLauncher};
 use clap::Parser;
 
 use super::{
@@ -124,6 +118,7 @@ impl OpRbuilderConfig {
 pub struct OpRbuilder {
     pub _handle: Box<dyn Any>,
     pub _tracing_guard: DefaultGuard,
+    pub _task_manager: TaskManager,
 }
 
 impl OpRbuilderConfig {
@@ -161,7 +156,7 @@ impl OpRbuilderConfig {
             chain,
             metrics,
             instance,
-            with_unused_ports,
+            with_unused_ports: _,
             network,
             rpc,
             txpool,
@@ -175,7 +170,7 @@ impl OpRbuilderConfig {
         } = command;
 
         // set up node config
-        let mut node_config = NodeConfig {
+        let node_config = NodeConfig {
             datadir,
             config,
             chain,
@@ -210,6 +205,7 @@ impl OpRbuilderConfig {
         Ok(OpRbuilder {
             _handle: handle,
             _tracing_guard: guard,
+            _task_manager: tasks,
         })
     }
 }
