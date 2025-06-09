@@ -6,8 +6,8 @@ use std::{
     process::Command,
 };
 
-use std::thread::JoinHandle;
 use std::time::Duration;
+use tokio::task::JoinHandle;
 use tokio::time::sleep;
 use tracing::subscriber::DefaultGuard;
 use tracing_subscriber::fmt;
@@ -139,13 +139,13 @@ impl OpRbuilderConfig {
 
         let cli_args = Cli::try_parse_from(args)?;
 
-        let _handle = std::thread::Builder::new()
-            .name("op-rbuilder-main".to_string())
-            .stack_size(16 * 1024 * 1024) // 16MB - generous stack
-            .spawn(move || {
-                let rt = tokio::runtime::Runtime::new().unwrap();
-                rt.block_on(async { launch(cli_args) })
-            })?;
+        let _handle = tokio::spawn(async move {
+            let res = launch(cli_args);
+            if let Err(e) = &res {
+                eprintln!("Error: {:?}", e);
+            }
+            res
+        });
 
         // sleep 5 seconds
         std::thread::sleep(Duration::from_secs(5));

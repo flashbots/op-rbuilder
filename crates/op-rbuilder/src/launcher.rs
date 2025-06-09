@@ -10,9 +10,9 @@ use crate::revert_protection::{EthApiExtServer, EthApiOverrideServer, RevertProt
 use crate::tx::FBPooledTransaction;
 use core::fmt::Debug;
 use moka::future::Cache;
-use reth::builder::{NodeBuilder, WithLaunchContext};
 use reth_cli_commands::launcher::Launcher;
 use reth_db::mdbx::DatabaseEnv;
+use reth_node_builder::{NodeBuilder, WithLaunchContext};
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_cli::chainspec::OpChainSpecParser;
 use reth_optimism_node::{
