@@ -1,13 +1,7 @@
-use alloy_primitives::Address;
-use dcap_rs::types::quotes::version_4::QuoteV4;
-use rand::rngs::OsRng;
-use secp256k1::{PublicKey, Secp256k1, SecretKey};
-use sha3::{Digest, Keccak256};
-use std::error::Error;
+use tracing::info;
 use std::io::Read;
 use tdx::{device::DeviceOptions, Tdx};
 use ureq;
-use alloy::sol;
 
 const DEBUG_QUOTE_SERVICE_URL: &str = "http://ns31695324.ip-141-94-163.eu:10080/attest";
 
@@ -29,7 +23,7 @@ impl Default for AttestationConfig {
 }
 
 /// Trait for attestation providers
-pub trait AttestationProvider {
+pub trait AttestationService {
     fn get_attestation(&self, report_data: [u8; 64]) -> eyre::Result<Vec<u8>>;
 }
 
@@ -44,7 +38,7 @@ impl TdxAttestationProvider {
     }
 }
 
-impl AttestationProvider for TdxAttestationProvider {
+impl AttestationService for TdxAttestationProvider {
     fn get_attestation(&self, report_data: [u8; 64]) -> eyre::Result<Vec<u8>> {
         self.tdx
             .get_attestation_report_raw_with_options(DeviceOptions {
@@ -65,12 +59,12 @@ impl DebugAttestationProvider {
     }
 }
 
-impl AttestationProvider for DebugAttestationProvider {
-    fn get_attestation(&self, report_data: [u8; 64]) -> Result<Vec<u8>, Box<dyn Error>> {
+impl AttestationService for DebugAttestationProvider {
+    fn get_attestation(&self, report_data: [u8; 64]) -> eyre::Result<Vec<u8>> {
         let report_data_hex = hex::encode(&report_data);
         let url = format!("{}/{}", self.service_url, report_data_hex);
 
-        info!(target: "flashtestations", "fetching quote in debug mode", url = url);
+        info!(target: "flashtestations", url = url, "fetching quote in debug mode");
 
         let response = ureq::get(&url)
             .timeout(std::time::Duration::from_secs(10))
@@ -83,14 +77,14 @@ impl AttestationProvider for DebugAttestationProvider {
     }
 }
 
-pub fn get_attestation_provider(config: AttestationConfig) -> impl AttestationProvider {
+pub fn get_attestation_provider(config: AttestationConfig) -> Box<dyn AttestationService> {
     if config.debug {
-        DebugAttestationProvider::new(
+        Box::new(DebugAttestationProvider::new(
             config
                 .debug_url
                 .unwrap_or(DEBUG_QUOTE_SERVICE_URL.to_string()),
-        )
+        ))
     } else {
-        TdxAttestationProvider::new()
+        Box::new(TdxAttestationProvider::new())
     }
 }

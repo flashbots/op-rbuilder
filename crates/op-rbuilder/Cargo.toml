@@ -54,6 +54,7 @@ reth-optimism-rpc.workspace = true
 reth-tasks.workspace = true
 reth-tracing-otlp = { workspace = true, optional = true }
 
+alloy.workspace = true
 alloy-primitives.workspace = true
 alloy-consensus.workspace = true
 alloy-eips.workspace = true
