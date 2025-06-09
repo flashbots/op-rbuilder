@@ -2,8 +2,7 @@ use eyre::Result;
 
 use crate::{
     args::*,
-    builders::{BuilderConfig, PayloadBuilder},
-    builders::{BuilderMode, FlashblocksBuilder, StandardBuilder},
+    builders::{BuilderConfig, BuilderMode, FlashblocksBuilder, PayloadBuilder, StandardBuilder},
     metrics::VERSION,
     monitor_tx_pool::monitor_tx_pool,
     primitives::reth::engine_api_builder::OpEngineApiBuilder,
@@ -23,11 +22,6 @@ use reth_optimism_node::{
 };
 use reth_transaction_pool::TransactionPool;
 use std::{marker::PhantomData, sync::Arc};
-
-// Prefer jemalloc for performance reasons.
-#[cfg(all(feature = "jemalloc", unix))]
-#[global_allocator]
-static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
 pub fn launch() -> Result<()> {
     let cli = Cli::parsed();
