@@ -46,7 +46,7 @@ reth-transaction-pool.workspace = true
 reth-network-peers.workspace = true
 reth-testing-utils.workspace = true
 reth-optimism-forks.workspace = true
-reth-node-builder = { workspace = true, features = ["test-utils"] }
+reth-node-builder.workspace = true
 reth-storage-api.workspace = true
 reth-rpc-api.workspace = true
 reth-rpc-eth-types.workspace = true
