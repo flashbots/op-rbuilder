@@ -126,13 +126,6 @@ impl TestHarnessBuilder {
         op_rbuilder_config = op_rbuilder_config.log_file(builder_log_path.clone());
         let builder = op_rbuilder_config.clone().start().await.unwrap();
 
-        //let builder = framework
-        //    .start("op-rbuilder", &op_rbuilder_config)
-        //    .await
-        //    .unwrap();
-
-        // let builder_log_path = builder.log_path.clone();
-
         Ok(TestHarness {
             framework: framework,
             builder_auth_rpc_port,
