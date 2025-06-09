@@ -19,7 +19,7 @@ use tracing_subscriber::fmt;
 
 use crate::{
     args::OpRbuilderArgs,
-    builders::StandardBuilder,
+    builders::{FlashblocksBuilder, StandardBuilder},
     launcher::{BuilderLauncher, NodeContext},
 };
 use clap::Parser;
@@ -126,7 +126,7 @@ pub struct OpRbuilder {
 
 impl OpRbuilderConfig {
     pub async fn start(self) -> eyre::Result<OpRbuilder> {
-        // Create a custom log subscriber only for this task
+        // This creates a custom log subscriber only for this task
         let file = File::create(self.log_file.clone()).unwrap();
 
         let subscriber = fmt::Subscriber::builder()
@@ -137,19 +137,23 @@ impl OpRbuilderConfig {
 
         let guard = tracing::subscriber::set_default(subscriber);
 
+        // We are reusing the same commands generated for running the op-rbuilder binary.
+        // But, there are two main differences we have to account for:
+        // - We are parsing directly on top of the "node" command, so we need to skip that first arg
+        // - We have to preppend the 'op-rbuilder' binary name to the args, otherwise the parser will fail
         let cmd = self.command();
         let cmd_args = cmd
             .get_args()
             .map(|a| a.to_string_lossy().to_string())
             .collect::<Vec<_>>();
 
-        // preppend the op-rbuilder binary name to the args, otherwise the parser will fail
-        let mut args = vec!["op-rbuilder".to_string()];
-        args.extend(cmd_args.clone().into_iter().skip(1)); // skip first arg that includes "node"
+        let mut args = vec!["op-rbuilder".to_string()]; // add op-rbuilder
+        args.extend(cmd_args.clone().into_iter().skip(1)); // skip 'node'
 
         let command =
             NodeCommand::<OpChainSpecParser, OpRbuilderArgs>::try_parse_from(args).unwrap();
 
+        // This is extracted from the "NodeCommand" execute function.
         let NodeCommand::<OpChainSpecParser, OpRbuilderArgs> {
             datadir,
             config,
@@ -190,6 +194,9 @@ impl OpRbuilderConfig {
         let tasks = TaskManager::current();
         let exec = tasks.executor();
 
+        // Using a real database for the builder. There is a function to use a memory database called 'testing_node'
+        // which might be useful in the future. However, It uses a concrete database implementation and I could not
+        // figure out how to make it work with the main launcher.
         let data_dir = node_config.datadir();
         let db_path = data_dir.db();
         let database =
@@ -199,10 +206,19 @@ impl OpRbuilderConfig {
             .with_database(database)
             .with_launch_context(exec.clone());
 
-        // TODO before merging, pick standard or flashblocks
-        let launcher = BuilderLauncher::<StandardBuilder>::new();
-        let handle = launcher.launch(builder, ext).await?;
+        let is_builder_mode = ext.flashblocks.enabled;
+        let handle = match is_builder_mode {
+            false => {
+                let launcher = BuilderLauncher::<StandardBuilder>::new();
+                launcher.launch(builder, ext).await?
+            }
+            true => {
+                let launcher = BuilderLauncher::<FlashblocksBuilder>::new();
+                launcher.launch(builder, ext).await?
+            }
+        };
 
+        // We need to keep both the handle and the task manager in scope otherwise the node will exit
         Ok(OpRbuilder {
             _handle: handle,
             _tracing_guard: guard,
