@@ -124,7 +124,7 @@ impl TestHarnessBuilder {
 
         let builder_log_path = framework.test_dir.join("op-rbuilder.log");
         op_rbuilder_config = op_rbuilder_config.log_file(builder_log_path.clone());
-        let builder = op_rbuilder_config.clone().start().unwrap();
+        let builder = op_rbuilder_config.clone().start().await.unwrap();
 
         //let builder = framework
         //    .start("op-rbuilder", &op_rbuilder_config)

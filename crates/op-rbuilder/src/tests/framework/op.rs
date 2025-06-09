@@ -4,12 +4,16 @@ use std::{
     io::{ErrorKind, Read},
     path::{Path, PathBuf},
     process::Command,
+    sync::Arc,
 };
 
+use core::any::Any;
 use reth::CliContext;
 use reth_cli_commands::NodeCommand;
+use reth_db::init_db;
+use reth_node_builder::{NodeBuilder, NodeConfig};
 use reth_optimism_cli::chainspec::OpChainSpecParser;
-use reth_tasks::TaskExecutor;
+use reth_tasks::TaskManager;
 use std::time::Duration;
 use tokio::task::JoinHandle;
 use tokio::time::sleep;
@@ -118,12 +122,12 @@ impl OpRbuilderConfig {
 }
 
 pub struct OpRbuilder {
-    pub _handle: JoinHandle<eyre::Result<()>>,
+    pub _handle: Box<dyn Any>,
     pub _tracing_guard: DefaultGuard,
 }
 
 impl OpRbuilderConfig {
-    pub fn start(self) -> eyre::Result<OpRbuilder> {
+    pub async fn start(self) -> eyre::Result<OpRbuilder> {
         // Create a custom log subscriber only for this task
         let file = File::create(self.log_file.clone()).unwrap();
 
@@ -151,25 +155,60 @@ impl OpRbuilderConfig {
         let command =
             NodeCommand::<OpChainSpecParser, OpRbuilderArgs>::try_parse_from(args).unwrap();
 
-        let ctx = CliContext {
-            task_executor: TaskExecutor::current(),
+        let NodeCommand::<OpChainSpecParser, OpRbuilderArgs> {
+            datadir,
+            config,
+            chain,
+            metrics,
+            instance,
+            with_unused_ports,
+            network,
+            rpc,
+            txpool,
+            builder,
+            debug,
+            db,
+            dev,
+            pruning,
+            ext,
+            engine,
+        } = command;
+
+        // set up node config
+        let mut node_config = NodeConfig {
+            datadir,
+            config,
+            chain,
+            metrics,
+            instance,
+            network,
+            rpc,
+            txpool,
+            builder,
+            debug,
+            db,
+            dev,
+            pruning,
+            engine,
         };
 
+        let tasks = TaskManager::current();
+        let exec = tasks.executor();
+
+        let data_dir = node_config.datadir();
+        let db_path = data_dir.db();
+        let database =
+            Arc::new(init_db(db_path.clone(), command.db.database_args())?.with_metrics());
+
+        let builder = NodeBuilder::new(node_config)
+            .with_database(database)
+            .with_launch_context(exec.clone());
+
         let launcher = BuilderLauncher::<StandardBuilder>::new();
-
-        let _handle = tokio::spawn(async move {
-            let res = command.execute(ctx, launcher).await;
-            if let Err(e) = &res {
-                eprintln!("Error: {:?}", e);
-            }
-            res
-        });
-
-        // sleep 5 seconds
-        std::thread::sleep(Duration::from_secs(5));
+        let handle = launcher.launch(builder, ext).await?;
 
         Ok(OpRbuilder {
-            _handle,
+            _handle: handle,
             _tracing_guard: guard,
         })
     }
