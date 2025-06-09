@@ -6,13 +6,21 @@ use std::{
     process::Command,
 };
 
+use reth::CliContext;
+use reth_cli_commands::NodeCommand;
+use reth_optimism_cli::chainspec::OpChainSpecParser;
+use reth_tasks::TaskExecutor;
 use std::time::Duration;
 use tokio::task::JoinHandle;
 use tokio::time::sleep;
 use tracing::subscriber::DefaultGuard;
 use tracing_subscriber::fmt;
 
-use crate::{args::Cli, launcher::launch};
+use crate::{
+    args::{Cli, OpRbuilderArgs},
+    builders::StandardBuilder,
+    launcher::BuilderLauncher,
+};
 use clap::Parser;
 
 use super::{
@@ -135,12 +143,22 @@ impl OpRbuilderConfig {
 
         // preppend the op-rbuilder binary name to the args, otherwise the parser will fail
         let mut args = vec!["op-rbuilder".to_string()];
-        args.extend(cmd_args.clone());
+        args.extend(cmd_args.clone().into_iter().skip(1)); // skip first arg that includes "node"
 
-        let cli_args = Cli::try_parse_from(args)?;
+        // let args = vec!["op-rbuilder", "--http"];
+        // println!("args: {:?}", args);
+
+        let command =
+            NodeCommand::<OpChainSpecParser, OpRbuilderArgs>::try_parse_from(args).unwrap();
+
+        let ctx = CliContext {
+            task_executor: TaskExecutor::current(),
+        };
+
+        let launcher = BuilderLauncher::<StandardBuilder>::new();
 
         let _handle = tokio::spawn(async move {
-            let res = launch(cli_args);
+            let res = command.execute(ctx, launcher).await;
             if let Err(e) = &res {
                 eprintln!("Error: {:?}", e);
             }
@@ -187,13 +205,13 @@ impl Service for OpRbuilderConfig {
             .arg("--datadir")
             .arg(self.data_dir.as_ref().expect("data_dir not set"))
             .arg("--disable-discovery")
-            .arg("--color")
-            .arg("never")
+            //.arg("--color")
+            //.arg("never")
             .arg("--builder.log-pool-transactions")
             .arg("--port")
             .arg(self.network_port.expect("network_port not set").to_string())
-            .arg("--ipcdisable")
-            .arg("-vvvv");
+            .arg("--ipcdisable");
+        // .arg("-vvvv");
 
         if let Some(revert_protection) = self.with_revert_protection {
             if revert_protection {
