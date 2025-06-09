@@ -5,6 +5,7 @@
 //! clap [Args](clap::Args) for optimism rollup configuration
 
 use crate::tx_signer::Signer;
+use alloy_primitives::Address;
 use anyhow::{anyhow, Result};
 use clap::Parser;
 use reth_optimism_cli::commands::Commands;
@@ -54,6 +55,8 @@ pub struct OpRbuilderArgs {
     pub flashblocks: FlashblocksArgs,
     #[command(flatten)]
     pub telemetry: TelemetryArgs,
+    #[command(flatten)]
+    pub flashtestations: FlashtestationsArgs,
 }
 
 impl Default for OpRbuilderArgs {

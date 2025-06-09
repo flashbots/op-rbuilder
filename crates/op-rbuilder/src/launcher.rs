@@ -95,8 +95,16 @@ where
         builder: WithLaunchContext<NodeBuilder<Arc<DatabaseEnv>, OpChainSpec>>,
         builder_args: OpRbuilderArgs,
     ) -> Result<()> {
+        let signer = if builder_args.flashtestations.enabled {
+            tracing::info!("Flashtestations enabled");
+            let (private_key, public_key, address) = generate_ethereum_keypair();
+            let signer = Signer { address,  pubkey: public_key, secret: private_key };
+            tracing::info!("Generated key for flashtestations with address {}", address);
+            Some(signer)
+        } else { builder_args.builder_signer };
         let builder_config = BuilderConfig::<B::Config>::try_from(builder_args.clone())
-            .expect("Failed to convert rollup args to builder config");
+            .expect("Failed to convert rollup args to builder config")
+            .with_builder_signer(signer);
 
         let da_config = builder_config.da_config.clone();
         let rollup_args = builder_args.rollup_args;
@@ -165,6 +173,26 @@ where
                     let listener = ctx.pool.all_transactions_event_listener();
                     let task = monitor_tx_pool(listener, reverted_cache_copy);
                     ctx.task_executor.spawn_critical("txlogging", task);
+                }
+
+                if builder_args.flashtestations.enabled {
+                    let flashtestations_signer = signer.expect("Failed to get for TEE attestation");
+                    tracing::info!("Starting attestations for builder key {}", flashtestations_signer.address);
+                    match builder_args.builder_signer {
+                        // use the builder key provided in args to sign the onchain attestation
+                        Some(signer)  => {
+                            // ctx.task_executor.spawn_critical(
+                            //     "flashtestations",
+                            //     Box::pin(async move {
+                            //        FlashtestationsService::bootstrap(builder_args.flashtestations, flashtestations_signer.pubkey, signer)
+                            //         .await;
+                            //     }),
+                            // );
+                        }
+                        None => {
+                            tracing::error!("Key to sign onchain attestations not set");
+                        }
+                    }
                 }
 
                 Ok(())

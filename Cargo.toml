@@ -140,6 +140,7 @@ alloy-signer-local = { version = "1.0.9" }
 alloy-rpc-client = { version = "1.0.9" }
 alloy-genesis = { version = "1.0.9" }
 alloy-trie = { version = "0.8.1" }
+alloy = { version = "1.0.9" }
 
 # optimism
 alloy-op-evm = { version = "0.10.0", default-features = false }

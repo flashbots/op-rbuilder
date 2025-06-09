@@ -4,10 +4,7 @@ use std::{sync::Arc, time::Instant};
 use super::{config::FlashblocksConfig, wspub::WebSocketPublisher};
 use crate::{
     builders::{
-        context::{estimate_gas_for_builder_tx, OpPayloadBuilderCtx},
-        flashblocks::config::FlashBlocksConfigExt,
-        generator::{BlockCell, BuildArguments},
-        BuilderConfig,
+        context::{estimate_gas_for_builder_tx, OpPayloadBuilderCtx}, flashblocks::config::FlashBlocksConfigExt, generator::{BlockCell, BuildArguments}, BuilderConfig
     },
     metrics::OpRBuilderMetrics,
     primitives::reth::ExecutionInfo,
@@ -69,7 +66,7 @@ pub struct OpPayloadBuilder<Pool, Client> {
     pub metrics: Arc<OpRBuilderMetrics>,
 }
 
-impl<Pool, Client> OpPayloadBuilder<Pool, Client> {
+impl<Pool, Client> OpPayloadBuilder<Pool, Client>  {
     /// `OpPayloadBuilder` constructor.
     pub fn new(
         evm_config: OpEvmConfig,
@@ -79,7 +76,6 @@ impl<Pool, Client> OpPayloadBuilder<Pool, Client> {
     ) -> eyre::Result<Self> {
         let metrics = Arc::new(OpRBuilderMetrics::default());
         let ws_pub = WebSocketPublisher::new(config.specific.ws_addr, Arc::clone(&metrics))?.into();
-
         Ok(Self {
             evm_config,
             pool,
