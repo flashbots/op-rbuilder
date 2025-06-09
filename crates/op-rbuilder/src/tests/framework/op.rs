@@ -7,7 +7,6 @@ use std::{
     sync::Arc,
 };
 
-use core::any::Any;
 use reth_cli_commands::NodeCommand;
 use reth_db::init_db;
 use reth_node_builder::{NodeBuilder, NodeConfig};
@@ -18,7 +17,11 @@ use tokio::time::sleep;
 use tracing::subscriber::DefaultGuard;
 use tracing_subscriber::fmt;
 
-use crate::{args::OpRbuilderArgs, builders::StandardBuilder, launcher::BuilderLauncher};
+use crate::{
+    args::OpRbuilderArgs,
+    builders::StandardBuilder,
+    launcher::{BuilderLauncher, NodeContext},
+};
 use clap::Parser;
 
 use super::{
@@ -116,7 +119,7 @@ impl OpRbuilderConfig {
 }
 
 pub struct OpRbuilder {
-    pub _handle: Box<dyn Any>,
+    pub _handle: NodeContext,
     pub _tracing_guard: DefaultGuard,
     pub _task_manager: TaskManager,
 }
@@ -143,9 +146,6 @@ impl OpRbuilderConfig {
         // preppend the op-rbuilder binary name to the args, otherwise the parser will fail
         let mut args = vec!["op-rbuilder".to_string()];
         args.extend(cmd_args.clone().into_iter().skip(1)); // skip first arg that includes "node"
-
-        // let args = vec!["op-rbuilder", "--http"];
-        // println!("args: {:?}", args);
 
         let command =
             NodeCommand::<OpChainSpecParser, OpRbuilderArgs>::try_parse_from(args).unwrap();
@@ -199,6 +199,7 @@ impl OpRbuilderConfig {
             .with_database(database)
             .with_launch_context(exec.clone());
 
+        // TODO before merging, pick standard or flashblocks
         let launcher = BuilderLauncher::<StandardBuilder>::new();
         let handle = launcher.launch(builder, ext).await?;
 

@@ -13,6 +13,7 @@ use moka::future::Cache;
 use reth_cli_commands::launcher::Launcher;
 use reth_db::mdbx::DatabaseEnv;
 use reth_node_builder::{NodeBuilder, NodeHandle, WithLaunchContext};
+use reth_node_core::exit::NodeExitFuture;
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_cli::chainspec::OpChainSpecParser;
 use reth_optimism_node::{
@@ -77,6 +78,11 @@ where
     }
 }
 
+pub struct NodeContext {
+    _node: Box<dyn Any>,
+    node_exit_future: NodeExitFuture,
+}
+
 impl<B> BuilderLauncher<B>
 where
     B: PayloadBuilder,
@@ -85,7 +91,7 @@ where
         self,
         builder: WithLaunchContext<NodeBuilder<Arc<DatabaseEnv>, OpChainSpec>>,
         builder_args: OpRbuilderArgs,
-    ) -> Result<Box<dyn Any>> {
+    ) -> Result<NodeContext> {
         let builder_config = BuilderConfig::<B::Config>::try_from(builder_args.clone())
             .expect("Failed to convert rollup args to builder config");
 
@@ -177,13 +183,10 @@ where
             .launch()
             .await?;
 
-        tokio::spawn(async move {
-            println!("Waiting for node to exit");
-            node_exit_future.await.unwrap();
-            println!("Node exited");
-        });
-
-        Ok(Box::new(node))
+        Ok(NodeContext {
+            _node: Box::new(node),
+            node_exit_future,
+        })
     }
 }
 
@@ -198,94 +201,7 @@ where
         builder: WithLaunchContext<NodeBuilder<Arc<DatabaseEnv>, OpChainSpec>>,
         builder_args: OpRbuilderArgs,
     ) -> Result<()> {
-        // TODO: Replace this with the launch method
-        let builder_config = BuilderConfig::<B::Config>::try_from(builder_args.clone())
-            .expect("Failed to convert rollup args to builder config");
-
-        let da_config = builder_config.da_config.clone();
-        let rollup_args = builder_args.rollup_args;
-        let op_node = OpNode::new(rollup_args.clone());
-        let reverted_cache = Cache::builder().max_capacity(100).build();
-        let reverted_cache_copy = reverted_cache.clone();
-
-        let mut addons: OpAddOns<
-            _,
-            _,
-            OpEngineValidatorBuilder,
-            OpEngineApiBuilder<OpEngineValidatorBuilder>,
-        > = OpAddOnsBuilder::default()
-            .with_sequencer(rollup_args.sequencer.clone())
-            .with_enable_tx_conditional(rollup_args.enable_tx_conditional)
-            .with_da_config(da_config)
-            .build();
-        if cfg!(feature = "custom-engine-api") {
-            let engine_builder: OpEngineApiBuilder<OpEngineValidatorBuilder> =
-                OpEngineApiBuilder::default();
-            addons = addons.with_engine_api(engine_builder);
-        }
-        let handle = builder
-            .with_types::<OpNode>()
-            .with_components(
-                op_node
-                    .components()
-                    .pool(
-                        OpPoolBuilder::<FBPooledTransaction>::default()
-                            .with_enable_tx_conditional(
-                                // Revert protection uses the same internal pool logic as conditional transactions
-                                // to garbage collect transactions out of the bundle range.
-                                rollup_args.enable_tx_conditional
-                                    || builder_args.enable_revert_protection,
-                            )
-                            .with_supervisor(
-                                rollup_args.supervisor_http.clone(),
-                                rollup_args.supervisor_safety_level,
-                            ),
-                    )
-                    .payload(B::new_service(builder_config)?),
-            )
-            .with_add_ons(addons)
-            .extend_rpc_modules(move |ctx| {
-                if builder_args.enable_revert_protection {
-                    tracing::info!("Revert protection enabled");
-
-                    let pool = ctx.pool().clone();
-                    let provider = ctx.provider().clone();
-                    let revert_protection_ext: RevertProtectionExt<
-                        _,
-                        _,
-                        _,
-                        op_alloy_network::Optimism,
-                    > = RevertProtectionExt::new(pool, provider, ctx.registry.eth_api().clone());
-
-                    ctx.modules
-                        .merge_configured(revert_protection_ext.bundle_api().into_rpc())?;
-                    ctx.modules.replace_configured(
-                        revert_protection_ext.eth_api(reverted_cache).into_rpc(),
-                    )?;
-                }
-
-                Ok(())
-            })
-            .on_node_started(move |ctx| {
-                VERSION.register_version_metrics();
-                if builder_args.log_pool_transactions {
-                    tracing::info!("Logging pool transactions");
-                    ctx.task_executor.spawn_critical(
-                        "txlogging",
-                        Box::pin(async move {
-                            monitor_tx_pool(
-                                ctx.pool.all_transactions_event_listener(),
-                                reverted_cache_copy,
-                            )
-                            .await;
-                        }),
-                    );
-                }
-
-                Ok(())
-            })
-            .launch()
-            .await?;
+        let handle = self.launch(builder, builder_args).await?;
 
         handle.node_exit_future.await?;
         Ok(())
