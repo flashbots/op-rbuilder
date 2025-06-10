@@ -4,7 +4,6 @@ use crate::{
 };
 use clap_builder::{CommandFactory, FromArgMatches};
 pub use op::OpRbuilderArgs;
-pub use op::FlashtestationsArgs;
 use playground::PlaygroundOptions;
 use reth_optimism_cli::{chainspec::OpChainSpecParser, commands::Commands};
 

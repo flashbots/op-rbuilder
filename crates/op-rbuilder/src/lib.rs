@@ -10,6 +10,7 @@ pub mod tx;
 /// CLI argument parsing.
 pub mod args;
 mod builders;
+mod flashtestations;
 pub mod launcher;
 mod metrics;
 mod monitor_tx_pool;
