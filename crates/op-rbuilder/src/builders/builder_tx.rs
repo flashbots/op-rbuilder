@@ -7,6 +7,7 @@ pub trait BuilderTxBuilder {
     fn signed_builder_tx() -> Result<Recovered<OpTransactionSigned>, secp256k1::Error>;
 }
 
+#[allow(dead_code)]
 pub struct StandardBuilderTxBuilder;
 
 impl BuilderTxBuilder for StandardBuilderTxBuilder {

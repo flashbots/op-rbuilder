@@ -1,11 +1,12 @@
-use tracing::info;
 use std::io::Read;
 use tdx::{device::DeviceOptions, Tdx};
+use tracing::info;
 use ureq;
 
 const DEBUG_QUOTE_SERVICE_URL: &str = "http://ns31695324.ip-141-94-163.eu:10080/attest";
 
 /// Configuration for attestation
+#[derive(Default)]
 pub struct AttestationConfig {
     /// If true, uses the debug HTTP service instead of real TDX hardware
     pub debug: bool,
@@ -13,17 +14,8 @@ pub struct AttestationConfig {
     pub debug_url: Option<String>,
 }
 
-impl Default for AttestationConfig {
-    fn default() -> Self {
-        Self {
-            debug: false,
-            debug_url: None,
-        }
-    }
-}
-
 /// Trait for attestation providers
-pub trait AttestationService {
+pub trait AttestationProvider {
     fn get_attestation(&self, report_data: [u8; 64]) -> eyre::Result<Vec<u8>>;
 }
 
@@ -32,13 +24,19 @@ pub struct TdxAttestationProvider {
     tdx: Tdx,
 }
 
+impl Default for TdxAttestationProvider {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TdxAttestationProvider {
     pub fn new() -> Self {
         Self { tdx: Tdx::new() }
     }
 }
 
-impl AttestationService for TdxAttestationProvider {
+impl AttestationProvider for TdxAttestationProvider {
     fn get_attestation(&self, report_data: [u8; 64]) -> eyre::Result<Vec<u8>> {
         self.tdx
             .get_attestation_report_raw_with_options(DeviceOptions {
@@ -59,9 +57,9 @@ impl DebugAttestationProvider {
     }
 }
 
-impl AttestationService for DebugAttestationProvider {
+impl AttestationProvider for DebugAttestationProvider {
     fn get_attestation(&self, report_data: [u8; 64]) -> eyre::Result<Vec<u8>> {
-        let report_data_hex = hex::encode(&report_data);
+        let report_data_hex = hex::encode(report_data);
         let url = format!("{}/{}", self.service_url, report_data_hex);
 
         info!(target: "flashtestations", url = url, "fetching quote in debug mode");
@@ -77,7 +75,9 @@ impl AttestationService for DebugAttestationProvider {
     }
 }
 
-pub fn get_attestation_provider(config: AttestationConfig) -> Box<dyn AttestationService> {
+pub fn get_attestation_provider(
+    config: AttestationConfig,
+) -> Box<dyn AttestationProvider + Send + Sync> {
     if config.debug {
         Box::new(DebugAttestationProvider::new(
             config
