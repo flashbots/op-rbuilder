@@ -5702,6 +5702,7 @@ dependencies = [
  "op-alloy-rpc-types",
  "op-alloy-rpc-types-engine",
  "op-revm",
+ "opentelemetry 0.29.1",
  "parking_lot",
  "rand 0.9.1",
  "reth",
