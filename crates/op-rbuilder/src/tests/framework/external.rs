@@ -239,10 +239,12 @@ impl ExternalNode {
 
 impl Drop for ExternalNode {
     fn drop(&mut self) {
-        // Clean up the temporary directory
-        if self.tempdir.exists() {
-            std::fs::remove_dir_all(&self.tempdir).expect("Failed to remove temporary directory");
+        if !self.tempdir.exists() {
+            return; // If the tempdir does not exist, there's nothing to clean up.
         }
+
+        // Clean up the temporary directory
+        std::fs::remove_dir_all(&self.tempdir).expect("Failed to remove temporary directory");
 
         // Block on cleaning up the container
         let docker = self.docker.clone();
