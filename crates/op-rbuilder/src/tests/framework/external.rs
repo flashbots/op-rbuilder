@@ -422,9 +422,6 @@ async fn cleanup(tempdir: PathBuf, docker: Docker, container_id: String) {
         return; // If the tempdir does not exist, there's nothing to clean up.
     }
 
-    // Clean up the temporary directory
-    std::fs::remove_dir_all(&tempdir).expect("Failed to remove temporary directory");
-
     // Block on cleaning up the container
     if let Err(e) = docker
         .stop_container(&container_id, None::<StopContainerOptions>)
@@ -445,6 +442,10 @@ async fn cleanup(tempdir: PathBuf, docker: Docker, container_id: String) {
     {
         warn!("Failed to remove container {}: {}", container_id, e);
     }
+
+
+    // Clean up the temporary directory
+    std::fs::remove_dir_all(&tempdir).expect("Failed to remove temporary directory");
 }
 
 trait OptimismProviderExt {
