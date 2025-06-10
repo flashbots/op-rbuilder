@@ -84,14 +84,8 @@ async fn disabled() -> eyre::Result<()> {
             .await?;
         let block = driver.build_new_block().await?;
 
-        assert!(block
-            .transactions
-            .hashes()
-            .any(|hash| hash == *valid_tx.tx_hash()));
-        assert!(block
-            .transactions
-            .hashes()
-            .any(|hash| hash == *reverting_tx.tx_hash()));
+        assert!(block.includes(valid_tx.tx_hash()));
+        assert!(block.includes(reverting_tx.tx_hash()));
     }
 
     Ok(())
