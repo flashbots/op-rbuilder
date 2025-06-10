@@ -18,7 +18,7 @@ use futures::{StreamExt, TryStreamExt};
 use op_alloy_network::Optimism;
 use op_alloy_rpc_types_engine::OpExecutionPayloadV4;
 use std::path::{Path, PathBuf};
-use tracing::debug;
+use tracing::{debug, warn};
 
 use crate::tests::{EngineApi, Ipc};
 
@@ -251,12 +251,14 @@ impl Drop for ExternalNode {
         let container_id = self.container_id.clone();
 
         tokio::spawn(async move {
-            docker
+            if let Err(e) = docker
                 .stop_container(&container_id, None::<StopContainerOptions>)
                 .await
-                .expect("Failed to stop container");
+            {
+                warn!("Failed to stop container {}: {}", container_id, e);
+            }
 
-            docker
+            if let Err(e) = docker
                 .remove_container(
                     &container_id,
                     Some(RemoveContainerOptions {
@@ -265,7 +267,9 @@ impl Drop for ExternalNode {
                     }),
                 )
                 .await
-                .expect("Failed to remove container");
+            {
+                warn!("Failed to remove container {}: {}", container_id, e);
+            }
         });
     }
 }
