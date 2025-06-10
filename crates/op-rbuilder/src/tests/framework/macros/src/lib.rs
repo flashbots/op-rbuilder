@@ -1,6 +1,6 @@
 use proc_macro::TokenStream;
-use quote::{quote, ToTokens};
-use syn::{parse_macro_input, punctuated::Punctuated, Expr, ItemFn, Meta, Token};
+use quote::{ToTokens, quote};
+use syn::{Expr, ItemFn, Meta, Token, parse_macro_input, punctuated::Punctuated};
 
 // Define all variant information in one place
 struct VariantInfo {
