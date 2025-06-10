@@ -66,7 +66,7 @@ async fn pending_pool_limit() -> eyre::Result<()> {
     let block = driver.build_new_block().await?;
 
     // Ensure that 10 extra txs got included
-    assert!(txs.into_iter().all(|tx| block.includes(&tx)));
+    assert!(block.includes(&txs));
 
     Ok(())
 }

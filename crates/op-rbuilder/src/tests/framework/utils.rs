@@ -144,19 +144,23 @@ impl<P: Protocol> ChainDriverExt for ChainDriver<P> {
 }
 
 pub trait BlockTransactionsExt {
-    fn includes(&self, tx_hash: &B256) -> bool;
+    fn includes(&self, txs: &impl AsTxs) -> bool;
 }
 
 impl BlockTransactionsExt for Block<Transaction> {
-    fn includes(&self, tx_hash: &B256) -> bool {
-        self.transactions.hashes().any(|tx| tx == *tx_hash)
+    fn includes(&self, txs: &impl AsTxs) -> bool {
+        txs.as_txs()
+            .into_iter()
+            .all(|tx| self.transactions.hashes().any(|included| included == tx))
     }
 }
 
 impl BlockTransactionsExt for BlockTransactionHashes<'_, Transaction> {
-    fn includes(&self, tx_hash: &B256) -> bool {
-        let mut iter = self.clone();
-        iter.any(|tx| tx == *tx_hash)
+    fn includes(&self, txs: &impl AsTxs) -> bool {
+        let mut included_tx_iter = self.clone();
+        txs.as_txs()
+            .iter()
+            .all(|tx| included_tx_iter.any(|included| included == *tx))
     }
 }
 
@@ -169,5 +173,21 @@ impl OpRbuilderArgsTestExt for crate::args::OpRbuilderArgs {
         let mut default = Self::default();
         default.flashblocks.flashblocks_port = 0; // randomize port
         default
+    }
+}
+
+pub trait AsTxs {
+    fn as_txs(&self) -> Vec<TxHash>;
+}
+
+impl AsTxs for TxHash {
+    fn as_txs(&self) -> Vec<TxHash> {
+        vec![*self]
+    }
+}
+
+impl AsTxs for Vec<TxHash> {
+    fn as_txs(&self) -> Vec<TxHash> {
+        self.clone()
     }
 }
