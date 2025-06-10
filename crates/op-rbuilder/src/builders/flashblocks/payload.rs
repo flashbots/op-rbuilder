@@ -79,7 +79,6 @@ impl<Pool, Client> OpPayloadBuilder<Pool, Client> {
     ) -> eyre::Result<Self> {
         let metrics = Arc::new(OpRBuilderMetrics::default());
         let ws_pub = WebSocketPublisher::new(config.specific.ws_addr, Arc::clone(&metrics))?.into();
-
         Ok(Self {
             evm_config,
             pool,

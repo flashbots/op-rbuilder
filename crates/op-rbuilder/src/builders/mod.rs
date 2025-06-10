@@ -13,11 +13,13 @@ use crate::{
     tx_signer::Signer,
 };
 
+mod builder_tx;
 mod context;
 mod flashblocks;
 mod generator;
 mod standard;
 
+pub use builder_tx::BuilderTxBuilder;
 pub use flashblocks::FlashblocksBuilder;
 pub use standard::StandardBuilder;
 
@@ -102,6 +104,13 @@ pub struct BuilderConfig<Specific: Clone> {
 
     /// Configuration values that are specific to the block builder implementation used.
     pub specific: Specific,
+}
+
+impl<S: Clone> BuilderConfig<S> {
+    pub fn with_builder_signer(mut self, builder_signer: Option<Signer>) -> Self {
+        self.builder_signer = builder_signer;
+        self
+    }
 }
 
 impl<S: Debug + Clone> core::fmt::Debug for BuilderConfig<S> {

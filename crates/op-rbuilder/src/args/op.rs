@@ -3,7 +3,7 @@
 //! Copied from OptimismNode to allow easy extension.
 
 //! clap [Args](clap::Args) for optimism rollup configuration
-use crate::tx_signer::Signer;
+use crate::{flashtestations::args::FlashtestationsArgs, tx_signer::Signer};
 use anyhow::{anyhow, Result};
 use reth_optimism_node::args::RollupArgs;
 use std::path::PathBuf;
@@ -49,6 +49,8 @@ pub struct OpRbuilderArgs {
     pub playground: Option<PathBuf>,
     #[command(flatten)]
     pub flashblocks: FlashblocksArgs,
+    #[command(flatten)]
+    pub flashtestations: FlashtestationsArgs,
 }
 
 fn expand_path(s: &str) -> Result<PathBuf> {
