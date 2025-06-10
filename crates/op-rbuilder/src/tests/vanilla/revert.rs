@@ -223,6 +223,40 @@ async fn bundle_min_block_number() -> eyre::Result<()> {
     Ok(())
 }
 
+/// Test the behaviour of the revert protection bundle with a min timestamp.
+#[tokio::test]
+async fn revert_protection_bundle_min_timestamp() -> eyre::Result<()> {
+    let rbuilder = LocalInstance::new::<StandardBuilder>(OpRbuilderArgs {
+        enable_revert_protection: true,
+        ..Default::default()
+    })
+    .await?;
+
+    let driver = rbuilder.driver().await?;
+    let initial_timestamp = driver.latest().await?.header.timestamp;
+
+    // The bundle is valid when the min timestamp is equal to the current block's timestamp
+    let bundle_with_min_timestamp = driver
+        .create_transaction()
+        .with_revert() // the transaction reverts but it is included in the block
+        .with_reverted_hash()
+        .with_bundle(BundleOpts {
+            min_timestamp: Some(initial_timestamp + 2),
+            ..Default::default()
+        })
+        .send()
+        .await?;
+
+    // Each block advances the timestamp by block_time_secs which is 1 when chain_block_time isn't set
+    let block = driver.build_new_block().await?; // Block 1, initial_timestamp + 1
+    assert!(!block.includes(bundle_with_min_timestamp.tx_hash()));
+
+    let block = driver.build_new_block().await?; // Block 2, initial_timestamp + 2, so bundle is valid
+    assert!(block.includes(bundle_with_min_timestamp.tx_hash()));
+
+    Ok(())
+}
+
 /// Test the range limits for the revert protection bundle.
 #[tokio::test]
 async fn bundle_range_limits() -> eyre::Result<()> {
