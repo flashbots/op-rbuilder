@@ -16,9 +16,7 @@ use tracing::info;
 #[tokio::test]
 async fn chain_produces_blocks() -> eyre::Result<()> {
     let rbuilder = LocalInstance::standard().await?;
-    let driver = rbuilder
-        .driver()
-        .await?;
+    let driver = rbuilder.driver().await?;
 
     #[cfg(target_os = "linux")]
     let driver = driver
