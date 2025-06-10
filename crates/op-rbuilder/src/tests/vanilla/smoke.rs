@@ -1,4 +1,4 @@
-use crate::tests::{ExternalNode, LocalInstance, TransactionBuilderExt};
+use crate::tests::{LocalInstance, TransactionBuilderExt};
 use alloy_primitives::TxHash;
 use core::{
     sync::atomic::{AtomicBool, Ordering},
@@ -18,8 +18,11 @@ async fn chain_produces_blocks() -> eyre::Result<()> {
     let rbuilder = LocalInstance::standard().await?;
     let driver = rbuilder
         .driver()
-        .await?
-        .with_validation_node(ExternalNode::reth().await?)
+        .await?;
+
+    #[cfg(target_os = "linux")]
+    let driver = driver
+        .with_validation_node(super::ExternalNode::reth().await?)
         .await?;
 
     const SAMPLE_SIZE: usize = 10;
