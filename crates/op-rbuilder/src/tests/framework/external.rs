@@ -8,16 +8,16 @@ use alloy_rpc_types_engine::{
 use bollard::{
     exec::{CreateExecOptions, StartExecResults},
     query_parameters::{
-        AttachContainerOptions, CreateContainerOptions, RemoveContainerOptions,
+        AttachContainerOptions, CreateContainerOptions, CreateImageOptions, RemoveContainerOptions,
         StartContainerOptions, StopContainerOptions,
     },
-    secret::{ContainerCreateBody, HostConfig},
+    secret::{ContainerCreateBody, ContainerCreateResponse, HostConfig},
     Docker,
 };
-use futures::StreamExt;
+use futures::{StreamExt, TryStreamExt};
 use op_alloy_network::Optimism;
 use op_alloy_rpc_types_engine::OpExecutionPayloadV4;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tracing::debug;
 
 use crate::tests::{EngineApi, Ipc};
@@ -65,43 +65,8 @@ impl ExternalNode {
         )
         .map_err(|_| eyre::eyre!("Failed to write genesis file"))?;
 
-        let host_config = HostConfig {
-            binds: Some(vec![format!(
-                "{}:/home/op-reth-shared:rw",
-                tempdir.display()
-            )]),
-            ..Default::default()
-        };
-
-        // Don't expose any ports, as we will only use IPC for communication.
-        let container_config = ContainerCreateBody {
-            image: Some(format!("ghcr.io/paradigmxyz/op-reth:{version_tag}")),
-            entrypoint: Some(vec!["op-reth".to_string()]),
-            cmd: Some(
-                vec![
-                    "node",
-                    "--chain=/home/op-reth-shared/genesis.json",
-                    "--auth-ipc",
-                    &format!("--auth-ipc.path={AUTH_CONTAINER_IPC_PATH}"),
-                    &format!("--ipcpath={RPC_CONTAINER_IPC_PATH}"),
-                    "--disable-discovery",
-                    "--no-persist-peers",
-                    "--max-outbound-peers=0",
-                    "--max-inbound-peers=0",
-                    "--trusted-only",
-                ]
-                .into_iter()
-                .map(String::from)
-                .collect(),
-            ),
-            host_config: Some(host_config),
-            ..Default::default()
-        };
-
-        // Create the container
-        let container = docker
-            .create_container(Some(CreateContainerOptions::default()), container_config)
-            .await?;
+        // Create Docker container with reth EL client
+        let container = create_container(&tempdir, &docker, version_tag).await?;
 
         docker
             .start_container(&container.id, None::<StartContainerOptions>)
@@ -301,6 +266,67 @@ impl Drop for ExternalNode {
                 .expect("Failed to remove container");
         });
     }
+}
+
+async fn create_container(
+    tempdir: &Path,
+    docker: &Docker,
+    version_tag: &str,
+) -> eyre::Result<ContainerCreateResponse> {
+    let host_config = HostConfig {
+        binds: Some(vec![format!(
+            "{}:/home/op-reth-shared:rw",
+            tempdir.display()
+        )]),
+        ..Default::default()
+    };
+
+    // first pull the image locally
+    let mut pull_stream = docker.create_image(
+        Some(CreateImageOptions {
+            from_image: Some("ghcr.io/paradigmxyz/op-reth".to_string()),
+            tag: Some(version_tag.into()),
+            ..Default::default()
+        }),
+        None,
+        None,
+    );
+
+    while let Some(pull_result) = pull_stream.try_next().await? {
+        debug!(
+            "Pulling 'ghcr.io/paradigmxyz/op-reth:{version_tag}' locally: {:?}",
+            pull_result
+        );
+    }
+
+    // Don't expose any ports, as we will only use IPC for communication.
+    let container_config = ContainerCreateBody {
+        image: Some(format!("ghcr.io/paradigmxyz/op-reth:{version_tag}")),
+        entrypoint: Some(vec!["op-reth".to_string()]),
+        cmd: Some(
+            vec![
+                "node",
+                "--chain=/home/op-reth-shared/genesis.json",
+                "--auth-ipc",
+                &format!("--auth-ipc.path={AUTH_CONTAINER_IPC_PATH}"),
+                &format!("--ipcpath={RPC_CONTAINER_IPC_PATH}"),
+                "--disable-discovery",
+                "--no-persist-peers",
+                "--max-outbound-peers=0",
+                "--max-inbound-peers=0",
+                "--trusted-only",
+            ]
+            .into_iter()
+            .map(String::from)
+            .collect(),
+        ),
+        host_config: Some(host_config),
+        ..Default::default()
+    };
+
+    Ok(docker
+        .create_container(Some(CreateContainerOptions::default()), container_config)
+        .await?)
 }
 
 async fn relax_permissions(docker: &Docker, container: &str, path: &str) -> eyre::Result<()> {

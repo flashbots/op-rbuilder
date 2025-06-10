@@ -28,9 +28,6 @@ jobs:
       - name: Checkout sources
         uses: actions/checkout@v4
 
-      - name: Try pulling the image manually
-        run: docker pull ghcr.io/paradigmxyz/op-reth:latest
-
       # https://github.com/dtolnay/rust-toolchain
       - name: Setup rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -72,14 +69,6 @@ jobs:
 
       - name: Lint
         run: make lint
-      
-      - name: Log in to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
 
       - name: Test
         run: make test
