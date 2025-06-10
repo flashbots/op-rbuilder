@@ -18,6 +18,7 @@ use futures::{StreamExt, TryStreamExt};
 use op_alloy_network::Optimism;
 use op_alloy_rpc_types_engine::OpExecutionPayloadV4;
 use std::path::{Path, PathBuf};
+use tokio::signal;
 use tracing::{debug, warn};
 
 use crate::tests::{EngineApi, Ipc};
@@ -85,6 +86,19 @@ impl ExternalNode {
         let provider = ProviderBuilder::<Identity, Identity, Optimism>::default()
             .connect_ipc(rpc_ipc.into())
             .await?;
+
+        // spin up a task that will clean up the container on ctrl-c
+        tokio::spawn({
+            let docker = docker.clone();
+            let container_id = container.id.clone();
+            let tempdir = tempdir.clone();
+
+            async move {
+                if signal::ctrl_c().await.is_ok() {
+                    cleanup(tempdir.clone(), docker.clone(), container_id.clone()).await;
+                }
+            }
+        });
 
         Ok(Self {
             engine_api,
@@ -239,37 +253,12 @@ impl ExternalNode {
 
 impl Drop for ExternalNode {
     fn drop(&mut self) {
-        if !self.tempdir.exists() {
-            return; // If the tempdir does not exist, there's nothing to clean up.
-        }
-
-        // Clean up the temporary directory
-        std::fs::remove_dir_all(&self.tempdir).expect("Failed to remove temporary directory");
-
         // Block on cleaning up the container
         let docker = self.docker.clone();
         let container_id = self.container_id.clone();
-
+        let tempdir = self.tempdir.clone();
         tokio::spawn(async move {
-            if let Err(e) = docker
-                .stop_container(&container_id, None::<StopContainerOptions>)
-                .await
-            {
-                warn!("Failed to stop container {}: {}", container_id, e);
-            }
-
-            if let Err(e) = docker
-                .remove_container(
-                    &container_id,
-                    Some(RemoveContainerOptions {
-                        force: true,
-                        ..Default::default()
-                    }),
-                )
-                .await
-            {
-                warn!("Failed to remove container {}: {}", container_id, e);
-            }
+            cleanup(tempdir, docker, container_id).await;
         });
     }
 }
@@ -419,6 +408,43 @@ async fn await_ipc_readiness(docker: &Docker, container: &str) -> eyre::Result<(
     }
 
     Ok(())
+}
+
+async fn cleanup(tempdir: PathBuf, docker: Docker, container_id: String) {
+    // This is a no-op function that will be spawned to clean up the container on ctrl-c
+    // or Drop.
+    debug!(
+        "Cleaning up external node resources at {} [{container_id}]...",
+        tempdir.display()
+    );
+
+    if !tempdir.exists() {
+        return; // If the tempdir does not exist, there's nothing to clean up.
+    }
+
+    // Clean up the temporary directory
+    std::fs::remove_dir_all(&tempdir).expect("Failed to remove temporary directory");
+
+    // Block on cleaning up the container
+    if let Err(e) = docker
+        .stop_container(&container_id, None::<StopContainerOptions>)
+        .await
+    {
+        warn!("Failed to stop container {}: {}", container_id, e);
+    }
+
+    if let Err(e) = docker
+        .remove_container(
+            &container_id,
+            Some(RemoveContainerOptions {
+                force: true,
+                ..Default::default()
+            }),
+        )
+        .await
+    {
+        warn!("Failed to remove container {}: {}", container_id, e);
+    }
 }
 
 trait OptimismProviderExt {
