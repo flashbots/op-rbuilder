@@ -20,7 +20,7 @@ async fn chain_produces_blocks() -> eyre::Result<()> {
 
     #[cfg(target_os = "linux")]
     let driver = driver
-        .with_validation_node(super::ExternalNode::reth().await?)
+        .with_validation_node(crate::tests::ExternalNode::reth().await?)
         .await?;
 
     const SAMPLE_SIZE: usize = 10;
