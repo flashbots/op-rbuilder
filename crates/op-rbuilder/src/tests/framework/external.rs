@@ -443,7 +443,6 @@ async fn cleanup(tempdir: PathBuf, docker: Docker, container_id: String) {
         warn!("Failed to remove container {}: {}", container_id, e);
     }
 
-
     // Clean up the temporary directory
     std::fs::remove_dir_all(&tempdir).expect("Failed to remove temporary directory");
 }
