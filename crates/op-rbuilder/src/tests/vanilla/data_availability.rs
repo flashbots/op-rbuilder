@@ -1,4 +1,4 @@
-use crate::tests::{BlockTransactionsExt, LocalInstance, TransactionBuilderExt};
+use crate::tests::{BlockTransactionsExt, ChainDriverExt, LocalInstance};
 use alloy_provider::Provider;
 
 /// This test ensures that the transaction size limit is respected.
@@ -45,15 +45,11 @@ async fn block_size_limit() -> eyre::Result<()> {
         .await?;
     assert!(call, "miner_setMaxDASize should be executed successfully");
 
-    let unfit_tx = driver
-        .create_transaction()
-        .random_valid_transfer()
-        .send()
-        .await?;
-    let block = driver.build_new_block().await?;
+    let (unfit_tx, block) = driver.build_new_block_with_valid_transaction().await?;
+
     // tx should not be included because we set the tx_size_limit to 1
     assert!(
-        !block.includes(unfit_tx.tx_hash()),
+        !block.includes(&unfit_tx),
         "transaction should not be included in the block"
     );
 

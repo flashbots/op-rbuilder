@@ -1,5 +1,5 @@
 use alloy_eips::Encodable2718;
-use alloy_primitives::{hex, Address, BlockHash, TxKind, B256, U256};
+use alloy_primitives::{hex, Address, BlockHash, TxHash, TxKind, B256, U256};
 use alloy_rpc_types_eth::{Block, BlockTransactionHashes};
 use core::future::Future;
 use op_alloy_consensus::{OpTypedTransaction, TxDeposit};
@@ -54,6 +54,14 @@ pub trait ChainDriverExt {
             Ok(accounts)
         }
     }
+
+    fn build_new_block_with_valid_transaction(
+        &self,
+    ) -> impl Future<Output = eyre::Result<(TxHash, Block<Transaction>)>>;
+
+    fn build_new_block_with_reverrting_transaction(
+        &self,
+    ) -> impl Future<Output = eyre::Result<(TxHash, Block<Transaction>)>>;
 }
 
 impl<P: Protocol> ChainDriverExt for ChainDriver<P> {
@@ -109,6 +117,29 @@ impl<P: Protocol> ChainDriverExt for ChainDriver<P> {
             .await?
             .header
             .hash)
+    }
+
+    async fn build_new_block_with_valid_transaction(
+        &self,
+    ) -> eyre::Result<(TxHash, Block<Transaction>)> {
+        let tx = self
+            .create_transaction()
+            .random_valid_transfer()
+            .send()
+            .await?;
+        Ok((*tx.tx_hash(), self.build_new_block().await?))
+    }
+
+    async fn build_new_block_with_reverrting_transaction(
+        &self,
+    ) -> eyre::Result<(TxHash, Block<Transaction>)> {
+        let tx = self
+            .create_transaction()
+            .random_reverting_transaction()
+            .send()
+            .await?;
+
+        Ok((*tx.tx_hash(), self.build_new_block().await?))
     }
 }
 
