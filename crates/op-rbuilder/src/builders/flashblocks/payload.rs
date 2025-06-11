@@ -143,7 +143,8 @@ where
 
         // We log only every 100th block to reduce usage
         let span = if cfg!(feature = "telemetry")
-            && config.parent_header.number % self.config.sampling_ratio == 0 {
+            && config.parent_header.number % self.config.sampling_ratio == 0
+        {
             span!(Level::INFO, "build_payload")
         } else {
             tracing::Span::none()
@@ -172,18 +173,17 @@ where
                 ?time,
             ),
             Some(time_drift) => {
-                    self
-                        .metrics
-                        .flashblock_time_drift
-                        .record(time_drift.as_millis() as f64);
-                    debug!(
-                        target: "payload_builder",
-                        message = "Time drift for building round",
-                        ?time,
-                        ?time_drift,
-                        ?timestamp
-                    );
-                }
+                self.metrics
+                    .flashblock_time_drift
+                    .record(time_drift.as_millis() as f64);
+                debug!(
+                    target: "payload_builder",
+                    message = "Time drift for building round",
+                    ?time,
+                    ?time_drift,
+                    ?timestamp
+                );
+            }
         }
         let block_env_attributes = OpNextBlockEnvAttributes {
             timestamp,
@@ -565,9 +565,7 @@ where
                 None => {
                     // Exit loop if channel closed or cancelled
                     ctx.metrics.block_built_success.increment(1);
-                    ctx.metrics
-                        .flashblock_count
-                        .record(flashblock_count as f64);
+                    ctx.metrics.flashblock_count.record(flashblock_count as f64);
                     debug!(
                         target: "payload_builder",
                         message = "Payload building complete, channel closed or job cancelled"
