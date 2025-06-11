@@ -150,6 +150,10 @@ pub struct TelemetryArgs {
     pub otlp_headers: Option<String>,
 
     /// Inverted sampling frequency in blocks. 1 - each block, 100 - every 100th block.
-    #[arg(long = "telemetry.sampling-ratio", env = "SAMPLING_RATIO", default_value = "100")]
-    pub sampling_ratio: u64
+    #[arg(
+        long = "telemetry.sampling-ratio",
+        env = "SAMPLING_RATIO",
+        default_value = "100"
+    )]
+    pub sampling_ratio: u64,
 }

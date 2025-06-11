@@ -43,7 +43,11 @@ impl TryFrom<OpRbuilderArgs> for FlashblocksConfig {
         );
 
         let leeway_time = Duration::from_millis(args.flashblocks.flashblocks_leeway_time);
-        Ok(Self { ws_addr, interval, leeway_time })
+        Ok(Self {
+            ws_addr,
+            interval,
+            leeway_time,
+        })
     }
 }
 
