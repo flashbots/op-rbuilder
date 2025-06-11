@@ -46,7 +46,7 @@ use std::{
     time::Instant,
 };
 use tokio::sync::mpsc;
-use tracing::{debug, error, metadata::Level, span, warn};
+use tracing::{debug, error, info, metadata::Level, span, warn};
 
 #[derive(Debug, Default)]
 struct ExtraExecutionInfo {
@@ -147,7 +147,7 @@ where
         } else {
             tracing::Span::none()
         };
-        let _enter = span.enter();
+        let _entered = span.enter();
         span.record(
             "payload_id",
             config.attributes.payload_attributes.id.to_string(),
@@ -165,11 +165,24 @@ where
             - Duration::from_millis(50);
         let time_drift = time.duration_since(std::time::SystemTime::now()).ok();
         match time_drift {
-            None => error!("FCU arrived too late or system clock are unsynced"),
-            Some(time_drift) => self
-                .metrics
-                .flashblock_time_drift
-                .record(time_drift.as_millis() as f64),
+            None => error!(
+                target: "payload_builder"
+                message = "FCU arrived too late or system clock are unsynced",
+                ?time,
+            ),
+            Some(time_drift) => {
+                    self
+                        .metrics
+                        .flashblock_time_drift
+                        .record(time_drift.as_millis() as f64);
+                    debug!(
+                        target: "payload_builder",
+                        message = "Time drift for building round",
+                        ?time,
+                        ?time_drift,
+                        ?timestamp
+                    );
+                }
         }
         let block_env_attributes = OpNextBlockEnvAttributes {
             timestamp,
@@ -241,7 +254,7 @@ where
             .publish(&fb_payload)
             .map_err(PayloadBuilderError::other)?;
 
-        tracing::info!(
+        info!(
             target: "payload_builder",
             message = "Fallback block built",
             payload_id = fb_payload.payload_id.to_string(),
@@ -252,7 +265,7 @@ where
             .record(info.executed_transactions.len() as f64);
 
         if ctx.attributes().no_tx_pool {
-            tracing::info!(
+            info!(
                 target: "payload_builder",
                 "No transaction pool, skipping transaction pool processing",
             );
@@ -290,6 +303,13 @@ where
                 )
             }
         };
+        info!(
+            target: "payload_builder",
+            message = "Performed flashblocks timing derivation",
+            flashblocks_per_block,
+            first_flashblock_offset = first_flashblock_offset.as_millis(),
+            flashblocks_interval = self.config.specific.interval,
+        );
         ctx.metrics
             .target_flashblock
             .record(flashblocks_per_block as f64);
@@ -341,7 +361,7 @@ where
                     })
                     .await;
                 if cancelled.is_none() {
-                    tracing::info!(target: "payload_builder", "Building job cancelled, stopping payload building");
+                    info!(target: "payload_builder", "Building job cancelled, stopping payload building");
                     drop(build_tx);
                     return;
                 }
@@ -360,7 +380,7 @@ where
                 }
             }).await;
             if cancelled.is_none() {
-                tracing::info!(target: "payload_builder", "Building job cancelled, stopping payload building");
+                info!(target: "payload_builder", "Building job cancelled, stopping payload building");
                 drop(build_tx);
             }
         });
@@ -386,7 +406,7 @@ where
                 rt.block_on(async {
                     // Check for cancellation first
                     if ctx.cancel.is_cancelled() {
-                        tracing::info!(
+                        info!(
                             target: "payload_builder",
                             "Job cancelled, stopping payload building",
                         );
@@ -402,7 +422,7 @@ where
             match received {
                 Some(()) => {
                     if flashblock_count >= flashblocks_per_block {
-                        tracing::info!(
+                        info!(
                             target: "payload_builder",
                             target = flashblocks_per_block,
                             flashblock_count = flashblock_count,
@@ -413,7 +433,7 @@ where
                     }
 
                     // Continue with flashblock building
-                    tracing::info!(
+                    info!(
                         target: "payload_builder",
                         block_number = ctx.block_number(),
                         flashblock_count = flashblock_count,
@@ -463,7 +483,7 @@ where
                         total_da_per_batch,
                     )? {
                         // Handles job cancellation
-                        tracing::info!(
+                        info!(
                             target: "payload_builder",
                             "Job cancelled, stopping payload building",
                         );
@@ -530,12 +550,13 @@ where
                                 }
                             }
                             flashblock_count += 1;
-                            tracing::info!(
+                            info!(
                                 target: "payload_builder",
                                 message = "Flashblock built",
                                 ?flashblock_count,
                                 current_gas = info.cumulative_gas_used,
                                 current_da = info.cumulative_da_bytes_used,
+                                target_flashblocks = flashblocks_per_block,
                             );
                         }
                     }
