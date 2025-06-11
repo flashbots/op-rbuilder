@@ -83,7 +83,7 @@ async fn chain_produces_blocks(rbuilder: LocalInstance) -> eyre::Result<()> {
         if_flashblocks! {
             // in flashblocks we add an additional transaction on the first
             // flashblocks and then one on the last flashblock, so it will have
-            // one more thransaction than the standard builder
+            // one more transaction than the standard builder
             assert_eq!(
                 txs.len(),
                 3 + count,
