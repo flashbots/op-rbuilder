@@ -5057,6 +5057,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "macros"
+version = "0.1.0"
+dependencies = [
+ "paste",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.101",
+]
+
+[[package]]
 name = "matchers"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5693,6 +5703,7 @@ dependencies = [
  "jsonrpsee 0.25.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "jsonrpsee-core 0.25.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "jsonrpsee-types 0.25.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "macros",
  "metrics",
  "moka",
  "nanoid",

@@ -122,6 +122,7 @@ reth-ipc = { workspace = true, optional = true }
 bollard = { version = "0.19", optional = true }
 tar = { version = "0.4", optional = true }
 ctor = { version = "0.4.2", optional = true }
+macros = { path = "src/tests/framework/macros", optional = true }
 
 [target.'cfg(unix)'.dependencies]
 tikv-jemallocator = { version = "0.6", optional = true }
@@ -135,7 +136,7 @@ alloy-provider = { workspace = true, default-features = true, features = [
 	"txpool-api",
 ] }
 tempfile = "3.8"
-
+macros = { path = "src/tests/framework/macros" }
 dashmap = { version = "6.1" }
 nanoid = { version = "0.4" }
 reth-ipc = { workspace = true }
@@ -172,6 +173,7 @@ testing = [
 	"reth-node-builder/test-utils",
 	"bollard",
 	"ctor",
+	"macros",
 ]
 
 
