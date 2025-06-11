@@ -100,6 +100,9 @@ pub struct BuilderConfig<Specific: Clone> {
     // (not just 0.5s) because of that.
     pub block_time_leeway: Duration,
 
+    /// Inverted sampling frequency in blocks. 1 - each block, 100 - every 100th block.
+    pub sampling_ratio: u64,
+
     /// Configuration values that are specific to the block builder implementation used.
     pub specific: Specific,
 }
@@ -132,6 +135,7 @@ impl<S: Default + Clone> Default for BuilderConfig<S> {
             block_time_leeway: Duration::from_millis(500),
             da_config: OpDAConfig::default(),
             specific: S::default(),
+            sampling_ratio: 100,
         }
     }
 }
@@ -149,6 +153,7 @@ where
             block_time: Duration::from_millis(args.chain_block_time),
             block_time_leeway: Duration::from_secs(args.extra_block_deadline_secs),
             da_config: Default::default(),
+            sampling_ratio: args.telemetry.sampling_ratio,
             specific: S::try_from(args)?,
         })
     }

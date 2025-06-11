@@ -142,7 +142,8 @@ where
         let BuildArguments { config, cancel, .. } = args;
 
         // We log only every 100th block to reduce usage
-        let span = if cfg!(feature = "telemetry") && config.parent_header.number % 100 == 0 {
+        let span = if cfg!(feature = "telemetry")
+            && config.parent_header.number % self.config.sampling_ratio == 0 {
             span!(Level::INFO, "build_payload")
         } else {
             tracing::Span::none()
@@ -157,16 +158,16 @@ where
         let timestamp = config.attributes.timestamp();
         // We use this system time to determine remining time to build a block
         // Things to consider:
-        // FCU(a) - FCU with attributes, block time 2 seconds
+        // FCU(a) - FCU with attributes
         // FCU(a) could arrive with `block_time - fb_time < delay`. In this case we could only produce 1 flashblock
         // FCU(a) could arrive with `delay < fb_time` - in this case we will shrink first flashblock
         // FCU(a) could arrive with `fb_time < delay < block_time - fb_time` - in this case we will issue less flashblocks
         let time = std::time::SystemTime::UNIX_EPOCH + Duration::from_secs(timestamp)
-            - Duration::from_millis(50);
+            - self.config.specific.leeway_time;
         let time_drift = time.duration_since(std::time::SystemTime::now()).ok();
         match time_drift {
             None => error!(
-                target: "payload_builder"
+                target: "payload_builder",
                 message = "FCU arrived too late or system clock are unsynced",
                 ?time,
             ),
@@ -308,7 +309,7 @@ where
             message = "Performed flashblocks timing derivation",
             flashblocks_per_block,
             first_flashblock_offset = first_flashblock_offset.as_millis(),
-            flashblocks_interval = self.config.specific.interval,
+            flashblocks_interval = self.config.specific.interval.as_millis(),
         );
         ctx.metrics
             .target_flashblock
