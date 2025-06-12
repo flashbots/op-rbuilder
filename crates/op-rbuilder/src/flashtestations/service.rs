@@ -1,7 +1,6 @@
 use alloy_primitives::{B256, U256};
 use reth_optimism_primitives::OpTransactionSigned;
 use reth_primitives::Recovered;
-use sha3::Digest;
 use tracing::info;
 
 use crate::{builders::BuilderTxBuilder, tx_signer::Signer};
@@ -90,7 +89,7 @@ impl BuilderTxBuilder for FlashtestationsService {
 mod tests {
     use alloy_primitives::Address;
     use secp256k1::{PublicKey, Secp256k1, SecretKey};
-    use sha3::Keccak256;
+    use sha3::{Digest, Keccak256};
 
     use crate::tx_signer::public_key_to_address;
 

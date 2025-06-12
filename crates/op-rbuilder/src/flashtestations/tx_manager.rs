@@ -13,7 +13,7 @@ use alloy::{
     sol,
     sol_types::{SolCall, SolValue},
 };
-use alloy_provider::ProviderBuilder;
+use alloy_provider::{Provider, ProviderBuilder};
 use op_alloy_network::Optimism;
 use tracing::{error, info};
 
@@ -72,19 +72,42 @@ impl TxManager {
         let provider = ProviderBuilder::new()
             .disable_recommended_fillers()
             .fetch_chain_id()
-            .with_gas_estimation()
-            .with_cached_nonce_management()
             .wallet(wallet)
             .network::<Optimism>()
             .connect(self.rpc_url.as_str())
             .await?;
 
         let quote_bytes = Bytes::from(attestation);
+
+        // Getting transaction params
+        let nonce = provider
+            .get_transaction_count(self.attestation_signer.address)
+            .await?;
+        // Get the latest block to extract base fee
+        let latest_block = provider
+            .get_block_by_number(alloy::rpc::types::BlockNumberOrTag::Latest)
+            .await?
+            .ok_or(eyre::eyre!("Failed to get latest block"))?;
+        // Extract base fee per gas from the latest block
+        let base_fee = latest_block
+            .header
+            .base_fee_per_gas
+            .ok_or(eyre::eyre!("Base fee not available"))?;
+
         let registry = IFlashtestationRegistry::new(self.registry_address, provider);
 
         info!(target: "flashtestations", "submitting quote to registry at {}", registry.address());
 
-        match registry.registerTEEService(quote_bytes).send().await {
+        // TODO: add retries
+        match registry
+            .registerTEEService(quote_bytes)
+            .gas(5_000_000) // Set gas limit manually as the contract is gas heavy
+            .max_fee_per_gas((base_fee + 1).into())
+            .max_priority_fee_per_gas(1)
+            .nonce(nonce)
+            .send()
+            .await
+        {
             Ok(pending_tx) => {
                 let tx_hash = *pending_tx.tx_hash();
                 info!(target: "flashtestations", tx_hash = %tx_hash, "transaction submitted, waiting for confirmation");
@@ -119,7 +142,7 @@ impl TxManager {
                 }
             }
             Err(e) => {
-                error!(target: "flashtestations", error = %e, "transaction failed to  be sent");
+                error!(target: "flashtestations", error = %e, "transaction failed to be sent");
                 Err(e.into())
             }
         }
