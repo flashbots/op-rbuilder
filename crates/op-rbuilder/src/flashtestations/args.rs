@@ -11,13 +11,13 @@ pub struct FlashtestationsArgs {
         default_value = "false",
         env = "ENABLE_FLASHTESTATIONS"
     )]
-    pub enabled: bool,
+    pub flashtestations_enabled: bool,
 
     /// Whether to use the debug HTTP service for quotes
     #[arg(
         long = "flashtestations.debug",
         default_value = "false",
-        env = "DEBUG_FLASHTESTATIONS"
+        env = "FLASHTESTATIONS_DEBUG"
     )]
     pub debug: bool,
 
@@ -45,7 +45,7 @@ pub struct FlashtestationsArgs {
     #[arg(
         long = "flashtestations.builder-policy-address",
         env = "FLASHTESTATIONS_BUILDER_POLICY_ADDRESS",
-        default_value = "127.0.0.1"
+        default_value = "0x0000000000000000000000000000000000000000"
     )]
     pub builder_policy_address: Address,
 

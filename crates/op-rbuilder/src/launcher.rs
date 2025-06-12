@@ -97,26 +97,27 @@ where
         builder: WithLaunchContext<NodeBuilder<Arc<DatabaseEnv>, OpChainSpec>>,
         builder_args: OpRbuilderArgs,
     ) -> Result<()> {
-        let (signer, flashtestations_service) = if builder_args.flashtestations.enabled {
-            tracing::info!("Flashtestations enabled");
-            let (private_key, public_key, address) = generate_ethereum_keypair();
-            let signer = Signer {
-                address,
-                pubkey: public_key,
-                secret: private_key,
+        let (signer, flashtestations_service) =
+            if builder_args.flashtestations.flashtestations_enabled {
+                tracing::info!("Flashtestations enabled");
+                let (private_key, public_key, address) = generate_ethereum_keypair();
+                let signer = Signer {
+                    address,
+                    pubkey: public_key,
+                    secret: private_key,
+                };
+                tracing::info!("Generated key for flashtestations with address {}", address);
+                let flashtestations_service = FlashtestationsService::new(
+                    builder_args.clone().flashtestations,
+                    signer,
+                    builder_args
+                        .builder_signer
+                        .expect("Key to sign onchain attestations not set"),
+                );
+                (Some(signer), Some(flashtestations_service))
+            } else {
+                (builder_args.builder_signer, None)
             };
-            tracing::info!("Generated key for flashtestations with address {}", address);
-            let flashtestations_service = FlashtestationsService::new(
-                builder_args.clone().flashtestations,
-                signer,
-                builder_args
-                    .builder_signer
-                    .expect("Key to sign onchain attestations not set"),
-            );
-            (Some(signer), Some(flashtestations_service))
-        } else {
-            (builder_args.builder_signer, None)
-        };
         let builder_config = BuilderConfig::<B::Config>::try_from(builder_args.clone())
             .expect("Failed to convert rollup args to builder config")
             .with_builder_signer(signer);
