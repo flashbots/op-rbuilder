@@ -40,7 +40,7 @@ sol!(
 
 pub struct TxManager {
     tee_service_signer: Signer,
-    attestation_signer: Signer,
+    funding_signer: Signer,
     rpc_url: String,
     registry_address: Address,
     builder_policy_address: Address,
@@ -50,7 +50,7 @@ pub struct TxManager {
 impl TxManager {
     pub fn new(
         tee_service_signer: Signer,
-        attestation_signer: Signer,
+        funding_signer: Signer,
         rpc_url: String,
         registry_address: Address,
         builder_policy_address: Address,
@@ -58,7 +58,7 @@ impl TxManager {
     ) -> Self {
         Self {
             tee_service_signer,
-            attestation_signer,
+            funding_signer,
             rpc_url,
             registry_address,
             builder_policy_address,
@@ -68,7 +68,7 @@ impl TxManager {
 
     pub async fn register_tee_service(&self, attestation: Vec<u8>) -> eyre::Result<()> {
         let wallet =
-            PrivateKeySigner::from_bytes(&self.attestation_signer.secret.secret_bytes().into())?;
+            PrivateKeySigner::from_bytes(&self.tee_service_signer.secret.secret_bytes().into())?;
         let provider = ProviderBuilder::new()
             .disable_recommended_fillers()
             .fetch_chain_id()
@@ -79,10 +79,68 @@ impl TxManager {
 
         let quote_bytes = Bytes::from(attestation);
 
-        // Getting transaction params
-        let nonce = provider
-            .get_transaction_count(self.attestation_signer.address)
+        let funding_wallet =
+            PrivateKeySigner::from_bytes(&self.funding_signer.secret.secret_bytes().into())?;
+        let funding_provider = ProviderBuilder::new()
+            .disable_recommended_fillers()
+            .fetch_chain_id()
+            .with_gas_estimation()
+            .with_cached_nonce_management()
+            .wallet(funding_wallet)
+            .network::<Optimism>()
+            .connect(self.rpc_url.as_str())
             .await?;
+
+        // Create funding transaction
+        let funding_tx = alloy::rpc::types::TransactionRequest {
+            from: Some(self.funding_signer.address),
+            to: Some(TxKind::Call(self.tee_service_signer.address)),
+            value: Some(U256::from(10_000_000_000_000_000u64)), // 0.001 ETH
+            gas: Some(21_000),                                  // Standard gas for ETH transfer
+            ..Default::default()
+        };
+        // Send funding transaction
+        match funding_provider.send_transaction(funding_tx.into()).await {
+            Ok(pending_funding_tx) => {
+                let funding_tx_hash = *pending_funding_tx.tx_hash();
+                info!(target: "flashtestations", tx_hash = %funding_tx_hash, "funding transaction submitted");
+
+                // Wait for funding transaction confirmation
+                match pending_funding_tx
+                    .with_timeout(Some(Duration::from_secs(30)))
+                    .get_receipt()
+                    .await
+                {
+                    Ok(receipt) => {
+                        if receipt.status() {
+                            info!(target: "flashtestations", 
+                                          tx_hash = %receipt.transaction_hash(),
+                                          "funding transaction confirmed successfully");
+                        } else {
+                            error!(target: "flashtestations", 
+                                           tx_hash = %receipt.transaction_hash(),
+                                           "funding transaction reverted");
+                            return Err(eyre::eyre!(
+                                "Funding transaction reverted: {}",
+                                funding_tx_hash
+                            ));
+                        }
+                    }
+                    Err(e) => {
+                        error!(target: "flashtestations", 
+                                       error = %e,
+                                       tx_hash = %funding_tx_hash,
+                                       "funding transaction failed to get receipt");
+                        return Err(e.into());
+                    }
+                }
+            }
+            Err(e) => {
+                error!(target: "flashtestations", error = %e, "funding transaction failed to be sent");
+                return Err(e.into());
+            }
+        }
+
         // Get the latest block to extract base fee
         let latest_block = provider
             .get_block_by_number(alloy::rpc::types::BlockNumberOrTag::Latest)
@@ -101,10 +159,10 @@ impl TxManager {
         // TODO: add retries
         match registry
             .registerTEEService(quote_bytes)
-            .gas(5_000_000) // Set gas limit manually as the contract is gas heavy
+            .gas(10_000_000) // Set gas limit manually as the contract is gas heavy
             .max_fee_per_gas((base_fee + 1).into())
             .max_priority_fee_per_gas(1)
-            .nonce(nonce)
+            .nonce(0)
             .send()
             .await
         {

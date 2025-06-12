@@ -33,7 +33,7 @@ impl FlashtestationsService {
     pub fn new(
         args: FlashtestationsArgs,
         tee_service_signer: Signer,
-        attestation_signer: Signer,
+        funding_signer: Signer,
     ) -> Self {
         let attestation_provider = get_attestation_provider(AttestationConfig {
             debug: args.debug,
@@ -42,7 +42,7 @@ impl FlashtestationsService {
 
         let tx_manager = TxManager::new(
             tee_service_signer,
-            attestation_signer,
+            funding_signer,
             args.rpc_url,
             args.registry_address,
             args.builder_policy_address,
@@ -92,8 +92,6 @@ mod tests {
     use sha3::{Digest, Keccak256};
 
     use crate::tx_signer::public_key_to_address;
-
-    use super::*;
 
     /// Derives Ethereum address from report data using the same logic as the Solidity contract
     fn derive_ethereum_address_from_report_data(pubkey_64_bytes: &[u8]) -> Address {
