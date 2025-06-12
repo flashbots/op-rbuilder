@@ -24,7 +24,7 @@ impl FlashtestationsService {
     pub fn new(
         args: FlashtestationsArgs,
         tee_service_signer: Signer,
-        attestation_signer: Signer,
+        funding_signer: Signer,
     ) -> Self {
         let attestation_provider = get_attestation_provider(AttestationConfig {
             debug: args.debug,
@@ -33,7 +33,7 @@ impl FlashtestationsService {
 
         let tx_manager = TxManager::new(
             tee_service_signer,
-            attestation_signer,
+            funding_signer,
             args.rpc_url,
             args.registry_address,
             args.builder_policy_address,
