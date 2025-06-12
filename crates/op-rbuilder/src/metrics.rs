@@ -76,6 +76,8 @@ pub struct OpRBuilderMetrics {
     pub da_block_size_limit: Gauge,
     /// Da tx size limit
     pub da_tx_size_limit: Gauge,
+    /// Number of nodes fetched
+    pub fetched_nodes: Histogram,
 }
 
 /// Contains version information for the application.

@@ -9,12 +9,15 @@ use reth_node_builder::{components::PayloadServiceBuilder, BuilderContext};
 use reth_optimism_evm::OpEvmConfig;
 use reth_payload_builder::{PayloadBuilderHandle, PayloadBuilderService};
 use reth_provider::CanonStateSubscriptions;
+use reth_provider::{StateCommitmentProvider, DatabaseProviderFactory, BlockReader};
 
 pub struct FlashblocksServiceBuilder(pub BuilderConfig<FlashblocksConfig>);
 
 impl<Node, Pool> PayloadServiceBuilder<Node, Pool, OpEvmConfig> for FlashblocksServiceBuilder
 where
     Node: NodeBounds,
+    Node::Provider: StateCommitmentProvider,
+    <Node::Provider as DatabaseProviderFactory>::Provider: BlockReader,
     Pool: PoolBounds,
 {
     async fn spawn_payload_builder_service(

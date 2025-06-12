@@ -19,7 +19,7 @@ const FUNDED_PRIVATE_KEYS: &[&str] =
     &["0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"];
 
 pub const DEFAULT_JWT_TOKEN: &str =
-    "688f5d737bad920bdfb2fc2f488d6b6209eebda1dae949a8de91398d932c517a";
+    "04592280e1778419b7aa954d43871cb2cfb2ebda754fb735e8adeb293a88f9bf";
 
 pub const ONE_ETH: u128 = 1_000_000_000_000_000_000;
 

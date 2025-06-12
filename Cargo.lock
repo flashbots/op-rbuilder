@@ -2563,6 +2563,7 @@ dependencies = [
  "lock_api",
  "once_cell",
  "parking_lot_core",
+ "rayon",
 ]
 
 [[package]]
@@ -3034,6 +3035,34 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2d2f06b9cac1506ece98fe3231e3cc9c4410ec3d5b1f24ae1c8946f0742cdefc"
 dependencies = [
  "version_check",
+]
+
+[[package]]
+name = "eth-sparse-mpt"
+version = "0.1.0"
+source = "git+https://github.com/cody-wang-cb/rbuilder.git?rev=cee9ad0d220f80f1e40f9f2d244f98c5de5e7413#cee9ad0d220f80f1e40f9f2d244f98c5de5e7413"
+dependencies = [
+ "alloy-primitives",
+ "alloy-rlp",
+ "alloy-trie",
+ "arrayvec",
+ "dashmap 6.1.0",
+ "eyre",
+ "parking_lot",
+ "rayon",
+ "reth-errors",
+ "reth-execution-errors",
+ "reth-provider",
+ "reth-trie",
+ "reth-trie-db",
+ "revm",
+ "rustc-hash 2.1.1",
+ "serde",
+ "serde_json",
+ "serde_with",
+ "smallvec",
+ "thiserror 1.0.69",
+ "tracing",
 ]
 
 [[package]]
@@ -5686,6 +5715,7 @@ dependencies = [
  "ctor",
  "dashmap 6.1.0",
  "derive_more",
+ "eth-sparse-mpt",
  "eyre",
  "futures",
  "futures-util",

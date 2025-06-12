@@ -1,7 +1,7 @@
 use core::time::Duration;
 
 use alloy_eips::{eip7685::Requests, BlockNumberOrTag, Encodable2718};
-use alloy_primitives::{address, hex, Bytes, TxKind, B256, U256};
+use alloy_primitives::{address, b64, hex, Bytes, TxKind, B256, U256};
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types_engine::{ForkchoiceUpdated, PayloadAttributes, PayloadStatusEnum};
 use alloy_rpc_types_eth::Block;
@@ -17,6 +17,7 @@ use crate::{
     tests::{ExternalNode, Protocol},
     tx_signer::Signer,
 };
+use tracing::{debug, info};
 
 const DEFAULT_GAS_LIMIT: u64 = 10_000_000;
 
@@ -144,6 +145,7 @@ impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
                 },
                 transactions: Some(vec![block_info_tx].into_iter().chain(txs).collect()),
                 gas_limit: Some(self.gas_limit.unwrap_or(DEFAULT_GAS_LIMIT)),
+                eip_1559_params: Some(b64!("0000000800000008")),
                 ..Default::default()
             })
             .await?;
@@ -180,8 +182,25 @@ impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
         }
 
         let new_block_hash = payload.payload_inner.payload_inner.payload_inner.block_hash;
+        
+        // Create minimal payload attributes for the forkchoice update
+        // This is needed because Optimism requires EIP-1559 parameters
+        let next_timestamp = Duration::from_secs(payload.payload_inner.payload_inner.payload_inner.timestamp + 12);
+        let forkchoice_attributes = OpPayloadAttributes {
+            payload_attributes: PayloadAttributes {
+                timestamp: next_timestamp.as_secs(),
+                parent_beacon_block_root: Some(B256::ZERO),
+                withdrawals: Some(vec![]),
+                ..Default::default()
+            },
+            eip_1559_params: Some(b64!("0000000800000008")),
+            transactions: Some(vec![]),
+            gas_limit: Some(self.gas_limit.unwrap_or(DEFAULT_GAS_LIMIT)),
+            ..Default::default()
+        };
+        
         self.engine_api
-            .update_forkchoice(latest.header.hash, new_block_hash, None)
+            .update_forkchoice(latest.header.hash, new_block_hash, Some(forkchoice_attributes))
             .await?;
 
         let block = self

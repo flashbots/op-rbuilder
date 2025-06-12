@@ -29,8 +29,7 @@ use reth_optimism_node::{OpBuiltPayload, OpPayloadBuilderAttributes};
 use reth_optimism_primitives::{OpPrimitives, OpReceipt, OpTransactionSigned};
 use reth_payload_util::BestPayloadTransactions;
 use reth_provider::{
-    ExecutionOutcome, HashedPostStateProvider, ProviderError, StateRootProvider,
-    StorageRootProvider,
+    providers::ConsistentDbView, BlockReader, DatabaseProviderFactory, ExecutionOutcome, HashedPostStateProvider, ProviderError, StateCommitmentProvider, StateRootProvider, StorageRootProvider
 };
 use reth_revm::{
     database::StateProviderDatabase,
@@ -44,6 +43,7 @@ use rollup_boost::{
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tracing::{debug, error, metadata::Level, span, warn};
+use eth_sparse_mpt::*;
 
 #[derive(Debug, Default)]
 struct ExtraExecutionInfo {
@@ -120,7 +120,7 @@ where
 impl<Pool, Client> OpPayloadBuilder<Pool, Client>
 where
     Pool: PoolBounds,
-    Client: ClientBounds,
+    Client: ClientBounds + DatabaseProviderFactory<Provider: BlockReader> + StateCommitmentProvider + Clone,
 {
     /// Constructs an Optimism payload from the transactions sent via the
     /// Payload attributes by the sequencer. If the `no_tx_pool` argument is passed in
@@ -193,6 +193,8 @@ where
 
         let state_provider = self.client.state_by_block_hash(ctx.parent().hash())?;
         let state = StateProviderDatabase::new(&state_provider);
+        let sparse_trie_shared_cache = SparseTrieSharedCache::new_with_parent_block_data(ctx.parent().hash(), ctx.parent().state_root);
+        let mut sparse_trie_local_cache = SparseTrieLocalCache::default();
 
         // 1. execute the pre steps and seal an early block with that
         let sequencer_tx_start_time = Instant::now();
@@ -216,7 +218,7 @@ where
             .sequencer_tx_duration
             .record(sequencer_tx_start_time.elapsed());
 
-        let (payload, fb_payload, mut bundle_state) = build_block(db, &ctx, &mut info)?;
+        let (payload, fb_payload, mut bundle_state) = build_block(db, self.client.clone(), &ctx, &mut info, &sparse_trie_shared_cache, &mut sparse_trie_local_cache)?;
 
         best_payload.set(payload.clone());
         self.ws_pub
@@ -412,7 +414,7 @@ where
                     });
 
                     let total_block_built_duration = Instant::now();
-                    let build_result = build_block(db, &ctx, &mut info);
+                    let build_result = build_block(db, self.client.clone(), &ctx, &mut info, &sparse_trie_shared_cache, &mut sparse_trie_local_cache);
                     ctx.metrics
                         .total_block_built_duration
                         .record(total_block_built_duration.elapsed());
@@ -488,7 +490,7 @@ where
 impl<Pool, Client> crate::builders::generator::PayloadBuilder for OpPayloadBuilder<Pool, Client>
 where
     Pool: PoolBounds,
-    Client: ClientBounds,
+    Client: ClientBounds + DatabaseProviderFactory<Provider: BlockReader> + StateCommitmentProvider + Clone,
 {
     type Attributes = OpPayloadBuilderAttributes<OpTransactionSigned>;
     type BuiltPayload = OpBuiltPayload;
@@ -528,14 +530,18 @@ where
     Ok(info)
 }
 
-fn build_block<DB, P>(
+fn build_block<DB, P, Client>(
     mut state: State<DB>,
+    client: Client,
     ctx: &OpPayloadBuilderCtx,
     info: &mut ExecutionInfo<ExtraExecutionInfo>,
+    sparse_trie_shared_cache: &SparseTrieSharedCache,
+    sparse_trie_local_cache: &mut SparseTrieLocalCache,
 ) -> Result<(OpBuiltPayload, FlashblocksPayloadV1, BundleState), PayloadBuilderError>
 where
     DB: Database<Error = ProviderError> + AsRef<P>,
     P: StateRootProvider + HashedPostStateProvider + StorageRootProvider,
+    Client: DatabaseProviderFactory<Provider: BlockReader> + StateCommitmentProvider + Clone
 {
     // TODO: We must run this only once per block, but we are running it on every flashblock
     // merge all transitions into bundle state, this would apply the withdrawal balance changes
@@ -573,24 +579,40 @@ where
 
     // // calculate the state root
     let state_root_start_time = Instant::now();
-    let state_provider = state.database.as_ref();
-    let hashed_state = state_provider.hashed_post_state(execution_outcome.state());
-    let (state_root, _trie_output) = {
-        state
-            .database
-            .as_ref()
-            .state_root_with_updates(hashed_state.clone())
-            .inspect_err(|err| {
-                warn!(target: "payload_builder",
-                parent_header=%ctx.parent().hash(),
-                    %err,
-                    "failed to calculate state root for payload"
-                );
-            })?
-    };
+    // let state_provider = state.database.as_ref();
+    // let hashed_state = state_provider.hashed_post_state(execution_outcome.state());
+    // let (state_root, _trie_output) = {
+    //     state
+    //         .database
+    //         .as_ref()
+    //         .state_root_with_updates(hashed_state.clone())
+    //         .inspect_err(|err| {
+    //             warn!(target: "payload_builder",
+    //             parent_header=%ctx.parent().hash(),
+    //                 %err,
+    //                 "failed to calculate state root for payload"
+    //             );
+    //         })?
+    // };
+    let consistent_db_view = ConsistentDbView::new_with_latest_tip(client.clone())?;
+
+    let (state_root, metrics) = calculate_root_hash_with_sparse_trie::<_, OpReceipt>(
+        consistent_db_view,
+        &execution_outcome,
+        sparse_trie_shared_cache,
+        sparse_trie_local_cache,
+        &None,
+        ETHSpareMPTVersion::V2,
+    );
+    let state_root = state_root.map_err(|err| PayloadBuilderError::other(err))?;
+
     ctx.metrics
         .state_root_calculation_duration
         .record(state_root_start_time.elapsed());
+
+    ctx.metrics
+        .fetched_nodes
+        .record(metrics.fetched_nodes as f64);
 
     let mut requests_hash = None;
     let withdrawals_root = if ctx

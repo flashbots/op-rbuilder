@@ -16,7 +16,7 @@ use reth_optimism_rpc::engine::OpEngineApiClient;
 use reth_payload_builder::PayloadId;
 use reth_rpc_layer::{AuthClientLayer, JwtSecret};
 use serde_json::Value;
-use tracing::debug;
+use tracing::{debug, info};
 
 #[derive(Clone, Debug)]
 pub enum Address {
@@ -182,6 +182,7 @@ impl<P: Protocol> EngineApi<P> {
         payload_attributes: Option<<OpEngineTypes as PayloadTypes>::PayloadAttributes>,
     ) -> eyre::Result<ForkchoiceUpdated> {
         debug!("Updating forkchoice at {}...", chrono::Utc::now());
+        println!("payload_attributes: {:?}", payload_attributes);
         Ok(OpEngineApiClient::<OpEngineTypes>::fork_choice_updated_v3(
             &self.client().await,
             ForkchoiceState {
