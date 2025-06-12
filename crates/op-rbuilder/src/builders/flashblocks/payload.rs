@@ -13,11 +13,13 @@ use crate::{
     primitives::reth::ExecutionInfo,
     traits::{ClientBounds, PoolBounds},
 };
+use alloy_consensus::BlockHeader;
 use alloy_consensus::{
     constants::EMPTY_WITHDRAWALS, proofs, BlockBody, Header, EMPTY_OMMER_ROOT_HASH,
 };
 use alloy_eips::{eip7685::EMPTY_REQUESTS_HASH, merge::BEACON_NONCE, Encodable2718};
 use alloy_primitives::{map::foldhash::HashMap, Address, B256, U256};
+use eth_sparse_mpt::*;
 use reth::payload::PayloadBuilderAttributes;
 use reth_basic_payload_builder::BuildOutcome;
 use reth_evm::{execute::BlockBuilder, ConfigureEvm};
@@ -29,8 +31,11 @@ use reth_optimism_node::{OpBuiltPayload, OpPayloadBuilderAttributes};
 use reth_optimism_primitives::{OpPrimitives, OpReceipt, OpTransactionSigned};
 use reth_payload_util::BestPayloadTransactions;
 use reth_provider::{
-    providers::ConsistentDbView, BlockReader, DatabaseProviderFactory, ExecutionOutcome, HashedPostStateProvider, ProviderError, StateCommitmentProvider, StateRootProvider, StorageRootProvider
+    providers::ConsistentDbView, BlockReader, DatabaseProviderFactory, ExecutionOutcome,
+    HashedPostStateProvider, ProviderError, StateCommitmentProvider, StateRootProvider,
+    StorageRootProvider,
 };
+use reth_provider::{BlockHashReader, StateProvider};
 use reth_revm::{
     database::StateProviderDatabase,
     db::{states::bundle_state::BundleRetention, BundleState},
@@ -42,8 +47,7 @@ use rollup_boost::{
 };
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
-use tracing::{debug, error, metadata::Level, span, warn};
-use eth_sparse_mpt::*;
+use tracing::{debug, error, info, metadata::Level, span, warn};
 
 #[derive(Debug, Default)]
 struct ExtraExecutionInfo {
@@ -120,7 +124,10 @@ where
 impl<Pool, Client> OpPayloadBuilder<Pool, Client>
 where
     Pool: PoolBounds,
-    Client: ClientBounds + DatabaseProviderFactory<Provider: BlockReader> + StateCommitmentProvider + Clone,
+    Client: ClientBounds
+        + DatabaseProviderFactory<Provider: BlockReader>
+        + StateCommitmentProvider
+        + Clone,
 {
     /// Constructs an Optimism payload from the transactions sent via the
     /// Payload attributes by the sequencer. If the `no_tx_pool` argument is passed in
@@ -193,12 +200,27 @@ where
 
         let state_provider = self.client.state_by_block_hash(ctx.parent().hash())?;
         let state = StateProviderDatabase::new(&state_provider);
-        let sparse_trie_shared_cache = SparseTrieSharedCache::new_with_parent_block_data(ctx.parent().hash(), ctx.parent().state_root);
+        let sparse_trie_shared_cache: SparseTrieSharedCache =
+            SparseTrieSharedCache::new_with_parent_block_data(
+                ctx.parent().hash(),
+                ctx.parent().state_root,
+            );
+        let block_number = self.client.last_block_number().unwrap();
+        info!("block number: {:?}", block_number);
+        info!("parent block number: {:?}", ctx.parent().number());
+        info!(
+            "parent hash from the client: {:?}",
+            self.client.block_hash(block_number).unwrap()
+        );
+        info!(
+            "created new sparse trie shared cache with parent block hash: {:?}",
+            ctx.parent().hash()
+        );
         let mut sparse_trie_local_cache = SparseTrieLocalCache::default();
 
         // 1. execute the pre steps and seal an early block with that
         let sequencer_tx_start_time = Instant::now();
-        let mut db = State::builder()
+        let mut db: State<StateProviderDatabase<&Box<dyn StateProvider>>> = State::builder()
             .with_database(state)
             .with_bundle_update()
             .build();
@@ -218,7 +240,14 @@ where
             .sequencer_tx_duration
             .record(sequencer_tx_start_time.elapsed());
 
-        let (payload, fb_payload, mut bundle_state) = build_block(db, self.client.clone(), &ctx, &mut info, &sparse_trie_shared_cache, &mut sparse_trie_local_cache)?;
+        let (payload, fb_payload, mut bundle_state) = build_block(
+            db,
+            self.client.clone(),
+            &ctx,
+            &mut info,
+            &sparse_trie_shared_cache,
+            &mut sparse_trie_local_cache,
+        )?;
 
         best_payload.set(payload.clone());
         self.ws_pub
@@ -414,7 +443,14 @@ where
                     });
 
                     let total_block_built_duration = Instant::now();
-                    let build_result = build_block(db, self.client.clone(), &ctx, &mut info, &sparse_trie_shared_cache, &mut sparse_trie_local_cache);
+                    let build_result = build_block(
+                        db,
+                        self.client.clone(),
+                        &ctx,
+                        &mut info,
+                        &sparse_trie_shared_cache,
+                        &mut sparse_trie_local_cache,
+                    );
                     ctx.metrics
                         .total_block_built_duration
                         .record(total_block_built_duration.elapsed());
@@ -490,7 +526,10 @@ where
 impl<Pool, Client> crate::builders::generator::PayloadBuilder for OpPayloadBuilder<Pool, Client>
 where
     Pool: PoolBounds,
-    Client: ClientBounds + DatabaseProviderFactory<Provider: BlockReader> + StateCommitmentProvider + Clone,
+    Client: ClientBounds
+        + DatabaseProviderFactory<Provider: BlockReader>
+        + StateCommitmentProvider
+        + Clone,
 {
     type Attributes = OpPayloadBuilderAttributes<OpTransactionSigned>;
     type BuiltPayload = OpBuiltPayload;
@@ -541,7 +580,7 @@ fn build_block<DB, P, Client>(
 where
     DB: Database<Error = ProviderError> + AsRef<P>,
     P: StateRootProvider + HashedPostStateProvider + StorageRootProvider,
-    Client: DatabaseProviderFactory<Provider: BlockReader> + StateCommitmentProvider + Clone
+    Client: DatabaseProviderFactory<Provider: BlockReader> + StateCommitmentProvider + Clone,
 {
     // TODO: We must run this only once per block, but we are running it on every flashblock
     // merge all transitions into bundle state, this would apply the withdrawal balance changes
@@ -594,9 +633,10 @@ where
     //             );
     //         })?
     // };
-    let consistent_db_view = ConsistentDbView::new_with_latest_tip(client.clone())?;
+    info!("start calculating MPT state root");
 
-    let (state_root, metrics) = calculate_root_hash_with_sparse_trie::<_, OpReceipt>(
+    let consistent_db_view = ConsistentDbView::new_with_latest_tip(client.clone())?;
+    let (state_root_result, metrics) = calculate_root_hash_with_sparse_trie::<_, OpReceipt>(
         consistent_db_view,
         &execution_outcome,
         sparse_trie_shared_cache,
@@ -604,7 +644,17 @@ where
         &None,
         ETHSpareMPTVersion::V2,
     );
-    let state_root = state_root.map_err(|err| PayloadBuilderError::other(err))?;
+
+    let state_root = match state_root_result {
+        Ok(root) => {
+            info!("Successfully calculated state root: {:?}", root);
+            root
+        }
+        Err(err) => {
+            error!("Failed to calculate state root: {:?}", err);
+            return Err(PayloadBuilderError::other(err));
+        }
+    };
 
     ctx.metrics
         .state_root_calculation_duration

@@ -182,10 +182,11 @@ impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
         }
 
         let new_block_hash = payload.payload_inner.payload_inner.payload_inner.block_hash;
-        
+
         // Create minimal payload attributes for the forkchoice update
         // This is needed because Optimism requires EIP-1559 parameters
-        let next_timestamp = Duration::from_secs(payload.payload_inner.payload_inner.payload_inner.timestamp + 12);
+        let next_timestamp =
+            Duration::from_secs(payload.payload_inner.payload_inner.payload_inner.timestamp + 12);
         let forkchoice_attributes = OpPayloadAttributes {
             payload_attributes: PayloadAttributes {
                 timestamp: next_timestamp.as_secs(),
@@ -198,9 +199,13 @@ impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
             gas_limit: Some(self.gas_limit.unwrap_or(DEFAULT_GAS_LIMIT)),
             ..Default::default()
         };
-        
+
         self.engine_api
-            .update_forkchoice(latest.header.hash, new_block_hash, Some(forkchoice_attributes))
+            .update_forkchoice(
+                latest.header.hash,
+                new_block_hash,
+                Some(forkchoice_attributes),
+            )
             .await?;
 
         let block = self

@@ -2,6 +2,7 @@ use payload::StandardPayloadBuilderBuilder;
 use reth_node_builder::components::BasicPayloadServiceBuilder;
 
 use crate::traits::{NodeBounds, PoolBounds};
+use reth_provider::{BlockReader, DatabaseProviderFactory, StateCommitmentProvider};
 
 use super::BuilderConfig;
 
@@ -18,7 +19,9 @@ impl super::PayloadBuilder for StandardBuilder {
         = BasicPayloadServiceBuilder<StandardPayloadBuilderBuilder>
     where
         Node: NodeBounds,
-        Pool: PoolBounds;
+        Pool: PoolBounds,
+        Node::Provider: StateCommitmentProvider,
+        <Node::Provider as DatabaseProviderFactory>::Provider: BlockReader;
 
     fn new_service<Node, Pool>(
         config: BuilderConfig<Self::Config>,
@@ -26,6 +29,8 @@ impl super::PayloadBuilder for StandardBuilder {
     where
         Node: NodeBounds,
         Pool: PoolBounds,
+        Node::Provider: StateCommitmentProvider,
+        <Node::Provider as DatabaseProviderFactory>::Provider: BlockReader,
     {
         Ok(BasicPayloadServiceBuilder::new(
             StandardPayloadBuilderBuilder(config),

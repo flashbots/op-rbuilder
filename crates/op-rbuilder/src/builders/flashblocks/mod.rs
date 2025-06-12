@@ -1,8 +1,8 @@
 use super::BuilderConfig;
 use crate::traits::{NodeBounds, PoolBounds};
 use config::FlashblocksConfig;
+use reth_provider::{BlockReader, DatabaseProviderFactory, StateCommitmentProvider};
 use service::FlashblocksServiceBuilder;
-use reth_provider::{StateCommitmentProvider, DatabaseProviderFactory, BlockReader};
 
 mod config;
 //mod context;
@@ -31,6 +31,8 @@ impl super::PayloadBuilder for FlashblocksBuilder {
     where
         Node: NodeBounds,
         Pool: PoolBounds,
+        Node::Provider: StateCommitmentProvider,
+        <Node::Provider as DatabaseProviderFactory>::Provider: BlockReader,
     {
         Ok(FlashblocksServiceBuilder(config))
     }

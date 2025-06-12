@@ -6,6 +6,7 @@ use core::{
 use reth_node_builder::components::PayloadServiceBuilder;
 use reth_optimism_evm::OpEvmConfig;
 use reth_optimism_payload_builder::config::OpDAConfig;
+use reth_provider::{BlockReader, DatabaseProviderFactory, StateCommitmentProvider};
 
 use crate::{
     args::OpRbuilderArgs,
@@ -49,7 +50,9 @@ pub trait PayloadBuilder: Send + Sync + 'static {
     type ServiceBuilder<Node, Pool>: PayloadServiceBuilder<Node, Pool, OpEvmConfig>
     where
         Node: NodeBounds,
-        Pool: PoolBounds;
+        Pool: PoolBounds,
+        Node::Provider: StateCommitmentProvider,
+        <Node::Provider as DatabaseProviderFactory>::Provider: BlockReader;
 
     /// Called during node startup by reth. Returns a [`PayloadBuilderService`] instance
     /// that is preloaded with a [`PayloadJobGenerator`] instance specific to the builder
@@ -59,7 +62,9 @@ pub trait PayloadBuilder: Send + Sync + 'static {
     ) -> eyre::Result<Self::ServiceBuilder<Node, Pool>>
     where
         Node: NodeBounds,
-        Pool: PoolBounds;
+        Pool: PoolBounds,
+        Node::Provider: StateCommitmentProvider,
+        <Node::Provider as DatabaseProviderFactory>::Provider: BlockReader;
 }
 
 /// Configuration values that are applicable to any type of block builder.

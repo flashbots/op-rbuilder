@@ -9,7 +9,7 @@ use reth_node_builder::{components::PayloadServiceBuilder, BuilderContext};
 use reth_optimism_evm::OpEvmConfig;
 use reth_payload_builder::{PayloadBuilderHandle, PayloadBuilderService};
 use reth_provider::CanonStateSubscriptions;
-use reth_provider::{StateCommitmentProvider, DatabaseProviderFactory, BlockReader};
+use reth_provider::{BlockReader, DatabaseProviderFactory, StateCommitmentProvider};
 
 pub struct FlashblocksServiceBuilder(pub BuilderConfig<FlashblocksConfig>);
 

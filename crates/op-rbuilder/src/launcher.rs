@@ -1,4 +1,5 @@
 use eyre::Result;
+use reth_provider::providers::BlockchainProvider;
 
 use crate::{
     args::*,
@@ -120,7 +121,7 @@ where
             addons = addons.with_engine_api(engine_builder);
         }
         let handle = builder
-            .with_types::<OpNode>()
+            .with_types_and_provider::<OpNode, BlockchainProvider<_>>()
             .with_components(
                 op_node
                     .components()
