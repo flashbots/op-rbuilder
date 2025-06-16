@@ -3,13 +3,11 @@ use eyre::Result;
 use crate::{
     args::*,
     builders::{BuilderConfig, BuilderMode, FlashblocksBuilder, PayloadBuilder, StandardBuilder},
-    flashtestations::service::FlashtestationsService,
     metrics::VERSION,
     monitor_tx_pool::monitor_tx_pool,
     primitives::reth::engine_api_builder::OpEngineApiBuilder,
     revert_protection::{EthApiExtServer, EthApiOverrideServer, RevertProtectionExt},
     tx::FBPooledTransaction,
-    tx_signer::{generate_ethereum_keypair, Signer},
 };
 use core::fmt::Debug;
 use moka::future::Cache;
@@ -97,30 +95,8 @@ where
         builder: WithLaunchContext<NodeBuilder<Arc<DatabaseEnv>, OpChainSpec>>,
         builder_args: OpRbuilderArgs,
     ) -> Result<()> {
-        let (signer, flashtestations_service) =
-            if builder_args.flashtestations.flashtestations_enabled {
-                tracing::info!("Flashtestations enabled");
-                let (private_key, public_key, address) = generate_ethereum_keypair();
-                let signer = Signer {
-                    address,
-                    pubkey: public_key,
-                    secret: private_key,
-                };
-                tracing::info!("Generated key for flashtestations with address {}", address);
-                let flashtestations_service = FlashtestationsService::new(
-                    builder_args.clone().flashtestations,
-                    signer,
-                    builder_args
-                        .builder_signer
-                        .expect("Key to sign onchain attestations not set"),
-                );
-                (Some(signer), Some(flashtestations_service))
-            } else {
-                (builder_args.builder_signer, None)
-            };
         let builder_config = BuilderConfig::<B::Config>::try_from(builder_args.clone())
-            .expect("Failed to convert rollup args to builder config")
-            .with_builder_signer(signer);
+            .expect("Failed to convert rollup args to builder config");
 
         let da_config = builder_config.da_config.clone();
         let rollup_args = builder_args.rollup_args;
@@ -190,17 +166,6 @@ where
                     let task = monitor_tx_pool(listener, reverted_cache_copy);
                     ctx.task_executor.spawn_critical("txlogging", task);
                 }
-
-                if let Some(s) = flashtestations_service {
-                    tracing::info!("Starting bootstrapping flashtestations service");
-                    ctx.task_executor.spawn_critical(
-                        "flashtestations",
-                        Box::pin(async move {
-                            let _ = s.bootstrap().await;
-                        }),
-                    );
-                };
-
                 Ok(())
             })
             .launch()

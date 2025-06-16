@@ -1,5 +1,6 @@
 use crate::{
     builders::{generator::BuildArguments, BuilderConfig},
+    flashtestations::service::spawn_flashtestations_service,
     metrics::OpRBuilderMetrics,
     primitives::reth::ExecutionInfo,
     traits::{ClientBounds, NodeBounds, PayloadTxsBounds, PoolBounds},
@@ -52,6 +53,22 @@ where
         pool: Pool,
         _evm_config: OpEvmConfig,
     ) -> eyre::Result<Self::PayloadBuilder> {
+        let signer = self.0.builder_signer;
+
+        if self.0.flashtestations_config.flashtestations_enabled {
+            let funding_signer = signer.expect("Key to fund TEE generated address not set");
+            spawn_flashtestations_service(
+                self.0.flashtestations_config.clone(),
+                funding_signer,
+                ctx,
+            )
+            .await?;
+
+            if self.0.flashtestations_config.enable_block_proofs {
+                // TODO: flashtestations end of block transaction
+            }
+        }
+
         Ok(StandardOpPayloadBuilder::new(
             OpEvmConfig::optimism(ctx.chain_spec()),
             pool,

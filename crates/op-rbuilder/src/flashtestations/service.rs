@@ -1,8 +1,16 @@
+use std::sync::Arc;
+
+use alloy_primitives::U256;
+use reth_node_builder::BuilderContext;
 use reth_optimism_primitives::OpTransactionSigned;
 use reth_primitives::Recovered;
-use tracing::info;
+use tracing::{info, warn};
 
-use crate::{builders::BuilderTxBuilder, tx_signer::Signer};
+use crate::{
+    builders::BuilderTx,
+    traits::NodeBounds,
+    tx_signer::{generate_ethereum_keypair, Signer},
+};
 
 use super::{
     args::FlashtestationsArgs,
@@ -10,26 +18,32 @@ use super::{
     tx_manager::TxManager,
 };
 
+#[derive(Clone)]
 pub struct FlashtestationsService {
     // Attestation provider generating attestations
-    attestation_provider: Box<dyn AttestationProvider + Send + Sync>,
+    attestation_provider: Arc<Box<dyn AttestationProvider + Send + Sync>>,
     // Handles the onchain attestation and TEE block building proofs
     tx_manager: TxManager,
     // TEE service generated key
     tee_service_signer: Signer,
+    // Funding amount for the TEE signer
+    funding_amount: U256,
 }
 
 // TODO: FlashtestationsService error types
 impl FlashtestationsService {
-    pub fn new(
-        args: FlashtestationsArgs,
-        tee_service_signer: Signer,
-        funding_signer: Signer,
-    ) -> Self {
-        let attestation_provider = get_attestation_provider(AttestationConfig {
+    pub fn new(args: FlashtestationsArgs, funding_signer: Signer) -> Self {
+        let (private_key, public_key, address) = generate_ethereum_keypair();
+        let tee_service_signer = Signer {
+            address,
+            pubkey: public_key,
+            secret: private_key,
+        };
+
+        let attestation_provider = Arc::new(get_attestation_provider(AttestationConfig {
             debug: args.debug,
             debug_url: args.debug_url,
-        });
+        }));
 
         let tx_manager = TxManager::new(
             tee_service_signer,
@@ -44,6 +58,7 @@ impl FlashtestationsService {
             attestation_provider,
             tx_manager,
             tee_service_signer,
+            funding_amount: args.funding_amount,
         }
     }
 
@@ -58,22 +73,63 @@ impl FlashtestationsService {
         let attestation = self.attestation_provider.get_attestation(report_data)?;
 
         // Submit report onchain by registering the key of the tee service
-        self.tx_manager.register_tee_service(attestation).await
+        self.tx_manager
+            .fund_and_register_tee_service(attestation, self.funding_amount)
+            .await
+    }
+
+    pub async fn clean_up(&self) -> eyre::Result<()> {
+        self.tx_manager.clean_up().await
     }
 }
 
-impl BuilderTxBuilder for FlashtestationsService {
-    fn estimated_builder_tx_gas() -> u64 {
+impl BuilderTx for FlashtestationsService {
+    fn estimated_builder_tx_gas(&self) -> u64 {
         todo!()
     }
 
-    fn estimated_builder_tx_da_size() -> Option<u64> {
+    fn estimated_builder_tx_da_size(&self) -> Option<u64> {
         todo!()
     }
 
-    fn signed_builder_tx() -> Result<Recovered<OpTransactionSigned>, secp256k1::Error> {
+    fn signed_builder_tx(&self) -> Result<Recovered<OpTransactionSigned>, secp256k1::Error> {
         todo!()
     }
+}
+
+pub async fn spawn_flashtestations_service<Node>(
+    args: FlashtestationsArgs,
+    funding_signer: Signer,
+    ctx: &BuilderContext<Node>,
+) -> eyre::Result<FlashtestationsService>
+where
+    Node: NodeBounds,
+{
+    info!("Flashtestations enabled");
+
+    let flashtestations_service = FlashtestationsService::new(args.clone(), funding_signer);
+    // Generates new key and registers the attestation onchain
+    flashtestations_service.bootstrap().await?;
+
+    let flashtestations_clone = flashtestations_service.clone();
+    ctx.task_executor()
+        .spawn_critical_with_graceful_shutdown_signal(
+            "flashtestations clean up task",
+            |shutdown| {
+                Box::pin(async move {
+                    let graceful_guard = shutdown.await;
+                    if let Err(e) = flashtestations_clone.clean_up().await {
+                        warn!(
+                            error = %e,
+                            "Failed to complete clean up for flashtestations service",
+                        )
+                    };
+                    drop(graceful_guard)
+                })
+            },
+        );
+
+    Ok(flashtestations_service)
 }
 
 #[cfg(test)]

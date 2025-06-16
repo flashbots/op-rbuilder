@@ -1,4 +1,4 @@
-use alloy_primitives::Address;
+use alloy_primitives::{utils::parse_ether, Address, U256};
 
 /// Parameters for Flashtestations configuration
 /// The names in the struct are prefixed with `flashtestations`
@@ -21,7 +21,7 @@ pub struct FlashtestationsArgs {
     )]
     pub debug: bool,
 
-    /// flashtestations debug url
+    // Debug url for attestations
     #[arg(long = "flashtestations.debug-url", env = "FLASHTESTATIONS_DEBUG_URL")]
     pub debug_url: Option<String>,
 
@@ -33,19 +33,34 @@ pub struct FlashtestationsArgs {
     )]
     pub rpc_url: String,
 
+    /// Funding amount for the generated signer
+    #[arg(
+        long = "flashtestations.funding-amount",
+        env = "FLASHTESTATIONS_FUNDING_AMOUNT",
+        default_value = "1",
+        value_parser = parse_ether
+    )]
+    pub funding_amount: U256,
+
+    /// Enable end of block TEE proof
+    #[arg(
+        long = "flashtestations.enable-block-proofs",
+        env = "FLASHTESTATIONS_ENABLE_BLOCK_PROOFS",
+        default_value = "false"
+    )]
+    pub enable_block_proofs: bool,
+
     /// The address of the flashtestations registry contract
     #[arg(
         long = "flashtestations.registry-address",
-        env = "FLASHTESTATIONS_REGISTRY_ADDRESS",
-        default_value = "0x0000000000000000000000000000000000000000"
+        env = "FLASHTESTATIONS_REGISTRY_ADDRESS"
     )]
     pub registry_address: Address,
 
     /// The address of the builder policy contract
     #[arg(
         long = "flashtestations.builder-policy-address",
-        env = "FLASHTESTATIONS_BUILDER_POLICY_ADDRESS",
-        default_value = "0x0000000000000000000000000000000000000000"
+        env = "FLASHTESTATIONS_BUILDER_POLICY_ADDRESS"
     )]
     pub builder_policy_address: Address,
 

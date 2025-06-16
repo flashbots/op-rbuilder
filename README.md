@@ -27,6 +27,39 @@ To build the op-rbuilder, run:
 cargo build -p op-rbuilder --bin op-rbuilder
 ```
 
+### Flashblocks
+
+To run op-rbuilder with flashblocks:
+
+```bash
+cargo run -p op-rbuilder --bin op-rbuilder -- node \
+    --chain /path/to/chain-config.json \
+    --http \
+    --authrpc.port 9551 \
+    --authrpc.jwtsecret /path/to/jwt.hex \
+    --flashblocks.enabled \
+    --flashblocks.port 1111 \ # port to bind ws that provides flashblocks 
+    --flashblocks.addr 127.0.0.1 # address to bind the ws that provides flashblocks
+```
+
+### Flashtestations 
+
+To run op-rbuilder with flashtestations:
+
+```bash
+cargo run -p op-rbuilder --bin op-rbuilder -- node \
+    --chain /path/to/chain-config.json \
+    --http \
+    --authrpc.port 9551 \
+    --authrpc.jwtsecret /path/to/jwt.hex \
+    --flashtestations.enabled \
+    --flashtestations.rpc-url your-rpc-url \ # rpc to submit the attestation transaction to
+    --flashtestations.funding-amount 0.01 \ # amount in ETH to fund the TEE generated key
+    --flashtestations.registry-address 0xFlashtestationsRegistryAddress 
+```
+
+Note that `--rollup.builder-secret-key` must be set and funded in order for the flashtestations key to be funded and submit the attestation on-chain.
+
 ## Observability
 
 To verify whether a builder block has landed on-chain, you can add the `--rollup.builder-secret-key` flag or `BUILDER_SECRET_KEY` environment variable.
