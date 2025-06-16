@@ -59,7 +59,7 @@ jobs:
           version: nightly
 
       - name: Install native dependencies
-        run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev clang libclang-dev llvm build-essential pkg-config
+        run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev clang libclang-dev llvm build-essential pkg-config libtss2-dev
 
       - name: Compile tester
         run: make tester
