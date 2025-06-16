@@ -53,14 +53,16 @@ pub struct FlashtestationsArgs {
     /// The address of the flashtestations registry contract
     #[arg(
         long = "flashtestations.registry-address",
-        env = "FLASHTESTATIONS_REGISTRY_ADDRESS"
+        env = "FLASHTESTATIONS_REGISTRY_ADDRESS",
+        required_if_eq("flashtestations_enabled", "true")
     )]
     pub registry_address: Address,
 
     /// The address of the builder policy contract
     #[arg(
         long = "flashtestations.builder-policy-address",
-        env = "FLASHTESTATIONS_BUILDER_POLICY_ADDRESS"
+        env = "FLASHTESTATIONS_BUILDER_POLICY_ADDRESS",
+        required_if_eq("flashtestations_enabled", "true")
     )]
     pub builder_policy_address: Address,
 
