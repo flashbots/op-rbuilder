@@ -123,6 +123,7 @@ reth-ipc = { workspace = true, optional = true }
 bollard = { version = "0.19", optional = true }
 tar = { version = "0.4", optional = true }
 ctor = { version = "0.4.2", optional = true }
+rlimit = { version = "0.10", optional = true }
 macros = { path = "src/tests/framework/macros", optional = true }
 
 [target.'cfg(unix)'.dependencies]
@@ -144,6 +145,7 @@ reth-ipc = { workspace = true }
 reth-node-builder = { workspace = true, features = ["test-utils"] }
 bollard = "0.19"
 ctor = "0.4.2"
+rlimit = { version = "0.10" }
 
 [features]
 default = ["jemalloc"]
@@ -175,15 +177,13 @@ testing = [
 	"bollard",
 	"ctor",
 	"macros",
+	"rlimit",
 ]
 
 
 interop = []
 
-telemetry = [
-	"reth-tracing-otlp",
-	"opentelemetry",
-]
+telemetry = ["reth-tracing-otlp", "opentelemetry"]
 
 custom-engine-api = []
 

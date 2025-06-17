@@ -15,6 +15,7 @@ use reth_optimism_chainspec::OpChainSpec;
         },
         ..default_node_config()
     },
+    standard
 )]
 async fn pending_pool_limit(rbuilder: LocalInstance) -> eyre::Result<()> {
     let driver = rbuilder.driver().await?;
