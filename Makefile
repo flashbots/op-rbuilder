@@ -54,10 +54,11 @@ test: ## Run the tests for rbuilder and op-rbuilder
 .PHONY: lt
 lt: lint test ## Run "lint" and "test"
 
+## TODO: use all features when tdx dependency is compatible with macOS
 .PHONY: fmt
 fmt: ## Format the code
 	cargo +nightly fmt
-	cargo +nightly clippy --all-features --fix --allow-staged --allow-dirty
+	cargo +nightly clippy --features ci-features --fix --allow-staged --allow-dirty
 	cargo +nightly fix --allow-staged --allow-dirty
 
 .PHONY: bench
