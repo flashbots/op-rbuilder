@@ -74,12 +74,23 @@ where
         let signer = self.0.builder_signer;
         if self.0.flashtestations_config.flashtestations_enabled {
             let funding_signer = signer.expect("Key to fund TEE generated address not set");
-            let flashtestations_service = spawn_flashtestations_service(
+            let flashtestations_service = match spawn_flashtestations_service(
                 self.0.flashtestations_config.clone(),
                 funding_signer,
                 ctx,
             )
-            .await?;
+            .await
+            {
+                Ok(service) => service,
+                Err(e) => {
+                    tracing::warn!(error = %e, "Failed to spawn flashtestations service, falling back to standard builder tx");
+                    return self.spawn_payload_builder_service(
+                        ctx,
+                        pool,
+                        StandardBuilderTx { signer },
+                    );
+                }
+            };
 
             if self.0.flashtestations_config.enable_block_proofs {
                 return self.spawn_payload_builder_service(ctx, pool, flashtestations_service);

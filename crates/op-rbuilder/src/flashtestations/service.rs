@@ -49,8 +49,10 @@ impl FlashtestationsService {
             tee_service_signer,
             funding_signer,
             args.rpc_url,
-            args.registry_address,
-            args.builder_policy_address,
+            args.registry_address
+                .expect("registry address required when flashtestations enabled"),
+            args.builder_policy_address
+                .expect("builder policy address required when flashtestations enabled"),
             args.builder_proof_version,
         );
 

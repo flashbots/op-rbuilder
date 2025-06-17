@@ -56,7 +56,7 @@ pub struct FlashtestationsArgs {
         env = "FLASHTESTATIONS_REGISTRY_ADDRESS",
         required_if_eq("flashtestations_enabled", "true")
     )]
-    pub registry_address: Address,
+    pub registry_address: Option<Address>,
 
     /// The address of the builder policy contract
     #[arg(
@@ -64,7 +64,7 @@ pub struct FlashtestationsArgs {
         env = "FLASHTESTATIONS_BUILDER_POLICY_ADDRESS",
         required_if_eq("flashtestations_enabled", "true")
     )]
-    pub builder_policy_address: Address,
+    pub builder_policy_address: Option<Address>,
 
     /// The version of the block builder verification proof
     #[arg(
