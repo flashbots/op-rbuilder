@@ -21,6 +21,7 @@ use crate::{
         flashblocks_block_time: 200,
         flashblocks_leeway_time: 0,
         flashblocks_dynamic: false,
+        calculate_state_root: true,
     },
     ..Default::default()
 })]

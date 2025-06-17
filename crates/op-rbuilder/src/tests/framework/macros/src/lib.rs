@@ -29,6 +29,7 @@ const BUILDER_VARIANTS: &[VariantInfo] = &[
                     let mut args = #args;
                     args.flashblocks.enabled = true;
                     args.flashblocks.flashblocks_port = 0;
+                    args.flashblocks.calculate_state_root = true;
                     args
                 }
             }
@@ -39,6 +40,7 @@ const BUILDER_VARIANTS: &[VariantInfo] = &[
                     let mut args = crate::args::OpRbuilderArgs::default();
                     args.flashblocks.enabled = true;
                     args.flashblocks.flashblocks_port = 0;
+                    args.flashblocks.calculate_state_root = true;
                     args
                 }
             }

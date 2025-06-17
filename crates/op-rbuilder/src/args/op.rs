@@ -137,6 +137,14 @@ pub struct FlashblocksArgs {
         env = "FLASHBLOCK_LEEWAY_TIME"
     )]
     pub flashblocks_leeway_time: u64,
+
+    /// Should we calculate state root for each flashblock
+    #[arg(
+        long = "flashblocks.calculate-state-root",
+        default_value = "true",
+        env = "FLASHBLOCKS_CALCULATE_STATE_ROOT"
+    )]
+    pub calculate_state_root: bool,
 }
 
 impl Default for FlashblocksArgs {

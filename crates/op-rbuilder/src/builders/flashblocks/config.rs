@@ -22,6 +22,9 @@ pub struct FlashblocksConfig {
 
     /// Enables dynamic flashblocks number based on FCU arrival time
     pub dynamic_adjustment: bool,
+
+    /// Should we calculate state root for each flashblock
+    pub calculate_state_root: bool,
 }
 
 impl Default for FlashblocksConfig {
@@ -31,6 +34,7 @@ impl Default for FlashblocksConfig {
             interval: Duration::from_millis(250),
             leeway_time: Duration::from_millis(50),
             dynamic_adjustment: false,
+            calculate_state_root: true,
         }
     }
 }
@@ -55,6 +59,7 @@ impl TryFrom<OpRbuilderArgs> for FlashblocksConfig {
             interval,
             leeway_time,
             dynamic_adjustment,
+            calculate_state_root: args.flashblocks.calculate_state_root,
         })
     }
 }
