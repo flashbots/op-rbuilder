@@ -330,11 +330,18 @@ impl OpPayloadBuilderCtx {
         let mut num_txs_simulated = 0;
         let mut num_txs_simulated_success = 0;
         let mut num_txs_simulated_fail = 0;
+        let mut num_bundles_reverted = 0;
         let base_fee = self.base_fee();
         let tx_da_limit = self.da_config.max_da_tx_size();
         let mut evm = self.evm_config.evm_with_env(&mut *db, self.evm_env.clone());
 
-        info!(target: "payload_builder", block_da_limit = ?block_da_limit, tx_da_size = ?tx_da_limit, block_gas_limit = ?block_gas_limit, "DA limits");
+        info!(
+            target: "payload_builder",
+            message = "Executing best transactions",
+            block_da_limit = ?block_da_limit,
+            tx_da_limit = ?tx_da_limit,
+            block_gas_limit = ?block_gas_limit,
+        );
 
         // Remove once we merge Reth 1.4.4
         // Fixed in https://github.com/paradigmxyz/reth/pull/16514
@@ -363,12 +370,22 @@ impl OpPayloadBuilderCtx {
             // - the transaction comes from a bundle (is_some) and the hash **is not** in reverted hashes
             // Note that we need to use the Option to signal whether the transaction comes from a bundle,
             // otherwise, we would exclude all transactions that are not in the reverted hashes.
+            let is_bundle_tx = reverted_hashes.is_some();
             let exclude_reverting_txs =
-                reverted_hashes.is_some() && !reverted_hashes.unwrap().contains(&tx_hash);
+                is_bundle_tx && !reverted_hashes.unwrap().contains(&tx_hash);
 
             let log_txn = |result: TxnExecutionResult| {
-                debug!(target: "payload_builder", tx_hash = ?tx_hash, tx_da_size = ?tx_da_size, exclude_reverting_txs = ?exclude_reverting_txs, result = %result, "Considering transaction");
+                debug!(
+                    target: "payload_builder",
+                    message = "Considering transaction",
+                    tx_hash = ?tx_hash,
+                    tx_da_size = ?tx_da_size,
+                    exclude_reverting_txs = ?exclude_reverting_txs,
+                    result = %result,
+                );
             };
+
+            num_txs_considered += 1;
 
             if let Some(conditional) = conditional {
                 // TODO: ideally we should get this from the txpool stream
@@ -391,7 +408,6 @@ impl OpPayloadBuilderCtx {
                 }
             }
 
-            num_txs_considered += 1;
             // ensure we still have capacity for this transaction
             if let Err(result) = info.is_tx_over_limits(
                 tx_da_size,
@@ -455,6 +471,9 @@ impl OpPayloadBuilderCtx {
                 num_txs_simulated_success += 1;
             } else {
                 num_txs_simulated_fail += 1;
+                if is_bundle_tx {
+                    num_bundles_reverted += 1;
+                }
                 if exclude_reverting_txs {
                     log_txn(TxnExecutionResult::RevertedAndExcluded);
                     info!(target: "payload_builder", tx_hash = ?tx.tx_hash(), "skipping reverted transaction");
@@ -511,7 +530,18 @@ impl OpPayloadBuilderCtx {
         self.metrics
             .payload_num_tx_simulated_fail
             .record(num_txs_simulated_fail as f64);
+        self.metrics
+            .bundles_reverted
+            .record(num_bundles_reverted as f64);
 
+        debug!(
+            target: "payload_builder",
+            message = "Completed executing best transactions",
+            txs_executed = num_txs_considered,
+            txs_applied = num_txs_simulated_success,
+            txs_rejected = num_txs_simulated_fail,
+            bundles_reverted = num_bundles_reverted,
+        );
         Ok(None)
     }
 

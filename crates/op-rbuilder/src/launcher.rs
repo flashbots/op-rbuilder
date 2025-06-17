@@ -26,12 +26,22 @@ use std::{marker::PhantomData, sync::Arc};
 pub fn launch() -> Result<()> {
     let cli = Cli::parsed();
     let mode = cli.builder_mode();
+
+    #[cfg(feature = "telemetry")]
+    let telemetry_args = match &cli.command {
+        reth_optimism_cli::commands::Commands::Node(node_command) => {
+            node_command.ext.telemetry.clone()
+        }
+        _ => Default::default(),
+    };
+
     let mut cli_app = cli.configure();
 
     #[cfg(feature = "telemetry")]
     {
-        let otlp = reth_tracing_otlp::layer("op-reth");
-        cli_app.access_tracing_layers()?.add_layer(otlp);
+        use crate::primitives::telemetry::setup_telemetry_layer;
+        let telemetry_layer = setup_telemetry_layer(&telemetry_args)?;
+        cli_app.access_tracing_layers()?.add_layer(telemetry_layer);
     }
 
     cli_app.init_tracing()?;
@@ -136,12 +146,8 @@ where
 
                     let pool = ctx.pool().clone();
                     let provider = ctx.provider().clone();
-                    let revert_protection_ext: RevertProtectionExt<
-                        _,
-                        _,
-                        _,
-                        op_alloy_network::Optimism,
-                    > = RevertProtectionExt::new(pool, provider, ctx.registry.eth_api().clone());
+                    let revert_protection_ext =
+                        RevertProtectionExt::new(pool, provider, ctx.registry.eth_api().clone());
 
                     ctx.modules
                         .merge_configured(revert_protection_ext.bundle_api().into_rpc())?;
@@ -156,16 +162,9 @@ where
                 VERSION.register_version_metrics();
                 if builder_args.log_pool_transactions {
                     tracing::info!("Logging pool transactions");
-                    ctx.task_executor.spawn_critical(
-                        "txlogging",
-                        Box::pin(async move {
-                            monitor_tx_pool(
-                                ctx.pool.all_transactions_event_listener(),
-                                reverted_cache_copy,
-                            )
-                            .await;
-                        }),
-                    );
+                    let listener = ctx.pool.all_transactions_event_listener();
+                    let task = monitor_tx_pool(listener, reverted_cache_copy);
+                    ctx.task_executor.spawn_critical("txlogging", task);
                 }
 
                 Ok(())

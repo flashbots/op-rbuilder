@@ -6,6 +6,7 @@ use core::{
     task::{Context, Poll},
 };
 use futures::{Sink, SinkExt};
+use futures_util::StreamExt;
 use rollup_boost::FlashblocksPayloadV1;
 use std::{io, net::TcpListener, sync::Arc};
 use tokio::{
@@ -20,7 +21,7 @@ use tokio_tungstenite::{
     tungstenite::{Message, Utf8Bytes},
     WebSocketStream,
 };
-use tracing::warn;
+use tracing::{debug, warn};
 
 use crate::metrics::OpRBuilderMetrics;
 
@@ -65,6 +66,14 @@ impl WebSocketPublisher {
         // Serialize the payload to a UTF-8 string
         // serialize only once, then just copy around only a pointer
         // to the serialized data for each subscription.
+        debug!(
+            target: "payload_builder",
+            message = "Sending flashblock to rollup-boost",
+            payload_id = payload.payload_id.to_string(),
+            index = payload.index,
+            base = payload.base.is_some(),
+        );
+
         let serialized = serde_json::to_string(payload)?;
         let utf8_bytes = Utf8Bytes::from(serialized);
 
@@ -201,6 +210,20 @@ async fn broadcast_loop(
                     tracing::warn!("Broadcast channel lagged, some messages were dropped");
                 }
             },
+
+            // Ping-pong handled by tokio_tungstenite when you perform read on the socket
+            message = stream.next() => if let Some(message) = message { match message {
+                // We handle only close frame to highlight conn closing
+                Ok(Message::Close(_)) => {
+                    tracing::info!("Closing frame received, stopping connection for {peer_addr}");
+                    break;
+                }
+                Err(e) => {
+                    tracing::warn!("Received error. Closing flashblocks subscription for {peer_addr}: {e}");
+                    break;
+                }
+                _ => (),
+            } }
         }
     }
 }

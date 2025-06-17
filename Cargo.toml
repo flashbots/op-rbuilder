@@ -184,3 +184,4 @@ ahash = "0.8.6"
 time = { version = "0.3.36", features = ["macros", "formatting", "parsing"] }
 vergen = "9.0.4"
 vergen-git2 = "1.0.5"
+opentelemetry = { version = "0.29.1", features = ["trace"] }
