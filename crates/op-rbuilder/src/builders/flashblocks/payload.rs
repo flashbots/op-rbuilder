@@ -453,13 +453,13 @@ where
                         .record(best_txs_start_time.elapsed());
 
                     let tx_execution_start_time = Instant::now();
-                    if let Some(()) = ctx.execute_best_transactions(
+                    if ctx.execute_best_transactions(
                         &mut info,
                         &mut db,
                         best_txs,
                         total_gas_per_batch.min(ctx.block_gas_limit()),
                         total_da_per_batch,
-                    )? {
+                    )?.is_some() {
                         // Handles job cancellation
                         info!(
                             target: "payload_builder",
