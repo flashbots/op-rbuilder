@@ -220,14 +220,11 @@ async fn bundle_min_block_number(rbuilder: LocalInstance) -> eyre::Result<()> {
 }
 
 /// Test the behaviour of the revert protection bundle with a min timestamp.
-#[tokio::test]
-async fn revert_protection_bundle_min_timestamp() -> eyre::Result<()> {
-    let rbuilder = LocalInstance::new::<StandardBuilder>(OpRbuilderArgs {
-        enable_revert_protection: true,
-        ..Default::default()
-    })
-    .await?;
-
+#[rb_test(args = OpRbuilderArgs {
+    enable_revert_protection: true,
+    ..Default::default()
+})]
+async fn bundle_min_timestamp(rbuilder: LocalInstance) -> eyre::Result<()> {
     let driver = rbuilder.driver().await?;
     let initial_timestamp = driver.latest().await?.header.timestamp;
 
