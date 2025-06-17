@@ -8,12 +8,20 @@ use tokio_tungstenite::{connect_async, tungstenite::Message};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    args::OpRbuilderArgs,
+    args::{FlashblocksArgs, OpRbuilderArgs},
     tests::{ChainDriverExt, LocalInstance, TransactionBuilderExt},
 };
 
 #[rb_test(flashblocks, args = OpRbuilderArgs {
     chain_block_time: 2000,
+    flashblocks: FlashblocksArgs {
+        enabled: true,
+        flashblocks_port: 1239,
+        flashblocks_addr: "127.0.0.1".into(),
+        flashblocks_block_time: 200,
+        flashblocks_leeway_time: 0,
+        flashblocks_dynamic: false,
+    },
     ..Default::default()
 })]
 async fn smoke(rbuilder: LocalInstance) -> eyre::Result<()> {
