@@ -47,7 +47,7 @@ cargo run -p op-rbuilder --bin op-rbuilder -- node \
 To run op-rbuilder with flashtestations:
 
 ```bash
-cargo run -p op-rbuilder --bin op-rbuilder -- node \
+cargo run -p op-rbuilder --bin op-rbuilder --features=flashtestations -- node \
     --chain /path/to/chain-config.json \
     --http \
     --authrpc.port 9551 \

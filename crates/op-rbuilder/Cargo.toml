@@ -121,8 +121,8 @@ hex = "0.4"
 ureq = "2.10"
 
 rollup-boost = { git = "http://github.com/flashbots/rollup-boost", branch = "main" }
-tdx = { git = "https://github.com/automata-network/tdx-attestation-sdk.git"}
-dcap-rs = { git = "https://github.com/automata-network/dcap-rs.git" }
+tdx = { git = "https://github.com/automata-network/tdx-attestation-sdk.git", optional = true }
+dcap-rs = { git = "https://github.com/automata-network/dcap-rs.git", optional = true }
 
 dashmap = { version = "6.1", optional = true }
 nanoid = { version = "0.4", optional = true }
@@ -187,8 +187,9 @@ testing = [
 	"rlimit",
 ]
 
-
 interop = []
+
+flashtestations = ["dcap-rs", "tdx"]
 
 telemetry = ["reth-tracing-otlp", "opentelemetry"]
 
