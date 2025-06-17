@@ -29,10 +29,8 @@ jobs:
           echo "| \`GITHUB_REF\`      | \`${GITHUB_REF}\`      |" >> $GITHUB_STEP_SUMMARY
           echo "| \`GITHUB_SHA\`      | \`${GITHUB_SHA}\`      |" >> $GITHUB_STEP_SUMMARY
           echo "| \`VERSION\`         | \`${VERSION}\`         |" >> $GITHUB_STEP_SUMMARY
-          echo "| \`FEATURES\`        | \`${{ github.event.inputs.features || 'none' }}\` |" >> $GITHUB_STEP_SUMMARY
 
   build-docker:
-    if: ${{ github.event.inputs.build-docker == 'true' }}
     name: Build and publish Docker image
     needs: extract-version
     runs-on: ${{ matrix.configs.runner }}
@@ -87,5 +85,4 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           build-args: |
-            FEATURES=${{ github.event.inputs.features || '' }}
             RBUILDER_BIN=op-rbuilder
