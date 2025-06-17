@@ -141,8 +141,7 @@ impl syn::parse::Parse for TestConfig {
                 return Err(syn::Error::new_spanned(
                     config.args.as_ref().or(config.config.as_ref()).unwrap(),
                     format!(
-                        "Cannot use 'args' or 'config' with custom '{}' expression. Use either '{} = expression' or 'args/config' parameters, not both.",
-                        variant, variant
+                        "Cannot use 'args' or 'config' with custom '{variant}' expression. Use either '{variant} = expression' or 'args/config' parameters, not both."
                     ),
                 ));
             }
@@ -172,7 +171,7 @@ fn generate_instance_init(
     }
 
     let variant_info =
-        get_variant_info(variant).unwrap_or_else(|| panic!("Unknown variant: {}", variant));
+        get_variant_info(variant).unwrap_or_else(|| panic!("Unknown variant: {variant}"));
 
     let builder_type: proc_macro2::TokenStream = variant_info.builder_type.parse().unwrap();
     let default_call: proc_macro2::TokenStream =
@@ -217,10 +216,8 @@ pub fn rb_test(args: TokenStream, input: TokenStream) -> TokenStream {
 
     // Generate test for each requested variant
     for (variant, custom_expr) in &config.variants {
-        let test_name = syn::Ident::new(
-            &format!("{}_{}", original_name, variant),
-            original_name.span(),
-        );
+        let test_name =
+            syn::Ident::new(&format!("{original_name}_{variant}"), original_name.span());
 
         let instance_init =
             generate_instance_init(variant, custom_expr.as_ref(), &config.args, &config.config);
@@ -261,10 +258,7 @@ fn validate_signature(item_fn: &ItemFn) {
         .replace(" ", "");
 
     if output_types != "->eyre::Result<()>" {
-        panic!(
-            "Function must return Result<(), eyre::Error>. Actual: {}",
-            output_types
-        );
+        panic!("Function must return Result<(), eyre::Error>. Actual: {output_types}",);
     }
 }
 
