@@ -278,32 +278,9 @@ where
             // return early since we don't need to build a block with transactions from the pool
             return Ok(());
         }
-        // We adjust our flashblocks timings based on time_drift
-        let (flashblocks_per_block, first_flashblock_offset) = match time_drift {
-            // Nothing we could do, assuming we have system time problem and praying
-            None => (
-                self.config.flashblocks_per_block(),
-                self.config.specific.interval,
-            ),
-            Some(time_drift) => {
-                let interval = self.config.specific.interval.as_millis();
-                let time_drift = time_drift.as_millis();
-                let first_flashblock_offset = time_drift.rem(interval);
-                let flashblocks_per_block = if first_flashblock_offset == 0 {
-                    // In this case all flashblock are full and they all in division
-                    time_drift.div(interval)
-                } else {
-                    // If we have any reminder that mean the first flashblock won't be in division
-                    // so we add it manually.
-                    time_drift.div(interval) + 1
-                };
-                // We won't have any problems because of casting
-                (
-                    flashblocks_per_block as u64,
-                    Duration::from_millis(first_flashblock_offset as u64),
-                )
-            }
-        };
+        // We adjust our flashblocks timings based on time_drift if dynamic adjustment enable
+        let (flashblocks_per_block, first_flashblock_offset) =
+            self.calculate_flashblocks(time_drift);
         info!(
             target: "payload_builder",
             message = "Performed flashblocks timing derivation",
@@ -575,6 +552,34 @@ where
                 }
             }
         }
+    }
+
+    /// Calculate number of flashblocks.
+    /// If dynamic is enabled this function will take time drift into the account.
+    pub fn calculate_flashblocks(&self, time_drift: Option<Duration>) -> (u64, Duration) {
+        if !self.config.specific.dynamic_adjustment || time_drift.is_none() {
+            return (
+                self.config.flashblocks_per_block(),
+                self.config.specific.interval,
+            );
+        }
+        let time_drift = time_drift.unwrap();
+        let interval = self.config.specific.interval.as_millis();
+        let time_drift = time_drift.as_millis();
+        let first_flashblock_offset = time_drift.rem(interval);
+        let flashblocks_per_block = if first_flashblock_offset == 0 {
+            // In this case all flashblock are full and they all in division
+            time_drift.div(interval)
+        } else {
+            // If we have any reminder that mean the first flashblock won't be in division
+            // so we add it manually.
+            time_drift.div(interval) + 1
+        };
+        // We won't have any problems because of casting
+        (
+            flashblocks_per_block as u64,
+            Duration::from_millis(first_flashblock_offset as u64),
+        )
     }
 }
 

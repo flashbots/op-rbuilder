@@ -116,6 +116,15 @@ pub struct FlashblocksArgs {
     )]
     pub flashblocks_block_time: u64,
 
+    /// Enabled dynamic flashblocks adjustment. This will allow account for late FCUs and produce
+    /// less flashblocks, while each flashblock would be bigger.
+    #[arg(
+        long = "flashblocks.dynamic",
+        default_value = "false",
+        env = "FLASHBLOCK_DYNAMIC"
+    )]
+    pub flashblocks_dynamic: bool,
+
     /// Time by which blocks would be completed earlier in milliseconds.
     ///
     /// This time used to account for latencies, this time would be deducted from total block
