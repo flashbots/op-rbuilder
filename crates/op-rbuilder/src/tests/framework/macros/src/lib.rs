@@ -1,6 +1,6 @@
 use proc_macro::TokenStream;
-use quote::{ToTokens, quote};
-use syn::{Expr, ItemFn, Meta, Token, parse_macro_input, punctuated::Punctuated};
+use quote::{quote, ToTokens};
+use syn::{parse_macro_input, punctuated::Punctuated, Expr, ItemFn, Meta, Token};
 
 // Define all variant information in one place
 struct VariantInfo {
@@ -43,6 +43,13 @@ const BUILDER_VARIANTS: &[VariantInfo] = &[
                 }
             }
         },
+    },
+    VariantInfo {
+        name: "experimental",
+        builder_type: "crate::builders::ExperimentalBuilder",
+        default_instance_call: "crate::tests::LocalInstance::experimental().await?",
+        args_modifier: |args| quote! { #args },
+        default_args_factory: || quote! { Default::default() },
     },
 ];
 
@@ -284,4 +291,4 @@ macro_rules! generate_if_variant_macros {
 }
 
 // Generate macros for all variants
-generate_if_variant_macros!(standard, flashblocks);
+generate_if_variant_macros!(standard, flashblocks, experimental);

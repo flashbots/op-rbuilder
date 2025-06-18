@@ -124,6 +124,8 @@ rollup-boost = { git = "http://github.com/flashbots/rollup-boost", branch = "mai
 tdx = { git = "https://github.com/automata-network/tdx-attestation-sdk.git", optional = true }
 dcap-rs = { git = "https://github.com/automata-network/dcap-rs.git", optional = true }
 
+rblib = { path = "../../../rblib", features = ["optimism"] }
+
 dashmap = { version = "6.1", optional = true }
 nanoid = { version = "0.4", optional = true }
 reth-ipc = { workspace = true, optional = true }
@@ -142,7 +144,7 @@ vergen-git2.workspace = true
 
 [dev-dependencies]
 alloy-provider = { workspace = true, default-features = true, features = [
-	"txpool-api",
+    "txpool-api",
 ] }
 tempfile = "3.8"
 macros = { path = "src/tests/framework/macros" }
@@ -158,15 +160,15 @@ rlimit = { version = "0.10" }
 default = ["jemalloc"]
 
 jemalloc = [
-	"dep:tikv-jemallocator",
-	"reth-cli-util/jemalloc",
-	"reth-optimism-cli/jemalloc",
+    "dep:tikv-jemallocator",
+    "reth-cli-util/jemalloc",
+    "reth-optimism-cli/jemalloc",
 ]
 jemalloc-prof = [
-	"jemalloc",
-	"tikv-jemallocator?/profiling",
-	"reth/jemalloc-prof",
-	"reth-cli-util/jemalloc-prof",
+    "jemalloc",
+    "tikv-jemallocator?/profiling",
+    "reth/jemalloc-prof",
+    "reth-cli-util/jemalloc-prof",
 ]
 
 min-error-logs = ["tracing/release_max_level_error"]
@@ -176,14 +178,14 @@ min-debug-logs = ["tracing/release_max_level_debug"]
 min-trace-logs = ["tracing/release_max_level_trace"]
 
 testing = [
-	"dashmap",
-	"nanoid",
-	"reth-ipc",
-	"reth-node-builder/test-utils",
-	"bollard",
-	"ctor",
-	"macros",
-	"rlimit",
+    "dashmap",
+    "nanoid",
+    "reth-ipc",
+    "reth-node-builder/test-utils",
+    "bollard",
+    "ctor",
+    "macros",
+    "rlimit",
 ]
 
 interop = []
@@ -202,10 +204,10 @@ ci-features = [
     "min-info-logs",
     "min-debug-logs",
     "min-trace-logs",
-	"testing",
-	"interop",
-	"telemetry",
-	"custom-engine-api",
+    "testing",
+    "interop",
+    "telemetry",
+    "custom-engine-api",
 ]
 
 [[bin]]

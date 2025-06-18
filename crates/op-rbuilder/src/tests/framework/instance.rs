@@ -1,6 +1,6 @@
 use crate::{
     args::OpRbuilderArgs,
-    builders::{BuilderConfig, FlashblocksBuilder, PayloadBuilder, StandardBuilder},
+    builders::{BuilderConfig, ExperimentalBuilder, FlashblocksBuilder, PayloadBuilder, StandardBuilder},
     primitives::reth::engine_api_builder::OpEngineApiBuilder,
     revert_protection::{EthApiExtServer, EthApiOverrideServer, RevertProtectionExt},
     tests::{
@@ -193,6 +193,19 @@ impl LocalInstance {
         node_command.ext.flashblocks.enabled = true;
         node_command.ext.flashblocks.flashblocks_port = 0; // use random os assigned port
         let instance = Self::new::<FlashblocksBuilder>(node_command.ext.clone()).await?;
+        let driver = ChainDriver::<Ipc>::local(&instance).await?;
+        driver.fund_default_accounts().await?;
+        Ok(instance)
+    }
+
+    /// Creates new local instance of the OP builder node with the standard builder configuration.
+    /// This method prefunds the default accounts with 1 ETH each.
+    pub async fn experimental() -> eyre::Result<Self> {
+        let args = crate::args::Cli::parse_from(["dummy", "node"]);
+        let Commands::Node(ref node_command) = args.command else {
+            unreachable!()
+        };
+        let instance = Self::new::<ExperimentalBuilder>(node_command.ext.clone()).await?;
         let driver = ChainDriver::<Ipc>::local(&instance).await?;
         driver.fund_default_accounts().await?;
         Ok(instance)

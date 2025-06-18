@@ -18,10 +18,12 @@ mod builder_tx;
 mod context;
 mod flashblocks;
 mod generator;
+mod next;
 mod standard;
 
 pub use builder_tx::BuilderTx;
 pub use flashblocks::FlashblocksBuilder;
+pub use next::ExperimentalBuilder;
 pub use standard::StandardBuilder;
 
 /// Defines the payload building mode for the OP builder.
