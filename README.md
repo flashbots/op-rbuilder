@@ -55,7 +55,9 @@ cargo run -p op-rbuilder --bin op-rbuilder --features=flashtestations -- node \
     --flashtestations.enabled \
     --flashtestations.rpc-url your-rpc-url \ # rpc to submit the attestation transaction to
     --flashtestations.funding-amount 0.01 \ # amount in ETH to fund the TEE generated key
-    --flashtestations.registry-address 0xFlashtestationsRegistryAddress 
+    --flashtestations.funding-key secret-key \ # funding key for the TEE key
+    --flashtestations.registry-address 0xFlashtestationsRegistryAddress \
+    flashtestations.builder-policy-address 0xBuilderPolicyAddress
 ```
 
 Note that `--rollup.builder-secret-key` must be set and funded in order for the flashtestations key to be funded and submit the attestation on-chain.
