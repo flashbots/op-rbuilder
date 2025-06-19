@@ -461,13 +461,14 @@ where
 
                     let tx_execution_start_time = Instant::now();
                     if ctx
-                        .execute_best_transactions(
+                        .best_transactions_executor(
                             &mut info,
                             &mut db,
                             best_txs,
                             total_gas_per_batch.min(ctx.block_gas_limit()),
                             total_da_per_batch,
-                        )?
+                        )
+                        .execute()?
                         .is_some()
                     {
                         // Handles job cancellation
