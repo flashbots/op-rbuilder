@@ -2456,7 +2456,7 @@ dependencies = [
 [[package]]
 name = "coco-provider"
 version = "0.1.0"
-source = "git+https://github.com/automata-network/tdx-attestation-sdk.git#2a0ecf0ef0cf61df56954fb51287045da2790390"
+source = "git+https://github.com/automata-network/tdx-attestation-sdk.git?rev=ce02e0009c20bb4fc37c4c95701925fc3f139b41#ce02e0009c20bb4fc37c4c95701925fc3f139b41"
 dependencies = [
  "bincode",
  "log",
@@ -11652,7 +11652,7 @@ checksum = "61c41af27dd6d1e27b1b16b489db798443478cef1f06a660c96db617ba5de3b1"
 [[package]]
 name = "tdx"
 version = "0.1.0"
-source = "git+https://github.com/automata-network/tdx-attestation-sdk.git#2a0ecf0ef0cf61df56954fb51287045da2790390"
+source = "git+https://github.com/automata-network/tdx-attestation-sdk.git?rev=ce02e0009c20bb4fc37c4c95701925fc3f139b41#ce02e0009c20bb4fc37c4c95701925fc3f139b41"
 dependencies = [
  "base64-url",
  "cbindgen",
