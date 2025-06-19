@@ -45,7 +45,11 @@ use std::{
     sync::Arc,
     time::Instant,
 };
-use tokio::sync::mpsc;
+use tokio::sync::{
+    mpsc,
+    mpsc::{error::SendError, Sender},
+};
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, metadata::Level, span, warn};
 
 #[derive(Debug, Default)]
@@ -146,7 +150,11 @@ where
         best_payload: BlockCell<OpBuiltPayload>,
     ) -> Result<(), PayloadBuilderError> {
         let block_build_start_time = Instant::now();
-        let BuildArguments { config, cancel, .. } = args;
+        let BuildArguments {
+            config,
+            cancel: block_cancel,
+            ..
+        } = args;
 
         // We log only every 100th block to reduce usage
         let span = if cfg!(feature = "telemetry")
@@ -219,13 +227,14 @@ where
             .next_evm_env(&config.parent_header, &block_env_attributes)
             .map_err(PayloadBuilderError::other)?;
 
-        let ctx = OpPayloadBuilderCtx {
+        let mut ctx = OpPayloadBuilderCtx {
             evm_config: self.evm_config.clone(),
             chain_spec: self.client.chain_spec(),
             config,
             evm_env,
             block_env_attributes,
-            cancel,
+            // Here we use parent token because child token handing is only for proper flashblocks
+            cancel: block_cancel.clone(),
             da_config: self.config.da_config.clone(),
             builder_signer: self.config.builder_signer,
             metrics: Default::default(),
@@ -320,56 +329,14 @@ where
         let last_flashblock = flashblocks_per_block.saturating_sub(1);
 
         let mut flashblock_count = 0;
-        // Create a channel to coordinate flashblock building
-        let (build_tx, mut build_rx) = mpsc::channel(1);
-
-        // Spawn the timer task that signals when to build a new flashblock
-        let cancel_clone = ctx.cancel.clone();
-        let interval = self.config.specific.interval;
-        tokio::spawn(async move {
-            // We handle first flashblock separately, because it could be shrunk to fit everything
-            let mut first_interval = tokio::time::interval(first_flashblock_offset);
-            // If first_flashblock_offset == 0 that means all flashblock are proper, and we just
-            // skip this cusom logic
-            if first_flashblock_offset.as_millis() != 0 {
-                let cancelled = cancel_clone
-                    .run_until_cancelled(async {
-                        // We send first signal straight away and then wait first_interval duration
-                        // to send second signal and start building normal blocks
-                        for _ in 0..2 {
-                            first_interval.tick().await;
-                            // TODO: maybe return None if cancelled
-                            if let Err(err) = build_tx.send(()).await {
-                                error!(target: "payload_builder", "Error sending build signal: {}", err);
-                            }
-                        }
-                    })
-                    .await;
-                if cancelled.is_none() {
-                    info!(target: "payload_builder", "Building job cancelled, stopping payload building");
-                    drop(build_tx);
-                    return;
-                }
-            }
-            // Handle rest of fbs in steady rate
-            let mut interval = tokio::time::interval(interval);
-            let cancelled = cancel_clone.run_until_cancelled(async {
-                // First tick completes immediately
-                interval.tick().await;
-                loop {
-                    interval.tick().await;
-                    if let Err(err) = build_tx.send(()).await {
-                        error!(target: "payload_builder", "Error sending build signal: {}", err);
-                        break;
-                    }
-                }
-            }).await;
-            if cancelled.is_none() {
-                info!(target: "payload_builder", "Building job cancelled, stopping payload building");
-                drop(build_tx);
-            }
-        });
-
+        // This channel coordinates flashblock building
+        let (fb_cancel_token_rx, mut fb_cancel_token_tx) =
+            mpsc::channel((self.config.flashblocks_per_block() + 1) as usize);
+        self.spawn_timer_task(
+            block_cancel.clone(),
+            fb_cancel_token_rx,
+            first_flashblock_offset,
+        );
         // Process flashblocks in a blocking loop
         loop {
             let fb_span = if span.is_none() {
@@ -382,30 +349,19 @@ where
                 )
             };
             let _entered = fb_span.enter();
-            // Block on receiving a message, break on cancellation or closed channel
-            let received = tokio::task::block_in_place(|| {
-                // Get runtime handle
-                let rt = tokio::runtime::Handle::current();
 
-                // Run the async operation to completion, blocking the current thread
-                rt.block_on(async {
-                    // Check for cancellation first
-                    if ctx.cancel.is_cancelled() {
-                        info!(
-                            target: "payload_builder",
-                            "Job cancelled, stopping payload building",
-                        );
-                        return None;
-                    }
+            // We get token from time loop. Token from this channel means that we need to start build flashblock
+            // Cancellation of this token means that we need to stop building flashblock.
+            // If channel return None it means that we built all flashblock or parent_token got cancelled
+            let fb_cancel_token =
+                tokio::task::block_in_place(|| fb_cancel_token_tx.blocking_recv()).flatten();
 
-                    // Wait for next message
-                    build_rx.recv().await
-                })
-            });
-
-            // Exit loop if channel closed or cancelled
-            match received {
-                Some(()) => {
+            match fb_cancel_token {
+                Some(cancel_token) => {
+                    // We use fb_cancel_token inside context so we could exit from
+                    // execute_best_transaction without cancelling parent token
+                    ctx.cancel = cancel_token;
+                    // TODO: remove this
                     if flashblock_count >= flashblocks_per_block {
                         info!(
                             target: "payload_builder",
@@ -416,7 +372,6 @@ where
                         );
                         continue;
                     }
-
                     // Continue with flashblock building
                     info!(
                         target: "payload_builder",
@@ -430,6 +385,7 @@ where
                     );
                     let flashblock_build_start_time = Instant::now();
                     let state = StateProviderDatabase::new(&state_provider);
+                    // TODO: refactor this so we add builder tx to the base flashblocks if no_tx is not set
                     invoke_on_first_flashblock(flashblock_count, || {
                         total_gas_per_batch -= builder_tx_gas;
                         // saturating sub just in case, we will log an error if da_limit too small for builder_tx_da_size
@@ -460,32 +416,23 @@ where
                         .record(best_txs_start_time.elapsed());
 
                     let tx_execution_start_time = Instant::now();
-                    if ctx
-                        .execute_best_transactions(
-                            &mut info,
-                            &mut db,
-                            best_txs,
-                            total_gas_per_batch.min(ctx.block_gas_limit()),
-                            total_da_per_batch,
-                        )?
-                        .is_some()
-                    {
-                        // Handles job cancellation
-                        info!(
-                            target: "payload_builder",
-                            "Job cancelled, stopping payload building",
-                        );
-                        ctx.metrics
-                            .payload_tx_simulation_duration
-                            .record(tx_execution_start_time.elapsed());
-                        // if the job was cancelled, stop
-                        return Ok(());
-                    }
+                    ctx.execute_best_transactions(
+                        &mut info,
+                        &mut db,
+                        best_txs,
+                        total_gas_per_batch.min(ctx.block_gas_limit()),
+                        total_da_per_batch,
+                    )?;
+                    ctx.metrics
+                        .payload_tx_simulation_duration
+                        .record(tx_execution_start_time.elapsed());
+
                     ctx.metrics
                         .payload_tx_simulation_duration
                         .record(tx_execution_start_time.elapsed());
 
                     // TODO: temporary we add builder tx to the first flashblock too
+                    // TODO: refactor this so we add builder tx to the base flashblocks if no_tx is not set
                     invoke_on_first_flashblock(flashblock_count, || {
                         ctx.add_builder_tx(&mut info, &mut db, builder_tx_gas, message.clone());
                     });
@@ -514,6 +461,13 @@ where
                             fb_payload.index = flashblock_count + 1; // we do this because the fallback block is index 0
                             fb_payload.base = None;
 
+                            // We check that child_job got cancelled before sending flashblock.
+                            // This will ensure consistent timing between flashblocks.
+                            tokio::task::block_in_place(|| {
+                                tokio::runtime::Handle::current()
+                                    .block_on(async { ctx.cancel.cancelled().await });
+                                
+                            });
                             self.ws_pub
                                 .publish(&fb_payload)
                                 .map_err(PayloadBuilderError::other)?;
@@ -567,6 +521,51 @@ where
         }
     }
 
+    /// Spawn task that will send new flashblock level cancel token in steady intervals (first interval
+    /// may vary if --flashblocks.dynamic enabled)
+    pub fn spawn_timer_task(
+        &self,
+        block_cancel: CancellationToken,
+        flashblock_cancel_token_rx: Sender<Option<CancellationToken>>,
+        first_flashblock_offset: Duration,
+    ) {
+        let interval = self.config.specific.interval;
+        tokio::spawn(async move {
+            let cancelled: Option<Result<(), SendError<Option<CancellationToken>>>> = block_cancel
+                .run_until_cancelled(async {
+                    // Create first fb interval already started
+                    let mut timer = tokio::time::interval(first_flashblock_offset);
+                    timer.tick().await;
+                    let child_token = block_cancel.child_token();
+                    flashblock_cancel_token_rx
+                        .send(Some(child_token.clone()))
+                        .await?;
+                    timer.tick().await;
+                    // Time to build flashblock has ended so we cancel the token
+                    child_token.cancel();
+                    // We would start using regular intervals from here on
+                    let mut timer = tokio::time::interval(interval);
+                    timer.tick().await;
+                    loop {
+                        // Initiate fb job
+                        let child_token = block_cancel.child_token();
+                        flashblock_cancel_token_rx
+                            .send(Some(child_token.clone()))
+                            .await?;
+                        timer.tick().await;
+                        // Cancel job once time is up
+                        child_token.cancel();
+                    }
+                })
+                .await;
+            if let Some(Err(err)) = cancelled {
+                error!(target: "payload_builder", "Timer task encountered error: {err}");
+            } else {
+                info!(target: "payload_builder", "Building job cancelled, stopping payload building");
+            }
+        });
+    }
+
     /// Calculate number of flashblocks.
     /// If dynamic is enabled this function will take time drift into the account.
     pub fn calculate_flashblocks(&self, time_drift: Option<Duration>) -> (u64, Duration) {
@@ -577,22 +576,19 @@ where
             );
         }
         let time_drift = time_drift.unwrap();
-        let interval = self.config.specific.interval.as_millis();
-        let time_drift = time_drift.as_millis();
+        let interval = self.config.specific.interval.as_millis() as u64;
+        let time_drift = time_drift.as_millis() as u64;
         let first_flashblock_offset = time_drift.rem(interval);
-        let flashblocks_per_block = if first_flashblock_offset == 0 {
-            // In this case all flashblock are full and they all in division
-            time_drift.div(interval)
+        if first_flashblock_offset == 0 {
+            // We have perfect division, so we use interval as first fb offset
+            (time_drift.div(interval), Duration::from_millis(interval))
         } else {
-            // If we have any reminder that mean the first flashblock won't be in division
-            // so we add it manually.
-            time_drift.div(interval) + 1
-        };
-        // We won't have any problems because of casting
-        (
-            flashblocks_per_block as u64,
-            Duration::from_millis(first_flashblock_offset as u64),
-        )
+            // Non-perfect division, so we account for it.
+            (
+                time_drift.div(interval) + 1,
+                Duration::from_millis(first_flashblock_offset),
+            )
+        }
     }
 }
 
