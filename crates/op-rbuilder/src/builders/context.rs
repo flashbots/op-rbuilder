@@ -709,7 +709,6 @@ where
     #[deref]
     ctx: &'a OpPayloadBuilderCtx,
     info: &'a mut ExecutionInfo<E>,
-    // db: &'a mut State<DB>,
     best_txs: TXS,
     block_gas_limit: u64,
     block_da_limit: Option<u64>,
@@ -754,7 +753,6 @@ where
         Self {
             ctx,
             info,
-            // db,
             best_txs,
             block_gas_limit,
             block_da_limit,
@@ -771,6 +769,75 @@ where
             num_txs_simulated_fail: 0,
             num_bundles_reverted: 0,
         }
+    }
+
+    /// Executes the given best transactions and updates the execution info.
+    ///
+    /// Returns `Ok(Some(())` if the job was cancelled.
+    pub fn execute_best_transactions(&mut self) -> Result<Option<()>, PayloadBuilderError>
+    where
+        DB: Database<Error = ProviderError>,
+    {
+        info!(
+            target: "payload_builder",
+            message = "Executing best transactions",
+            block_da_limit = ?self.block_da_limit,
+            tx_da_limit = ?self.tx_da_limit,
+            block_gas_limit = ?self.block_gas_limit,
+        );
+
+        // Remove once we merge Reth 1.4.4
+        // Fixed in https://github.com/paradigmxyz/reth/pull/16514
+        let block_da_limit = self.block_da_limit.map_or(-1.0, |v| v as f64);
+        self.metrics.da_block_size_limit.set(block_da_limit);
+        let tx_da_limit = self.tx_da_limit.map_or(-1.0, |v| v as f64);
+        self.metrics.da_tx_size_limit.set(tx_da_limit);
+
+        let block_attr = BlockConditionalAttributes {
+            number: self.block_number(),
+            timestamp: self.attributes().timestamp(),
+        };
+
+        while let Some(tx) = self.best_txs.next(()) {
+            match self.execute_best_one(tx) {
+                StepStatus::Continue => {}
+                StepStatus::Interrupt => {
+                    return Ok(Some(()));
+                }
+                StepStatus::Failed(err) => {
+                    return Err(err);
+                }
+            }
+        }
+
+        self.metrics
+            .payload_tx_simulation_duration
+            .record(self.execute_txs_start_time.elapsed());
+        self.metrics
+            .payload_num_tx_considered
+            .record(self.num_txs_considered as f64);
+        self.metrics
+            .payload_num_tx_simulated
+            .record(self.num_txs_simulated as f64);
+        self.metrics
+            .payload_num_tx_simulated_success
+            .record(self.num_txs_simulated_success as f64);
+        self.metrics
+            .payload_num_tx_simulated_fail
+            .record(self.num_txs_simulated_fail as f64);
+        self.metrics
+            .bundles_reverted
+            .record(self.num_bundles_reverted as f64);
+
+        debug!(
+            target: "payload_builder",
+            message = "Completed executing best transactions",
+            txs_executed = self.num_txs_considered,
+            txs_applied = self.num_txs_simulated_success,
+            txs_rejected = self.num_txs_simulated_fail,
+            bundles_reverted = self.num_bundles_reverted,
+        );
+        Ok(None)
     }
 
     pub fn execute_best_one(&mut self, tx: TXS::Transaction) -> StepStatus {
