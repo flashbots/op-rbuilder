@@ -283,7 +283,7 @@ impl OpPayloadBuilderCtx {
                         continue;
                     }
                     // this is an error that we should treat as fatal for this attempt
-                    return Err(PayloadBuilderError::EvmExecutionError(Box::new(err)));
+                    return Err(PayloadBuilderError::evm(err));
                 }
             };
 
@@ -457,7 +457,7 @@ impl OpPayloadBuilderCtx {
                     }
                     // this is an error that we should treat as fatal for this attempt
                     log_txn(TxnExecutionResult::EvmError);
-                    return Err(PayloadBuilderError::EvmExecutionError(Box::new(err)));
+                    return Err(PayloadBuilderError::evm(err));
                 }
             };
 
@@ -567,7 +567,7 @@ impl OpPayloadBuilderCtx {
 
                 let ResultAndState { result, state } = evm
                     .transact(&builder_tx)
-                    .map_err(|err| PayloadBuilderError::EvmExecutionError(Box::new(err)))?;
+                    .map_err(PayloadBuilderError::evm)?;
 
                 // Add gas used by the transaction to cumulative gas used, before creating the receipt
                 let gas_used = result.gas_used();
