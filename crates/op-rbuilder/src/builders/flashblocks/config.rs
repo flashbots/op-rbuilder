@@ -17,7 +17,13 @@ pub struct FlashblocksConfig {
     pub interval: Duration,
 
     /// How much time would be deducted from block build time to account for latencies in
-    /// milliseconds
+    /// milliseconds.
+    ///
+    /// If dynamic_adjustment is false this value would be deducted from first flashblock and
+    /// it shouldn't be more than interval
+    ///
+    /// If dynamic_adjustment is true this value would be deducted from first flashblock and
+    /// it shouldn't be more than interval
     pub leeway_time: Duration,
 
     /// Enables dynamic flashblocks number based on FCU arrival time

@@ -122,7 +122,7 @@ pub struct FlashblocksArgs {
     /// less flashblocks, while each flashblock would be bigger.
     #[arg(
         long = "flashblocks.dynamic",
-        default_value = "false",
+        default_value = "true",
         env = "FLASHBLOCK_DYNAMIC"
     )]
     pub flashblocks_dynamic: bool,

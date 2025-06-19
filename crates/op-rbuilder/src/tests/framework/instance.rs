@@ -4,6 +4,7 @@ use crate::{
     primitives::reth::engine_api_builder::OpEngineApiBuilder,
     revert_protection::{EthApiExtServer, EthApiOverrideServer, RevertProtectionExt},
     tests::{
+        create_test_db,
         framework::{driver::ChainDriver, BUILDER_PRIVATE_KEY},
         ChainDriverExt, EngineApi, Ipc, TransactionPoolObserver,
     },
@@ -30,6 +31,7 @@ use reth::{
     tasks::TaskManager,
 };
 use reth_node_builder::{NodeBuilder, NodeConfig};
+use reth_node_core::args::DatabaseArgs;
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_cli::commands::Commands;
 use reth_optimism_node::{
@@ -108,7 +110,8 @@ impl LocalInstance {
             .build();
 
         let node_builder = NodeBuilder::<_, OpChainSpec>::new(config.clone())
-            .testing_node(task_manager.executor())
+            .with_database(create_test_db(config.clone()))
+            .with_launch_context(task_manager.executor())
             .with_types::<OpNode>()
             .with_components(
                 op_node
@@ -315,10 +318,18 @@ pub fn default_node_config() -> NodeConfig<OpChainSpec> {
         static_files_path: None,
     };
 
+    let db = DatabaseArgs {
+        // 1MB
+        max_size: Some(1048576),
+        growth_step: Some(4096),
+        ..Default::default()
+    };
+
     NodeConfig::<OpChainSpec>::new(chain_spec())
         .with_datadir_args(datadir)
         .with_rpc(rpc)
         .with_network(network)
+        .with_db(db)
 }
 
 fn chain_spec() -> Arc<OpChainSpec> {
