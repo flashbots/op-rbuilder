@@ -466,7 +466,6 @@ where
                             tokio::task::block_in_place(|| {
                                 tokio::runtime::Handle::current()
                                     .block_on(async { ctx.cancel.cancelled().await });
-                                
                             });
                             self.ws_pub
                                 .publish(&fb_payload)
