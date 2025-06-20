@@ -142,6 +142,7 @@ reth-ipc = { workspace = true }
 reth-node-builder = { workspace = true, features = ["test-utils"] }
 bollard = "0.19"
 ctor = "0.4.2"
+divan = { version = "2.10.1", package = "codspeed-divan-compat" }
 
 [features]
 default = ["jemalloc"]
@@ -188,3 +189,7 @@ path = "src/bin/op-rbuilder/main.rs"
 [[bin]]
 name = "tester"
 required-features = ["testing"]
+
+[[bench]]
+harness = false
+name = "test_bench"
