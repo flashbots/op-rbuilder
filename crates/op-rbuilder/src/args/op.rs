@@ -118,6 +118,7 @@ pub struct FlashblocksArgs {
     )]
     pub flashblocks_block_time: u64,
 
+    // TODO: combine next 3 options
     /// Enabled dynamic flashblocks adjustment. This will allow account for late FCUs and produce
     /// less flashblocks, while each flashblock would be bigger.
     #[arg(
@@ -132,11 +133,21 @@ pub struct FlashblocksArgs {
     /// This time used to account for latencies, this time would be deducted from total block
     /// building time before calculating number of fbs.
     #[arg(
-        long = "flashblocks.leeway-time",
+        long = "flashblocks.block-leeway-time",
         default_value = "50",
-        env = "FLASHBLOCK_LEEWAY_TIME"
+        env = "FLASHBLOCK_BLOCK_LEEWAY_TIME"
     )]
-    pub flashblocks_leeway_time: u64,
+    pub block_leeway_time: u64,
+
+    /// Time to deduct from first flashblock in ms. This is an alternative to flashblocks_dynamic.
+    ///
+    /// This option is ignored if flashblocks_dynamic is enabled
+    #[arg(
+        long = "flashblocks.first-flashblock-leeway-time",
+        default_value = "50",
+        env = "FLASHBLOCK_FIRST_FLASHBLOCK_LEEWAY_TIME"
+    )]
+    pub first_flashblock_leeway_time: u64,
 }
 
 impl Default for FlashblocksArgs {

@@ -19,8 +19,9 @@ use crate::{
         flashblocks_port: 1239,
         flashblocks_addr: "127.0.0.1".into(),
         flashblocks_block_time: 200,
-        flashblocks_leeway_time: 0,
+        block_leeway_time: 0,
         flashblocks_dynamic: false,
+        first_flashblock_leeway_time: 50,
     },
     ..Default::default()
 })]
@@ -63,7 +64,9 @@ async fn smoke(rbuilder: LocalInstance) -> eyre::Result<()> {
         }
 
         let block = driver.build_new_block().await?;
-        assert_eq!(block.transactions.len(), 8); // 5 normal txn + deposit + 2 builder txn
+
+        println!("Executed block, {} txs", block.transactions.len());
+        assert_eq!(block.transactions.len(), 8, "Got: {:?}", block.transactions); // 5 normal txn + deposit + 2 builder txn
 
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     }

@@ -16,12 +16,20 @@ pub struct FlashblocksConfig {
     /// per block is equal to the block time divided by the flashblock interval.
     pub interval: Duration,
 
-    /// How much time would be deducted from block build time to account for latencies in
-    /// milliseconds
-    pub leeway_time: Duration,
+    /// How much time would be deducted from block building time to account for latencies in
+    /// milliseconds.
+    ///
+    /// This option is used only if dynamic_adjustment is enabled
+    pub block_leeway_time: Duration,
 
     /// Enables dynamic flashblocks number based on FCU arrival time
     pub dynamic_adjustment: bool,
+
+    /// How much time to deduct from first flashblock to account for latencies.
+    /// This is more simple alternative to dynamic dynamic_adjustment.
+    ///
+    /// This option is used only if dynamic_adjustment is disabled
+    pub first_flashblock_leeway: Duration,
 }
 
 impl Default for FlashblocksConfig {
@@ -29,8 +37,9 @@ impl Default for FlashblocksConfig {
         Self {
             ws_addr: SocketAddr::new(Ipv4Addr::UNSPECIFIED.into(), 1111),
             interval: Duration::from_millis(250),
-            leeway_time: Duration::from_millis(50),
+            block_leeway_time: Duration::from_millis(0),
             dynamic_adjustment: false,
+            first_flashblock_leeway: Duration::from_millis(0),
         }
     }
 }
@@ -46,15 +55,19 @@ impl TryFrom<OpRbuilderArgs> for FlashblocksConfig {
             args.flashblocks.flashblocks_port,
         );
 
-        let leeway_time = Duration::from_millis(args.flashblocks.flashblocks_leeway_time);
+        let block_leeway_time = Duration::from_millis(args.flashblocks.block_leeway_time);
 
         let dynamic_adjustment = args.flashblocks.flashblocks_dynamic;
+
+        let first_flashblock_leeway =
+            Duration::from_millis(args.flashblocks.first_flashblock_leeway_time);
 
         Ok(Self {
             ws_addr,
             interval,
-            leeway_time,
+            block_leeway_time,
             dynamic_adjustment,
+            first_flashblock_leeway,
         })
     }
 }
