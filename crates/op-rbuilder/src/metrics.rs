@@ -86,6 +86,8 @@ pub struct OpRBuilderMetrics {
     pub bundles_received: Counter,
     /// Number of reverted bundles
     pub bundles_reverted: Histogram,
+    /// Time taken to return a valid bundle sent to the eth_sendBundle endpoint
+    pub bundle_receive_duration: Histogram,
 }
 
 /// Contains version information for the application.

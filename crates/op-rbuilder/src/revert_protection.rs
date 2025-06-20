@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::Instant};
 
 use crate::{
     metrics::OpRBuilderMetrics,
@@ -88,6 +88,8 @@ where
     Provider: StateProviderFactory + Send + Sync + Clone + 'static,
 {
     async fn send_bundle(&self, bundle: Bundle) -> RpcResult<BundleResult> {
+        let request_start_time = Instant::now();
+
         let last_block_number = self
             .provider
             .best_block_number()
@@ -128,6 +130,9 @@ where
             .map_err(EthApiError::from)?;
 
         self.metrics.bundles_received.increment(1);
+        self.metrics
+            .bundle_receive_duration
+            .record(request_start_time.elapsed());
 
         let result = BundleResult { bundle_hash: hash };
         Ok(result)
