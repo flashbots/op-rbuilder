@@ -141,11 +141,10 @@ where
             .map_err(EthApiError::from)?;
 
         let recovered = recover_raw_transaction(&bundle_transaction)?;
-        let mut pool_transaction: FBPooledTransaction =
-            OpPooledTransaction::from_pooled(recovered).into();
-
-        pool_transaction.set_reverted_hashes(bundle.reverting_hashes.clone().unwrap_or_default());
-        pool_transaction.set_conditional(conditional);
+        let pool_transaction =
+            FBPooledTransaction::from(OpPooledTransaction::from_pooled(recovered))
+                .with_reverted_hashes(bundle.reverting_hashes.clone().unwrap_or_default())
+                .with_conditional(conditional);
 
         let hash = self
             .pool
