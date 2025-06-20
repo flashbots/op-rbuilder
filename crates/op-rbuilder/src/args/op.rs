@@ -118,6 +118,7 @@ pub struct FlashblocksArgs {
     )]
     pub flashblocks_block_time: u64,
 
+    // TODO: combine next 3 options
     /// Enabled dynamic flashblocks adjustment. This will allow account for late FCUs and produce
     /// less flashblocks, while each flashblock would be bigger.
     #[arg(
@@ -143,7 +144,7 @@ pub struct FlashblocksArgs {
     /// This option is ignored if flashblocks_dynamic is enabled
     #[arg(
         long = "flashblocks.first-flashblock-leeway-time",
-        default_value = "0",
+        default_value = "50",
         env = "FLASHBLOCK_FIRST_FLASHBLOCK_LEEWAY_TIME"
     )]
     pub first_flashblock_leeway_time: u64,

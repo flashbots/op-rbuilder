@@ -21,7 +21,7 @@ use crate::{
         flashblocks_block_time: 200,
         block_leeway_time: 0,
         flashblocks_dynamic: false,
-        first_flashblock_leeway_time: 10,
+        first_flashblock_leeway_time: 50,
     },
     ..Default::default()
 })]
