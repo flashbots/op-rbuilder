@@ -90,6 +90,7 @@ where
 {
     async fn send_bundle(&self, bundle: Bundle) -> RpcResult<BundleResult> {
         let request_start_time = Instant::now();
+        self.metrics.bundle_requests.increment(1);
 
         let bundle_result = self
             .send_bundle_inner(bundle)
