@@ -2,7 +2,7 @@ use super::{payload::OpPayloadBuilder, FlashblocksConfig};
 use crate::{
     builders::{
         builder_tx::StandardBuilderTx, generator::BlockPayloadJobGenerator, BuilderConfig,
-        BuilderTx,
+        BuilderTransactions,
     },
     flashtestations::service::spawn_flashtestations_service,
     traits::{NodeBounds, PoolBounds},
@@ -26,7 +26,7 @@ impl FlashblocksServiceBuilder {
     where
         Node: NodeBounds,
         Pool: PoolBounds,
-        BT: BuilderTx + Unpin + Clone + Send + Sync + 'static,
+        BT: BuilderTransactions + Unpin + Clone + Send + Sync + 'static,
     {
         let payload_builder = OpPayloadBuilder::new(
             OpEvmConfig::optimism(ctx.chain_spec()),

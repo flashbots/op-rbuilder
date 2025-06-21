@@ -1,13 +1,14 @@
 use std::sync::Arc;
 
 use alloy_primitives::U256;
+use reth_evm::{ConfigureEvm, Evm};
 use reth_node_builder::BuilderContext;
-use reth_optimism_primitives::OpTransactionSigned;
-use reth_primitives::Recovered;
 use tracing::{info, warn};
 
 use crate::{
-    builders::BuilderTx,
+    builders::{
+        BuilderTransactionCtx, BuilderTransactionError, BuilderTransactions, OpPayloadBuilderCtx,
+    },
     traits::NodeBounds,
     tx_signer::{generate_ethereum_keypair, Signer},
 };
@@ -17,6 +18,10 @@ use super::{
     attestation::{get_attestation_provider, AttestationConfig, AttestationProvider},
     tx_manager::TxManager,
 };
+
+/// Possible error variants during flashtestations
+#[derive(Debug, thiserror::Error)]
+pub enum FlashtestationsError {}
 
 #[derive(Clone)]
 pub struct FlashtestationsService {
@@ -28,9 +33,10 @@ pub struct FlashtestationsService {
     tee_service_signer: Signer,
     // Funding amount for the TEE signer
     funding_amount: U256,
+    // Whether the register transaction has been confirmed
+    registered: bool,
 }
 
-// TODO: FlashtestationsService error types
 impl FlashtestationsService {
     pub fn new(args: FlashtestationsArgs) -> Self {
         let (private_key, public_key, address) = generate_ethereum_keypair();
@@ -49,7 +55,8 @@ impl FlashtestationsService {
             tee_service_signer,
             args.funding_key
                 .expect("funding key required when flashtestations enabled"),
-            args.rpc_url,
+            args.rpc_url
+                .expect("rpc url required when flashtestations enabled"),
             args.registry_address
                 .expect("registry address required when flashtestations enabled"),
             args.builder_policy_address
@@ -62,19 +69,12 @@ impl FlashtestationsService {
             tx_manager,
             tee_service_signer,
             funding_amount: args.funding_amount,
+            registered: false,
         }
     }
 
     pub async fn bootstrap(&self) -> eyre::Result<()> {
-        // Prepare report data with public key (64 bytes, no 0x04 prefix)
-        let mut report_data = [0u8; 64];
-        let pubkey_uncompressed = self.tee_service_signer.pubkey.serialize_uncompressed();
-        report_data.copy_from_slice(&pubkey_uncompressed[1..65]); // Skip 0x04 prefix
-
-        // Request TDX attestation
-        info!(target: "flashtestations", "requesting TDX attestation");
-        let attestation = self.attestation_provider.get_attestation(report_data)?;
-
+        let attestation = self.get_attestation()?;
         // Submit report onchain by registering the key of the tee service
         self.tx_manager
             .fund_and_register_tee_service(attestation, self.funding_amount)
@@ -84,20 +84,44 @@ impl FlashtestationsService {
     pub async fn clean_up(&self) -> eyre::Result<()> {
         self.tx_manager.clean_up().await
     }
+
+    fn get_attestation(&self) -> eyre::Result<Vec<u8>> {
+        // Prepare report data with public key (64 bytes, no 0x04 prefix)
+        let mut report_data = [0u8; 64];
+        let pubkey_uncompressed = self.tee_service_signer.pubkey.serialize_uncompressed();
+        report_data.copy_from_slice(&pubkey_uncompressed[1..65]); // Skip 0x04 prefix
+
+        // Request TDX attestation
+        info!(target: "flashtestations", "requesting TDX attestation");
+        self.attestation_provider.get_attestation(report_data)
+    }
 }
 
-impl BuilderTx for FlashtestationsService {
-    fn estimated_builder_tx_gas(&self) -> u64 {
-        todo!()
-    }
+impl BuilderTransactions for FlashtestationsService {
+    fn get_builder_txs<DB>(
+        &self,
+        ctx: OpPayloadBuilderCtx,
+        db: &mut reth_revm::State<DB>,
+    ) -> Result<Vec<BuilderTransactionCtx>, BuilderTransactionError>
+    where
+        DB: revm::Database<Error = reth_provider::ProviderError>,
+    {
+        let mut evm = ctx.evm_config.evm_with_env(&mut *db, ctx.evm_env.clone());
+        let nonce = evm
+            .db_mut()
+            .load_cache_account(self.tee_service_signer.address)
+            .map(|acc| acc.account_info().unwrap_or_default().nonce)
+            .map_err(|_| {
+                BuilderTransactionError::AccountLoadFailed(self.tee_service_signer.address)
+            })?;
 
-    fn estimated_builder_tx_da_size(&self) -> Option<u64> {
-        todo!()
+        Ok(vec![])
     }
-
-    fn signed_builder_tx(&self) -> Result<Recovered<OpTransactionSigned>, secp256k1::Error> {
-        todo!()
-    }
+    // init registered = false
+    // if registered = false && (no_rpc OR rpc submit failed) => simulate register tx to get gas + workload id from logs + funding tx
+    // call isValidWorkload(workload id, address) -> if false, add register tx
+    // registered = true
+    // verifyblockproof -> if revert, fallback to standard
 }
 
 pub async fn spawn_flashtestations_service<Node>(

@@ -38,11 +38,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, trace, warn};
 
 use crate::{
-    metrics::OpRBuilderMetrics,
-    primitives::reth::{ExecutionInfo, TxnExecutionResult},
-    traits::PayloadTxsBounds,
-    tx::MaybeRevertingTransaction,
-    tx_signer::Signer,
+    builders::BuilderTransactionCtx, metrics::OpRBuilderMetrics, primitives::reth::{ExecutionInfo, TxnExecutionResult}, traits::PayloadTxsBounds, tx::MaybeRevertingTransaction, tx_signer::Signer
 };
 
 /// Container type that holds all necessities to build a new payload.
@@ -545,12 +541,11 @@ impl OpPayloadBuilderCtx {
         Ok(None)
     }
 
-    pub fn add_builder_tx<DB, Extra: Debug + Default>(
+    pub fn add_builder_txs<DB, Extra: Debug + Default>(
         &self,
         info: &mut ExecutionInfo<Extra>,
         db: &mut State<DB>,
-        builder_tx_gas: u64,
-        message: Vec<u8>,
+        builder_txs: Vec<BuilderTransactionCtx>,
     ) -> Option<()>
     where
         DB: Database<Error = ProviderError>,

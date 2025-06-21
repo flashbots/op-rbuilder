@@ -373,7 +373,10 @@ impl<Txs: PayloadTxsBounds> OpBuilder<'_, Txs> {
         let builder_tx_gas = ctx
             .builder_signer()
             .map_or(0, |_| estimate_gas_for_builder_tx(message.clone()));
-        let block_gas_limit = ctx.block_gas_limit() - builder_tx_gas;
+        let block_gas_limit = ctx.block_gas_limit().saturating_sub(builder_tx_gas);
+        if block_gas_limit == 0 {
+            error!("Builder tx gas subtraction resulted in block gas limit to be 0. No transactions would be included");
+        }
         // Save some space in the block_da_limit for builder tx
         let builder_tx_da_size = ctx
             .estimate_builder_tx_da_size(state, builder_tx_gas, message.clone())
@@ -410,7 +413,7 @@ impl<Txs: PayloadTxsBounds> OpBuilder<'_, Txs> {
         }
 
         // Add builder tx to the block
-        ctx.add_builder_tx(&mut info, state, builder_tx_gas, message);
+        ctx.add_builder_txs(&mut info, state, builder_tx_gas, message);
 
         let state_merge_start_time = Instant::now();
 

@@ -4,7 +4,7 @@ use crate::{
         context::{estimate_gas_for_builder_tx, OpPayloadBuilderCtx},
         flashblocks::config::FlashBlocksConfigExt,
         generator::{BlockCell, BuildArguments},
-        BuilderConfig, BuilderTx,
+        BuilderConfig, BuilderTransactions,
     },
     metrics::OpRBuilderMetrics,
     primitives::reth::ExecutionInfo,
@@ -56,7 +56,7 @@ struct ExtraExecutionInfo {
 
 /// Optimism's payload builder
 #[derive(Debug, Clone)]
-pub struct OpPayloadBuilder<Pool, Client, BT> {
+pub struct OpPayloadBuilder<Pool, Client, BuilderTxs> {
     /// The type responsible for creating the evm.
     pub evm_config: OpEvmConfig,
     /// The transaction pool
@@ -71,18 +71,17 @@ pub struct OpPayloadBuilder<Pool, Client, BT> {
     /// The metrics for the builder
     pub metrics: Arc<OpRBuilderMetrics>,
     /// The end of builder transaction type
-    #[allow(dead_code)]
-    pub builder_tx: BT,
+    pub builder_tx: BuilderTxs,
 }
 
-impl<Pool, Client, BT> OpPayloadBuilder<Pool, Client, BT> {
+impl<Pool, Client, BuilderTxs> OpPayloadBuilder<Pool, Client, BuilderTxs> {
     /// `OpPayloadBuilder` constructor.
     pub fn new(
         evm_config: OpEvmConfig,
         pool: Pool,
         client: Client,
         config: BuilderConfig<FlashblocksConfig>,
-        builder_tx: BT,
+        builder_tx: BuilderTxs,
     ) -> eyre::Result<Self> {
         let metrics = Arc::new(OpRBuilderMetrics::default());
         let ws_pub = WebSocketPublisher::new(config.specific.ws_addr, Arc::clone(&metrics))?.into();
@@ -130,7 +129,7 @@ impl<Pool, Client, BT> OpPayloadBuilder<Pool, Client, BT>
 where
     Pool: PoolBounds,
     Client: ClientBounds,
-    BT: BuilderTx,
+    BT: BuilderTransactions,
 {
     /// Constructs an Optimism payload from the transactions sent via the
     /// Payload attributes by the sequencer. If the `no_tx_pool` argument is passed in
@@ -242,13 +241,12 @@ where
             .build();
 
         // We subtract gas limit and da limit for builder transaction from the whole limit
-        let message = format!("Block Number: {}", ctx.block_number()).into_bytes();
-        let builder_tx_gas = ctx
-            .builder_signer()
-            .map_or(0, |_| estimate_gas_for_builder_tx(message.clone()));
-        let builder_tx_da_size = ctx
-            .estimate_builder_tx_da_size(&mut db, builder_tx_gas, message.clone())
-            .unwrap_or(0);
+        let builder_txs = self
+            .builder_tx
+            .get_builder_txs(ctx, &mut db)
+            .map_err(|err| PayloadBuilderError::Other(Box::new(err)))?;
+        let builder_tx_gas = builder_txs.iter().fold(0, |acc, tx| acc + tx.gas_used);
+        let builder_tx_da_size = builder_txs.iter().fold(0, |acc, tx| acc + tx.da_size);
 
         let mut info = execute_pre_steps(&mut db, &ctx)?;
         ctx.metrics
@@ -431,14 +429,14 @@ where
                     let flashblock_build_start_time = Instant::now();
                     let state = StateProviderDatabase::new(&state_provider);
                     invoke_on_first_flashblock(flashblock_count, || {
-                        total_gas_per_batch -= builder_tx_gas;
+                        total_gas_per_batch = total_gas_per_batch.saturating_sub(builder_tx_gas);
                         // saturating sub just in case, we will log an error if da_limit too small for builder_tx_da_size
                         if let Some(da_limit) = total_da_per_batch.as_mut() {
                             *da_limit = da_limit.saturating_sub(builder_tx_da_size);
                         }
                     });
                     invoke_on_last_flashblock(flashblock_count, last_flashblock, || {
-                        total_gas_per_batch -= builder_tx_gas;
+                        total_gas_per_batch = total_gas_per_batch.saturating_sub(builder_tx_gas);
                         // saturating sub just in case, we will log an error if da_limit too small for builder_tx_da_size
                         if let Some(da_limit) = total_da_per_batch.as_mut() {
                             *da_limit = da_limit.saturating_sub(builder_tx_da_size);
@@ -487,12 +485,12 @@ where
 
                     // TODO: temporary we add builder tx to the first flashblock too
                     invoke_on_first_flashblock(flashblock_count, || {
-                        ctx.add_builder_tx(&mut info, &mut db, builder_tx_gas, message.clone());
+                        ctx.add_builder_txs(&mut info, &mut db, builder_tx_gas, message.clone());
                     });
 
                     // If it is the last flashblocks, add the builder txn to the block if enabled
                     invoke_on_last_flashblock(flashblock_count, last_flashblock, || {
-                        ctx.add_builder_tx(&mut info, &mut db, builder_tx_gas, message.clone());
+                        ctx.add_builder_txs(&mut info, &mut db, builder_tx_gas, message.clone());
                     });
 
                     let total_block_built_duration = Instant::now();
@@ -601,7 +599,7 @@ impl<Pool, Client, BT> crate::builders::generator::PayloadBuilder
 where
     Pool: PoolBounds,
     Client: ClientBounds,
-    BT: BuilderTx + Clone + Send + Sync,
+    BT: BuilderTransactions + Clone + Send + Sync,
 {
     type Attributes = OpPayloadBuilderAttributes<OpTransactionSigned>;
     type BuiltPayload = OpBuiltPayload;

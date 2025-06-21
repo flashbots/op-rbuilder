@@ -155,7 +155,37 @@ impl TxManager {
         }
     }
 
-    pub fn signed_block_builder_proof(
+    pub fn signed_register_tee_service_tx(
+        &self,
+        attestation: Vec<u8>,
+        gas_limit: u64,
+        base_fee: u64,
+        chain_id: u64,
+        nonce: u64,
+    ) -> Result<Recovered<OpTransactionSigned>, secp256k1::Error> {
+        info!(target: "flashtestations",  "signing registering tee service transaction");
+
+        let quote_bytes = Bytes::from(attestation);
+        let calldata = IFlashtestationRegistry::registerTEEServiceCall {
+            rawQuote: quote_bytes,
+        }
+        .abi_encode();
+
+        // Create the EIP-1559 transaction
+        let tx = OpTypedTransaction::Eip1559(TxEip1559 {
+            chain_id,
+            nonce,
+            gas_limit,
+            max_fee_per_gas: base_fee.into(),
+            max_priority_fee_per_gas: 0,
+            to: TxKind::Call(self.registry_address),
+            input: calldata.into(),
+            ..Default::default()
+        });
+        self.tee_service_signer.sign_tx(tx)
+    }
+
+    pub fn signed_block_builder_proof_tx(
         &self,
         payload: OpBuiltPayload,
         gas_limit: u64,
@@ -165,7 +195,7 @@ impl TxManager {
     ) -> Result<Recovered<OpTransactionSigned>, secp256k1::Error> {
         let block_content_hash = Self::compute_block_content_hash(payload);
 
-        info!(target: "flashtestations",  block_content_hash = ?block_content_hash, "submitting block builder proof transaction");
+        debug!(target: "flashtestations",  block_content_hash = ?block_content_hash, "signing block builder proof transaction");
         let calldata = IBlockBuilderPolicy::verifyBlockBuilderProofCall {
             version: self.builder_proof_version,
             blockContentHash: block_content_hash,
