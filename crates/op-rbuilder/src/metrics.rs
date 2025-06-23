@@ -86,6 +86,8 @@ pub struct OpRBuilderMetrics {
     pub bundle_requests: Counter,
     /// Number of valid bundles received at the eth_sendBundle endpoint
     pub valid_bundles: Counter,
+    /// Number of bundles that failed to execute
+    pub failed_bundles: Counter,
     /// Number of reverted bundles
     pub bundles_reverted: Histogram,
     /// Time taken to respond to a request to the eth_sendBundle endpoint

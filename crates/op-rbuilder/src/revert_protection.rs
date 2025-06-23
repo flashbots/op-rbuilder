@@ -99,6 +99,8 @@ where
 
         if bundle_result.is_ok() {
             self.metrics.valid_bundles.increment(1);
+        } else {
+            self.metrics.failed_bundles.increment(1);
         }
 
         self.metrics
