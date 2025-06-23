@@ -129,7 +129,7 @@ where
             .await
             .map_err(EthApiError::from)?;
 
-        self.metrics.bundles_received.increment(1);
+        self.metrics.valid_bundles.increment(1);
         self.metrics
             .bundle_receive_duration
             .record(request_start_time.elapsed());

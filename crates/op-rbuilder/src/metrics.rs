@@ -83,7 +83,7 @@ pub struct OpRBuilderMetrics {
     /// Time offset we used for first flashblock
     pub first_flashblock_time_offset: Histogram,
     /// Number of valid bundles received at the eth_sendBundle endpoint
-    pub bundles_received: Counter,
+    pub valid_bundles: Counter,
     /// Number of reverted bundles
     pub bundles_reverted: Histogram,
     /// Time taken to return a valid bundle sent to the eth_sendBundle endpoint
