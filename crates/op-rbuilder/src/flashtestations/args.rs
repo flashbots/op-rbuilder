@@ -28,12 +28,8 @@ pub struct FlashtestationsArgs {
     pub debug_url: Option<String>,
 
     /// The rpc url to post the onchain attestation requests to
-    #[arg(
-        long = "flashtestations.rpc-url",
-        env = "FLASHTESTATIONS_RPC_URL",
-        default_value = "http://localhost:8545"
-    )]
-    pub rpc_url: String,
+    #[arg(long = "flashtestations.rpc-url", env = "FLASHTESTATIONS_RPC_URL")]
+    pub rpc_url: Option<String>,
 
     /// Funding key for the TEE key
     #[arg(
