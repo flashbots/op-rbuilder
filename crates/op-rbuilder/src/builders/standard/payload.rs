@@ -1,6 +1,9 @@
 use crate::{
-    builders::{generator::BuildArguments, BuilderConfig},
-    flashtestations::service::spawn_flashtestations_service,
+    builders::{
+        builder_tx::StandardBuilderTx, generator::BuildArguments, BuilderConfig,
+        BuilderTransactions,
+    },
+    flashtestations::service::bootstrap_flashtestations,
     metrics::OpRBuilderMetrics,
     primitives::reth::ExecutionInfo,
     traits::{ClientBounds, NodeBounds, PayloadTxsBounds, PoolBounds},
@@ -38,7 +41,7 @@ use std::{sync::Arc, time::Instant};
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
-use super::super::context::{estimate_gas_for_builder_tx, OpPayloadBuilderCtx};
+use super::super::context::OpPayloadBuilderCtx;
 
 pub struct StandardPayloadBuilderBuilder(pub BuilderConfig<()>);
 
@@ -47,7 +50,7 @@ where
     Node: NodeBounds,
     Pool: PoolBounds,
 {
-    type PayloadBuilder = StandardOpPayloadBuilder<Pool, Node::Provider>;
+    type PayloadBuilder = StandardOpPayloadBuilder<Pool, Node::Provider, StandardBuilderTx>;
 
     async fn build_payload_builder(
         self,
@@ -55,9 +58,16 @@ where
         pool: Pool,
         _evm_config: OpEvmConfig,
     ) -> eyre::Result<Self::PayloadBuilder> {
+        let signer = self.0.builder_signer;
         if self.0.flashtestations_config.flashtestations_enabled {
-            match spawn_flashtestations_service(self.0.flashtestations_config.clone(), ctx).await {
-                Ok(service) => service,
+            let _flashtestation_builder_tx = match bootstrap_flashtestations(
+                self.0.flashtestations_config.clone(),
+                ctx,
+                signer,
+            )
+            .await
+            {
+                Ok(flashtestation_builder_tx) => flashtestation_builder_tx,
                 Err(e) => {
                     tracing::warn!(error = %e, "Failed to spawn flashtestations service, falling back to standard builder tx");
                     return Ok(StandardOpPayloadBuilder::new(
@@ -65,12 +75,19 @@ where
                         pool,
                         ctx.provider().clone(),
                         self.0.clone(),
+                        StandardBuilderTx::new(self.0.builder_signer),
                     ));
                 }
             };
 
             if self.0.flashtestations_config.enable_block_proofs {
-                // TODO: flashtestations end of block transaction
+                // return Ok(StandardOpPayloadBuilder::new(
+                //     OpEvmConfig::optimism(ctx.chain_spec()),
+                //     pool,
+                //     ctx.provider().clone(),
+                //     self.0.clone(),
+                //     flashtestation_builder_tx,
+                // ));
             }
         }
 
@@ -79,13 +96,14 @@ where
             pool,
             ctx.provider().clone(),
             self.0.clone(),
+            StandardBuilderTx::new(self.0.builder_signer),
         ))
     }
 }
 
 /// Optimism's payload builder
 #[derive(Debug, Clone)]
-pub struct StandardOpPayloadBuilder<Pool, Client, Txs = ()> {
+pub struct StandardOpPayloadBuilder<Pool, Client, BuilderTx, Txs = ()> {
     /// The type responsible for creating the evm.
     pub evm_config: OpEvmConfig,
     /// The transaction pool
@@ -99,15 +117,18 @@ pub struct StandardOpPayloadBuilder<Pool, Client, Txs = ()> {
     pub best_transactions: Txs,
     /// The metrics for the builder
     pub metrics: Arc<OpRBuilderMetrics>,
+    /// The type responsible for creating the builder transactions
+    pub builder_tx: BuilderTx,
 }
 
-impl<Pool, Client> StandardOpPayloadBuilder<Pool, Client> {
+impl<Pool, Client, BuilderTx> StandardOpPayloadBuilder<Pool, Client, BuilderTx> {
     /// `OpPayloadBuilder` constructor.
     pub fn new(
         evm_config: OpEvmConfig,
         pool: Pool,
         client: Client,
         config: BuilderConfig<()>,
+        builder_tx: BuilderTx,
     ) -> Self {
         Self {
             pool,
@@ -116,6 +137,7 @@ impl<Pool, Client> StandardOpPayloadBuilder<Pool, Client> {
             evm_config,
             best_transactions: (),
             metrics: Default::default(),
+            builder_tx,
         }
     }
 }
@@ -146,11 +168,12 @@ impl<T: PoolTransaction> OpPayloadTransactions<T> for () {
     }
 }
 
-impl<Pool, Client, Txs> reth_basic_payload_builder::PayloadBuilder
-    for StandardOpPayloadBuilder<Pool, Client, Txs>
+impl<Pool, Client, BuilderTx, Txs> reth_basic_payload_builder::PayloadBuilder
+    for StandardOpPayloadBuilder<Pool, Client, BuilderTx, Txs>
 where
     Pool: PoolBounds,
     Client: ClientBounds,
+    BuilderTx: BuilderTransactions + Clone + Send + Sync,
     Txs: OpPayloadTransactions<Pool::Transaction>,
 {
     type Attributes = OpPayloadBuilderAttributes<OpTransactionSigned>;
@@ -209,10 +232,11 @@ where
     }
 }
 
-impl<Pool, Client, T> StandardOpPayloadBuilder<Pool, Client, T>
+impl<Pool, Client, BuilderTx, T> StandardOpPayloadBuilder<Pool, Client, BuilderTx, T>
 where
     Pool: PoolBounds,
     Client: ClientBounds,
+    BuilderTx: BuilderTransactions + Clone,
 {
     /// Constructs an Optimism payload from the transactions sent via the
     /// Payload attributes by the sequencer. If the `no_tx_pool` argument is passed in
@@ -288,14 +312,14 @@ where
                 .with_database(state)
                 .with_bundle_update()
                 .build();
-            builder.build(db, ctx)
+            builder.build(db, ctx, self.builder_tx.clone())
         } else {
             // sequencer mode we can reuse cachedreads from previous runs
             let db = State::builder()
                 .with_database(cached_reads.as_db_mut(state))
                 .with_bundle_update()
                 .build();
-            builder.build(db, ctx)
+            builder.build(db, ctx, self.builder_tx.clone())
         }
         .map(|out| {
             let total_block_building_time = block_build_start_time.elapsed();
@@ -349,14 +373,16 @@ pub struct ExecutedPayload {
 
 impl<Txs: PayloadTxsBounds> OpBuilder<'_, Txs> {
     /// Executes the payload and returns the outcome.
-    pub fn execute<DB, P>(
+    pub fn execute<DB, P, BuilderTx>(
         self,
         state: &mut State<DB>,
         ctx: &OpPayloadBuilderCtx,
+        builder_tx: BuilderTx,
     ) -> Result<BuildOutcomeKind<ExecutedPayload>, PayloadBuilderError>
     where
         DB: Database<Error = ProviderError> + AsRef<P> + std::fmt::Debug,
         P: StorageRootProvider,
+        BuilderTx: BuilderTransactions,
     {
         let Self { best } = self;
         info!(target: "payload_builder", id=%ctx.payload_id(), parent_header = ?ctx.parent().hash(), parent_number = ctx.parent().number, "building new payload");
@@ -379,17 +405,14 @@ impl<Txs: PayloadTxsBounds> OpBuilder<'_, Txs> {
         // 4. if mem pool transactions are requested we execute them
 
         // gas reserved for builder tx
-        let message = format!("Block Number: {}", ctx.block_number())
-            .as_bytes()
-            .to_vec();
-        let builder_tx_gas = ctx
-            .builder_signer()
-            .map_or(0, |_| estimate_gas_for_builder_tx(message.clone()));
-        let block_gas_limit = ctx.block_gas_limit() - builder_tx_gas;
+        let builder_txs = builder_tx.simulate_builder_txs(&mut info, ctx, state)?;
+        let builder_tx_gas = builder_txs.iter().fold(0, |acc, tx| acc + tx.gas_used);
+        let block_gas_limit = ctx.block_gas_limit().saturating_sub(builder_tx_gas);
+        if block_gas_limit == 0 {
+            error!("Builder tx gas subtraction resulted in block gas limit to be 0. No transactions would be included");
+        }
         // Save some space in the block_da_limit for builder tx
-        let builder_tx_da_size = ctx
-            .estimate_builder_tx_da_size(state, builder_tx_gas, message.clone())
-            .unwrap_or(0);
+        let builder_tx_da_size = builder_txs.iter().fold(0, |acc, tx| acc + tx.da_size);
         let block_da_limit = ctx
             .da_config
             .max_da_block_size()
@@ -427,7 +450,7 @@ impl<Txs: PayloadTxsBounds> OpBuilder<'_, Txs> {
         }
 
         // Add builder tx to the block
-        ctx.add_builder_tx(&mut info, state, builder_tx_gas, message);
+        builder_tx.add_builder_txs(&mut info, ctx, state)?;
 
         let state_merge_start_time = Instant::now();
 
@@ -457,16 +480,18 @@ impl<Txs: PayloadTxsBounds> OpBuilder<'_, Txs> {
     }
 
     /// Builds the payload on top of the state.
-    pub fn build<DB, P>(
+    pub fn build<DB, P, BuilderTx>(
         self,
         mut state: State<DB>,
         ctx: OpPayloadBuilderCtx,
+        builder_tx: BuilderTx,
     ) -> Result<BuildOutcomeKind<OpBuiltPayload>, PayloadBuilderError>
     where
         DB: Database<Error = ProviderError> + AsRef<P> + std::fmt::Debug,
         P: StateRootProvider + HashedPostStateProvider + StorageRootProvider,
+        BuilderTx: BuilderTransactions,
     {
-        let ExecutedPayload { info } = match self.execute(&mut state, &ctx)? {
+        let ExecutedPayload { info } = match self.execute(&mut state, &ctx, builder_tx)? {
             BuildOutcomeKind::Better { payload } | BuildOutcomeKind::Freeze(payload) => payload,
             BuildOutcomeKind::Cancelled => return Ok(BuildOutcomeKind::Cancelled),
             BuildOutcomeKind::Aborted { fees } => return Ok(BuildOutcomeKind::Aborted { fees }),
