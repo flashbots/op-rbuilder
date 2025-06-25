@@ -1,137 +1,114 @@
-use std::sync::Arc;
-
-use alloy_primitives::U256;
 use reth_node_builder::BuilderContext;
-use reth_optimism_primitives::OpTransactionSigned;
-use reth_primitives::Recovered;
 use tracing::{info, warn};
 
 use crate::{
-    builders::BuilderTx,
+    flashtestations::builder_tx::{FlashtestationsBuilderTx, FlashtestationsBuilderTxArgs},
     traits::NodeBounds,
     tx_signer::{generate_ethereum_keypair, Signer},
 };
 
 use super::{
     args::FlashtestationsArgs,
-    attestation::{get_attestation_provider, AttestationConfig, AttestationProvider},
+    attestation::{get_attestation_provider, AttestationConfig},
     tx_manager::TxManager,
 };
 
-#[derive(Clone)]
-pub struct FlashtestationsService {
-    // Attestation provider generating attestations
-    attestation_provider: Arc<Box<dyn AttestationProvider + Send + Sync>>,
-    // Handles the onchain attestation and TEE block building proofs
-    tx_manager: TxManager,
-    // TEE service generated key
-    tee_service_signer: Signer,
-    // Funding amount for the TEE signer
-    funding_amount: U256,
-}
-
-// TODO: FlashtestationsService error types
-impl FlashtestationsService {
-    pub fn new(args: FlashtestationsArgs) -> Self {
-        let (private_key, public_key, address) = generate_ethereum_keypair();
-        let tee_service_signer = Signer {
-            address,
-            pubkey: public_key,
-            secret: private_key,
-        };
-
-        let attestation_provider = Arc::new(get_attestation_provider(AttestationConfig {
-            debug: args.debug,
-            debug_url: args.debug_url,
-        }));
-
-        let tx_manager = TxManager::new(
-            tee_service_signer,
-            args.funding_key
-                .expect("funding key required when flashtestations enabled"),
-            args.rpc_url,
-            args.registry_address
-                .expect("registry address required when flashtestations enabled"),
-            args.builder_policy_address
-                .expect("builder policy address required when flashtestations enabled"),
-            args.builder_proof_version,
-        );
-
-        Self {
-            attestation_provider,
-            tx_manager,
-            tee_service_signer,
-            funding_amount: args.funding_amount,
-        }
-    }
-
-    pub async fn bootstrap(&self) -> eyre::Result<()> {
-        // Prepare report data with public key (64 bytes, no 0x04 prefix)
-        let mut report_data = [0u8; 64];
-        let pubkey_uncompressed = self.tee_service_signer.pubkey.serialize_uncompressed();
-        report_data.copy_from_slice(&pubkey_uncompressed[1..65]); // Skip 0x04 prefix
-
-        // Request TDX attestation
-        info!(target: "flashtestations", "requesting TDX attestation");
-        let attestation = self.attestation_provider.get_attestation(report_data)?;
-
-        // Submit report onchain by registering the key of the tee service
-        self.tx_manager
-            .fund_and_register_tee_service(attestation, self.funding_amount)
-            .await
-    }
-
-    pub async fn clean_up(&self) -> eyre::Result<()> {
-        self.tx_manager.clean_up().await
-    }
-}
-
-impl BuilderTx for FlashtestationsService {
-    fn estimated_builder_tx_gas(&self) -> u64 {
-        todo!()
-    }
-
-    fn estimated_builder_tx_da_size(&self) -> Option<u64> {
-        todo!()
-    }
-
-    fn signed_builder_tx(&self) -> Result<Recovered<OpTransactionSigned>, secp256k1::Error> {
-        todo!()
-    }
-}
-
-pub async fn spawn_flashtestations_service<Node>(
+// TODO: Flashtestations error types
+pub async fn bootstrap_flashtestations<Node>(
     args: FlashtestationsArgs,
     ctx: &BuilderContext<Node>,
-) -> eyre::Result<FlashtestationsService>
+    builder_signer: Option<Signer>,
+) -> eyre::Result<FlashtestationsBuilderTx>
 where
     Node: NodeBounds,
 {
     info!("Flashtestations enabled");
 
-    let flashtestations_service = FlashtestationsService::new(args.clone());
-    // Generates new key and registers the attestation onchain
-    flashtestations_service.bootstrap().await?;
+    let (private_key, public_key, address) = generate_ethereum_keypair();
+    let tee_service_signer = Signer {
+        address,
+        pubkey: public_key,
+        secret: private_key,
+    };
 
-    let flashtestations_clone = flashtestations_service.clone();
+    let funding_key = args
+        .funding_key
+        .expect("funding key required when flashtestations enabled");
+    let registry_address = args
+        .registry_address
+        .expect("registry address required when flashtestations enabled");
+    let builder_policy_address = args
+        .builder_policy_address
+        .expect("builder policy address required when flashtestations enabled");
+
+    let attestation_provider = get_attestation_provider(AttestationConfig {
+        debug: args.debug,
+        debug_url: args.debug_url,
+    });
+
+    // Prepare report data with public key (64 bytes, no 0x04 prefix)
+    let mut report_data = [0u8; 64];
+    let pubkey_uncompressed = tee_service_signer.pubkey.serialize_uncompressed();
+    report_data.copy_from_slice(&pubkey_uncompressed[1..65]); // Skip 0x04 prefix
+
+    // Request TDX attestation
+    info!(target: "flashtestations", "requesting TDX attestation");
+    let attestation = attestation_provider.get_attestation(report_data)?;
+
+    let (tx_manager, registered) = if let Some(rpc_url) = args.rpc_url {
+        let tx_manager = TxManager::new(
+            tee_service_signer,
+            funding_key,
+            rpc_url.clone(),
+            registry_address,
+        );
+        // Submit report onchain by registering the key of the tee service
+        match tx_manager
+            .fund_and_register_tee_service(attestation.clone(), args.funding_amount)
+            .await
+        {
+            Ok(_) => (Some(tx_manager), true),
+            Err(e) => {
+                warn!(error = %e, "Failed to register tee service via rpc");
+                (Some(tx_manager), false)
+            }
+        }
+    } else {
+        (None, false)
+    };
+
+    let builder_tx = FlashtestationsBuilderTx::new(FlashtestationsBuilderTxArgs {
+        attestation,
+        tee_service_signer,
+        funding_key,
+        funding_amount: args.funding_amount,
+        registry_address,
+        builder_policy_address,
+        builder_proof_version: args.builder_proof_version,
+        builder_signer,
+        registered,
+    });
+
     ctx.task_executor()
         .spawn_critical_with_graceful_shutdown_signal(
             "flashtestations clean up task",
             |shutdown| {
                 Box::pin(async move {
                     let graceful_guard = shutdown.await;
-                    if let Err(e) = flashtestations_clone.clean_up().await {
-                        warn!(
-                            error = %e,
-                            "Failed to complete clean up for flashtestations service",
-                        )
-                    };
+                    if let Some(tx_manager) = tx_manager {
+                        if let Err(e) = tx_manager.clean_up().await {
+                            warn!(
+                                error = %e,
+                                "Failed to complete clean up for flashtestations service",
+                            );
+                        }
+                    }
                     drop(graceful_guard)
                 })
             },
         );
 
-    Ok(flashtestations_service)
+    Ok(builder_tx)
 }
 
 #[cfg(test)]
