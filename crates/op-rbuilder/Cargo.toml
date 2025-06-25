@@ -187,7 +187,7 @@ testing = [
 
 interop = []
 
-flashtestations = ["dcap-rs", "tdx"]
+flashtestations = ["tdx"]
 
 telemetry = ["reth-tracing-otlp", "opentelemetry"]
 
