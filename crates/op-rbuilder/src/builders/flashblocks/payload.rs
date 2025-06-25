@@ -1,10 +1,11 @@
 use super::{config::FlashblocksConfig, wspub::WebSocketPublisher};
 use crate::{
     builders::{
-        context::{estimate_gas_for_builder_tx, OpPayloadBuilderCtx},
+        builder_tx::BuilderTransactions,
+        context::OpPayloadBuilderCtx,
         flashblocks::config::FlashBlocksConfigExt,
         generator::{BlockCell, BuildArguments},
-        BuilderConfig, BuilderTx,
+        BuilderConfig,
     },
     metrics::OpRBuilderMetrics,
     primitives::reth::ExecutionInfo,
@@ -60,7 +61,7 @@ struct ExtraExecutionInfo {
 
 /// Optimism's payload builder
 #[derive(Debug, Clone)]
-pub struct OpPayloadBuilder<Pool, Client, BT> {
+pub struct OpPayloadBuilder<Pool, Client, BuilderTx> {
     /// The type responsible for creating the evm.
     pub evm_config: OpEvmConfig,
     /// The transaction pool
@@ -76,17 +77,17 @@ pub struct OpPayloadBuilder<Pool, Client, BT> {
     pub metrics: Arc<OpRBuilderMetrics>,
     /// The end of builder transaction type
     #[allow(dead_code)]
-    pub builder_tx: BT,
+    pub builder_tx: BuilderTx,
 }
 
-impl<Pool, Client, BT> OpPayloadBuilder<Pool, Client, BT> {
+impl<Pool, Client, BuilderTx> OpPayloadBuilder<Pool, Client, BuilderTx> {
     /// `OpPayloadBuilder` constructor.
     pub fn new(
         evm_config: OpEvmConfig,
         pool: Pool,
         client: Client,
         config: BuilderConfig<FlashblocksConfig>,
-        builder_tx: BT,
+        builder_tx: BuilderTx,
     ) -> eyre::Result<Self> {
         let metrics = Arc::new(OpRBuilderMetrics::default());
         let ws_pub = WebSocketPublisher::new(config.specific.ws_addr, Arc::clone(&metrics))?.into();
@@ -102,12 +103,12 @@ impl<Pool, Client, BT> OpPayloadBuilder<Pool, Client, BT> {
     }
 }
 
-impl<Pool, Client, BT> reth_basic_payload_builder::PayloadBuilder
-    for OpPayloadBuilder<Pool, Client, BT>
+impl<Pool, Client, BuilderTx> reth_basic_payload_builder::PayloadBuilder
+    for OpPayloadBuilder<Pool, Client, BuilderTx>
 where
     Pool: Clone + Send + Sync,
     Client: Clone + Send + Sync,
-    BT: Clone + Send + Sync,
+    BuilderTx: Clone + Send + Sync,
 {
     type Attributes = OpPayloadBuilderAttributes<OpTransactionSigned>;
     type BuiltPayload = OpBuiltPayload;
@@ -130,11 +131,11 @@ where
     }
 }
 
-impl<Pool, Client, BT> OpPayloadBuilder<Pool, Client, BT>
+impl<Pool, Client, BuilderTx> OpPayloadBuilder<Pool, Client, BuilderTx>
 where
     Pool: PoolBounds,
     Client: ClientBounds,
-    BT: BuilderTx,
+    BuilderTx: BuilderTransactions,
 {
     /// Constructs an Optimism payload from the transactions sent via the
     /// Payload attributes by the sequencer. If the `no_tx_pool` argument is passed in
@@ -222,15 +223,6 @@ where
             .with_bundle_update()
             .build();
 
-        // We subtract gas limit and da limit for builder transaction from the whole limit
-        let message = format!("Block Number: {}", ctx.block_number()).into_bytes();
-        let builder_tx_gas = ctx
-            .builder_signer()
-            .map_or(0, |_| estimate_gas_for_builder_tx(message.clone()));
-        let builder_tx_da_size = ctx
-            .estimate_builder_tx_da_size(&mut db, builder_tx_gas, message.clone())
-            .unwrap_or(0);
-
         let mut info = execute_pre_steps(&mut db, &ctx)?;
         ctx.metrics
             .sequencer_tx_duration
@@ -238,8 +230,16 @@ where
 
         // If we have payload with txpool we add first builder tx right after deposits
         if !ctx.attributes().no_tx_pool {
-            ctx.add_builder_tx(&mut info, &mut db, builder_tx_gas, message.clone());
+            self.builder_tx.add_builder_txs(&mut info, &ctx, &mut db)?;
         }
+
+        // We subtract gas limit and da limit for builder transaction from the whole limit
+        let builder_txs = self
+            .builder_tx
+            .simulate_builder_txs(&mut info, &ctx, &mut db)
+            .map_err(|err| PayloadBuilderError::Other(Box::new(err)))?;
+        let builder_tx_gas = builder_txs.iter().fold(0, |acc, tx| acc + tx.gas_used);
+        let builder_tx_da_size: u64 = builder_txs.iter().fold(0, |acc, tx| acc + tx.da_size);
 
         let (payload, fb_payload, mut bundle_state) = build_block(db, &ctx, &mut info)?;
 
@@ -297,7 +297,9 @@ where
         if let Some(da_limit) = da_per_batch {
             // We error if we can't insert any tx aside from builder tx in flashblock
             if da_limit / 2 < builder_tx_da_size {
-                error!("Builder tx da size subtraction caused max_da_block_size to be 0. No transaction would be included.");
+                error!(
+                    "Builder tx da size subtraction caused max_da_block_size to be 0. No transaction would be included."
+                );
             }
         }
         let mut total_da_per_batch = da_per_batch;
@@ -374,7 +376,8 @@ where
                         if let Some(da_limit) = total_da_per_batch.as_mut() {
                             *da_limit = da_limit.saturating_sub(builder_tx_da_size);
                         }
-                    });
+                        Ok(())
+                    })?;
                     let mut db = State::builder()
                         .with_database(state)
                         .with_bundle_update()
@@ -420,8 +423,10 @@ where
 
                     // If it is the last flashblocks, add the builder txn to the block if enabled
                     invoke_on_last_flashblock(flashblock_count, last_flashblock, || {
-                        ctx.add_builder_tx(&mut info, &mut db, builder_tx_gas, message.clone());
-                    });
+                        self.builder_tx
+                            .add_builder_txs(&mut info, &ctx, &mut db)
+                            .map_err(|err| PayloadBuilderError::Other(Box::new(err)))
+                    })?;
 
                     let total_block_built_duration = Instant::now();
                     let build_result = build_block(db, &ctx, &mut info);
@@ -471,7 +476,9 @@ where
                                 if let Some(da) = total_da_per_batch.as_mut() {
                                     *da += da_limit;
                                 } else {
-                                    error!("Builder end up in faulty invariant, if da_per_batch is set then total_da_per_batch must be set");
+                                    error!(
+                                        "Builder end up in faulty invariant, if da_per_batch is set then total_da_per_batch must be set"
+                                    );
                                 }
                             }
                             flashblock_count += 1;
@@ -605,12 +612,12 @@ where
     }
 }
 
-impl<Pool, Client, BT> crate::builders::generator::PayloadBuilder
-    for OpPayloadBuilder<Pool, Client, BT>
+impl<Pool, Client, BuilderTx> crate::builders::generator::PayloadBuilder
+    for OpPayloadBuilder<Pool, Client, BuilderTx>
 where
     Pool: PoolBounds,
     Client: ClientBounds,
-    BT: BuilderTx + Clone + Send + Sync,
+    BuilderTx: BuilderTransactions + Clone + Send + Sync,
 {
     type Attributes = OpPayloadBuilderAttributes<OpTransactionSigned>;
     type BuiltPayload = OpBuiltPayload;
@@ -861,12 +868,13 @@ where
     ))
 }
 
-pub fn invoke_on_last_flashblock<F: FnOnce()>(
+pub fn invoke_on_last_flashblock<F: FnOnce() -> Result<(), PayloadBuilderError>>(
     current_flashblock: u64,
     flashblock_limit: u64,
     fun: F,
-) {
+) -> Result<(), PayloadBuilderError> {
     if current_flashblock == flashblock_limit {
-        fun()
+        fun()?;
     }
+    Ok(())
 }
