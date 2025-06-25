@@ -1,13 +1,7 @@
-use alloy_consensus::TxEip1559;
-use alloy_eips::Encodable2718;
 use alloy_network::ReceiptResponse;
 use alloy_primitives::{keccak256, Address, Bytes, TxHash, TxKind, B256, U256};
 use alloy_rpc_types_eth::TransactionRequest;
 use alloy_transport::TransportResult;
-use op_alloy_consensus::OpTypedTransaction;
-use reth_optimism_node::OpBuiltPayload;
-use reth_optimism_primitives::OpTransactionSigned;
-use reth_primitives::Recovered;
 use std::time::Duration;
 
 use alloy_provider::{PendingTransactionBuilder, Provider, ProviderBuilder};
@@ -16,26 +10,7 @@ use alloy_sol_types::{sol, SolCall, SolValue};
 use op_alloy_network::Optimism;
 use tracing::{debug, error, info};
 
-use crate::tx_signer::Signer;
-
-sol!(
-    #[sol(rpc, abi)]
-    interface IFlashtestationRegistry {
-        function registerTEEService(bytes calldata rawQuote) external;
-    }
-
-    #[sol(rpc, abi)]
-    interface IBlockBuilderPolicy {
-        function verifyBlockBuilderProof(uint8 version, bytes32 blockContentHash) external;
-    }
-
-    struct BlockData {
-        bytes32 parentHash;
-        uint256 blockNumber;
-        uint256 timestamp;
-        bytes32[] transactionHashes;
-    }
-);
+use crate::{flashtestations::IFlashtestationRegistry, tx_signer::Signer};
 
 #[derive(Debug, Clone)]
 pub struct TxManager {
@@ -43,8 +18,6 @@ pub struct TxManager {
     funding_signer: Signer,
     rpc_url: String,
     registry_address: Address,
-    builder_policy_address: Address,
-    builder_proof_version: u8,
 }
 
 impl TxManager {
@@ -53,16 +26,12 @@ impl TxManager {
         funding_signer: Signer,
         rpc_url: String,
         registry_address: Address,
-        builder_policy_address: Address,
-        builder_proof_version: u8,
     ) -> Self {
         Self {
             tee_service_signer,
             funding_signer,
             rpc_url,
             registry_address,
-            builder_policy_address,
-            builder_proof_version,
         }
     }
 
@@ -136,7 +105,6 @@ impl TxManager {
         let tx = TransactionRequest {
             from: Some(self.tee_service_signer.address),
             to: Some(TxKind::Call(self.registry_address)),
-            // gas: Some(10_000_000), // Set gas limit manually as the contract is gas heavy
             nonce: Some(0),
             input: calldata.into(),
             ..Default::default()
@@ -151,36 +119,6 @@ impl TxManager {
                 Err(e)
             }
         }
-    }
-
-    pub fn signed_block_builder_proof(
-        &self,
-        payload: OpBuiltPayload,
-        gas_limit: u64,
-        base_fee: u64,
-        chain_id: u64,
-        nonce: u64,
-    ) -> Result<Recovered<OpTransactionSigned>, secp256k1::Error> {
-        let block_content_hash = Self::compute_block_content_hash(payload);
-
-        info!(target: "flashtestations",  block_content_hash = ?block_content_hash, "submitting block builder proof transaction");
-        let calldata = IBlockBuilderPolicy::verifyBlockBuilderProofCall {
-            version: self.builder_proof_version,
-            blockContentHash: block_content_hash,
-        }
-        .abi_encode();
-        // Create the EIP-1559 transaction
-        let tx = OpTypedTransaction::Eip1559(TxEip1559 {
-            chain_id,
-            nonce,
-            gas_limit,
-            max_fee_per_gas: base_fee.into(),
-            max_priority_fee_per_gas: 0,
-            to: TxKind::Call(self.builder_policy_address),
-            input: calldata.into(),
-            ..Default::default()
-        });
-        self.tee_service_signer.sign_tx(tx)
     }
 
     pub async fn clean_up(&self) -> eyre::Result<()> {
@@ -234,34 +172,5 @@ impl TxManager {
             }
             Err(e) => Err(e.into()),
         }
-    }
-
-    /// Computes the block content hash according to the formula:
-    /// keccak256(abi.encode(parentHash, blockNumber, timestamp, transactionHashes))
-    fn compute_block_content_hash(payload: OpBuiltPayload) -> B256 {
-        let block = payload.block();
-        let body = block.clone().into_body();
-        let transactions = body.transactions();
-
-        // Create ordered list of transaction hashes
-        let transaction_hashes: Vec<B256> = transactions
-            .map(|tx| {
-                // RLP encode the transaction and hash it
-                let mut encoded = Vec::new();
-                tx.encode_2718(&mut encoded);
-                keccak256(&encoded)
-            })
-            .collect();
-
-        // Create struct and ABI encode
-        let block_data = BlockData {
-            parentHash: block.parent_hash,
-            blockNumber: U256::from(block.number),
-            timestamp: U256::from(block.timestamp),
-            transactionHashes: transaction_hashes,
-        };
-
-        let encoded = block_data.abi_encode();
-        keccak256(&encoded)
     }
 }
