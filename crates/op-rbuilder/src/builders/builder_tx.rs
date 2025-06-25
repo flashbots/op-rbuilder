@@ -59,7 +59,7 @@ impl From<BuilderTransactionError> for PayloadBuilderError {
     }
 }
 
-pub trait BuilderTransactions {
+pub trait BuilderTransactions: Debug {
     fn simulate_builder_txs<DB, Extra: Debug + Default>(
         &self,
         info: &mut ExecutionInfo<Extra>,
@@ -132,7 +132,7 @@ pub trait BuilderTransactions {
 
 // Scaffolding for how to construct the end of block builder transaction
 // This will be the regular end of block transaction without the TEE key
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct StandardBuilderTx {
     #[allow(dead_code)]
     pub signer: Option<Signer>,

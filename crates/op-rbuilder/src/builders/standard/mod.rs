@@ -1,11 +1,12 @@
-use payload::StandardPayloadBuilderBuilder;
-use reth_node_builder::components::BasicPayloadServiceBuilder;
-
-use crate::traits::{NodeBounds, PoolBounds};
+use crate::{
+    builders::standard::service::StandardServiceBuilder,
+    traits::{NodeBounds, PoolBounds},
+};
 
 use super::BuilderConfig;
 
 mod payload;
+mod service;
 
 /// Block building strategy that builds blocks using the standard approach by
 /// producing blocks every chain block time.
@@ -15,7 +16,7 @@ impl super::PayloadBuilder for StandardBuilder {
     type Config = ();
 
     type ServiceBuilder<Node, Pool>
-        = BasicPayloadServiceBuilder<StandardPayloadBuilderBuilder>
+        = StandardServiceBuilder
     where
         Node: NodeBounds,
         Pool: PoolBounds;
@@ -27,8 +28,6 @@ impl super::PayloadBuilder for StandardBuilder {
         Node: NodeBounds,
         Pool: PoolBounds,
     {
-        Ok(BasicPayloadServiceBuilder::new(
-            StandardPayloadBuilderBuilder(config),
-        ))
+        Ok(StandardServiceBuilder(config))
     }
 }

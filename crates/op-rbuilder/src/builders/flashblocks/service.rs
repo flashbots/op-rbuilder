@@ -71,7 +71,6 @@ where
         pool: Pool,
         _: OpEvmConfig,
     ) -> eyre::Result<PayloadBuilderHandle<<Node::Types as NodeTypes>::Payload>> {
-        tracing::debug!("Spawning flashblocks payload builder service");
         let signer = self.0.builder_signer;
         if self.0.flashtestations_config.flashtestations_enabled {
             let flashtestations_builder_tx = match bootstrap_flashtestations(
@@ -83,7 +82,7 @@ where
             {
                 Ok(service) => service,
                 Err(e) => {
-                    tracing::warn!(error = %e, "Failed to spawn flashtestations service, falling back to standard builder tx");
+                    tracing::warn!(error = %e, "Failed to bootstrap flashtestations, falling back to standard builder tx");
                     return self.spawn_payload_builder_service(
                         ctx,
                         pool,

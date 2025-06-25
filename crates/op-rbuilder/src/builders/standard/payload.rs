@@ -1,12 +1,8 @@
 use crate::{
-    builders::{
-        builder_tx::StandardBuilderTx, generator::BuildArguments, BuilderConfig,
-        BuilderTransactions,
-    },
-    flashtestations::service::bootstrap_flashtestations,
+    builders::{generator::BuildArguments, BuilderConfig, BuilderTransactions},
     metrics::OpRBuilderMetrics,
     primitives::reth::ExecutionInfo,
-    traits::{ClientBounds, NodeBounds, PayloadTxsBounds, PoolBounds},
+    traits::{ClientBounds, PayloadTxsBounds, PoolBounds},
 };
 use alloy_consensus::{
     constants::EMPTY_WITHDRAWALS, proofs, BlockBody, Header, EMPTY_OMMER_ROOT_HASH,
@@ -18,7 +14,6 @@ use reth_basic_payload_builder::{BuildOutcome, BuildOutcomeKind, MissingPayloadB
 use reth_chain_state::{ExecutedBlock, ExecutedBlockWithTrieUpdates, ExecutedTrieUpdates};
 use reth_evm::{execute::BlockBuilder, ConfigureEvm};
 use reth_node_api::{Block, PayloadBuilderError};
-use reth_node_builder::{components::PayloadBuilderBuilder, BuilderContext};
 use reth_optimism_consensus::{calculate_receipt_root_no_memo_optimism, isthmus};
 use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
 use reth_optimism_forks::OpHardforks;
@@ -42,64 +37,6 @@ use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
 use super::super::context::OpPayloadBuilderCtx;
-
-pub struct StandardPayloadBuilderBuilder(pub BuilderConfig<()>);
-
-impl<Node, Pool> PayloadBuilderBuilder<Node, Pool, OpEvmConfig> for StandardPayloadBuilderBuilder
-where
-    Node: NodeBounds,
-    Pool: PoolBounds,
-{
-    type PayloadBuilder = StandardOpPayloadBuilder<Pool, Node::Provider, StandardBuilderTx>;
-
-    async fn build_payload_builder(
-        self,
-        ctx: &BuilderContext<Node>,
-        pool: Pool,
-        _evm_config: OpEvmConfig,
-    ) -> eyre::Result<Self::PayloadBuilder> {
-        let signer = self.0.builder_signer;
-        if self.0.flashtestations_config.flashtestations_enabled {
-            let _flashtestation_builder_tx = match bootstrap_flashtestations(
-                self.0.flashtestations_config.clone(),
-                ctx,
-                signer,
-            )
-            .await
-            {
-                Ok(flashtestation_builder_tx) => flashtestation_builder_tx,
-                Err(e) => {
-                    tracing::warn!(error = %e, "Failed to spawn flashtestations service, falling back to standard builder tx");
-                    return Ok(StandardOpPayloadBuilder::new(
-                        OpEvmConfig::optimism(ctx.chain_spec()),
-                        pool,
-                        ctx.provider().clone(),
-                        self.0.clone(),
-                        StandardBuilderTx::new(self.0.builder_signer),
-                    ));
-                }
-            };
-
-            if self.0.flashtestations_config.enable_block_proofs {
-                // return Ok(StandardOpPayloadBuilder::new(
-                //     OpEvmConfig::optimism(ctx.chain_spec()),
-                //     pool,
-                //     ctx.provider().clone(),
-                //     self.0.clone(),
-                //     flashtestation_builder_tx,
-                // ));
-            }
-        }
-
-        Ok(StandardOpPayloadBuilder::new(
-            OpEvmConfig::optimism(ctx.chain_spec()),
-            pool,
-            ctx.provider().clone(),
-            self.0.clone(),
-            StandardBuilderTx::new(self.0.builder_signer),
-        ))
-    }
-}
 
 /// Optimism's payload builder
 #[derive(Debug, Clone)]

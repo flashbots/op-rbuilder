@@ -43,7 +43,7 @@ pub struct FlashtestationsBuilderTxArgs {
     pub registered: bool,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct FlashtestationsBuilderTx {
     // Attestation for the builder
     attestation: Vec<u8>,
