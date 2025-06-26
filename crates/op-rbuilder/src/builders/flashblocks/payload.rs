@@ -537,7 +537,7 @@ where
     /// Calculate number of flashblocks.
     /// If dynamic is enabled this function will take time drift into the account.
     pub fn calculate_flashblocks(&self, timestamp: u64) -> (u64, Duration) {
-        if !self.config.specific.dynamic_adjustment {
+        if self.config.specific.fixed {
             return (
                 self.config.flashblocks_per_block(),
                 // We adjust first FB to ensure that we have at least some time to make all FB in time

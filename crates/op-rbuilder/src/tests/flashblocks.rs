@@ -19,7 +19,7 @@ use crate::{
         flashblocks_addr: "127.0.0.1".into(),
         flashblocks_block_time: 200,
         flashblocks_leeway_time: 100,
-        flashblocks_dynamic: true,
+        flashblocks_fixed: false,
     },
     ..Default::default()
 })]
@@ -88,7 +88,7 @@ async fn smoke_dynamic_base(rbuilder: LocalInstance) -> eyre::Result<()> {
         flashblocks_addr: "127.0.0.1".into(),
         flashblocks_block_time: 200,
         flashblocks_leeway_time: 100,
-        flashblocks_dynamic: true,
+        flashblocks_fixed: false,
     },
     ..Default::default()
 })]
@@ -157,7 +157,7 @@ async fn smoke_dynamic_unichain(rbuilder: LocalInstance) -> eyre::Result<()> {
         flashblocks_addr: "127.0.0.1".into(),
         flashblocks_block_time: 200,
         flashblocks_leeway_time: 50,
-        flashblocks_dynamic: false,
+        flashblocks_fixed: true,
     },
     ..Default::default()
 })]
@@ -226,7 +226,7 @@ async fn smoke_classic_unichain(rbuilder: LocalInstance) -> eyre::Result<()> {
         flashblocks_addr: "127.0.0.1".into(),
         flashblocks_block_time: 200,
         flashblocks_leeway_time: 50,
-        flashblocks_dynamic: false,
+        flashblocks_fixed: true,
     },
     ..Default::default()
 })]
@@ -295,7 +295,7 @@ async fn smoke_classic_base(rbuilder: LocalInstance) -> eyre::Result<()> {
         flashblocks_addr: "127.0.0.1".into(),
         flashblocks_block_time: 200,
         flashblocks_leeway_time: 100,
-        flashblocks_dynamic: true,
+        flashblocks_fixed: false,
     },
     ..Default::default()
 })]
@@ -366,7 +366,7 @@ async fn unichain_dynamic_with_lag(rbuilder: LocalInstance) -> eyre::Result<()> 
         flashblocks_addr: "127.0.0.1".into(),
         flashblocks_block_time: 200,
         flashblocks_leeway_time: 0,
-        flashblocks_dynamic: true,
+        flashblocks_fixed: false,
     },
     ..Default::default()
 })]
