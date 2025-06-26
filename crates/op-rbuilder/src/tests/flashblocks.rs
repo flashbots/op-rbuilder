@@ -409,8 +409,8 @@ async fn dynamic_with_full_block_lag(rbuilder: LocalInstance) -> eyre::Result<()
     let block = driver
         .build_new_block_with_current_timestamp(Some(Duration::from_millis(999)))
         .await?;
-    // We could only produce block with deposits because of short time frame
-    assert_eq!(block.transactions.len(), 1);
+    // We could only produce block with deposits + builder tx because of short time frame
+    assert_eq!(block.transactions.len(), 2);
     cancellation_token.cancel();
     assert!(ws_handle.await.is_ok(), "WebSocket listener task failed");
 
