@@ -27,6 +27,22 @@ pub struct FlashtestationsArgs {
     #[arg(long = "flashtestations.debug-url", env = "FLASHTESTATIONS_DEBUG_URL")]
     pub debug_url: Option<String>,
 
+    /// The seed for the tee key in debug mode
+    #[arg(
+        long = "flashtestations.tee-key-seed",
+        env = "FLASHTESTATIONS_TEE_KEY_SEED",
+        default_value = "debug"
+    )]
+    pub tee_key_seed: String,
+
+    /// Path writing tee key to disk in debug mode
+    #[arg(
+        long = "flashtestations.tee-key-path",
+        env = "FLASHTESTATIONS_TEE_KEY_PATH",
+        default_value = "tee_key.json"
+    )]
+    pub tee_key_path: String,
+
     /// The rpc url to post the onchain attestation requests to
     #[arg(
         long = "flashtestations.rpc-url",

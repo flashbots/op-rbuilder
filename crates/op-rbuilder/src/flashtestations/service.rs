@@ -9,7 +9,7 @@ use tracing::{info, warn};
 use crate::{
     builders::BuilderTx,
     traits::NodeBounds,
-    tx_signer::{generate_ethereum_keypair, Signer},
+    tx_signer::{generate_ethereum_keypair, generate_key_from_seed, Signer},
 };
 
 use super::{
@@ -17,6 +17,8 @@ use super::{
     attestation::{get_attestation_provider, AttestationConfig, AttestationProvider},
     tx_manager::TxManager,
 };
+
+use hex;
 
 #[derive(Clone)]
 pub struct FlashtestationsService {
@@ -33,11 +35,42 @@ pub struct FlashtestationsService {
 // TODO: FlashtestationsService error types
 impl FlashtestationsService {
     pub fn new(args: FlashtestationsArgs) -> Self {
-        let (private_key, public_key, address) = generate_ethereum_keypair();
-        let tee_service_signer = Signer {
-            address,
-            pubkey: public_key,
-            secret: private_key,
+        let tee_service_signer = if args.debug {
+            info!("Flashtestations debug mode enabled, generating debug key");
+            let (private_key, public_key, address) = generate_key_from_seed(&args.tee_key_seed);
+            let signer = Signer {
+                address,
+                pubkey: public_key,
+                secret: private_key,
+            };
+
+            // Write signer struct to disk in debug mode
+            {
+                let debug_info = serde_json::json!({
+                    "address": format!("0x{:x}", signer.address),
+                    "public_key": format!("0x{}", hex::encode(signer.pubkey.serialize_uncompressed())),
+                    "private_key": format!("0x{}", hex::encode(signer.secret.secret_bytes())),
+                    "seed": args.tee_key_seed
+                });
+
+                if let Err(e) = serde_json::to_writer_pretty(
+                    std::fs::File::create(&args.tee_key_path).unwrap(),
+                    &debug_info,
+                ) {
+                    warn!(target: "flashtestations", error = %e, "Failed to write debug signer info to disk");
+                } else {
+                    info!(target: "flashtestations", debug_path = ?args.tee_key_path, "Wrote signer debug info to disk");
+                }
+            }
+
+            signer
+        } else {
+            let (private_key, public_key, address) = generate_ethereum_keypair();
+            Signer {
+                address,
+                pubkey: public_key,
+                secret: private_key,
+            }
         };
 
         let attestation_provider = Arc::new(get_attestation_provider(AttestationConfig {

@@ -16,7 +16,7 @@ use alloy::{
 };
 use alloy_provider::{PendingTransactionBuilder, Provider, ProviderBuilder};
 use op_alloy_network::Optimism;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 use crate::tx_signer::Signer;
 
@@ -114,7 +114,10 @@ impl TxManager {
             self.tee_service_signer.address,
             funding_amount,
         )
-        .await?;
+        .await
+        .unwrap_or_else(|e| {
+            warn!(target: "flashtestations", error = %e, "Failed to fund TEE address, attempting to register without funding");
+        });
 
         let quote_bytes = Bytes::from(attestation);
         let wallet =
@@ -123,6 +126,7 @@ impl TxManager {
             .disable_recommended_fillers()
             .fetch_chain_id()
             .with_gas_estimation()
+            .with_cached_nonce_management()
             .wallet(wallet)
             .network::<Optimism>()
             .connect(self.rpc_url.as_str())
@@ -138,21 +142,18 @@ impl TxManager {
         let tx = alloy::rpc::types::TransactionRequest {
             from: Some(self.tee_service_signer.address),
             to: Some(TxKind::Call(self.registry_address)),
-            // gas: Some(10_000_000), // Set gas limit manually as the contract is gas heavy
-            nonce: Some(0),
             input: calldata.into(),
             ..Default::default()
         };
         match Self::process_pending_tx(provider.send_transaction(tx.into()).await).await {
             Ok(tx_hash) => {
                 info!(target: "flashtestations", tx_hash = %tx_hash, "attestation transaction confirmed successfully");
-                Ok(())
             }
             Err(e) => {
                 error!(target: "flashtestations", error = %e, "attestation transaction failed to be sent");
-                Err(e)
             }
         }
+        Ok(())
     }
 
     pub fn signed_block_builder_proof(
