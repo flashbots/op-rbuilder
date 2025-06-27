@@ -318,18 +318,10 @@ pub fn default_node_config() -> NodeConfig<OpChainSpec> {
         static_files_path: None,
     };
 
-    let db = DatabaseArgs {
-        // 1MB
-        max_size: Some(1048576),
-        growth_step: Some(4096),
-        ..Default::default()
-    };
-
     NodeConfig::<OpChainSpec>::new(chain_spec())
         .with_datadir_args(datadir)
         .with_rpc(rpc)
         .with_network(network)
-        .with_db(db)
 }
 
 fn chain_spec() -> Arc<OpChainSpec> {
