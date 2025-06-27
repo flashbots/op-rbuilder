@@ -1,10 +1,11 @@
 use super::{payload::OpPayloadBuilder, FlashblocksConfig};
 use crate::{
     builders::{
-        builder_tx::StandardBuilderTx, generator::BlockPayloadJobGenerator, BuilderConfig,
-        BuilderTx,
+        builder_tx::{BuilderTransactions, StandardBuilderTx},
+        generator::BlockPayloadJobGenerator,
+        BuilderConfig,
     },
-    flashtestations::service::spawn_flashtestations_service,
+    flashtestations::service::bootstrap_flashtestations,
     traits::{NodeBounds, PoolBounds},
 };
 use reth_basic_payload_builder::BasicPayloadJobGeneratorConfig;
@@ -17,16 +18,16 @@ use reth_provider::CanonStateSubscriptions;
 pub struct FlashblocksServiceBuilder(pub BuilderConfig<FlashblocksConfig>);
 
 impl FlashblocksServiceBuilder {
-    fn spawn_payload_builder_service<Node, Pool, BT>(
+    fn spawn_payload_builder_service<Node, Pool, BuilderTx>(
         self,
         ctx: &BuilderContext<Node>,
         pool: Pool,
-        builder_tx: BT,
+        builder_tx: BuilderTx,
     ) -> eyre::Result<PayloadBuilderHandle<<Node::Types as NodeTypes>::Payload>>
     where
         Node: NodeBounds,
         Pool: PoolBounds,
-        BT: BuilderTx + Unpin + Clone + Send + Sync + 'static,
+        BuilderTx: BuilderTransactions + Unpin + Clone + Send + Sync + 'static,
     {
         let payload_builder = OpPayloadBuilder::new(
             OpEvmConfig::optimism(ctx.chain_spec()),
@@ -70,18 +71,18 @@ where
         pool: Pool,
         _: OpEvmConfig,
     ) -> eyre::Result<PayloadBuilderHandle<<Node::Types as NodeTypes>::Payload>> {
-        tracing::debug!("Spawning flashblocks payload builder service");
         let signer = self.0.builder_signer;
         if self.0.flashtestations_config.flashtestations_enabled {
-            let flashtestations_service = match spawn_flashtestations_service(
+            let flashtestations_builder_tx = match bootstrap_flashtestations(
                 self.0.flashtestations_config.clone(),
                 ctx,
+                signer,
             )
             .await
             {
                 Ok(service) => service,
                 Err(e) => {
-                    tracing::warn!(error = %e, "Failed to spawn flashtestations service, falling back to standard builder tx");
+                    tracing::warn!(error = %e, "Failed to bootstrap flashtestations, falling back to standard builder tx");
                     return self.spawn_payload_builder_service(
                         ctx,
                         pool,
@@ -91,7 +92,7 @@ where
             };
 
             if self.0.flashtestations_config.enable_block_proofs {
-                return self.spawn_payload_builder_service(ctx, pool, flashtestations_service);
+                return self.spawn_payload_builder_service(ctx, pool, flashtestations_builder_tx);
             }
         }
         self.spawn_payload_builder_service(ctx, pool, StandardBuilderTx { signer })
