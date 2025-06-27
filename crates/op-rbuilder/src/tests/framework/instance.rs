@@ -31,7 +31,6 @@ use reth::{
     tasks::TaskManager,
 };
 use reth_node_builder::{NodeBuilder, NodeConfig};
-use reth_node_core::args::DatabaseArgs;
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_cli::commands::Commands;
 use reth_optimism_node::{
