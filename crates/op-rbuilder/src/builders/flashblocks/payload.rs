@@ -271,13 +271,14 @@ where
 
         // If we have payload with txpool we add first builder tx right after deposits
         if !ctx.attributes().no_tx_pool {
-            self.builder_tx.add_builder_txs(&mut info, &ctx, &mut db)?;
+            self.builder_tx
+                .add_builder_txs(&state_provider, &mut info, &ctx, &mut db)?;
         }
 
         // We subtract gas limit and da limit for builder transaction from the whole limit
         let builder_txs = self
             .builder_tx
-            .simulate_builder_txs(&mut info, &ctx, &mut db)
+            .simulate_builder_txs(&state_provider, &mut info, &ctx, &mut db)
             .map_err(|err| PayloadBuilderError::Other(Box::new(err)))?;
         let builder_tx_gas = builder_txs.iter().fold(0, |acc, tx| acc + tx.gas_used);
         let builder_tx_da_size: u64 = builder_txs.iter().fold(0, |acc, tx| acc + tx.da_size);
@@ -426,7 +427,7 @@ where
                     let mut db = State::builder()
                         .with_database(state)
                         .with_bundle_update()
-                        .with_bundle_prestate(bundle_state)
+                        .with_bundle_prestate(bundle_state.clone())
                         .build();
 
                     let best_txs_start_time = Instant::now();

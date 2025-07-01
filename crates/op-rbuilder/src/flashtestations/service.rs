@@ -1,10 +1,11 @@
 use reth_node_builder::BuilderContext;
+use secp256k1::{PublicKey, Secp256k1, SecretKey};
 use tracing::{info, warn};
 
 use crate::{
     flashtestations::builder_tx::{FlashtestationsBuilderTx, FlashtestationsBuilderTxArgs},
     traits::NodeBounds,
-    tx_signer::{generate_ethereum_keypair, Signer},
+    tx_signer::{generate_ethereum_keypair, public_key_to_address, Signer},
 };
 
 use super::{
@@ -13,7 +14,6 @@ use super::{
     tx_manager::TxManager,
 };
 
-// TODO: Flashtestations error types
 pub async fn bootstrap_flashtestations<Node>(
     args: FlashtestationsArgs,
     ctx: &BuilderContext<Node>,
@@ -24,7 +24,16 @@ where
 {
     info!("Flashtestations enabled");
 
-    let (private_key, public_key, address) = generate_ethereum_keypair();
+    let (private_key, public_key, address) = if args.debug {
+        info!("Flashtestations debug mode enabled, generating debug key");
+        // Generate deterministic key for debugging purposes
+        let secp = Secp256k1::new();
+        let private_key = SecretKey::from_slice(&[0x42; 32]).unwrap();
+        let public_key = PublicKey::from_secret_key(&secp, &private_key);
+        (private_key, public_key, public_key_to_address(&public_key))
+    } else {
+        generate_ethereum_keypair()
+    };
     let tee_service_signer = Signer {
         address,
         pubkey: public_key,
@@ -86,6 +95,7 @@ where
         builder_policy_address,
         builder_proof_version: args.builder_proof_version,
         builder_signer,
+        enable_block_proofs: args.enable_block_proofs,
         registered,
     });
 

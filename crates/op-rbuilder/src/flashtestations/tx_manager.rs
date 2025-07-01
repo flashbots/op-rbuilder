@@ -1,3 +1,4 @@
+use alloy_json_rpc::RpcError;
 use alloy_network::ReceiptResponse;
 use alloy_primitives::{keccak256, Address, Bytes, TxHash, TxKind, B256, U256};
 use alloy_rpc_types_eth::TransactionRequest;
@@ -8,9 +9,29 @@ use alloy_provider::{PendingTransactionBuilder, Provider, ProviderBuilder};
 use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::{sol, SolCall, SolValue};
 use op_alloy_network::Optimism;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 use crate::{flashtestations::IFlashtestationRegistry, tx_signer::Signer};
+
+#[derive(Debug, thiserror::Error)]
+pub enum TxManagerError {
+    #[error("rpc error: {0}")]
+    RpcError(TransportError),
+    #[error("tx reverted: {0}")]
+    TxReverted(TxHash),
+    #[error("error checking tx confirmation: {0}")]
+    TxConfirmationError(PendingTransactionError),
+    #[error("tx rpc error: {0}")]
+    TxRpcError(RpcError<TransportErrorKind>),
+    #[error("signer error: {0}")]
+    SignerError(ecdsa::Error),
+}
+
+impl From<TransportError> for TxManagerError {
+    fn from(e: TransportError) -> Self {
+        TxManagerError::RpcError(e)
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct TxManager {
@@ -35,8 +56,14 @@ impl TxManager {
         }
     }
 
-    pub async fn fund_address(&self, from: Signer, to: Address, amount: U256) -> eyre::Result<()> {
-        let funding_wallet = PrivateKeySigner::from_bytes(&from.secret.secret_bytes().into())?;
+    pub async fn fund_address(
+        &self,
+        from: Signer,
+        to: Address,
+        amount: U256,
+    ) -> Result<(), TxManagerError> {
+        let funding_wallet = PrivateKeySigner::from_bytes(&from.secret.secret_bytes().into())
+            .map_err(TxManagerError::SignerError)?;
         let provider = ProviderBuilder::new()
             .disable_recommended_fillers()
             .fetch_chain_id()
@@ -60,36 +87,40 @@ impl TxManager {
         match Self::process_pending_tx(provider.send_transaction(funding_tx.into()).await).await {
             Ok(tx_hash) => {
                 info!(target: "flashtestations", tx_hash = %tx_hash, "funding transaction confirmed successfully");
+                Ok(())
             }
             Err(e) => {
-                error!(target: "flashtestations", error = %e, "funding transaction failed");
-                return Err(e);
+                warn!(target: "flashtestations", error = %e, "funding transaction failed");
+                Err(e)
             }
         }
-
-        Ok(())
     }
 
     pub async fn fund_and_register_tee_service(
         &self,
         attestation: Vec<u8>,
         funding_amount: U256,
-    ) -> eyre::Result<()> {
+    ) -> Result<(), TxManagerError> {
         info!(target: "flashtestations", "funding TEE address at {}", self.tee_service_signer.address);
         self.fund_address(
             self.funding_signer,
             self.tee_service_signer.address,
             funding_amount,
         )
-        .await?;
+        .await
+        .unwrap_or_else(|e| {
+            warn!(target: "flashtestations", error = %e, "Failed to fund TEE address, attempting to register without funding");
+        });
 
         let quote_bytes = Bytes::from(attestation);
         let wallet =
-            PrivateKeySigner::from_bytes(&self.tee_service_signer.secret.secret_bytes().into())?;
+            PrivateKeySigner::from_bytes(&self.tee_service_signer.secret.secret_bytes().into())
+                .map_err(TxManagerError::SignerError)?;
         let provider = ProviderBuilder::new()
             .disable_recommended_fillers()
             .fetch_chain_id()
             .with_gas_estimation()
+            .with_cached_nonce_management()
             .wallet(wallet)
             .network::<Optimism>()
             .connect(self.rpc_url.as_str())
@@ -97,7 +128,6 @@ impl TxManager {
 
         info!(target: "flashtestations", "submitting quote to registry at {}", self.registry_address);
 
-        // TODO: add retries
         let calldata = IFlashtestationRegistry::registerTEEServiceCall {
             rawQuote: quote_bytes,
         }
@@ -105,23 +135,21 @@ impl TxManager {
         let tx = TransactionRequest {
             from: Some(self.tee_service_signer.address),
             to: Some(TxKind::Call(self.registry_address)),
-            nonce: Some(0),
             input: calldata.into(),
             ..Default::default()
         };
         match Self::process_pending_tx(provider.send_transaction(tx.into()).await).await {
             Ok(tx_hash) => {
                 info!(target: "flashtestations", tx_hash = %tx_hash, "attestation transaction confirmed successfully");
-                Ok(())
             }
             Err(e) => {
-                error!(target: "flashtestations", error = %e, "attestation transaction failed to be sent");
-                Err(e)
+                warn!(target: "flashtestations", error = %e, "attestation transaction failed to be sent");
             }
         }
+        Ok(())
     }
 
-    pub async fn clean_up(&self) -> eyre::Result<()> {
+    pub async fn clean_up(&self) -> Result<(), TxManagerError> {
         info!(target: "flashtestations", "sending funds back from TEE generated key to funding address");
         let provider = ProviderBuilder::new()
             .disable_recommended_fillers()
@@ -140,7 +168,7 @@ impl TxManager {
                 self.funding_signer.address,
                 balance.saturating_sub(gas_cost),
             )
-            .await?
+            .await?;
         }
         Ok(())
     }
@@ -148,7 +176,7 @@ impl TxManager {
     /// Processes a pending transaction and logs whether the transaction succeeded or not
     async fn process_pending_tx(
         pending_tx_result: TransportResult<PendingTransactionBuilder<Optimism>>,
-    ) -> eyre::Result<TxHash> {
+    ) -> Result<TxHash, TxManagerError> {
         match pending_tx_result {
             Ok(pending_tx) => {
                 let tx_hash = *pending_tx.tx_hash();
@@ -164,13 +192,13 @@ impl TxManager {
                         if receipt.status() {
                             Ok(receipt.transaction_hash())
                         } else {
-                            Err(eyre::eyre!("Transaction reverted: {}", tx_hash))
+                            Err(TxManagerError::TxReverted(tx_hash))
                         }
                     }
-                    Err(e) => Err(e.into()),
+                    Err(e) => Err(TxManagerError::TxConfirmationError(e)),
                 }
             }
-            Err(e) => Err(e.into()),
+            Err(e) => Err(TxManagerError::TxRpcError(e)),
         }
     }
 }

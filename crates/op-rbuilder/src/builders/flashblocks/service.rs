@@ -91,9 +91,7 @@ where
                 }
             };
 
-            if self.0.flashtestations_config.enable_block_proofs {
-                return self.spawn_payload_builder_service(ctx, pool, flashtestations_builder_tx);
-            }
+            return self.spawn_payload_builder_service(ctx, pool, flashtestations_builder_tx);
         }
         self.spawn_payload_builder_service(ctx, pool, StandardBuilderTx { signer })
     }

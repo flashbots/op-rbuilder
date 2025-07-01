@@ -1,3 +1,4 @@
+use super::super::context::OpPayloadBuilderCtx;
 use crate::{
     builders::{generator::BuildArguments, BuilderConfig, BuilderTransactions},
     metrics::OpRBuilderMetrics,
@@ -21,10 +22,7 @@ use reth_optimism_node::{OpBuiltPayload, OpPayloadBuilderAttributes};
 use reth_optimism_primitives::{OpPrimitives, OpTransactionSigned};
 use reth_payload_util::{BestPayloadTransactions, NoopPayloadTransactions, PayloadTransactions};
 use reth_primitives::RecoveredBlock;
-use reth_provider::{
-    ExecutionOutcome, HashedPostStateProvider, ProviderError, StateRootProvider,
-    StorageRootProvider,
-};
+use reth_provider::{ExecutionOutcome, ProviderError, StateProvider};
 use reth_revm::{
     database::StateProviderDatabase, db::states::bundle_state::BundleRetention, State,
 };
@@ -35,8 +33,6 @@ use revm::Database;
 use std::{sync::Arc, time::Instant};
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
-
-use super::super::context::OpPayloadBuilderCtx;
 
 /// Optimism's payload builder
 #[derive(Debug, Clone)]
@@ -241,22 +237,18 @@ where
         let builder = OpBuilder::new(best);
 
         let state_provider = self.client.state_by_block_hash(ctx.parent().hash())?;
-        let state = StateProviderDatabase::new(state_provider);
+        let state = StateProviderDatabase::new(&state_provider);
         let metrics = ctx.metrics.clone();
-
         if ctx.attributes().no_tx_pool {
-            let db = State::builder()
-                .with_database(state)
-                .with_bundle_update()
-                .build();
-            builder.build(db, ctx, self.builder_tx.clone())
+            builder.build(state, &state_provider, ctx, self.builder_tx.clone())
         } else {
             // sequencer mode we can reuse cachedreads from previous runs
-            let db = State::builder()
-                .with_database(cached_reads.as_db_mut(state))
-                .with_bundle_update()
-                .build();
-            builder.build(db, ctx, self.builder_tx.clone())
+            builder.build(
+                cached_reads.as_db_mut(state),
+                &state_provider,
+                ctx,
+                self.builder_tx.clone(),
+            )
         }
         .map(|out| {
             let total_block_building_time = block_build_start_time.elapsed();
@@ -310,15 +302,14 @@ pub struct ExecutedPayload {
 
 impl<Txs: PayloadTxsBounds> OpBuilder<'_, Txs> {
     /// Executes the payload and returns the outcome.
-    pub fn execute<DB, P, BuilderTx>(
+    pub fn execute<BuilderTx>(
         self,
-        state: &mut State<DB>,
+        state_provider: impl StateProvider,
+        db: &mut State<impl Database<Error = ProviderError>>,
         ctx: &OpPayloadBuilderCtx,
         builder_tx: BuilderTx,
     ) -> Result<BuildOutcomeKind<ExecutedPayload>, PayloadBuilderError>
     where
-        DB: Database<Error = ProviderError> + AsRef<P> + std::fmt::Debug,
-        P: StorageRootProvider,
         BuilderTx: BuilderTransactions,
     {
         let Self { best } = self;
@@ -326,14 +317,14 @@ impl<Txs: PayloadTxsBounds> OpBuilder<'_, Txs> {
 
         // 1. apply pre-execution changes
         ctx.evm_config
-            .builder_for_next_block(state, ctx.parent(), ctx.block_env_attributes.clone())
+            .builder_for_next_block(db, ctx.parent(), ctx.block_env_attributes.clone())
             .map_err(PayloadBuilderError::other)?
             .apply_pre_execution_changes()?;
 
         let sequencer_tx_start_time = Instant::now();
 
         // 3. execute sequencer transactions
-        let mut info = ctx.execute_sequencer_transactions(state)?;
+        let mut info = ctx.execute_sequencer_transactions(db)?;
 
         let sequencer_tx_time = sequencer_tx_start_time.elapsed();
         ctx.metrics.sequencer_tx_duration.record(sequencer_tx_time);
@@ -342,7 +333,7 @@ impl<Txs: PayloadTxsBounds> OpBuilder<'_, Txs> {
         // 4. if mem pool transactions are requested we execute them
 
         // gas reserved for builder tx
-        let builder_txs = builder_tx.simulate_builder_txs(&mut info, ctx, state)?;
+        let builder_txs = builder_tx.simulate_builder_txs(&state_provider, &mut info, ctx, db)?;
         let builder_tx_gas = builder_txs.iter().fold(0, |acc, tx| acc + tx.gas_used);
         let block_gas_limit = ctx.block_gas_limit().saturating_sub(builder_tx_gas);
         if block_gas_limit == 0 {
@@ -375,7 +366,7 @@ impl<Txs: PayloadTxsBounds> OpBuilder<'_, Txs> {
             if ctx
                 .execute_best_transactions(
                     &mut info,
-                    state,
+                    db,
                     best_txs,
                     block_gas_limit,
                     block_da_limit,
@@ -387,13 +378,13 @@ impl<Txs: PayloadTxsBounds> OpBuilder<'_, Txs> {
         }
 
         // Add builder tx to the block
-        builder_tx.add_builder_txs(&mut info, ctx, state)?;
+        builder_tx.add_builder_txs(&state_provider, &mut info, ctx, db)?;
 
         let state_merge_start_time = Instant::now();
 
         // merge all transitions into bundle state, this would apply the withdrawal balance changes
         // and 4788 contract call
-        state.merge_transitions(BundleRetention::Reverts);
+        db.merge_transitions(BundleRetention::Reverts);
 
         let state_transition_merge_time = state_merge_start_time.elapsed();
         ctx.metrics
@@ -417,26 +408,32 @@ impl<Txs: PayloadTxsBounds> OpBuilder<'_, Txs> {
     }
 
     /// Builds the payload on top of the state.
-    pub fn build<DB, P, BuilderTx>(
+    pub fn build<BuilderTx>(
         self,
-        mut state: State<DB>,
+        state: impl Database<Error = ProviderError>,
+        state_provider: impl StateProvider,
         ctx: OpPayloadBuilderCtx,
         builder_tx: BuilderTx,
     ) -> Result<BuildOutcomeKind<OpBuiltPayload>, PayloadBuilderError>
     where
-        DB: Database<Error = ProviderError> + AsRef<P> + std::fmt::Debug,
-        P: StateRootProvider + HashedPostStateProvider + StorageRootProvider,
         BuilderTx: BuilderTransactions,
     {
-        let ExecutedPayload { info } = match self.execute(&mut state, &ctx, builder_tx)? {
-            BuildOutcomeKind::Better { payload } | BuildOutcomeKind::Freeze(payload) => payload,
-            BuildOutcomeKind::Cancelled => return Ok(BuildOutcomeKind::Cancelled),
-            BuildOutcomeKind::Aborted { fees } => return Ok(BuildOutcomeKind::Aborted { fees }),
-        };
+        let mut db = State::builder()
+            .with_database(state)
+            .with_bundle_update()
+            .build();
+        let ExecutedPayload { info } =
+            match self.execute(&state_provider, &mut db, &ctx, builder_tx)? {
+                BuildOutcomeKind::Better { payload } | BuildOutcomeKind::Freeze(payload) => payload,
+                BuildOutcomeKind::Cancelled => return Ok(BuildOutcomeKind::Cancelled),
+                BuildOutcomeKind::Aborted { fees } => {
+                    return Ok(BuildOutcomeKind::Aborted { fees })
+                }
+            };
 
         let block_number = ctx.block_number();
         let execution_outcome = ExecutionOutcome::new(
-            state.take_bundle(),
+            db.take_bundle(),
             vec![info.receipts],
             block_number,
             Vec::new(),
@@ -457,12 +454,9 @@ impl<Txs: PayloadTxsBounds> OpBuilder<'_, Txs> {
         // calculate the state root
         let state_root_start_time = Instant::now();
 
-        let state_provider = state.database.as_ref();
         let hashed_state = state_provider.hashed_post_state(execution_outcome.state());
         let (state_root, trie_output) = {
-            state
-                .database
-                .as_ref()
+            state_provider
                 .state_root_with_updates(hashed_state.clone())
                 .inspect_err(|err| {
                     warn!(target: "payload_builder",
@@ -486,7 +480,7 @@ impl<Txs: PayloadTxsBounds> OpBuilder<'_, Txs> {
             // `l2tol1-message-passer`
             (
                 Some(
-                    isthmus::withdrawals_root(execution_outcome.state(), state.database.as_ref())
+                    isthmus::withdrawals_root(execution_outcome.state(), state_provider)
                         .map_err(PayloadBuilderError::other)?,
                 ),
                 Some(EMPTY_REQUESTS_HASH),

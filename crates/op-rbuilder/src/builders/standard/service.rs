@@ -92,14 +92,12 @@ where
                 }
             };
 
-            if self.0.flashtestations_config.enable_block_proofs {
-                return self.spawn_payload_builder_service(
-                    evm_config,
-                    ctx,
-                    pool,
-                    flashtestation_builder_tx,
-                );
-            }
+            return self.spawn_payload_builder_service(
+                evm_config,
+                ctx,
+                pool,
+                flashtestation_builder_tx,
+            );
         }
 
         self.spawn_payload_builder_service(evm_config, ctx, pool, StandardBuilderTx::new(signer))
