@@ -1,11 +1,10 @@
 use reth_node_builder::BuilderContext;
-use secp256k1::{PublicKey, Secp256k1, SecretKey};
 use tracing::{info, warn};
 
 use crate::{
     flashtestations::builder_tx::{FlashtestationsBuilderTx, FlashtestationsBuilderTxArgs},
     traits::NodeBounds,
-    tx_signer::{generate_ethereum_keypair, public_key_to_address, Signer},
+    tx_signer::{generate_ethereum_keypair, generate_key_from_seed, Signer},
 };
 
 use super::{
@@ -22,18 +21,16 @@ pub async fn bootstrap_flashtestations<Node>(
 where
     Node: NodeBounds,
 {
-    info!("Flashtestations enabled");
-
     let (private_key, public_key, address) = if args.debug {
         info!("Flashtestations debug mode enabled, generating debug key");
         // Generate deterministic key for debugging purposes
-        let secp = Secp256k1::new();
-        let private_key = SecretKey::from_slice(&[0x42; 32]).unwrap();
-        let public_key = PublicKey::from_secret_key(&secp, &private_key);
-        (private_key, public_key, public_key_to_address(&public_key))
+        generate_key_from_seed(&args.debug_tee_key_seed)
     } else {
         generate_ethereum_keypair()
     };
+
+    info!("Flashtestations key generated: {}", address);
+
     let tee_service_signer = Signer {
         address,
         pubkey: public_key,
@@ -52,7 +49,7 @@ where
 
     let attestation_provider = get_attestation_provider(AttestationConfig {
         debug: args.debug,
-        debug_url: args.debug_url,
+        quote_provider: args.quote_provider,
     });
 
     // Prepare report data with public key (64 bytes, no 0x04 prefix)

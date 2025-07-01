@@ -153,11 +153,11 @@ impl StandardBuilderTx {
         Self { signer }
     }
 
-    pub fn simulate_builder_txs(
+    pub fn simulate_builder_tx(
         &self,
         ctx: &OpPayloadBuilderCtx,
         db: &mut State<impl Database<Error = ProviderError>>,
-    ) -> Result<Vec<BuilderTransactionCtx>, BuilderTransactionError> {
+    ) -> Result<Option<BuilderTransactionCtx>, BuilderTransactionError> {
         match self.signer {
             Some(signer) => {
                 let message: Vec<u8> = format!("Block Number: {}", ctx.block_number()).into_bytes();
@@ -166,13 +166,13 @@ impl StandardBuilderTx {
                 let da_size = op_alloy_flz::tx_estimated_size_fjord_bytes(
                     signed_tx.encoded_2718().as_slice(),
                 );
-                Ok(vec![BuilderTransactionCtx {
+                Ok(Some(BuilderTransactionCtx {
                     gas_used,
                     da_size,
                     signed_tx,
-                }])
+                }))
             }
-            None => Ok(vec![]),
+            None => Ok(None),
         }
     }
 
@@ -242,6 +242,7 @@ impl BuilderTransactions for StandardBuilderTx {
         ctx: &OpPayloadBuilderCtx,
         db: &mut State<impl Database<Error = ProviderError>>,
     ) -> Result<Vec<BuilderTransactionCtx>, BuilderTransactionError> {
-        self.simulate_builder_txs(ctx, db)
+        let builder_tx = self.simulate_builder_tx(ctx, db)?;
+        Ok(builder_tx.into_iter().collect())
     }
 }
