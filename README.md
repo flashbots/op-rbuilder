@@ -44,6 +44,10 @@ cargo run -p op-rbuilder --bin op-rbuilder -- node \
 
 ### Flashtestations 
 
+Flashtestations is a feature that enables Trusted Execution Environment (TEE) attestation for block building. It provides cryptographic proof that blocks were built within a secure enclave, ensuring the integrity and confidentiality of the block building process.
+
+#### Usage
+
 To run op-rbuilder with flashtestations:
 
 ```bash
@@ -53,14 +57,18 @@ cargo run -p op-rbuilder --bin op-rbuilder --features=flashtestations -- node \
     --authrpc.port 9551 \
     --authrpc.jwtsecret /path/to/jwt.hex \
     --flashtestations.enabled \
-    --flashtestations.rpc-url your-rpc-url \ # rpc to submit the attestation transaction to
     --flashtestations.funding-amount 0.01 \ # amount in ETH to fund the TEE generated key
     --flashtestations.funding-key secret-key \ # funding key for the TEE key
     --flashtestations.registry-address 0xFlashtestationsRegistryAddress \
-    flashtestations.builder-policy-address 0xBuilderPolicyAddress
+    --flashtestations.builder-policy-address 0xBuilderPolicyAddress
 ```
 
-Note that `--rollup.builder-secret-key` must be set and funded in order for the flashtestations key to be funded and submit the attestation on-chain.
+#### Additional CLI Config
+
+- `--flashtestations.enable-block-proofs`: Enable end-of-block transaction proofs that verify the block was built within a TEE
+- `--flashtestations.debug`: Enable debug mode with a deterministic TEE key and debug attestation server for testing and development
+- `--flashtestations.quote-provider <URL>`: Specify a remote URL to provide an attestation instead of generating a quote in process
+- `--flashtestations.rpc-url <URL>`: Use a remote provider to submit attestations to
 
 ## Observability
 

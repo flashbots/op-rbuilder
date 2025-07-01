@@ -1,13 +1,13 @@
-use alloy::sol_types::{SolCall, SolValue};
+use alloy::sol_types::{SolCall, SolEvent, SolValue};
 use alloy_consensus::TxEip1559;
 use alloy_eips::Encodable2718;
 use alloy_op_evm::OpEvm;
 use alloy_primitives::{keccak256, map::foldhash::HashMap, Address, Bytes, TxKind, B256, U256};
 use core::fmt::Debug;
 use op_alloy_consensus::OpTypedTransaction;
-use reth_evm::{precompiles::PrecompilesMap, ConfigureEvm, Evm};
+use reth_evm::{precompiles::PrecompilesMap, ConfigureEvm, Evm, EvmError};
 use reth_optimism_primitives::OpTransactionSigned;
-use reth_primitives::Recovered;
+use reth_primitives::{Log, Recovered};
 use reth_provider::{ProviderError, StateProvider};
 use reth_revm::{database::StateProviderDatabase, State};
 use revm::{
@@ -20,7 +20,7 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
 };
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
 use crate::{
     builders::{
@@ -28,8 +28,9 @@ use crate::{
         StandardBuilderTx,
     },
     flashtestations::{
-        BlockBuilderPolicyError, BlockData, FlashtestationRegistryError,
+        BlockBuilderPolicyError, BlockBuilderProofVerified, BlockData, FlashtestationRegistryError,
         FlashtestationRevertReason, IBlockBuilderPolicy, IFlashtestationRegistry,
+        TEEServiceRegistered,
     },
     primitives::reth::ExecutionInfo,
     tx_signer::Signer,
@@ -72,12 +73,13 @@ pub struct FlashtestationsBuilderTx {
     fallback_builder_tx: StandardBuilderTx,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct TxSimulateResult {
     pub gas_used: u64,
     pub success: bool,
     pub state_changes: HashMap<Address, Account>,
     pub revert_reason: Option<FlashtestationRevertReason>,
+    pub logs: Vec<Log>,
 }
 
 impl FlashtestationsBuilderTx {
@@ -106,7 +108,6 @@ impl FlashtestationsBuilderTx {
         nonce: u64,
     ) -> Result<Recovered<OpTransactionSigned>, secp256k1::Error> {
         // Create the EIP-1559 transaction
-
         let tx = OpTypedTransaction::Eip1559(TxEip1559 {
             chain_id,
             nonce,
@@ -150,18 +151,11 @@ impl FlashtestationsBuilderTx {
 
     fn signed_block_builder_proof_tx(
         &self,
-        transactions: Vec<OpTransactionSigned>,
+        block_content_hash: B256,
         ctx: &OpPayloadBuilderCtx,
         gas_limit: u64,
         nonce: u64,
     ) -> Result<Recovered<OpTransactionSigned>, secp256k1::Error> {
-        let block_content_hash = Self::compute_block_content_hash(
-            transactions,
-            ctx.parent_hash(),
-            ctx.block_number(),
-            ctx.timestamp(),
-        );
-
         let calldata = IBlockBuilderPolicy::verifyBlockBuilderProofCall {
             version: self.builder_proof_version,
             blockContentHash: block_content_hash,
@@ -212,15 +206,17 @@ impl FlashtestationsBuilderTx {
         keccak256(&encoded)
     }
 
-    fn simulate_register_tee_service_tx<DB>(
+    fn simulate_register_tee_service_tx(
         &self,
         ctx: &OpPayloadBuilderCtx,
-        evm: &mut OpEvm<&mut State<DB>, NoOpInspector, PrecompilesMap>,
-        nonce: u64,
-    ) -> Result<TxSimulateResult, BuilderTransactionError>
-    where
-        DB: revm::Database<Error = reth_provider::ProviderError>,
-    {
+        evm: &mut OpEvm<
+            &mut State<StateProviderDatabase<impl StateProvider>>,
+            NoOpInspector,
+            PrecompilesMap,
+        >,
+    ) -> Result<TxSimulateResult, BuilderTransactionError> {
+        let nonce = get_nonce(evm.db_mut(), self.tee_service_signer.address)?;
+
         let register_tx = self.signed_register_tee_service_tx(
             self.attestation.clone(),
             ctx.block_gas_limit(),
@@ -228,20 +224,27 @@ impl FlashtestationsBuilderTx {
             ctx.chain_id(),
             nonce,
         )?;
-        let ResultAndState { result, state } = evm
-            .transact(&register_tx)
-            .map_err(|e| BuilderTransactionError::EvmExecutionError(Box::new(e)))?;
+        let ResultAndState { result, state } = match evm.transact(&register_tx) {
+            Ok(res) => res,
+            Err(err) => {
+                if err.is_invalid_tx_err() {
+                    warn!(target: "flashtestations", %err, "register tee service tx failed");
+                    return Ok(TxSimulateResult::default());
+                } else {
+                    return Err(BuilderTransactionError::EvmExecutionError(Box::new(err)));
+                }
+            }
+        };
         match result {
-            // TODO: check logs
-            ExecutionResult::Success { gas_used, .. } => Ok(TxSimulateResult {
+            ExecutionResult::Success { gas_used, logs, .. } => Ok(TxSimulateResult {
                 gas_used,
                 success: true,
                 state_changes: state,
                 revert_reason: None,
+                logs,
             }),
             ExecutionResult::Revert { output, .. } => {
                 let revert_reason = FlashtestationRegistryError::from(output);
-                warn!(target: "flashtestations", "register tee tx reverted during simulation: {}", revert_reason);
                 Ok(TxSimulateResult {
                     gas_used: 0,
                     success: false,
@@ -249,54 +252,73 @@ impl FlashtestationsBuilderTx {
                     revert_reason: Some(FlashtestationRevertReason::FlashtestationRegistry(
                         revert_reason,
                     )),
+                    logs: vec![],
                 })
             }
-            _ => {
-                error!(target: "flashtestations", "register tee tx halted or reverted during simulation");
-                Ok(TxSimulateResult {
-                    gas_used: 0,
-                    success: false,
-                    state_changes: state,
-                    revert_reason: None,
-                })
-            }
+            ExecutionResult::Halt { reason, .. } => Ok(TxSimulateResult {
+                gas_used: 0,
+                success: false,
+                state_changes: state,
+                revert_reason: Some(FlashtestationRevertReason::Halt(
+                    serde_json::to_string(&reason).unwrap_or_default(),
+                )),
+                logs: vec![],
+            }),
         }
     }
 
-    fn check_registered(&self, revert_reason: Option<FlashtestationRevertReason>) -> bool {
-        if let Some(FlashtestationRevertReason::FlashtestationRegistry(
-            FlashtestationRegistryError::TEEServiceAlreadyRegistered(_, _),
-        )) = revert_reason
-        {
-            return true;
+    fn check_tee_address_registered_log(&self, logs: Vec<Log>, address: Address) -> bool {
+        for log in logs {
+            if log.topics().len() > 1 && log.topics()[0] == TEEServiceRegistered::SIGNATURE_HASH {
+                if let Ok(decoded) = TEEServiceRegistered::decode_log(&log) {
+                    if decoded.address == address {
+                        return true;
+                    }
+                };
+            }
         }
         false
     }
 
-    fn simulate_verify_block_proof_tx<DB>(
+    fn simulate_verify_block_proof_tx(
         &self,
-        transactions: Vec<OpTransactionSigned>,
+        block_content_hash: B256,
         ctx: &OpPayloadBuilderCtx,
-        evm: &mut OpEvm<&mut State<DB>, NoOpInspector, PrecompilesMap>,
-        nonce: u64,
-    ) -> Result<TxSimulateResult, BuilderTransactionError>
-    where
-        DB: revm::Database<Error = reth_provider::ProviderError>,
-    {
-        let verify_block_proof_tx =
-            self.signed_block_builder_proof_tx(transactions, ctx, ctx.block_gas_limit(), nonce)?;
-        let ResultAndState { result, state, .. } = evm.transact(&verify_block_proof_tx)?;
+        evm: &mut OpEvm<
+            &mut State<StateProviderDatabase<impl StateProvider>>,
+            NoOpInspector,
+            PrecompilesMap,
+        >,
+    ) -> Result<TxSimulateResult, BuilderTransactionError> {
+        let nonce = get_nonce(evm.db_mut(), self.tee_service_signer.address)?;
+
+        let verify_block_proof_tx = self.signed_block_builder_proof_tx(
+            block_content_hash,
+            ctx,
+            ctx.block_gas_limit(),
+            nonce,
+        )?;
+        let ResultAndState { result, state } = match evm.transact(&verify_block_proof_tx) {
+            Ok(res) => res,
+            Err(err) => {
+                if err.is_invalid_tx_err() {
+                    warn!(target: "flashtestations", %err, "verify block proof tx failed");
+                    return Ok(TxSimulateResult::default());
+                } else {
+                    return Err(BuilderTransactionError::EvmExecutionError(Box::new(err)));
+                }
+            }
+        };
         match result {
-            // TODO: check logs
-            ExecutionResult::Success { gas_used, .. } => Ok(TxSimulateResult {
+            ExecutionResult::Success { gas_used, logs, .. } => Ok(TxSimulateResult {
                 gas_used,
                 success: true,
                 state_changes: state,
                 revert_reason: None,
+                logs,
             }),
             ExecutionResult::Revert { output, .. } => {
                 let revert_reason = BlockBuilderPolicyError::from(output);
-                warn!(target: "flashtestations", "verify block proof tx reverted during simulation: {}", revert_reason);
                 Ok(TxSimulateResult {
                     gas_used: 0,
                     success: false,
@@ -304,17 +326,185 @@ impl FlashtestationsBuilderTx {
                     revert_reason: Some(FlashtestationRevertReason::BlockBuilderPolicy(
                         revert_reason,
                     )),
+                    logs: vec![],
                 })
             }
-            ExecutionResult::Halt { reason, .. } => {
-                warn!(target: "flashtestations", "verify block proof tx halted during simulation: {:?}", reason);
-                Ok(TxSimulateResult {
-                    gas_used: 0,
-                    success: false,
-                    state_changes: state,
-                    revert_reason: None,
-                })
+            ExecutionResult::Halt { reason, .. } => Ok(TxSimulateResult {
+                gas_used: 0,
+                success: false,
+                state_changes: state,
+                revert_reason: Some(FlashtestationRevertReason::Halt(
+                    serde_json::to_string(&reason).unwrap_or_default(),
+                )),
+                logs: vec![],
+            }),
+        }
+    }
+
+    fn check_verify_block_proof_log(&self, logs: Vec<Log>) -> bool {
+        for log in logs {
+            if log.topics().len() > 1
+                && log.topics()[0] == BlockBuilderProofVerified::SIGNATURE_HASH
+            {
+                return true;
             }
+        }
+        false
+    }
+
+    fn fund_tee_service_tx(
+        &self,
+        ctx: &OpPayloadBuilderCtx,
+        evm: &mut OpEvm<
+            &mut State<StateProviderDatabase<impl StateProvider>>,
+            NoOpInspector,
+            PrecompilesMap,
+        >,
+    ) -> Result<Option<BuilderTransactionCtx>, BuilderTransactionError> {
+        let balance = get_balance(evm.db_mut(), self.tee_service_signer.address)?;
+        if balance.is_zero() {
+            let funding_nonce = get_nonce(evm.db_mut(), self.funding_key.address)?;
+            let funding_tx = self.signed_funding_tx(
+                self.tee_service_signer.address,
+                self.funding_key,
+                self.funding_amount,
+                ctx.base_fee(),
+                ctx.chain_id(),
+                funding_nonce,
+            )?;
+            let da_size =
+                op_alloy_flz::tx_estimated_size_fjord_bytes(funding_tx.encoded_2718().as_slice());
+            let ResultAndState { state, .. } = match evm.transact(&funding_tx) {
+                Ok(res) => res,
+                Err(err) => {
+                    if err.is_invalid_tx_err() {
+                        warn!(target: "flashtestations", %err, "funding tx failed");
+                        return Ok(None);
+                    } else {
+                        return Err(BuilderTransactionError::EvmExecutionError(Box::new(err)));
+                    }
+                }
+            };
+            info!(target: "flashtestations", "adding funding tx to builder txs");
+            evm.db_mut().commit(state);
+            Ok(Some(BuilderTransactionCtx {
+                gas_used: 21000,
+                da_size,
+                signed_tx: funding_tx,
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn register_tee_service_tx(
+        &self,
+        ctx: &OpPayloadBuilderCtx,
+        evm: &mut OpEvm<
+            &mut State<StateProviderDatabase<impl StateProvider>>,
+            NoOpInspector,
+            PrecompilesMap,
+        >,
+    ) -> Result<(Option<BuilderTransactionCtx>, bool), BuilderTransactionError> {
+        let TxSimulateResult {
+            gas_used,
+            success,
+            state_changes,
+            revert_reason,
+            logs,
+        } = self.simulate_register_tee_service_tx(ctx, evm)?;
+        if success {
+            let has_log =
+                self.check_tee_address_registered_log(logs, self.tee_service_signer.address);
+            if !has_log {
+                warn!(target: "flashtestations", "transaction did not emit TEEServiceRegistered log, FlashtestationRegistry contract address may be incorrect");
+                Ok((None, false))
+            } else {
+                let nonce = get_nonce(evm.db_mut(), self.tee_service_signer.address)?;
+                let register_tx = self.signed_register_tee_service_tx(
+                    self.attestation.clone(),
+                    gas_used * 64 / 63, // Due to EIP-150, 63/64 of available gas is forwarded to external calls so need to add a buffer
+                    ctx.base_fee(),
+                    ctx.chain_id(),
+                    nonce,
+                )?;
+                let da_size = op_alloy_flz::tx_estimated_size_fjord_bytes(
+                    register_tx.encoded_2718().as_slice(),
+                );
+                info!(target: "flashtestations", "adding register tee tx to builder txs");
+                evm.db_mut().commit(state_changes);
+                Ok((
+                    Some(BuilderTransactionCtx {
+                        gas_used,
+                        da_size,
+                        signed_tx: register_tx,
+                    }),
+                    false,
+                ))
+            }
+        } else if let Some(FlashtestationRevertReason::FlashtestationRegistry(
+            FlashtestationRegistryError::TEEServiceAlreadyRegistered(_, _),
+        )) = revert_reason
+        {
+            Ok((None, true))
+        } else {
+            warn!(target: "flashtestations", reason = ?revert_reason, "register tee service tx failed");
+            Ok((None, false))
+        }
+    }
+
+    fn verify_block_proof_tx(
+        &self,
+        transactions: Vec<OpTransactionSigned>,
+        ctx: &OpPayloadBuilderCtx,
+        evm: &mut OpEvm<
+            &mut State<StateProviderDatabase<impl StateProvider>>,
+            NoOpInspector,
+            PrecompilesMap,
+        >,
+    ) -> Result<Option<BuilderTransactionCtx>, BuilderTransactionError> {
+        let block_content_hash = Self::compute_block_content_hash(
+            transactions.clone(),
+            ctx.parent_hash(),
+            ctx.block_number(),
+            ctx.timestamp(),
+        );
+
+        let TxSimulateResult {
+            gas_used,
+            success,
+            revert_reason,
+            logs,
+            ..
+        } = self.simulate_verify_block_proof_tx(block_content_hash, ctx, evm)?;
+        if success {
+            let has_log = self.check_verify_block_proof_log(logs);
+            if !has_log {
+                warn!(target: "flashtestations", "transaction did not emit BlockBuilderProofVerified log, BlockBuilderPolicy contract address may be incorrect");
+                Ok(None)
+            } else {
+                let nonce = get_nonce(evm.db_mut(), self.tee_service_signer.address)?;
+                // Due to EIP-150, only 63/64 of available gas is forwarded to external calls so need to add a buffer
+                let verify_block_proof_tx = self.signed_block_builder_proof_tx(
+                    block_content_hash,
+                    ctx,
+                    gas_used * 64 / 63,
+                    nonce,
+                )?;
+                let da_size = op_alloy_flz::tx_estimated_size_fjord_bytes(
+                    verify_block_proof_tx.encoded_2718().as_slice(),
+                );
+                debug!(target: "flashtestations", "adding verify block proof tx to builder txs");
+                Ok(Some(BuilderTransactionCtx {
+                    gas_used,
+                    da_size,
+                    signed_tx: verify_block_proof_tx,
+                }))
+            }
+        } else {
+            warn!(target: "flashtestations", reason = ?revert_reason, "verify block proof tx failed, falling back to standard builder tx");
+            self.fallback_builder_tx
+                .simulate_builder_tx(ctx, evm.db_mut())
         }
     }
 }
@@ -344,102 +534,26 @@ impl BuilderTransactions for FlashtestationsBuilderTx {
 
         let mut builder_txs = Vec::<BuilderTransactionCtx>::new();
 
-        let mut nonce: u64 = get_nonce(evm.db_mut(), self.tee_service_signer.address)?;
         if !self.registered.load(Ordering::Relaxed) {
-            let balance = get_balance(evm.db_mut(), self.tee_service_signer.address)?;
-            if balance.is_zero() {
-                // funding transaction
-                let funding_nonce = get_nonce(evm.db_mut(), self.funding_key.address)?;
-                let funding_tx = self.signed_funding_tx(
-                    self.tee_service_signer.address,
-                    self.funding_key,
-                    self.funding_amount,
-                    ctx.base_fee(),
-                    ctx.chain_id(),
-                    funding_nonce,
-                )?;
-                let da_size = op_alloy_flz::tx_estimated_size_fjord_bytes(
-                    funding_tx.encoded_2718().as_slice(),
-                );
-                let ResultAndState { state, .. } = evm.transact(&funding_tx)?;
-                info!(target: "flashtestations", "adding funding tx to builder txs");
-                builder_txs.push(BuilderTransactionCtx {
-                    gas_used: 21000,
-                    da_size,
-                    signed_tx: funding_tx,
-                });
-                evm.db_mut().commit(state);
+            builder_txs.extend(self.fund_tee_service_tx(ctx, &mut evm)?);
+            let (register_tx, registered) = self.register_tee_service_tx(ctx, &mut evm)?;
+            if registered {
+                self.registered.store(true, Ordering::Relaxed);
             }
-            let TxSimulateResult {
-                gas_used,
-                success,
-                state_changes,
-                revert_reason,
-            } = self.simulate_register_tee_service_tx(ctx, &mut evm, nonce)?;
-            let registered = self.check_registered(revert_reason);
-            self.registered.store(registered, Ordering::Relaxed);
-            if success {
-                let register_tx = self.signed_register_tee_service_tx(
-                    self.attestation.clone(),
-                    gas_used * 64 / 63, // Due to EIP-150, 63/64 of available gas is forwarded to external calls so need to add a buffer
-                    ctx.base_fee(),
-                    ctx.chain_id(),
-                    nonce,
-                )?;
-                let da_size = op_alloy_flz::tx_estimated_size_fjord_bytes(
-                    register_tx.encoded_2718().as_slice(),
-                );
-                info!(target: "flashtestations", "adding register tee tx to builder txs");
-                builder_txs.push(BuilderTransactionCtx {
-                    gas_used,
-                    da_size,
-                    signed_tx: register_tx,
-                });
-                evm.db_mut().commit(state_changes);
-                nonce += 1;
-            }
+            builder_txs.extend(register_tx);
         }
 
         if self.enable_block_proofs {
             // add verify block proof tx
-            let TxSimulateResult {
-                gas_used,
-                success: should_include_tx,
-                ..
-            } = self.simulate_verify_block_proof_tx(
+            builder_txs.extend(self.verify_block_proof_tx(
                 info.executed_transactions.clone(),
                 ctx,
                 &mut evm,
-                nonce,
-            )?;
-            if should_include_tx {
-                // Due to EIP-150, 63/64 of available gas is forwarded to external calls so need to add a buffer
-                let verify_block_proof_tx = self.signed_block_builder_proof_tx(
-                    info.executed_transactions.clone(),
-                    ctx,
-                    gas_used * 64 / 63,
-                    nonce,
-                )?;
-                let da_size = op_alloy_flz::tx_estimated_size_fjord_bytes(
-                    verify_block_proof_tx.encoded_2718().as_slice(),
-                );
-                debug!(target: "flashtestations", "adding verify block proof tx to builder txs");
-                builder_txs.push(BuilderTransactionCtx {
-                    gas_used,
-                    da_size,
-                    signed_tx: verify_block_proof_tx,
-                });
-                return Ok(builder_txs);
-            } else {
-                warn!(target: "flashtestations", "verify block proof tx reverted, falling back to standard builder tx");
-            }
+            )?);
+        } else {
+            // Fallback to standard builder tx (either when block proofs are disabled or when verify block proof tx fails)
+            builder_txs.extend(self.fallback_builder_tx.simulate_builder_tx(ctx, db)?);
         }
-
-        // Fallback to standard builder tx (either when block proofs are disabled or when verify block proof tx fails)
-        builder_txs.extend(
-            self.fallback_builder_tx
-                .simulate_builder_txs(ctx, evm.db_mut())?,
-        );
 
         Ok(builder_txs)
     }
