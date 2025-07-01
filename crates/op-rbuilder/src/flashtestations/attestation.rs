@@ -11,8 +11,8 @@ const DEBUG_QUOTE_SERVICE_URL: &str = "http://ns31695324.ip-141-94-163.eu:10080/
 pub struct AttestationConfig {
     /// If true, uses the debug HTTP service instead of real TDX hardware
     pub debug: bool,
-    /// The URL of the debug HTTP service
-    pub debug_url: Option<String>,
+    /// The URL of the quote provider
+    pub quote_provider: Option<String>,
 }
 
 /// Trait for attestation providers
@@ -51,18 +51,18 @@ impl AttestationProvider for TdxAttestationProvider {
     }
 }
 
-/// Debug HTTP service attestation provider
-pub struct DebugAttestationProvider {
+/// Remote HTTP service attestation provider
+pub struct RemoteAttestationProvider {
     service_url: String,
 }
 
-impl DebugAttestationProvider {
+impl RemoteAttestationProvider {
     pub fn new(service_url: String) -> Self {
         Self { service_url }
     }
 }
 
-impl AttestationProvider for DebugAttestationProvider {
+impl AttestationProvider for RemoteAttestationProvider {
     fn get_attestation(&self, report_data: [u8; 64]) -> eyre::Result<Vec<u8>> {
         let report_data_hex = hex::encode(report_data);
         let url = format!("{}/{}", self.service_url, report_data_hex);
@@ -83,10 +83,12 @@ impl AttestationProvider for DebugAttestationProvider {
 pub fn get_attestation_provider(
     config: AttestationConfig,
 ) -> Box<dyn AttestationProvider + Send + Sync> {
-    if config.debug {
-        Box::new(DebugAttestationProvider::new(
+    if let Some(quote_provider) = config.quote_provider {
+        Box::new(RemoteAttestationProvider::new(quote_provider))
+    } else if config.debug {
+        Box::new(RemoteAttestationProvider::new(
             config
-                .debug_url
+                .quote_provider
                 .unwrap_or(DEBUG_QUOTE_SERVICE_URL.to_string()),
         ))
     } else {
@@ -97,7 +99,7 @@ pub fn get_attestation_provider(
         #[cfg(not(feature = "flashtestations"))]
         {
             info!("Using debug attestation provider as flashtestations feature is disabled");
-            Box::new(DebugAttestationProvider::new(
+            Box::new(RemoteAttestationProvider::new(
                 DEBUG_QUOTE_SERVICE_URL.to_string(),
             ))
         }
