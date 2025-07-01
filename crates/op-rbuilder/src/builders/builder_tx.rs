@@ -6,13 +6,17 @@ use alloy_primitives::{
 };
 use core::fmt::Debug;
 use op_alloy_consensus::OpTypedTransaction;
+use op_revm::OpTransactionError;
 use reth_evm::{eth::receipt_builder::ReceiptBuilderCtx, ConfigureEvm, Evm};
 use reth_node_api::PayloadBuilderError;
 use reth_optimism_primitives::OpTransactionSigned;
 use reth_primitives::Recovered;
-use reth_provider::ProviderError;
+use reth_provider::{ProviderError, StateProvider};
 use reth_revm::State;
-use revm::{context::result::ResultAndState, Database, DatabaseCommit};
+use revm::{
+    context::result::{EVMError, ResultAndState},
+    Database, DatabaseCommit,
+};
 use tracing::{debug, warn};
 
 use crate::{
@@ -48,6 +52,12 @@ impl From<secp256k1::Error> for BuilderTransactionError {
     }
 }
 
+impl From<EVMError<ProviderError, OpTransactionError>> for BuilderTransactionError {
+    fn from(error: EVMError<ProviderError, OpTransactionError>) -> Self {
+        BuilderTransactionError::EvmExecutionError(Box::new(error))
+    }
+}
+
 impl From<BuilderTransactionError> for PayloadBuilderError {
     fn from(error: BuilderTransactionError) -> Self {
         match error {
@@ -60,30 +70,30 @@ impl From<BuilderTransactionError> for PayloadBuilderError {
 }
 
 pub trait BuilderTransactions: Debug {
-    fn simulate_builder_txs<DB, Extra: Debug + Default>(
+    fn simulate_builder_txs<Extra: Debug + Default>(
         &self,
+        state_provider: impl StateProvider,
         info: &mut ExecutionInfo<Extra>,
         ctx: &OpPayloadBuilderCtx,
-        db: &mut State<DB>,
-    ) -> Result<Vec<BuilderTransactionCtx>, BuilderTransactionError>
-    where
-        DB: Database<Error = ProviderError>;
+        db: &mut State<impl Database<Error = ProviderError>>,
+    ) -> Result<Vec<BuilderTransactionCtx>, BuilderTransactionError>;
 
-    fn add_builder_txs<DB, Extra: Debug + Default>(
+    fn add_builder_txs<Extra: Debug + Default>(
         &self,
+        state_provider: impl StateProvider,
         info: &mut ExecutionInfo<Extra>,
         builder_ctx: &OpPayloadBuilderCtx,
-        db: &mut State<DB>,
-    ) -> Result<(), BuilderTransactionError>
-    where
-        DB: Database<Error = ProviderError>,
-    {
+        db: &mut State<impl Database<Error = ProviderError>>,
+    ) -> Result<(), BuilderTransactionError> {
         {
             let mut evm = builder_ctx
                 .evm_config
                 .evm_with_env(&mut *db, builder_ctx.evm_env.clone());
+
             let mut invalid: HashSet<Address> = HashSet::new();
-            let builder_txs = self.simulate_builder_txs(info, builder_ctx, evm.db_mut())?;
+            // simulate builder txs on the top of block state
+            let builder_txs =
+                self.simulate_builder_txs(state_provider, info, builder_ctx, evm.db_mut())?;
             for builder_tx in builder_txs {
                 if invalid.contains(&builder_tx.signed_tx.signer()) {
                     debug!(target: "payload_builder", tx_hash = ?builder_tx.signed_tx.tx_hash(), "builder signer invalid as previous builder tx reverted");
@@ -141,6 +151,29 @@ pub struct StandardBuilderTx {
 impl StandardBuilderTx {
     pub fn new(signer: Option<Signer>) -> Self {
         Self { signer }
+    }
+
+    pub fn simulate_builder_txs(
+        &self,
+        ctx: &OpPayloadBuilderCtx,
+        db: &mut State<impl Database<Error = ProviderError>>,
+    ) -> Result<Vec<BuilderTransactionCtx>, BuilderTransactionError> {
+        match self.signer {
+            Some(signer) => {
+                let message: Vec<u8> = format!("Block Number: {}", ctx.block_number()).into_bytes();
+                let gas_used = self.estimate_builder_tx_gas(&message);
+                let signed_tx = self.signed_builder_tx(ctx, db, signer, gas_used, message)?;
+                let da_size = op_alloy_flz::tx_estimated_size_fjord_bytes(
+                    signed_tx.encoded_2718().as_slice(),
+                );
+                Ok(vec![BuilderTransactionCtx {
+                    gas_used,
+                    da_size,
+                    signed_tx,
+                }])
+            }
+            None => Ok(vec![]),
+        }
     }
 
     fn estimate_builder_tx_gas(&self, input: &[u8]) -> u64 {
@@ -202,30 +235,13 @@ impl StandardBuilderTx {
 }
 
 impl BuilderTransactions for StandardBuilderTx {
-    fn simulate_builder_txs<DB, Extra: Debug + Default>(
+    fn simulate_builder_txs<Extra: Debug + Default>(
         &self,
+        _state_provider: impl StateProvider,
         _info: &mut ExecutionInfo<Extra>,
         ctx: &OpPayloadBuilderCtx,
-        db: &mut State<DB>,
-    ) -> Result<Vec<BuilderTransactionCtx>, BuilderTransactionError>
-    where
-        DB: Database<Error = ProviderError>,
-    {
-        match self.signer {
-            Some(signer) => {
-                let message: Vec<u8> = format!("Block Number: {}", ctx.block_number()).into_bytes();
-                let gas_used = self.estimate_builder_tx_gas(&message);
-                let signed_tx = self.signed_builder_tx(ctx, db, signer, gas_used, message)?;
-                let da_size = op_alloy_flz::tx_estimated_size_fjord_bytes(
-                    signed_tx.encoded_2718().as_slice(),
-                );
-                Ok(vec![BuilderTransactionCtx {
-                    gas_used,
-                    da_size,
-                    signed_tx,
-                }])
-            }
-            None => Ok(vec![]),
-        }
+        db: &mut State<impl Database<Error = ProviderError>>,
+    ) -> Result<Vec<BuilderTransactionCtx>, BuilderTransactionError> {
+        self.simulate_builder_txs(ctx, db)
     }
 }
