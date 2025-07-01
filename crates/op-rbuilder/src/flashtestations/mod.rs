@@ -53,6 +53,8 @@ pub enum FlashtestationRevertReason {
     FlashtestationRegistry(FlashtestationRegistryError),
     #[error("block builder policy error: {0}")]
     BlockBuilderPolicy(BlockBuilderPolicyError),
+    #[error("halt: {0}")]
+    Halt(String),
 }
 
 #[derive(Debug, thiserror::Error)]
