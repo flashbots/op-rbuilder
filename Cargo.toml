@@ -107,7 +107,7 @@ revm = { version = "24.0.1", features = [
     "optional_balance_check",
 ], default-features = false }
 revm-inspectors = { version = "0.22.0", default-features = false }
-op-revm = { version = "5.0.1", default-features = false }
+op-revm = { version = "5.0.1", features = ["serde"], default-features = false }
 
 ethereum_ssz_derive = "0.9.0"
 ethereum_ssz = "0.9.0"
