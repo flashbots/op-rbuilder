@@ -16,12 +16,12 @@ use reth_cli_commands::launcher::Launcher;
 use reth_db::mdbx::DatabaseEnv;
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_cli::chainspec::OpChainSpecParser;
-use reth_optimism_node::{
-    node::{OpAddOns, OpAddOnsBuilder, OpEngineValidatorBuilder, OpPoolBuilder},
-    OpNode,
-};
+use reth_optimism_node::{node::{OpAddOns, OpAddOnsBuilder, OpEngineValidatorBuilder, OpPoolBuilder}, OpNetworkBuilder, OpNode};
 use reth_transaction_pool::TransactionPool;
 use std::{marker::PhantomData, sync::Arc};
+use clap_builder::builder::TypedValueParser;
+use reth::network::{NetworkBuilder, NetworkManager};
+use testcontainers::ImageExt;
 
 pub fn launch() -> Result<()> {
     let cli = Cli::parsed();
@@ -137,7 +137,8 @@ where
                                 rollup_args.supervisor_safety_level,
                             ),
                     )
-                    .payload(B::new_service(builder_config)?),
+                    .payload(B::new_service(builder_config)?)
+                    .network(OpNetworkBuilder::new())
             )
             .with_add_ons(addons)
             .extend_rpc_modules(move |ctx| {
