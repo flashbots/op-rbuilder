@@ -1,8 +1,11 @@
-use std::collections::HashSet;
-use reth::network::NetworkPrimitives;
-use reth::network::transactions::{PeerMetadata, TransactionPropagationPolicy};
+use reth::network::{
+    transactions::{PeerMetadata, TransactionPropagationPolicy},
+    NetworkPrimitives,
+};
 use reth_network_peers::PeerId;
+use std::collections::HashSet;
 
+#[derive(Debug, Clone)]
 pub struct RbuilderTransactionPropagation {
     pub peers: HashSet<PeerId>,
 }

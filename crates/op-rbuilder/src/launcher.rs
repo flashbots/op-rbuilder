@@ -5,7 +5,9 @@ use crate::{
     builders::{BuilderConfig, BuilderMode, FlashblocksBuilder, PayloadBuilder, StandardBuilder},
     metrics::VERSION,
     monitor_tx_pool::monitor_tx_pool,
-    primitives::reth::engine_api_builder::OpEngineApiBuilder,
+    primitives::reth::{
+        engine_api_builder::OpEngineApiBuilder, network_builder::CustomOpNetworkBuilder,
+    },
     revert_protection::{EthApiExtServer, EthApiOverrideServer, RevertProtectionExt},
     tx::FBPooledTransaction,
 };
@@ -16,12 +18,12 @@ use reth_cli_commands::launcher::Launcher;
 use reth_db::mdbx::DatabaseEnv;
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_cli::chainspec::OpChainSpecParser;
-use reth_optimism_node::{node::{OpAddOns, OpAddOnsBuilder, OpEngineValidatorBuilder, OpPoolBuilder}, OpNetworkBuilder, OpNode};
+use reth_optimism_node::{
+    node::{OpAddOns, OpAddOnsBuilder, OpEngineValidatorBuilder, OpPoolBuilder},
+    OpNode,
+};
 use reth_transaction_pool::TransactionPool;
 use std::{marker::PhantomData, sync::Arc};
-use clap_builder::builder::TypedValueParser;
-use reth::network::{NetworkBuilder, NetworkManager};
-use testcontainers::ImageExt;
 
 pub fn launch() -> Result<()> {
     let cli = Cli::parsed();
@@ -103,6 +105,7 @@ where
         let op_node = OpNode::new(rollup_args.clone());
         let reverted_cache = Cache::builder().max_capacity(100).build();
         let reverted_cache_copy = reverted_cache.clone();
+        let peers = builder_args.rbuilder_peers;
 
         let mut addons: OpAddOns<
             _,
@@ -138,7 +141,11 @@ where
                             ),
                     )
                     .payload(B::new_service(builder_config)?)
-                    .network(OpNetworkBuilder::new())
+                    .network(CustomOpNetworkBuilder::new(
+                        rollup_args.disable_txpool_gossip,
+                        !rollup_args.discovery_v4,
+                        peers.iter().map(|peer| peer.id).collect(),
+                    )),
             )
             .with_add_ons(addons)
             .extend_rpc_modules(move |ctx| {
