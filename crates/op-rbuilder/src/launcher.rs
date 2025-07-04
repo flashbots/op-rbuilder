@@ -5,7 +5,9 @@ use crate::{
     builders::{BuilderConfig, BuilderMode, FlashblocksBuilder, PayloadBuilder, StandardBuilder},
     metrics::VERSION,
     monitor_tx_pool::monitor_tx_pool,
-    primitives::reth::engine_api_builder::OpEngineApiBuilder,
+    primitives::reth::{
+        engine_api_builder::OpEngineApiBuilder, network_builder::CustomOpNetworkBuilder,
+    },
     revert_protection::{EthApiExtServer, EthApiOverrideServer, RevertProtectionExt},
     tx::FBPooledTransaction,
 };
@@ -103,6 +105,7 @@ where
         let op_node = OpNode::new(rollup_args.clone());
         let reverted_cache = Cache::builder().max_capacity(100).build();
         let reverted_cache_copy = reverted_cache.clone();
+        let peers = builder_args.rbuilder_peers;
 
         let mut addons: OpAddOns<
             _,
@@ -137,7 +140,12 @@ where
                                 rollup_args.supervisor_safety_level,
                             ),
                     )
-                    .payload(B::new_service(builder_config)?),
+                    .payload(B::new_service(builder_config)?)
+                    .network(CustomOpNetworkBuilder::new(
+                        rollup_args.disable_txpool_gossip,
+                        !rollup_args.discovery_v4,
+                        peers.iter().map(|peer| peer.id).collect(),
+                    )),
             )
             .with_add_ons(addons)
             .extend_rpc_modules(move |ctx| {
