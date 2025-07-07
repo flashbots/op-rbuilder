@@ -19,3 +19,4 @@ mod smoke;
 
 #[cfg(test)]
 mod txpool;
+mod tx_gossiping;
