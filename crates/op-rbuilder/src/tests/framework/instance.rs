@@ -39,6 +39,7 @@ use reth_optimism_node::{
 };
 use reth_transaction_pool::{AllTransactionsEvents, TransactionPool};
 use std::sync::{Arc, LazyLock};
+use reth::rpc::builder::RpcModuleSelection;
 use tokio::sync::oneshot;
 
 /// Represents a type that emulates a local in-process instance of the OP builder node.

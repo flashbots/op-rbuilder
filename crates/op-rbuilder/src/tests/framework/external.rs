@@ -127,6 +127,11 @@ impl ExternalNode {
     pub fn engine_api(&self) -> &EngineApi<Ipc> {
         &self.engine_api
     }
+
+    /// Access to the Engine API of the validation node.
+    pub fn container_id(&self) -> String {
+        self.container_id.clone()
+    }
 }
 
 impl ExternalNode {
