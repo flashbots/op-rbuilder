@@ -139,6 +139,8 @@ async fn test_txgossiping_no_rbuilder_gossiping() {
     // We enabled regular mechanism, bit disable rbuilder gossip mechanism. this should result in no gossiping
     command.rollup_args.disable_txpool_gossip = false;
     command.rbuilder_disable_txpool_gossip = true;
+    // We add rbuilder peer too, to ensure that it won't receive txs
+    command.rbuilder_peers = vec![enode2.clone()];
     let instance =
         LocalInstance::new_with_config::<StandardBuilder>(node_command.ext.clone(), config)
             .await
