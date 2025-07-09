@@ -46,6 +46,10 @@ pub struct OpRBuilderMetrics {
     pub total_block_built_gauge: Gauge,
     /// Histogram of the time taken to build a Flashblock
     pub flashblock_build_duration: Histogram,
+    /// Flashblock byte size histogram
+    pub flashblock_byte_size_histogram: Histogram,
+    /// Histogram of transactions in a Flashblock
+    pub flashblock_num_tx_histogram: Histogram,
     /// Number of invalid blocks
     pub invalid_blocks_count: Counter,
     /// Histogram of fetching transactions from the pool duration

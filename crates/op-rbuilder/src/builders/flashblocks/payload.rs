@@ -475,20 +475,12 @@ where
                             ctx.metrics
                                 .flashblock_build_duration
                                 .record(flashblock_build_start_time.elapsed());
-                            // Should these be separate metrics since flashblocks
-                            // will always be smaller?
                             ctx.metrics
-                                .payload_byte_size
+                                .flashblock_byte_size_histogram
                                 .record(new_payload.block().size() as f64);
                             ctx.metrics
-                                .payload_byte_size_gauge
-                                .set(new_payload.block().size() as f64);
-                            ctx.metrics
-                                .payload_num_tx
+                                .flashblock_num_tx_histogram
                                 .record(info.executed_transactions.len() as f64);
-                            ctx.metrics
-                                .payload_num_tx_gauge
-                                .set(info.executed_transactions.len() as f64);
 
                             best_payload.set(new_payload.clone());
                             // Update bundle_state for next iteration
