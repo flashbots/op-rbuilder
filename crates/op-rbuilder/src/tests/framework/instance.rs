@@ -41,6 +41,7 @@ use reth_transaction_pool::{AllTransactionsEvents, TransactionPool};
 use std::sync::{Arc, LazyLock};
 use reth::rpc::builder::RpcModuleSelection;
 use tokio::sync::oneshot;
+use crate::primitives::reth::network_builder::CustomOpNetworkBuilder;
 
 /// Represents a type that emulates a local in-process instance of the OP builder node.
 /// This node uses IPC as the communication channel for the RPC server Engine API.
@@ -93,6 +94,11 @@ impl LocalInstance {
         });
         args.builder_signer = Some(signer);
         args.rollup_args.enable_tx_conditional = true;
+        let custom_network = CustomOpNetworkBuilder::new(
+            args.rbuilder_disable_txpool_gossip,
+            !args.rollup_args.discovery_v4,
+            args.rbuilder_peers.clone().iter().map(|peer| peer.id).collect(),
+        );
 
         let builder_config = BuilderConfig::<P::Config>::try_from(args.clone())
             .expect("Failed to convert rollup args to builder config");
@@ -117,7 +123,8 @@ impl LocalInstance {
                 op_node
                     .components()
                     .pool(pool_component(&args))
-                    .payload(P::new_service(builder_config)?),
+                    .payload(P::new_service(builder_config)?)
+                    .network(custom_network),
             )
             .with_add_ons(addons)
             .extend_rpc_modules(move |ctx| {

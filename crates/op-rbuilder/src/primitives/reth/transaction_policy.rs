@@ -4,6 +4,7 @@ use reth::network::{
 };
 use reth_network_peers::PeerId;
 use std::collections::HashSet;
+use tracing::debug;
 
 #[derive(Debug, Clone)]
 pub struct RbuilderTransactionPropagation {
@@ -19,7 +20,11 @@ impl RbuilderTransactionPropagation {
 }
 impl TransactionPropagationPolicy for RbuilderTransactionPropagation {
     fn can_propagate<N: NetworkPrimitives>(&self, peer: &mut PeerMetadata<N>) -> bool {
-        self.peers.contains(&peer.request_tx().peer_id)
+        let res = self.peers.contains(&peer.request_tx().peer_id);
+        if res {
+            debug!(target: "monitoring", "Propagating tx to peer {}", peer.request_tx().peer_id);
+        }
+        res
     }
 
     fn on_session_established<N: NetworkPrimitives>(&mut self, _peer: &mut PeerMetadata<N>) {}

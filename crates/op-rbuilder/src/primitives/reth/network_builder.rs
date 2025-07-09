@@ -4,6 +4,7 @@ use reth::{
     chainspec::Hardforks,
     network::{primitives::BasicNetworkPrimitives, NetworkHandle, NetworkManager, PeersInfo},
 };
+use reth::network::transactions::TransactionPropagationMode;
 use reth_network_peers::PeerId;
 use reth_node_api::FullNodeTypes;
 use reth_node_builder::{components::NetworkBuilder, BuilderContext};
@@ -47,13 +48,15 @@ where
     ) -> eyre::Result<Self::Network> {
         let network_config = self.inner.network_config(ctx)?;
         let network = NetworkManager::builder(network_config).await?;
+        let mut manager_config = ctx.config().network.transactions_manager_config();
+        manager_config.propagation_mode = TransactionPropagationMode::All;
         let handle = ctx.start_network_with(
             network,
             pool,
-            ctx.config().network.transactions_manager_config(),
+            manager_config,
             RbuilderTransactionPropagation::new(self.peers),
         );
-        info!(target: "reth::cli", enode=%handle.local_node_record(), "P2P networking initialized");
+        info!(target: "reth::cli", enode=%handle.local_node_record(), "Custom P2P networking initialized");
 
         Ok(handle)
     }

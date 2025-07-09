@@ -314,8 +314,6 @@ async fn create_container(
                 "--disable-discovery",
                 "--no-persist-peers",
                 "--max-outbound-peers=0",
-                "--max-inbound-peers=0",
-                "--trusted-only",
             ]
             .into_iter()
             .map(String::from)
