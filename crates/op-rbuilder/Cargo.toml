@@ -186,6 +186,7 @@ testing = [
     "ctor",
     "macros",
     "rlimit",
+    "alloy/rpc-types-admin"
 ]
 
 interop = []

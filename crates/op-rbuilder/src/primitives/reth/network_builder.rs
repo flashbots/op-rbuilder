@@ -2,9 +2,11 @@ use crate::primitives::reth::transaction_policy::RbuilderTransactionPropagation;
 use reth::{
     api::{NodeTypes, PrimitivesTy, TxTy},
     chainspec::Hardforks,
-    network::{primitives::BasicNetworkPrimitives, NetworkHandle, NetworkManager, PeersInfo},
+    network::{
+        primitives::BasicNetworkPrimitives, transactions::TransactionPropagationMode,
+        NetworkHandle, NetworkManager, PeersInfo,
+    },
 };
-use reth::network::transactions::TransactionPropagationMode;
 use reth_network_peers::PeerId;
 use reth_node_api::FullNodeTypes;
 use reth_node_builder::{components::NetworkBuilder, BuilderContext};

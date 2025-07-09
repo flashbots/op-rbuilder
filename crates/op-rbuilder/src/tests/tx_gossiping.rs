@@ -1,12 +1,3 @@
-use std::net::Ipv4Addr;
-use clap_builder::Parser;
-use reth_optimism_cli::commands::Commands;
-use crate::builders::StandardBuilder;
-use crate::tests::{default_node_config, setup_external_peer_node, ChainDriver, ExternalNode, Ipc, LocalInstance};
-use alloy_provider::ext::TxPoolApi;
-use eyre::ensure;
-use reth::network::transactions::config::TransactionPropagationKind;
-use tracing::info;
 
 #[tokio::test]
 async fn test_txgossiping_with_peer() {
@@ -27,7 +18,9 @@ async fn test_txgossiping_with_peer() {
     // We enable peering and appoint node2 as rbuilder peer
     command.rbuilder_peers = vec![enode2.clone()];
     command.rbuilder_disable_txpool_gossip = false;
-    let instance = LocalInstance::new_with_config::<StandardBuilder>(command, config).await.expect("testing node");
+    let instance = LocalInstance::new_with_config::<StandardBuilder>(command, config)
+        .await
+        .expect("testing node");
     let driver = ChainDriver::<Ipc>::local(&instance).await.expect("driver");
     let provider1 = node1.provider().clone();
     let provider2 = node2.provider().clone();
@@ -39,10 +32,24 @@ async fn test_txgossiping_with_peer() {
     let _ = driver.create_transaction().send().await.expect("query tx");
     let _ = driver.create_transaction().send().await.expect("query tx");
     tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
-    assert!(provider1.txpool_content().await.unwrap().pending.is_empty(), "Transaction should not be propagated");
-    assert!(provider1.txpool_content().await.unwrap().queued.is_empty(), "Transaction should not be propagated");
-    assert_eq!(provider2.txpool_status().await.unwrap().pending, 3, "Rbuilder peer should contain same transactions");
-    assert_eq!(driver.provider().txpool_status().await.unwrap().pending, 3, "Main node should contain 3 transaction");
+    assert!(
+        provider1.txpool_content().await.unwrap().pending.is_empty(),
+        "Transaction should not be propagated"
+    );
+    assert!(
+        provider1.txpool_content().await.unwrap().queued.is_empty(),
+        "Transaction should not be propagated"
+    );
+    assert_eq!(
+        provider2.txpool_status().await.unwrap().pending,
+        3,
+        "Rbuilder peer should contain same transactions"
+    );
+    assert_eq!(
+        driver.provider().txpool_status().await.unwrap().pending,
+        3,
+        "Main node should contain 3 transaction"
+    );
 }
 
 /// This test sets tx propagation to trusted peers only, but we are using custom network so it won't
@@ -65,7 +72,10 @@ async fn test_txgossiping_no_rbuilder_peers() {
     let mut command = node_command.ext.clone();
     // We enabled gossiping but have not provided peers
     command.rbuilder_disable_txpool_gossip = false;
-    let instance = LocalInstance::new_with_config::<StandardBuilder>(node_command.ext.clone(), config).await.expect("testing node");
+    let instance =
+        LocalInstance::new_with_config::<StandardBuilder>(node_command.ext.clone(), config)
+            .await
+            .expect("testing node");
     let driver = ChainDriver::<Ipc>::local(&instance).await.expect("driver");
     let provider1 = node1.provider().clone();
     let provider2 = node2.provider().clone();
@@ -77,11 +87,27 @@ async fn test_txgossiping_no_rbuilder_peers() {
     let _ = driver.create_transaction().send().await.expect("query tx");
     let _ = driver.create_transaction().send().await.expect("query tx");
     tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
-    assert!(provider1.txpool_content().await.unwrap().pending.is_empty(), "Transaction should not be propagated");
-    assert!(provider1.txpool_content().await.unwrap().queued.is_empty(), "Transaction should not be propagated");
-    assert!(provider2.txpool_content().await.unwrap().pending.is_empty(), "Transaction should not be propagated");
-    assert!(provider2.txpool_content().await.unwrap().queued.is_empty(), "Transaction should not be propagated");
-    assert_eq!(driver.provider().txpool_status().await.unwrap().pending, 3, "Main node should contain 3 transaction");
+    assert!(
+        provider1.txpool_content().await.unwrap().pending.is_empty(),
+        "Transaction should not be propagated"
+    );
+    assert!(
+        provider1.txpool_content().await.unwrap().queued.is_empty(),
+        "Transaction should not be propagated"
+    );
+    assert!(
+        provider2.txpool_content().await.unwrap().pending.is_empty(),
+        "Transaction should not be propagated"
+    );
+    assert!(
+        provider2.txpool_content().await.unwrap().queued.is_empty(),
+        "Transaction should not be propagated"
+    );
+    assert_eq!(
+        driver.provider().txpool_status().await.unwrap().pending,
+        3,
+        "Main node should contain 3 transaction"
+    );
 }
 
 /// This test sets tx propagation to trusted peers only, but we are using custom network so it won't
@@ -105,7 +131,10 @@ async fn test_txgossiping_no_rbuilder_gossiping() {
     // We enabled regular mechanism, bit disable rbuilder gossip mechanism. this should result in no gossiping
     command.rollup_args.disable_txpool_gossip = false;
     command.rbuilder_disable_txpool_gossip = true;
-    let instance = LocalInstance::new_with_config::<StandardBuilder>(node_command.ext.clone(), config).await.expect("testing node");
+    let instance =
+        LocalInstance::new_with_config::<StandardBuilder>(node_command.ext.clone(), config)
+            .await
+            .expect("testing node");
     let driver = ChainDriver::<Ipc>::local(&instance).await.expect("driver");
     let provider1 = node1.provider().clone();
     let provider2 = node2.provider().clone();
@@ -118,9 +147,25 @@ async fn test_txgossiping_no_rbuilder_gossiping() {
     let _ = driver.create_transaction().send().await.expect("query tx");
     // Sleep to wait for propagation
     tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
-    assert!(provider1.txpool_content().await.unwrap().pending.is_empty(), "Transaction should not be propagated");
-    assert!(provider1.txpool_content().await.unwrap().queued.is_empty(), "Transaction should not be propagated");
-    assert!(provider2.txpool_content().await.unwrap().pending.is_empty(), "Transaction should not be propagated");
-    assert!(provider2.txpool_content().await.unwrap().queued.is_empty(), "Transaction should not be propagated");
-    assert_eq!(driver.provider().txpool_status().await.unwrap().pending, 3, "Main node should contain 3 transaction");
+    assert!(
+        provider1.txpool_content().await.unwrap().pending.is_empty(),
+        "Transaction should not be propagated"
+    );
+    assert!(
+        provider1.txpool_content().await.unwrap().queued.is_empty(),
+        "Transaction should not be propagated"
+    );
+    assert!(
+        provider2.txpool_content().await.unwrap().pending.is_empty(),
+        "Transaction should not be propagated"
+    );
+    assert!(
+        provider2.txpool_content().await.unwrap().queued.is_empty(),
+        "Transaction should not be propagated"
+    );
+    assert_eq!(
+        driver.provider().txpool_status().await.unwrap().pending,
+        3,
+        "Main node should contain 3 transaction"
+    );
 }

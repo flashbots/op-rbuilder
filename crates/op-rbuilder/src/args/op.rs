@@ -51,7 +51,7 @@ pub struct OpRbuilderArgs {
     /// Enables transaction propagation between peers specified in builder.peers
     #[arg(long = "builder.disable-txpool-gossip", default_value = "true")]
     pub rbuilder_disable_txpool_gossip: bool,
-    
+
     /// Path to builder playgorund to automatically start up the node connected to it
     #[arg(
         long = "builder.playground",

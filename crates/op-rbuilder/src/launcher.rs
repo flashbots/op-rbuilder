@@ -106,10 +106,15 @@ where
         let reverted_cache = Cache::builder().max_capacity(100).build();
         let reverted_cache_copy = reverted_cache.clone();
         let custom_network = CustomOpNetworkBuilder::new(
-            // We use custom disable 
+            // We use custom disable
             builder_args.rbuilder_disable_txpool_gossip,
             !rollup_args.discovery_v4,
-            builder_args.rbuilder_peers.clone().iter().map(|peer| peer.id).collect(),
+            builder_args
+                .rbuilder_peers
+                .clone()
+                .iter()
+                .map(|peer| peer.id)
+                .collect(),
         );
 
         let mut addons: OpAddOns<
