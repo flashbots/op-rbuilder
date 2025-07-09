@@ -17,6 +17,8 @@ mod revert;
 #[cfg(test)]
 mod smoke;
 
+#[cfg(test)]
 mod tx_gossiping;
+
 #[cfg(test)]
 mod txpool;

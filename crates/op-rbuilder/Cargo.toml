@@ -145,9 +145,6 @@ vergen-git2.workspace = true
 alloy-provider = { workspace = true, default-features = true, features = [
     "txpool-api",
 ] }
-alloy = { workspace = true, default-features = true, features = [
-    "rpc-types-admin",
-] }
 tempfile = "3.8"
 macros = { path = "src/tests/framework/macros" }
 dashmap = { version = "6.1" }
