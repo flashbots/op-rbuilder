@@ -412,7 +412,7 @@ where
                         flashblock_count = ctx.flashblock_index(),
                         target_gas = total_gas_per_batch,
                         gas_used = info.cumulative_gas_used,
-                        target_da = total_da_per_batch.unwrap_or(0),
+                        target_da = total_da_per_batch,
                         da_used = info.cumulative_da_bytes_used,
                         "Building flashblock",
                     );

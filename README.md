@@ -68,7 +68,7 @@ cargo run -p op-rbuilder --bin op-rbuilder --features=flashtestations -- node \
 - `--flashtestations.enable-block-proofs`: Enable end-of-block transaction proofs that verify the block was built within a TEE
 - `--flashtestations.debug`: Enable debug mode with a deterministic TEE key and debug attestation server for testing and development
 - `--flashtestations.quote-provider <URL>`: Specify a remote URL to provide an attestation instead of generating a quote in process
-- `--flashtestations.rpc-url <URL>`: Use a remote provider to submit attestations to
+- `--flashtestations.rpc-url <URL>`: Use a remote rpc provider to submit attestations to
 
 ## Observability
 

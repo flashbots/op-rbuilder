@@ -1,5 +1,6 @@
 use alloy_consensus::{conditional::BlockConditionalAttributes, Eip658Value, Transaction};
 use alloy_eips::Typed2718;
+use alloy_evm::Database;
 use alloy_op_evm::block::receipt_builder::OpReceiptBuilder;
 use alloy_primitives::{BlockHash, Bytes, U256};
 use alloy_rpc_types_eth::Withdrawals;
@@ -27,12 +28,9 @@ use reth_optimism_txpool::{
 use reth_payload_builder::PayloadId;
 use reth_primitives::SealedHeader;
 use reth_primitives_traits::{InMemorySize, SignedTransaction};
-use reth_provider::ProviderError;
 use reth_revm::{context::Block, State};
 use reth_transaction_pool::{BestTransactionsAttributes, PoolTransaction};
-use revm::{
-    context::result::ResultAndState, interpreter::as_u64_saturated, Database, DatabaseCommit,
-};
+use revm::{context::result::ResultAndState, interpreter::as_u64_saturated, DatabaseCommit};
 use std::{sync::Arc, time::Instant};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, trace};
@@ -239,13 +237,10 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
     }
 
     /// Executes all sequencer transactions that are included in the payload attributes.
-    pub fn execute_sequencer_transactions<DB, E: Debug + Default>(
+    pub fn execute_sequencer_transactions<E: Debug + Default>(
         &self,
-        db: &mut State<DB>,
-    ) -> Result<ExecutionInfo<E>, PayloadBuilderError>
-    where
-        DB: Database<Error = ProviderError> + std::fmt::Debug,
-    {
+        db: &mut State<impl Database>,
+    ) -> Result<ExecutionInfo<E>, PayloadBuilderError> {
         let mut info = ExecutionInfo::with_capacity(self.attributes().transactions.len());
 
         let mut evm = self.evm_config.evm_with_env(&mut *db, self.evm_env.clone());
@@ -326,17 +321,14 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
     /// Executes the given best transactions and updates the execution info.
     ///
     /// Returns `Ok(Some(())` if the job was cancelled.
-    pub fn execute_best_transactions<DB, E: Debug + Default>(
+    pub fn execute_best_transactions<E: Debug + Default>(
         &self,
         info: &mut ExecutionInfo<E>,
-        db: &mut State<DB>,
+        db: &mut State<impl Database>,
         mut best_txs: impl PayloadTxsBounds,
         block_gas_limit: u64,
         block_da_limit: Option<u64>,
-    ) -> Result<Option<()>, PayloadBuilderError>
-    where
-        DB: Database<Error = ProviderError> + std::fmt::Debug,
-    {
+    ) -> Result<Option<()>, PayloadBuilderError> {
         let execute_txs_start_time = Instant::now();
         let mut num_txs_considered = 0;
         let mut num_txs_simulated = 0;
@@ -345,11 +337,7 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
         let mut num_bundles_reverted = 0;
         let base_fee = self.base_fee();
         let tx_da_limit = self.da_config.max_da_tx_size();
-        let mut evm: alloy_op_evm::OpEvm<
-            &mut State<DB>,
-            revm::inspector::NoOpInspector,
-            reth_evm::precompiles::PrecompilesMap,
-        > = self.evm_config.evm_with_env(&mut *db, self.evm_env.clone());
+        let mut evm = self.evm_config.evm_with_env(&mut *db, self.evm_env.clone());
 
         info!(
             target: "payload_builder",
