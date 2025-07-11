@@ -1,7 +1,9 @@
 use crate::{
     args::OpRbuilderArgs,
     builders::{BuilderConfig, FlashblocksBuilder, PayloadBuilder, StandardBuilder},
-    primitives::reth::engine_api_builder::OpEngineApiBuilder,
+    primitives::reth::{
+        engine_api_builder::OpEngineApiBuilder, network_builder::CustomOpNetworkBuilder,
+    },
     revert_protection::{EthApiExtServer, EthApiOverrideServer, RevertProtectionExt},
     tests::{
         create_test_db,
@@ -92,6 +94,15 @@ impl LocalInstance {
         });
         args.builder_signer = Some(signer);
         args.rollup_args.enable_tx_conditional = true;
+        let custom_network = CustomOpNetworkBuilder::new(
+            args.rbuilder_disable_txpool_gossip,
+            !args.rollup_args.discovery_v4,
+            args.rbuilder_peers
+                .clone()
+                .iter()
+                .map(|peer| peer.id)
+                .collect(),
+        );
 
         let builder_config = BuilderConfig::<P::Config>::try_from(args.clone())
             .expect("Failed to convert rollup args to builder config");
@@ -116,7 +127,8 @@ impl LocalInstance {
                 op_node
                     .components()
                     .pool(pool_component(&args))
-                    .payload(P::new_service(builder_config)?),
+                    .payload(P::new_service(builder_config)?)
+                    .network(custom_network),
             )
             .with_add_ons(addons)
             .extend_rpc_modules(move |ctx| {
