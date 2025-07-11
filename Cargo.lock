@@ -6202,6 +6202,7 @@ dependencies = [
  "alloy",
  "alloy-consensus",
  "alloy-eips",
+ "alloy-evm",
  "alloy-json-rpc",
  "alloy-network",
  "alloy-op-evm",
