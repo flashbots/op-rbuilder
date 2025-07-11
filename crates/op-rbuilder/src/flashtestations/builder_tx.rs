@@ -1,6 +1,7 @@
 use alloy::sol_types::{SolCall, SolEvent, SolValue};
 use alloy_consensus::TxEip1559;
 use alloy_eips::Encodable2718;
+use alloy_evm::Database;
 use alloy_op_evm::OpEvm;
 use alloy_primitives::{keccak256, map::foldhash::HashMap, Address, Bytes, TxKind, B256, U256};
 use core::fmt::Debug;
@@ -8,13 +9,13 @@ use op_alloy_consensus::OpTypedTransaction;
 use reth_evm::{precompiles::PrecompilesMap, ConfigureEvm, Evm, EvmError};
 use reth_optimism_primitives::OpTransactionSigned;
 use reth_primitives::{Log, Recovered};
-use reth_provider::{ProviderError, StateProvider};
+use reth_provider::StateProvider;
 use reth_revm::{database::StateProviderDatabase, State};
 use revm::{
     context::result::{ExecutionResult, ResultAndState},
     inspector::NoOpInspector,
     state::Account,
-    Database, DatabaseCommit,
+    DatabaseCommit,
 };
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -177,6 +178,7 @@ impl FlashtestationsBuilderTx {
 
     /// Computes the block content hash according to the formula:
     /// keccak256(abi.encode(parentHash, blockNumber, timestamp, transactionHashes))
+    /// https://github.com/flashbots/rollup-boost/blob/main/specs/flashtestations.md#block-building-process
     fn compute_block_content_hash(
         transactions: Vec<OpTransactionSigned>,
         parent_hash: B256,
@@ -269,9 +271,9 @@ impl FlashtestationsBuilderTx {
 
     fn check_tee_address_registered_log(&self, logs: Vec<Log>, address: Address) -> bool {
         for log in logs {
-            if log.topics().len() > 1 && log.topics()[0] == TEEServiceRegistered::SIGNATURE_HASH {
+            if log.topics().first() == Some(&TEEServiceRegistered::SIGNATURE_HASH) {
                 if let Ok(decoded) = TEEServiceRegistered::decode_log(&log) {
-                    if decoded.address == address {
+                    if decoded.teeAddress == address {
                         return true;
                     }
                 };
@@ -343,9 +345,7 @@ impl FlashtestationsBuilderTx {
 
     fn check_verify_block_proof_log(&self, logs: Vec<Log>) -> bool {
         for log in logs {
-            if log.topics().len() > 1
-                && log.topics()[0] == BlockBuilderProofVerified::SIGNATURE_HASH
-            {
+            if log.topics().first() == Some(&BlockBuilderProofVerified::SIGNATURE_HASH) {
                 return true;
             }
         }
@@ -515,7 +515,7 @@ impl BuilderTransactions for FlashtestationsBuilderTx {
         state_provider: impl StateProvider,
         info: &mut ExecutionInfo<Extra>,
         ctx: &OpPayloadBuilderCtx,
-        db: &mut State<impl Database<Error = ProviderError>>,
+        db: &mut State<impl Database>,
     ) -> Result<Vec<BuilderTransactionCtx>, BuilderTransactionError> {
         let state = StateProviderDatabase::new(state_provider);
         let mut simulation_state = State::builder()

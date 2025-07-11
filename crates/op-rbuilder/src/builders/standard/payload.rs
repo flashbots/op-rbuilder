@@ -9,6 +9,7 @@ use alloy_consensus::{
     constants::EMPTY_WITHDRAWALS, proofs, BlockBody, Header, EMPTY_OMMER_ROOT_HASH,
 };
 use alloy_eips::{eip7685::EMPTY_REQUESTS_HASH, merge::BEACON_NONCE};
+use alloy_evm::Database;
 use alloy_primitives::U256;
 use reth::payload::PayloadBuilderAttributes;
 use reth_basic_payload_builder::{BuildOutcome, BuildOutcomeKind, MissingPayloadBehaviour};
@@ -22,14 +23,13 @@ use reth_optimism_node::{OpBuiltPayload, OpPayloadBuilderAttributes};
 use reth_optimism_primitives::{OpPrimitives, OpTransactionSigned};
 use reth_payload_util::{BestPayloadTransactions, NoopPayloadTransactions, PayloadTransactions};
 use reth_primitives::RecoveredBlock;
-use reth_provider::{ExecutionOutcome, ProviderError, StateProvider};
+use reth_provider::{ExecutionOutcome, StateProvider};
 use reth_revm::{
     database::StateProviderDatabase, db::states::bundle_state::BundleRetention, State,
 };
 use reth_transaction_pool::{
     BestTransactions, BestTransactionsAttributes, PoolTransaction, TransactionPool,
 };
-use revm::Database;
 use std::{sync::Arc, time::Instant};
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
@@ -305,7 +305,7 @@ impl<Txs: PayloadTxsBounds> OpBuilder<'_, Txs> {
     pub fn execute<BuilderTx>(
         self,
         state_provider: impl StateProvider,
-        db: &mut State<impl Database<Error = ProviderError>>,
+        db: &mut State<impl Database>,
         ctx: &OpPayloadBuilderCtx,
         builder_tx: BuilderTx,
     ) -> Result<BuildOutcomeKind<ExecutedPayload>, PayloadBuilderError>
@@ -410,7 +410,7 @@ impl<Txs: PayloadTxsBounds> OpBuilder<'_, Txs> {
     /// Builds the payload on top of the state.
     pub fn build<BuilderTx>(
         self,
-        state: impl Database<Error = ProviderError>,
+        state: impl Database,
         state_provider: impl StateProvider,
         ctx: OpPayloadBuilderCtx,
         builder_tx: BuilderTx,

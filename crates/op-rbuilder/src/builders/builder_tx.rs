@@ -1,5 +1,6 @@
 use alloy_consensus::TxEip1559;
 use alloy_eips::{eip7623::TOTAL_COST_FLOOR_PER_TOKEN, Encodable2718};
+use alloy_evm::Database;
 use alloy_primitives::{
     map::foldhash::{HashSet, HashSetExt},
     Address, TxKind,
@@ -15,7 +16,7 @@ use reth_provider::{ProviderError, StateProvider};
 use reth_revm::State;
 use revm::{
     context::result::{EVMError, ResultAndState},
-    Database, DatabaseCommit,
+    DatabaseCommit,
 };
 use tracing::{debug, warn};
 
@@ -75,7 +76,7 @@ pub trait BuilderTransactions: Debug {
         state_provider: impl StateProvider,
         info: &mut ExecutionInfo<Extra>,
         ctx: &OpPayloadBuilderCtx,
-        db: &mut State<impl Database<Error = ProviderError>>,
+        db: &mut State<impl Database>,
     ) -> Result<Vec<BuilderTransactionCtx>, BuilderTransactionError>;
 
     fn add_builder_txs<Extra: Debug + Default>(
@@ -83,7 +84,7 @@ pub trait BuilderTransactions: Debug {
         state_provider: impl StateProvider,
         info: &mut ExecutionInfo<Extra>,
         builder_ctx: &OpPayloadBuilderCtx,
-        db: &mut State<impl Database<Error = ProviderError>>,
+        db: &mut State<impl Database>,
     ) -> Result<(), BuilderTransactionError> {
         {
             let mut evm = builder_ctx
@@ -156,7 +157,7 @@ impl StandardBuilderTx {
     pub fn simulate_builder_tx(
         &self,
         ctx: &OpPayloadBuilderCtx,
-        db: &mut State<impl Database<Error = ProviderError>>,
+        db: &mut State<impl Database>,
     ) -> Result<Option<BuilderTransactionCtx>, BuilderTransactionError> {
         match self.signer {
             Some(signer) => {
@@ -197,17 +198,14 @@ impl StandardBuilderTx {
         std::cmp::max(zero_cost + nonzero_cost + 21_000, floor_gas)
     }
 
-    fn signed_builder_tx<DB>(
+    fn signed_builder_tx(
         &self,
         ctx: &OpPayloadBuilderCtx,
-        db: &mut State<DB>,
+        db: &mut State<impl Database>,
         signer: Signer,
         gas_used: u64,
         message: Vec<u8>,
-    ) -> Result<Recovered<OpTransactionSigned>, BuilderTransactionError>
-    where
-        DB: Database<Error = ProviderError>,
-    {
+    ) -> Result<Recovered<OpTransactionSigned>, BuilderTransactionError> {
         let nonce = db
             .load_cache_account(signer.address)
             .map(|acc| acc.account_info().unwrap_or_default().nonce)
@@ -240,7 +238,7 @@ impl BuilderTransactions for StandardBuilderTx {
         _state_provider: impl StateProvider,
         _info: &mut ExecutionInfo<Extra>,
         ctx: &OpPayloadBuilderCtx,
-        db: &mut State<impl Database<Error = ProviderError>>,
+        db: &mut State<impl Database>,
     ) -> Result<Vec<BuilderTransactionCtx>, BuilderTransactionError> {
         let builder_tx = self.simulate_builder_tx(ctx, db)?;
         Ok(builder_tx.into_iter().collect())
