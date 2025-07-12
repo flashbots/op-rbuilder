@@ -8,7 +8,7 @@ repository = "https://github.com/flashbots/op-rbuilder"
 exclude = [".github/"]
 
 [workspace]
-members = [ "crates/op-rbuilder"]
+members = [ "crates/op-rbuilder", "crates/tdx-quote-provider"]
 default-members = ["crates/op-rbuilder"]
 resolver = "2"
 
@@ -100,7 +100,6 @@ reth-optimism-rpc = { git = "https://github.com/paradigmxyz/reth", tag = "v1.5.1
     "client",
 ] }
 
-# compatible with reth "v1.4.7 dependencies
 revm = { version = "27.0.2", features = [
     "std",
     "secp256k1",
@@ -115,6 +114,7 @@ ethereum_ssz = "0.9.0"
 alloy-primitives = { version = "1.2.0", default-features = false }
 alloy-rlp = "0.3.10"
 alloy-chains = "0.2.5"
+alloy-contract = { version = "1.0.18" }
 alloy-evm = { version = "0.14", default-features = false }
 alloy-provider = { version = "1.0.18", features = [
     "ipc",
@@ -133,6 +133,7 @@ alloy-transport = { version = "1.0.18" }
 alloy-node-bindings = { version = "1.0.18" }
 alloy-consensus = { version = "1.0.18", features = ["kzg"] }
 alloy-serde = { version = "1.0.18" }
+alloy-sol-types = { version = "1.2.1", features = ["json"] }
 alloy-rpc-types-beacon = { version = "1.0.18", features = ["ssz"] }
 alloy-rpc-types-engine = { version = "1.0.18", features = ["ssz"] }
 alloy-rpc-types-eth = { version = "1.0.18" }
@@ -140,7 +141,6 @@ alloy-signer-local = { version = "1.0.18" }
 alloy-rpc-client = { version = "1.0.18" }
 alloy-genesis = { version = "1.0.18" }
 alloy-trie = { version = "0.9.0" }
-alloy = { version = "1.0.18" }
 
 # optimism
 alloy-op-evm = { version = "0.14", default-features = false }
@@ -176,7 +176,6 @@ flate2 = "1.0.35"
 prometheus = "0.13.4"
 ctor = "0.2"
 
-libc = { version = "0.2.161" }
 lazy_static = "1.4.0"
 tikv-jemallocator = { version = "0.6" }
 tracing = "0.1.37"

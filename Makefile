@@ -31,6 +31,10 @@ build: ## Build (debug version)
 op-rbuilder: ## Build op-rbuilder (debug version)
 	cargo build -p op-rbuilder --bin op-rbuilder --features "$(FEATURES)"
 
+.PHONY: tdx-quote-provider
+tdx-quote-provider: ## Build tdx-quote-provider (debug version)
+	cargo build -p tdx-quote-provider --bin tdx-quote-provider --features "$(FEATURES)"
+
 .PHONY: tester
 tester: ## Build tester (debug version)
 	cargo build -p op-rbuilder --bin tester --features "testing,$(FEATURES)"
@@ -50,15 +54,15 @@ lint: ## Run the linters
 test: ## Run the tests for rbuilder and op-rbuilder
 	cargo test --verbose --features "$(FEATURES)"
 	cargo test -p op-rbuilder --verbose --features "$(FEATURES)"
+	cargo test -p tdx-quote-provider --verbose --features "$(FEATURES)"
 
 .PHONY: lt
 lt: lint test ## Run "lint" and "test"
 
-## TODO: use all features when tdx dependency is compatible with macOS
 .PHONY: fmt
 fmt: ## Format the code
 	cargo +nightly fmt
-	cargo +nightly clippy --features ci-features --fix --allow-staged --allow-dirty
+	cargo +nightly clippy --all-features --fix --allow-staged --allow-dirty
 	cargo +nightly fix --allow-staged --allow-dirty
 
 .PHONY: bench
