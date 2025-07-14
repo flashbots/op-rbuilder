@@ -13002,7 +13002,7 @@ checksum = "61c41af27dd6d1e27b1b16b489db798443478cef1f06a660c96db617ba5de3b1"
 [[package]]
 name = "tdx"
 version = "0.2.0"
-source = "git+https://github.com/avalonche/tdx-attestation-sdk.git?rev=edfe4cf572bd4801286056673841546989a5c6ed#edfe4cf572bd4801286056673841546989a5c6ed"
+source = "git+https://github.com/automata-network/tdx-attestation-sdk.git?branch=main#70b90743c01edeb9b0b69774936629db04df7ff7"
 dependencies = [
  "alloy",
  "anyhow",

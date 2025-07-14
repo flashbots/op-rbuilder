@@ -13,7 +13,7 @@ FROM rust:1.88 AS base
 ARG TARGETPLATFORM
 
 RUN apt-get update \
-    && apt-get install -y clang libclang-dev
+    && apt-get install -y clang libclang-dev libtss2-dev
 
 RUN rustup component add clippy rustfmt
 

@@ -27,8 +27,7 @@ metrics-exporter-prometheus = { version = "0.17.0", features = [
     "http-listener",
 ] }
 tracing-subscriber = { version = "0.3.11", features = ["env-filter", "json"] }
-# TODO: this deps routes to https://github.com/avalonche/tdx-attestation-sdk/tree/avalonche/update-alloy, replace it once https://github.com/automata-network/tdx-attestation-sdk/pull/32 is merged
-tdx = { git = "https://github.com/avalonche/tdx-attestation-sdk.git", features = ["configfs"], rev = "edfe4cf572bd4801286056673841546989a5c6ed"}
+tdx = { git = "https://github.com/automata-network/tdx-attestation-sdk.git", features = ["configfs"], branch = "main"}
 
 [dev-dependencies]
 reqwest.workspace = true

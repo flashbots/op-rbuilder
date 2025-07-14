@@ -7,12 +7,15 @@ ARG FEATURES
 
 COPY . .
 
-RUN apt-get update && apt-get install -y clang libclang-dev libtss2-dev
+RUN apt-get update && apt-get install -y libssl3 libtss2-dev
 
 RUN cargo build --release --features="$FEATURES" --package=${BINARY}
 
-FROM gcr.io/distroless/cc-debian12
+FROM debian:12-slim
 WORKDIR /app
+
+# Install runtime dependencies
+RUN apt-get update && apt-get install -y libssl3 libtss2-dev
 
 ARG BINARY="tdx-quote-provider"
 COPY --from=builder /app/target/release/${BINARY} /usr/local/bin/
