@@ -1,4 +1,4 @@
-FROM rust:1.85 AS builder
+FROM rust:1.88 AS builder
 
 WORKDIR /app
 
@@ -6,6 +6,8 @@ ARG BINARY="tdx-quote-provider"
 ARG FEATURES
 
 COPY . .
+
+RUN apt-get update && apt-get install -y clang libclang-dev libtss2-dev
 
 RUN cargo build --release --features="$FEATURES" --package=${BINARY}
 

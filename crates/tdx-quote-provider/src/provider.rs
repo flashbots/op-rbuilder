@@ -49,7 +49,7 @@ impl AttestationProvider for TdxAttestationProvider {
                 report_data: Some(report_data),
             })
             .map(|(quote, _var_data)| quote)
-            .map_err(|e| AttestationError::GetAttestationFailed(e))
+            .map_err(AttestationError::GetAttestationFailed)
     }
 }
 
@@ -74,10 +74,10 @@ impl AttestationProvider for MockAttestationProvider {
             "using mock attestation provider",
         );
         let mut file = File::open(self.mock_attestation_path.clone())
-            .map_err(|e| AttestationError::ReadMockAttestationFailed(e))?;
+            .map_err(AttestationError::ReadMockAttestationFailed)?;
         let mut buffer = Vec::new();
         file.read_to_end(&mut buffer)
-            .map_err(|e| AttestationError::ReadMockAttestationFailed(e))?;
+            .map_err(AttestationError::ReadMockAttestationFailed)?;
         Ok(buffer)
     }
 }
