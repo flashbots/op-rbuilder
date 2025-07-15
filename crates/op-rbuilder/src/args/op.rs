@@ -7,6 +7,7 @@
 use crate::{flashtestations::args::FlashtestationsArgs, tx_signer::Signer};
 use anyhow::{anyhow, Result};
 use clap::Parser;
+use reth_network_peers::TrustedPeer;
 use reth_optimism_cli::commands::Commands;
 use reth_optimism_node::args::RollupArgs;
 use std::path::PathBuf;
@@ -40,6 +41,16 @@ pub struct OpRbuilderArgs {
     /// Whether to enable revert protection by default
     #[arg(long = "builder.enable-revert-protection", default_value = "false")]
     pub enable_revert_protection: bool,
+
+    /// Comma separated enode URLs of rbuilder peers for P2P connections.
+    ///
+    /// --builder.peers enode://abcd@192.168.0.1:30303
+    #[arg(long = "builder.peers", value_delimiter = ',')]
+    pub rbuilder_peers: Vec<TrustedPeer>,
+
+    /// Enables transaction propagation between peers specified in builder.peers
+    #[arg(long = "builder.disable-txpool-gossip", default_value = "true")]
+    pub rbuilder_disable_txpool_gossip: bool,
 
     /// Path to builder playgorund to automatically start up the node connected to it
     #[arg(

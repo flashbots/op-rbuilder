@@ -515,6 +515,7 @@ dependencies = [
  "alloy-primitives 1.2.0",
  "alloy-pubsub",
  "alloy-rpc-client",
+ "alloy-rpc-types-admin",
  "alloy-rpc-types-engine",
  "alloy-rpc-types-eth",
  "alloy-rpc-types-txpool",
@@ -623,6 +624,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "99074f79ad4b188b1049807f8f96637abc3cc019fde53791906edc26bc092a57"
 dependencies = [
  "alloy-primitives 1.2.0",
+ "alloy-rpc-types-admin",
  "alloy-rpc-types-engine",
  "alloy-rpc-types-eth",
  "alloy-serde",
