@@ -1,8 +1,8 @@
 use std::str::FromStr;
 
-use alloy::signers::k256::sha2::Sha256;
 use alloy_consensus::SignableTransaction;
 use alloy_primitives::{Address, Signature, B256, U256};
+use k256::sha2::Sha256;
 use op_alloy_consensus::OpTypedTransaction;
 use reth_optimism_primitives::OpTransactionSigned;
 use reth_primitives::Recovered;

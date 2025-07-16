@@ -1,13 +1,16 @@
 use alloy_json_rpc::RpcError;
 use alloy_network::ReceiptResponse;
-use alloy_primitives::{keccak256, Address, Bytes, TxHash, TxKind, B256, U256};
+use alloy_primitives::{Address, Bytes, TxHash, TxKind, U256};
 use alloy_rpc_types_eth::TransactionRequest;
-use alloy_transport::TransportResult;
+use alloy_sol_types::SolCall;
+use alloy_transport::{TransportError, TransportErrorKind, TransportResult};
+use k256::ecdsa;
 use std::time::Duration;
 
-use alloy_provider::{PendingTransactionBuilder, Provider, ProviderBuilder};
+use alloy_provider::{
+    PendingTransactionBuilder, PendingTransactionError, Provider, ProviderBuilder,
+};
 use alloy_signer_local::PrivateKeySigner;
-use alloy_sol_types::{sol, SolCall, SolValue};
 use op_alloy_network::Optimism;
 use tracing::{debug, error, info, warn};
 
