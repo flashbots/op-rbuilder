@@ -34,7 +34,7 @@ use reth_provider::ProviderError;
 use reth_revm::{context::Block, State};
 use reth_transaction_pool::{BestTransactionsAttributes, PoolTransaction};
 use revm::{context::result::ResultAndState, Database, DatabaseCommit};
-use std::{result, sync::Arc, time::Instant};
+use std::{sync::Arc, time::Instant};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, trace, warn};
 use {vrf::openssl::{CipherSuite, ECVRF}};
@@ -82,7 +82,7 @@ pub struct OpPayloadBuilderCtx {
 }
 
 impl OpPayloadBuilderCtx {
-    /// Returns the parent block the payload will be build on.
+    /// Returns the parent block the payload will be built on.
     pub fn parent(&self) -> &SealedHeader {
         &self.config.parent_header
     }
@@ -323,9 +323,9 @@ impl OpPayloadBuilderCtx {
         Ok(info)
     }
 
-    /// Executes the given best transactions and updates the execution info.
+    /// Executes the given the best transactions and updates the execution info.
     ///
-    /// Returns `Ok(Some(())` if the job was cancelled.
+    /// Returns `Ok(Some(()))` if the job was cancelled.
     pub fn execute_best_transactions<DB, E: Debug + Default>(
         &self,
         info: &mut ExecutionInfo<E>,
@@ -567,16 +567,21 @@ impl OpPayloadBuilderCtx {
         let n = info.receipts.len() - 1;
         // storing log
         let logs = match &info.receipts[n] {
-            OpReceipt::Eip1559(opDepositReceipt) => Some(&opDepositReceipt.logs),
-            _ => None,
+            OpReceipt::Eip1559(receipt) => receipt.logs.clone(),
+            _ => Vec::new()
         };
-        
 
-        let log = logs.Log;
+        for log in logs {
+            let topics = log.data.topics();
+            let address = log.address;
+            let data = log.data.data.clone();
 
-
-
-        debug!("printing the transaction logs{:?}", log);
+            debug!("log data: addr={:?} topics={:?} data={:?}",
+                address.to_string(),
+                topics,
+                data
+            );
+        }
 
         debug!(
             target: "payload_builder",
