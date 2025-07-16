@@ -1,9 +1,9 @@
-use alloy::sol_types::{SolCall, SolEvent, SolValue};
 use alloy_consensus::TxEip1559;
 use alloy_eips::Encodable2718;
 use alloy_evm::Database;
 use alloy_op_evm::OpEvm;
 use alloy_primitives::{keccak256, map::foldhash::HashMap, Address, Bytes, TxKind, B256, U256};
+use alloy_sol_types::{SolCall, SolEvent, SolValue};
 use core::fmt::Debug;
 use op_alloy_consensus::OpTypedTransaction;
 use reth_evm::{precompiles::PrecompilesMap, ConfigureEvm, Evm, EvmError};
@@ -385,7 +385,7 @@ impl FlashtestationsBuilderTx {
                     }
                 }
             };
-            info!(target: "flashtestations", "adding funding tx to builder txs");
+            info!(target: "flashtestations", block_number = ctx.block_number(), tx_hash = ?funding_tx.tx_hash(), "adding funding tx to builder txs");
             evm.db_mut().commit(state);
             Ok(Some(BuilderTransactionCtx {
                 gas_used: 21000,
@@ -431,7 +431,7 @@ impl FlashtestationsBuilderTx {
                 let da_size = op_alloy_flz::tx_estimated_size_fjord_bytes(
                     register_tx.encoded_2718().as_slice(),
                 );
-                info!(target: "flashtestations", "adding register tee tx to builder txs");
+                info!(target: "flashtestations", block_number = ctx.block_number(), tx_hash = ?register_tx.tx_hash(), "adding register tee tx to builder txs");
                 evm.db_mut().commit(state_changes);
                 Ok((
                     Some(BuilderTransactionCtx {
@@ -494,7 +494,7 @@ impl FlashtestationsBuilderTx {
                 let da_size = op_alloy_flz::tx_estimated_size_fjord_bytes(
                     verify_block_proof_tx.encoded_2718().as_slice(),
                 );
-                debug!(target: "flashtestations", "adding verify block proof tx to builder txs");
+                debug!(target: "flashtestations", block_number = ctx.block_number(), tx_hash = ?verify_block_proof_tx.tx_hash(), "adding verify block proof tx to builder txs");
                 Ok(Some(BuilderTransactionCtx {
                     gas_used,
                     da_size,
@@ -507,21 +507,47 @@ impl FlashtestationsBuilderTx {
                 .simulate_builder_tx(ctx, evm.db_mut())
         }
     }
+
+    fn set_registered(
+        &self,
+        state_provider: impl StateProvider + Clone,
+        ctx: &OpPayloadBuilderCtx,
+    ) {
+        let state = StateProviderDatabase::new(state_provider.clone());
+        let mut simulation_state = State::builder()
+            .with_database(state)
+            .with_bundle_update()
+            .build();
+        let mut evm = ctx
+            .evm_config
+            .evm_with_env(&mut simulation_state, ctx.evm_env.clone());
+        evm.modify_cfg(|cfg| {
+            cfg.disable_balance_check = true;
+        });
+        match self.register_tee_service_tx(ctx, &mut evm) {
+            Ok((_, registered)) => {
+                self.registered.store(registered, Ordering::Relaxed);
+            }
+            Err(e) => {
+                debug!(target: "flashtestations", error = ?e, "simulation error when checking if registered");
+            }
+        }
+    }
 }
 
 impl BuilderTransactions for FlashtestationsBuilderTx {
     fn simulate_builder_txs<Extra: Debug + Default>(
         &self,
-        state_provider: impl StateProvider,
+        state_provider: impl StateProvider + Clone,
         info: &mut ExecutionInfo<Extra>,
         ctx: &OpPayloadBuilderCtx,
         db: &mut State<impl Database>,
     ) -> Result<Vec<BuilderTransactionCtx>, BuilderTransactionError> {
-        let state = StateProviderDatabase::new(state_provider);
+        let state = StateProviderDatabase::new(state_provider.clone());
         let mut simulation_state = State::builder()
             .with_database(state)
-            .with_bundle_prestate(db.bundle_state.clone())
             .with_cached_prestate(db.cache.clone())
+            .with_bundle_prestate(db.bundle_state.clone())
             .with_bundle_update()
             .build();
 
@@ -535,11 +561,10 @@ impl BuilderTransactions for FlashtestationsBuilderTx {
         let mut builder_txs = Vec::<BuilderTransactionCtx>::new();
 
         if !self.registered.load(Ordering::Relaxed) {
+            info!(target: "flashtestations", "tee service not registered yet, attempting to add registration tx");
+            self.set_registered(state_provider, ctx);
             builder_txs.extend(self.fund_tee_service_tx(ctx, &mut evm)?);
-            let (register_tx, registered) = self.register_tee_service_tx(ctx, &mut evm)?;
-            if registered {
-                self.registered.store(true, Ordering::Relaxed);
-            }
+            let (register_tx, _) = self.register_tee_service_tx(ctx, &mut evm)?;
             builder_txs.extend(register_tx);
         }
 

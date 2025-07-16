@@ -1,5 +1,5 @@
-use alloy::{sol, sol_types::SolError};
 use alloy_primitives::{Address, Bytes, FixedBytes, B256, U256};
+use alloy_sol_types::{sol, SolError};
 
 sol!(
     #[sol(rpc, abi)]
