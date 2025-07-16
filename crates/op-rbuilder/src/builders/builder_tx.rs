@@ -73,7 +73,7 @@ impl From<BuilderTransactionError> for PayloadBuilderError {
 pub trait BuilderTransactions: Debug {
     fn simulate_builder_txs<Extra: Debug + Default>(
         &self,
-        state_provider: impl StateProvider,
+        state_provider: impl StateProvider + Clone,
         info: &mut ExecutionInfo<Extra>,
         ctx: &OpPayloadBuilderCtx,
         db: &mut State<impl Database>,
@@ -81,7 +81,7 @@ pub trait BuilderTransactions: Debug {
 
     fn add_builder_txs<Extra: Debug + Default>(
         &self,
-        state_provider: impl StateProvider,
+        state_provider: impl StateProvider + Clone,
         info: &mut ExecutionInfo<Extra>,
         builder_ctx: &OpPayloadBuilderCtx,
         db: &mut State<impl Database>,
@@ -235,7 +235,7 @@ impl StandardBuilderTx {
 impl BuilderTransactions for StandardBuilderTx {
     fn simulate_builder_txs<Extra: Debug + Default>(
         &self,
-        _state_provider: impl StateProvider,
+        _state_provider: impl StateProvider + Clone,
         _info: &mut ExecutionInfo<Extra>,
         ctx: &OpPayloadBuilderCtx,
         db: &mut State<impl Database>,
