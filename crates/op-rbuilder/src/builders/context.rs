@@ -3,7 +3,8 @@ use alloy_consensus::{
 };
 use alloy_eips::{eip7623::TOTAL_COST_FLOOR_PER_TOKEN, Encodable2718, Typed2718};
 use alloy_op_evm::block::receipt_builder::OpReceiptBuilder;
-use alloy_primitives::{Address, Bytes, TxKind, U256};
+use alloy_primitives::{Address, Bytes, TxKind, U256, Log};
+// use alloy::{primitives::hex, sol, sol_types::SolCall};
 use alloy_rpc_types_eth::Withdrawals;
 use core::fmt::Debug;
 use op_alloy_consensus::{OpDepositReceipt, OpTypedTransaction};
@@ -27,15 +28,17 @@ use reth_optimism_txpool::{
     interop::{is_valid_interop, MaybeInteropTransaction},
 };
 use reth_payload_builder::PayloadId;
-use reth_primitives::{Recovered, SealedHeader};
+use reth_primitives::{Recovered, SealedHeader, Receipt};
 use reth_primitives_traits::{InMemorySize, SignedTransaction};
 use reth_provider::ProviderError;
 use reth_revm::{context::Block, State};
 use reth_transaction_pool::{BestTransactionsAttributes, PoolTransaction};
 use revm::{context::result::ResultAndState, Database, DatabaseCommit};
-use std::{sync::Arc, time::Instant};
+use std::{result, sync::Arc, time::Instant};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, trace, warn};
+use {vrf::openssl::{CipherSuite, ECVRF}};
+use vrf::VRF;
 
 use crate::{
     metrics::OpRBuilderMetrics,
@@ -44,6 +47,16 @@ use crate::{
     tx::MaybeRevertingTransaction,
     tx_signer::Signer,
 };
+
+// defining event structure
+// sol!(
+//    event randomnessRequestEvent(
+//         uint256 callbackGasLimit,
+//         uint256 amountOfRamdomness,
+//         string publicKey,
+//         uint256 seed
+//    );
+// );
 
 /// Container type that holds all necessities to build a new payload.
 #[derive(Debug)]
@@ -211,7 +224,6 @@ impl OpPayloadBuilderCtx {
                     cumulative_gas_used: ctx.cumulative_gas_used,
                     logs: ctx.result.into_logs(),
                 };
-
                 receipt_builder.build_deposit_receipt(OpDepositReceipt {
                     inner: receipt,
                     deposit_nonce,
@@ -357,7 +369,9 @@ impl OpPayloadBuilderCtx {
             timestamp: self.attributes().timestamp(),
         };
 
+        // loop is never entered
         while let Some(tx) = best_txs.next(()) {
+            debug!("hello");
             let interop = tx.interop_deadline();
             let reverted_hashes = tx.reverted_hashes().clone();
             let conditional = tx.conditional().cloned();
@@ -437,6 +451,8 @@ impl OpPayloadBuilderCtx {
             }
 
             let tx_simulation_start_time = Instant::now();
+
+            // executes transactions
             let ResultAndState { result, state } = match evm.transact(&tx) {
                 Ok(res) => res,
                 Err(err) => {
@@ -460,7 +476,9 @@ impl OpPayloadBuilderCtx {
                     return Err(PayloadBuilderError::EvmExecutionError(Box::new(err)));
                 }
             };
-
+            debug!(
+                "{:?}", result.gas_used()
+            );
             self.metrics
                 .tx_simulation_duration
                 .record(tx_simulation_start_time.elapsed());
@@ -491,6 +509,7 @@ impl OpPayloadBuilderCtx {
             // record tx da size
             info.cumulative_da_bytes_used += tx_da_size;
 
+            // Does result contain transaction logs?
             // Push transaction changeset and calculate header bloom filter for receipt.
             let ctx = ReceiptBuilderCtx {
                 tx: tx.inner(),
@@ -499,6 +518,8 @@ impl OpPayloadBuilderCtx {
                 state: &state,
                 cumulative_gas_used: info.cumulative_gas_used,
             };
+
+
             info.receipts.push(self.build_receipt(ctx, None));
 
             // commit changes
@@ -513,6 +534,7 @@ impl OpPayloadBuilderCtx {
             // append sender and transaction to the respective lists
             info.executed_senders.push(tx.signer());
             info.executed_transactions.push(tx.into_inner());
+            
         }
 
         self.metrics
@@ -533,6 +555,28 @@ impl OpPayloadBuilderCtx {
         self.metrics
             .bundles_reverted
             .record(num_bundles_reverted as f64);
+
+        // check if randomness event was emitted by checking for appropriate topic hash
+        // if randomness topic hash found create vrf hash output using witnet vrf
+        // (?) create new transaction and send back to randomness
+        // q's:
+        //      how is a new transaction created through op-rbuilder
+        //      how to deploy a contract to builder playground to view log
+
+        // get recently pushed tx receipt
+        let n = info.receipts.len() - 1;
+        // storing log
+        let logs = match &info.receipts[n] {
+            OpReceipt::Eip1559(opDepositReceipt) => Some(&opDepositReceipt.logs),
+            _ => None,
+        };
+        
+
+        let log = logs.Log;
+
+
+
+        debug!("printing the transaction logs{:?}", log);
 
         debug!(
             target: "payload_builder",
@@ -687,4 +731,23 @@ where
     let builder_tx = signer.sign_tx(tx).map_err(PayloadBuilderError::other)?;
 
     Ok(builder_tx)
+}
+
+pub fn generate_randomness(
+    amountOfRandomness: u64,
+    key: String,
+    seed: u64
+) -> Vec<u8> {
+    let mut vrf = ECVRF::from_suite(CipherSuite::SECP256K1_SHA256_TAI).unwrap();
+    let secret_key = hex::decode(key).unwrap();
+    let public_key = vrf.derive_public_key(&secret_key).unwrap();
+    let seed = seed.to_string();
+    let message: &[u8] = seed.as_bytes();
+
+    let pi = vrf.prove(&secret_key, &message).unwrap();
+    let hash = vrf.proof_to_hash(&pi).unwrap();
+
+    let hash_output = vrf.verify(&public_key, &pi, &message);
+
+    return hash_output.unwrap();
 }

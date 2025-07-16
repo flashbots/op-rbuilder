@@ -4093,6 +4093,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "hmac-sha256"
+version = "1.1.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ad6880c8d4a9ebf39c6e8b77007ce223f646a4d21ce29d99f70cb16420545425"
+
+[[package]]
 name = "home"
 version = "0.5.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6243,6 +6249,7 @@ dependencies = [
  "uuid",
  "vergen",
  "vergen-git2",
+ "vrf",
 ]
 
 [[package]]
@@ -12652,6 +12659,17 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.101",
+]
+
+[[package]]
+name = "vrf"
+version = "0.2.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c61e8e7db1dafc0ffb6d1579befee4f0e8be3ffe467a8928045c8c032c59b607"
+dependencies = [
+ "hmac-sha256",
+ "openssl",
+ "thiserror 2.0.12",
 ]
 
 [[package]]

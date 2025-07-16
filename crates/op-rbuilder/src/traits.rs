@@ -6,6 +6,7 @@ use reth_optimism_primitives::{OpPrimitives, OpTransactionSigned};
 use reth_payload_util::PayloadTransactions;
 use reth_provider::{BlockReaderIdExt, ChainSpecProvider, StateProviderFactory};
 use reth_transaction_pool::TransactionPool;
+use std::fmt::Debug;
 
 use crate::tx::FBPoolTransaction;
 
