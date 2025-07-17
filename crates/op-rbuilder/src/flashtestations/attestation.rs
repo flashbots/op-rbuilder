@@ -47,6 +47,7 @@ impl AttestationProvider for RemoteAttestationProvider {
     }
 }
 
+#[allow(clippy::if_same_then_else)]
 pub fn get_attestation_provider(
     config: AttestationConfig,
 ) -> Box<dyn AttestationProvider + Send + Sync> {
@@ -60,7 +61,7 @@ pub fn get_attestation_provider(
         Box::new(RemoteAttestationProvider::new(
             config
                 .quote_provider
-                .expect("remote quote provider is required"),
+                .unwrap_or(DEBUG_QUOTE_SERVICE_URL.to_string()), // TODO: remove this once we have a real quote provider
         ))
     }
 }
