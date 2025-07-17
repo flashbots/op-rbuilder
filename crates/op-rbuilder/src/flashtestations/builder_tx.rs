@@ -561,7 +561,7 @@ impl BuilderTransactions for FlashtestationsBuilderTx {
         let mut builder_txs = Vec::<BuilderTransactionCtx>::new();
 
         if !self.registered.load(Ordering::Relaxed) {
-            info!(target: "flashtestations", "tee service not registered yet, attempting to add registration tx");
+            info!(target: "flashtestations", "tee service not registered yet, attempting to register");
             self.set_registered(state_provider, ctx);
             builder_txs.extend(self.fund_tee_service_tx(ctx, &mut evm)?);
             let (register_tx, _) = self.register_tee_service_tx(ctx, &mut evm)?;
