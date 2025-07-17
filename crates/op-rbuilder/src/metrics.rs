@@ -4,6 +4,8 @@ use reth_metrics::{
     Metrics,
 };
 
+use crate::args::OpRbuilderArgs;
+
 /// The latest version from Cargo.toml.
 pub const CARGO_PKG_VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -152,6 +154,35 @@ impl OpRBuilderMetrics {
         self.payload_num_tx_simulated_fail_gauge
             .set(num_txs_simulated_fail);
         self.bundles_reverted.record(num_bundles_reverted);
+    }
+}
+
+/// Gauges to check whether particular flags are enabled or not
+#[derive(Metrics, Clone)]
+#[metrics(scope = "op_rbuilder_flags")]
+pub struct FlagMetrics {
+    /// Whether flashblocks.enabled is set or not
+    pub flashblocks_enabled: Gauge,
+    /// Whether flashtestations.enabled is set or not
+    pub flashtestations_enabled: Gauge,
+    /// Whether builder.enable-revert-protection is set or not
+    pub enable_revert_protection: Gauge,
+}
+
+impl FlagMetrics {
+    /// Set gauge metrics for some flags so we can inspect which ones are set
+    /// and which ones aren't.
+    pub fn record_flags(builder_args: &OpRbuilderArgs) {
+        let flag_metrics = Self::default();
+        flag_metrics
+            .flashblocks_enabled
+            .set(builder_args.flashblocks.enabled as i32);
+        flag_metrics
+            .flashtestations_enabled
+            .set(builder_args.flashtestations.flashtestations_enabled as i32);
+        flag_metrics
+            .enable_revert_protection
+            .set(builder_args.enable_revert_protection as i32);
     }
 }
 
