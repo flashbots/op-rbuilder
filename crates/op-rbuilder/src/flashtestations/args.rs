@@ -34,11 +34,7 @@ pub struct FlashtestationsArgs {
     // Remote url for attestations
     #[arg(
         long = "flashtestations.quote-provider",
-        env = "FLASHTESTATIONS_QUOTE_PROVIDER",
-        required_if_eq_all([
-            ("flashtestations_enabled", "true"),
-            ("debug", "false")
-        ])
+        env = "FLASHTESTATIONS_QUOTE_PROVIDER"
     )]
     pub quote_provider: Option<String>,
 
