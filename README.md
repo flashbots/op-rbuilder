@@ -51,7 +51,7 @@ Flashtestations is a feature that enables Trusted Execution Environment (TEE) at
 To run op-rbuilder with flashtestations:
 
 ```bash
-cargo run -p op-rbuilder --bin op-rbuilder --features=flashtestations -- node \
+cargo run -p op-rbuilder --bin op-rbuilder -- node \
     --chain /path/to/chain-config.json \
     --http \
     --authrpc.port 9551 \
