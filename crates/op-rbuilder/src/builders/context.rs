@@ -518,39 +518,14 @@ impl OpPayloadBuilderCtx {
         }
 
         let payload_tx_simulation_time = execute_txs_start_time.elapsed();
-        self.metrics
-            .payload_tx_simulation_duration
-            .record(payload_tx_simulation_time);
-        self.metrics
-            .payload_tx_simulation_gauge
-            .set(payload_tx_simulation_time);
-        self.metrics
-            .payload_num_tx_considered
-            .record(num_txs_considered as f64);
-        self.metrics
-            .payload_num_tx_considered_gauge
-            .set(num_txs_considered as f64);
-        self.metrics
-            .payload_num_tx_simulated
-            .record(num_txs_simulated as f64);
-        self.metrics
-            .payload_num_tx_simulated_gauge
-            .set(num_txs_simulated as f64);
-        self.metrics
-            .payload_num_tx_simulated_success
-            .record(num_txs_simulated_success as f64);
-        self.metrics
-            .payload_num_tx_simulated_success_gauge
-            .set(num_txs_simulated_success as f64);
-        self.metrics
-            .payload_num_tx_simulated_fail
-            .record(num_txs_simulated_fail as f64);
-        self.metrics
-            .payload_num_tx_simulated_fail_gauge
-            .set(num_txs_simulated_fail as f64);
-        self.metrics
-            .bundles_reverted
-            .record(num_bundles_reverted as f64);
+        self.metrics.set_payload_builder_metrics(
+            payload_tx_simulation_time,
+            num_txs_considered,
+            num_txs_simulated,
+            num_txs_simulated_success,
+            num_txs_simulated_fail,
+            num_bundles_reverted,
+        );
 
         debug!(
             target: "payload_builder",

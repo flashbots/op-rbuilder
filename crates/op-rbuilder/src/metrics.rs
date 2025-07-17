@@ -1,3 +1,4 @@
+use metrics::IntoF64;
 use reth_metrics::{
     metrics::{gauge, Counter, Gauge, Histogram},
     Metrics,
@@ -122,6 +123,36 @@ pub struct OpRBuilderMetrics {
     pub bundles_reverted: Histogram,
     /// Histogram of eth_sendBundle request duration
     pub bundle_receive_duration: Histogram,
+}
+
+impl OpRBuilderMetrics {
+    pub fn set_payload_builder_metrics(
+        &self,
+        payload_tx_simulation_time: impl IntoF64 + Copy,
+        num_txs_considered: impl IntoF64 + Copy,
+        num_txs_simulated: impl IntoF64 + Copy,
+        num_txs_simulated_success: impl IntoF64 + Copy,
+        num_txs_simulated_fail: impl IntoF64 + Copy,
+        num_bundles_reverted: impl IntoF64,
+    ) {
+        self.payload_tx_simulation_duration
+            .record(payload_tx_simulation_time);
+        self.payload_tx_simulation_gauge
+            .set(payload_tx_simulation_time);
+        self.payload_num_tx_considered.record(num_txs_considered);
+        self.payload_num_tx_considered_gauge.set(num_txs_considered);
+        self.payload_num_tx_simulated.record(num_txs_simulated);
+        self.payload_num_tx_simulated_gauge.set(num_txs_simulated);
+        self.payload_num_tx_simulated_success
+            .record(num_txs_simulated_success);
+        self.payload_num_tx_simulated_success_gauge
+            .set(num_txs_simulated_success);
+        self.payload_num_tx_simulated_fail
+            .record(num_txs_simulated_fail);
+        self.payload_num_tx_simulated_fail_gauge
+            .set(num_txs_simulated_fail);
+        self.bundles_reverted.record(num_bundles_reverted);
+    }
 }
 
 /// Contains version information for the application.
