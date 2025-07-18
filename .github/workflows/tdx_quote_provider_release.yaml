@@ -1,9 +1,9 @@
-name: Release Optimism
+name: Release TDX Quote Provider
 
 on:
   push:
     tags:
-      - "op-rbuilder/v*"
+      - "tdx-quote-provider/v*"
   workflow_dispatch:
     inputs:
       draft-release:
@@ -11,23 +11,11 @@ on:
         description: "Draft Release"
         required: false
         type: boolean
-      build-docker:
-        default: false
-        description: "Build Docker"
-        required: false
-        type: boolean
-      build-binary:
-        default: true
-        description: "Build Binary"
-        required: false
-        type: boolean
       features:
         default: ""
         description: "Binary Compilation Features"
         options:
           - ""
-          - "redact-sensitive"
-          - "flashblocks"
         required: false
         type: choice
 
@@ -60,7 +48,6 @@ jobs:
   build-binary:
     name: Build binary
     needs: extract-version
-    if: ${{ github.event.inputs.build-binary == 'true' || github.event_name == 'push'}} # when manually triggered or version tagged
     runs-on: ${{ matrix.configs.runner }}
     container:
       image: ubuntu:22.04
@@ -90,24 +77,25 @@ jobs:
             git \
             libclang-dev \
             libssl-dev \
+            libtss2-dev \
             pkg-config \
             protobuf-compiler
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 
       - uses: actions/checkout@v4 # must install git before checkout and set safe.directory after checkout because of container
 
-      - name: Build op-rbuilder binary
+      - name: Build tdx-quote-provider binary
         run: |
           git config --global --add safe.directory "$(pwd)"
           . $HOME/.cargo/env
-          cargo build --release --features=${{ matrix.features }} --target ${{ matrix.configs.target }} --package op-rbuilder
+          cargo build --release --features=${{ matrix.features }} --target ${{ matrix.configs.target }} --package tdx-quote-provider
           mkdir -p artifacts
-          mv target/${{ matrix.configs.target }}/release/op-rbuilder artifacts/op-rbuilder-${{ needs.extract-version.outputs.VERSION }}-${{ matrix.configs.target }}${{ matrix.features && '-' }}${{ matrix.features }}
+          mv target/${{ matrix.configs.target }}/release/tdx-quote-provider artifacts/tdx-quote-provider-${{ needs.extract-version.outputs.VERSION }}-${{ matrix.configs.target }}${{ matrix.features && '-' }}${{ matrix.features }}
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: op-rbuilder-${{ needs.extract-version.outputs.VERSION }}-${{ matrix.configs.target }}${{ matrix.features && '-' }}${{ matrix.features }}
+          name: tdx-quote-provider-${{ needs.extract-version.outputs.VERSION }}-${{ matrix.configs.target }}${{ matrix.features && '-' }}${{ matrix.features }}
           path: artifacts
 
   draft-release:
@@ -151,67 +139,3 @@ jobs:
           echo "---"
           echo "### Release Draft: ${{ env.VERSION }}" >> $GITHUB_STEP_SUMMARY
           echo "${{ steps.create-release-draft.outputs.url }}" >> $GITHUB_STEP_SUMMARY
-
-  build-docker:
-    if: ${{ github.event.inputs.build-docker == 'true' }}
-    name: Build and publish Docker image
-    needs: extract-version
-    runs-on: ${{ matrix.configs.runner }}
-    env:
-      VERSION: ${{ needs.extract-version.outputs.VERSION }}
-    permissions:
-      contents: read
-      packages: write
-    strategy:
-      matrix:
-        configs:
-          - target: linux/amd64
-            runner: warp-ubuntu-latest-x64-16x
-          - target: linux/arm64
-            runner: warp-ubuntu-latest-arm64-16x
-    steps:
-      - name: checkout sources
-        uses: actions/checkout@v4
-
-      - name: docker qemu
-        uses: docker/setup-qemu-action@v3
-
-      - name: docker buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: docker metadata
-        uses: docker/metadata-action@v5
-        id: meta
-        with:
-          images: ghcr.io/${{ github.repository }}
-          labels: org.opencontainers.image.source=${{ github.repositoryUrl }}
-          tags: |
-            type=sha
-            type=semver,pattern={{version}},value=${{ env.VERSION }}
-            type=semver,pattern={{major}}.{{minor}},value=${{ env.VERSION }}
-            type=semver,pattern={{major}},value=${{ env.VERSION }}
-
-            # Push latest tag for full version only, not for prerelease versions (i.e. not for v1.2.3-rc1)
-            type=raw,value=latest,enable=${{ !contains(env.VERSION, '-') }}
-
-      - name: docker login
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: docker build and push op-rbuilder
-        uses: docker/build-push-action@v5
-        with:
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          file: Dockerfile
-          context: .
-          labels: ${{ steps.meta.outputs.labels }}
-          platforms: ${{ matrix.configs.target }}
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          build-args: |
-            FEATURES=${{ github.event.inputs.features || '' }}
-            RBUILDER_BIN=op-rbuilder
