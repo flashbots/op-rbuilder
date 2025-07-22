@@ -91,7 +91,7 @@ impl OpPayloadBuilderCtx<FlashblocksExtraCtx> {
 
     /// Returns if the flashblock is the last one
     pub fn is_last_flashblock(&self) -> bool {
-        self.flashblock_index() == self.target_flashblock_count()
+        self.flashblock_index() == self.target_flashblock_count() - 1
     }
 }
 
@@ -392,7 +392,7 @@ where
                     // execute_best_transaction without cancelling parent token
                     ctx.cancel = cancel_token;
                     // TODO: remove this
-                    if ctx.flashblock_index() > ctx.target_flashblock_count() {
+                    if ctx.flashblock_index() >= ctx.target_flashblock_count() {
                         info!(
                             target: "payload_builder",
                             target = ctx.target_flashblock_count(),
