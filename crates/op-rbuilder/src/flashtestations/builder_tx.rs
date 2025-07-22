@@ -546,7 +546,6 @@ impl BuilderTransactions for FlashtestationsBuilderTx {
         let state = StateProviderDatabase::new(state_provider.clone());
         let mut simulation_state = State::builder()
             .with_database(state)
-            .with_cached_prestate(db.cache.clone())
             .with_bundle_prestate(db.bundle_state.clone())
             .with_bundle_update()
             .build();
