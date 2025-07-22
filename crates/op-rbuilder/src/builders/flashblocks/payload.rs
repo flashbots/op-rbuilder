@@ -415,14 +415,12 @@ where
                     );
                     let flashblock_build_start_time = Instant::now();
                     let state = StateProviderDatabase::new(&state_provider);
-                    // If it is the last flashblock, we need to account for the builder tx
-                    if ctx.is_last_flashblock() {
-                        total_gas_per_batch = total_gas_per_batch.saturating_sub(builder_tx_gas);
-                        // saturating sub just in case, we will log an error if da_limit too small for builder_tx_da_size
-                        if let Some(da_limit) = total_da_per_batch.as_mut() {
-                            *da_limit = da_limit.saturating_sub(builder_tx_da_size);
-                        }
+                    total_gas_per_batch = total_gas_per_batch.saturating_sub(builder_tx_gas);
+                    // saturating sub just in case, we will log an error if da_limit too small for builder_tx_da_size
+                    if let Some(da_limit) = total_da_per_batch.as_mut() {
+                        *da_limit = da_limit.saturating_sub(builder_tx_da_size);
                     }
+
                     let mut db = State::builder()
                         .with_database(state)
                         .with_bundle_update()
@@ -474,10 +472,7 @@ where
                         .payload_tx_simulation_gauge
                         .set(payload_tx_simulation_time);
 
-                    // If it is the last flashblocks, add the builder txn to the block if enabled
-                    if ctx.is_last_flashblock() {
-                        ctx.add_builder_tx(&mut info, &mut db, builder_tx_gas, message.clone());
-                    };
+                    ctx.add_builder_tx(&mut info, &mut db, builder_tx_gas, message.clone());
 
                     let total_block_built_duration = Instant::now();
                     let build_result = build_block(db, &ctx, &mut info);
