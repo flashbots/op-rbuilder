@@ -65,6 +65,8 @@ pub struct FlashblocksExtraCtx {
     pub flashblock_index: u64,
     /// Target flashblock count
     pub target_flashblock_count: u64,
+    /// Whether the current flashblock is the first fallback block
+    pub is_first_fallback_block: bool,
 }
 
 impl OpPayloadBuilderCtx<FlashblocksExtraCtx> {
@@ -78,6 +80,11 @@ impl OpPayloadBuilderCtx<FlashblocksExtraCtx> {
         self.extra_ctx.target_flashblock_count
     }
 
+    /// Returns if the flashblock is the first fallback block
+    pub fn is_first_fallback_block(&self) -> bool {
+        self.extra_ctx.is_first_fallback_block
+    }
+
     /// Increments the flashblock index
     pub fn increment_flashblock_index(&mut self) -> u64 {
         self.extra_ctx.flashblock_index += 1;
@@ -88,6 +95,11 @@ impl OpPayloadBuilderCtx<FlashblocksExtraCtx> {
     pub fn set_target_flashblock_count(&mut self, target_flashblock_count: u64) -> u64 {
         self.extra_ctx.target_flashblock_count = target_flashblock_count;
         self.extra_ctx.target_flashblock_count
+    }
+
+    /// Sets the first fallback block flag
+    pub fn set_first_fallback_block(&mut self, is_first_fallback_block: bool) {
+        self.extra_ctx.is_first_fallback_block = is_first_fallback_block;
     }
 
     /// Returns if the flashblock is the last one
@@ -250,6 +262,7 @@ where
             extra_ctx: FlashblocksExtraCtx {
                 flashblock_index: 0,
                 target_flashblock_count: self.config.flashblocks_per_block(),
+                is_first_fallback_block: true,
             },
         };
 
@@ -286,6 +299,8 @@ where
         self.ws_pub
             .publish(&fb_payload)
             .map_err(PayloadBuilderError::other)?;
+        // We set the first fallback block flag to false after building the first fallback block
+        ctx.set_first_fallback_block(false);
 
         info!(
             target: "payload_builder",

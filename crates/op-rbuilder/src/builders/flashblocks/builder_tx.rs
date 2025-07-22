@@ -124,11 +124,17 @@ impl BuilderTransactions<FlashblocksExtraCtx> for FlashblocksBuilderTx {
         db: &mut State<impl Database>,
     ) -> Result<Vec<BuilderTransactionCtx>, BuilderTransactionError> {
         let mut builder_txs = Vec::<BuilderTransactionCtx>::new();
-        let flashblocks_builder_tx = self.simulate_builder_tx(ctx, db)?;
-        builder_txs.extend(flashblocks_builder_tx.clone());
-        if let Some(flashtestations_builder_tx) = &self.flashtestations_builder_tx {
-            // We only include flashtestations txs in the last flashblock
-            if ctx.flashblock_index() == ctx.target_flashblock_count() - 1 {
+        if ctx.is_first_fallback_block() {
+            let flashblocks_builder_tx = self.simulate_builder_tx(ctx, db)?;
+            builder_txs.extend(flashblocks_builder_tx.clone());
+        }
+
+        if ctx.is_last_flashblock() {
+            let flashblocks_builder_tx = self.simulate_builder_tx(ctx, db)?;
+            builder_txs.extend(flashblocks_builder_tx.clone());
+            if let Some(flashtestations_builder_tx) = &self.flashtestations_builder_tx {
+                // We only include flashtestations txs in the last flashblock
+
                 let mut simulation_state = self.simulate_builder_txs_state::<FlashblocksExtraCtx>(
                     state_provider.clone(),
                     flashblocks_builder_tx.iter().collect(),
