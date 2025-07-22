@@ -7,8 +7,8 @@ use reth_provider::CanonStateSubscriptions;
 
 use crate::{
     builders::{
-        standard::payload::StandardOpPayloadBuilder, BuilderConfig, BuilderTransactions,
-        StandardBuilderTx,
+        standard::{builder_tx::StandardBuilderTx, payload::StandardOpPayloadBuilder},
+        BuilderConfig, BuilderTransactions,
     },
     flashtestations::service::bootstrap_flashtestations,
     traits::{NodeBounds, PoolBounds},
@@ -72,34 +72,25 @@ where
         evm_config: OpEvmConfig,
     ) -> eyre::Result<PayloadBuilderHandle<<Node::Types as NodeTypes>::Payload>> {
         let signer = self.0.builder_signer;
-        if self.0.flashtestations_config.flashtestations_enabled {
-            let flashtestation_builder_tx = match bootstrap_flashtestations(
-                self.0.flashtestations_config.clone(),
-                ctx,
-                signer,
-            )
-            .await
+        let flashtestations_builder_tx = if self.0.flashtestations_config.flashtestations_enabled {
+            match bootstrap_flashtestations::<Node>(self.0.flashtestations_config.clone(), ctx)
+                .await
             {
-                Ok(flashtestation_builder_tx) => flashtestation_builder_tx,
+                Ok(builder_tx) => Some(builder_tx),
                 Err(e) => {
-                    tracing::warn!(error = %e, "Failed to bootstrap flashtestations, falling back to standard builder tx");
-                    return self.spawn_payload_builder_service(
-                        evm_config,
-                        ctx,
-                        pool,
-                        StandardBuilderTx::new(signer),
-                    );
+                    tracing::warn!(error = %e, "Failed to bootstrap flashtestations, builderb will not include flashtestations txs");
+                    None
                 }
-            };
+            }
+        } else {
+            None
+        };
 
-            return self.spawn_payload_builder_service(
-                evm_config,
-                ctx,
-                pool,
-                flashtestation_builder_tx,
-            );
-        }
-
-        self.spawn_payload_builder_service(evm_config, ctx, pool, StandardBuilderTx::new(signer))
+        self.spawn_payload_builder_service(
+            evm_config,
+            ctx,
+            pool,
+            StandardBuilderTx::new(signer, flashtestations_builder_tx),
+        )
     }
 }

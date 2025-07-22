@@ -5,6 +5,7 @@ use crate::{
 
 use super::BuilderConfig;
 
+mod builder_tx;
 mod payload;
 mod service;
 
