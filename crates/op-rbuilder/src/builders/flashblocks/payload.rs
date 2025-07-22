@@ -78,13 +78,20 @@ impl OpPayloadBuilderCtx<FlashblocksExtraCtx> {
     }
 
     /// Increments the flashblock index
-    pub fn increment_flashblock_index(&mut self) {
+    pub fn increment_flashblock_index(&mut self) -> u64 {
         self.extra_ctx.flashblock_index += 1;
+        self.extra_ctx.flashblock_index
     }
 
     /// Sets the target flashblock count
-    pub fn set_target_flashblock_count(&mut self, target_flashblock_count: u64) {
+    pub fn set_target_flashblock_count(&mut self, target_flashblock_count: u64) -> u64 {
         self.extra_ctx.target_flashblock_count = target_flashblock_count;
+        self.extra_ctx.target_flashblock_count
+    }
+
+    /// Returns if the flashblock is the last one
+    pub fn is_last_flashblock(&self) -> bool {
+        self.flashblock_index() == self.target_flashblock_count()
     }
 }
 
@@ -352,10 +359,6 @@ where
             *da_limit = da_limit.saturating_sub(builder_tx_da_size);
         }
 
-        // // TODO: we should account for a case when we will issue only 1 flashblock
-        // let last_flashblock = flashblocks_per_block.saturating_sub(1);
-
-        // let mut flashblock_count = 0;
         // This channel coordinates flashblock building
         let (fb_cancel_token_rx, mut fb_cancel_token_tx) =
             mpsc::channel((self.config.flashblocks_per_block() + 1) as usize);
@@ -389,7 +392,7 @@ where
                     // execute_best_transaction without cancelling parent token
                     ctx.cancel = cancel_token;
                     // TODO: remove this
-                    if ctx.flashblock_index() >= ctx.target_flashblock_count() {
+                    if ctx.flashblock_index() > ctx.target_flashblock_count() {
                         info!(
                             target: "payload_builder",
                             target = ctx.target_flashblock_count(),
@@ -413,7 +416,7 @@ where
                     let flashblock_build_start_time = Instant::now();
                     let state = StateProviderDatabase::new(&state_provider);
                     // If it is the last flashblock, we need to account for the builder tx
-                    if ctx.flashblock_index() == ctx.target_flashblock_count() - 1 {
+                    if ctx.is_last_flashblock() {
                         total_gas_per_batch = total_gas_per_batch.saturating_sub(builder_tx_gas);
                         // saturating sub just in case, we will log an error if da_limit too small for builder_tx_da_size
                         if let Some(da_limit) = total_da_per_batch.as_mut() {
@@ -472,7 +475,7 @@ where
                         .set(payload_tx_simulation_time);
 
                     // If it is the last flashblocks, add the builder txn to the block if enabled
-                    if ctx.flashblock_index() == ctx.target_flashblock_count() - 1 {
+                    if ctx.is_last_flashblock() {
                         ctx.add_builder_tx(&mut info, &mut db, builder_tx_gas, message.clone());
                     };
 
@@ -496,8 +499,7 @@ where
                             return Err(err);
                         }
                         Ok((new_payload, mut fb_payload, new_bundle_state)) => {
-                            ctx.increment_flashblock_index(); // fallback block is index 0, so we need to increment here
-                            fb_payload.index = ctx.flashblock_index();
+                            fb_payload.index = ctx.increment_flashblock_index(); // fallback block is index 0, so we need to increment here
                             fb_payload.base = None;
 
                             // We check that child_job got cancelled before sending flashblock.
