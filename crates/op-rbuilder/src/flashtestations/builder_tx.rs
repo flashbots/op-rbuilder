@@ -26,7 +26,6 @@ use tracing::{debug, info, warn};
 use crate::{
     builders::{
         BuilderTransactionCtx, BuilderTransactionError, BuilderTransactions, OpPayloadBuilderCtx,
-        StandardBuilderTx,
     },
     flashtestations::{
         BlockBuilderPolicyError, BlockBuilderProofVerified, BlockData, FlashtestationRegistryError,
@@ -45,7 +44,6 @@ pub struct FlashtestationsBuilderTxArgs {
     pub registry_address: Address,
     pub builder_policy_address: Address,
     pub builder_proof_version: u8,
-    pub builder_signer: Option<Signer>,
     pub enable_block_proofs: bool,
     pub registered: bool,
 }
@@ -70,8 +68,6 @@ pub struct FlashtestationsBuilderTx {
     registered: Arc<AtomicBool>,
     // Whether block proofs are enabled
     enable_block_proofs: bool,
-    // fallback builder transaction implementation
-    fallback_builder_tx: StandardBuilderTx,
 }
 
 #[derive(Debug, Default)]
@@ -95,7 +91,6 @@ impl FlashtestationsBuilderTx {
             builder_proof_version: args.builder_proof_version,
             registered: Arc::new(AtomicBool::new(args.registered)),
             enable_block_proofs: args.enable_block_proofs,
-            fallback_builder_tx: StandardBuilderTx::new(args.builder_signer),
         }
     }
 
@@ -150,10 +145,10 @@ impl FlashtestationsBuilderTx {
         self.tee_service_signer.sign_tx(tx)
     }
 
-    fn signed_block_builder_proof_tx(
+    fn signed_block_builder_proof_tx<ExtraCtx: Debug + Default>(
         &self,
         block_content_hash: B256,
-        ctx: &OpPayloadBuilderCtx,
+        ctx: &OpPayloadBuilderCtx<ExtraCtx>,
         gas_limit: u64,
         nonce: u64,
     ) -> Result<Recovered<OpTransactionSigned>, secp256k1::Error> {
@@ -208,9 +203,9 @@ impl FlashtestationsBuilderTx {
         keccak256(&encoded)
     }
 
-    fn simulate_register_tee_service_tx(
+    fn simulate_register_tee_service_tx<ExtraCtx: Debug + Default>(
         &self,
-        ctx: &OpPayloadBuilderCtx,
+        ctx: &OpPayloadBuilderCtx<ExtraCtx>,
         evm: &mut OpEvm<
             &mut State<StateProviderDatabase<impl StateProvider>>,
             NoOpInspector,
@@ -282,10 +277,10 @@ impl FlashtestationsBuilderTx {
         false
     }
 
-    fn simulate_verify_block_proof_tx(
+    fn simulate_verify_block_proof_tx<ExtraCtx: Debug + Default>(
         &self,
         block_content_hash: B256,
-        ctx: &OpPayloadBuilderCtx,
+        ctx: &OpPayloadBuilderCtx<ExtraCtx>,
         evm: &mut OpEvm<
             &mut State<StateProviderDatabase<impl StateProvider>>,
             NoOpInspector,
@@ -352,9 +347,9 @@ impl FlashtestationsBuilderTx {
         false
     }
 
-    fn fund_tee_service_tx(
+    fn fund_tee_service_tx<ExtraCtx: Debug + Default>(
         &self,
-        ctx: &OpPayloadBuilderCtx,
+        ctx: &OpPayloadBuilderCtx<ExtraCtx>,
         evm: &mut OpEvm<
             &mut State<StateProviderDatabase<impl StateProvider>>,
             NoOpInspector,
@@ -397,9 +392,9 @@ impl FlashtestationsBuilderTx {
         }
     }
 
-    fn register_tee_service_tx(
+    fn register_tee_service_tx<ExtraCtx: Debug + Default>(
         &self,
-        ctx: &OpPayloadBuilderCtx,
+        ctx: &OpPayloadBuilderCtx<ExtraCtx>,
         evm: &mut OpEvm<
             &mut State<StateProviderDatabase<impl StateProvider>>,
             NoOpInspector,
@@ -453,10 +448,10 @@ impl FlashtestationsBuilderTx {
         }
     }
 
-    fn verify_block_proof_tx(
+    fn verify_block_proof_tx<ExtraCtx: Debug + Default>(
         &self,
         transactions: Vec<OpTransactionSigned>,
-        ctx: &OpPayloadBuilderCtx,
+        ctx: &OpPayloadBuilderCtx<ExtraCtx>,
         evm: &mut OpEvm<
             &mut State<StateProviderDatabase<impl StateProvider>>,
             NoOpInspector,
@@ -503,15 +498,14 @@ impl FlashtestationsBuilderTx {
             }
         } else {
             warn!(target: "flashtestations", reason = ?revert_reason, "verify block proof tx failed, falling back to standard builder tx");
-            self.fallback_builder_tx
-                .simulate_builder_tx(ctx, evm.db_mut())
+            Ok(None)
         }
     }
 
-    fn set_registered(
+    fn set_registered<ExtraCtx: Debug + Default>(
         &self,
         state_provider: impl StateProvider + Clone,
-        ctx: &OpPayloadBuilderCtx,
+        ctx: &OpPayloadBuilderCtx<ExtraCtx>,
     ) {
         let state = StateProviderDatabase::new(state_provider.clone());
         let mut simulation_state = State::builder()
@@ -535,12 +529,12 @@ impl FlashtestationsBuilderTx {
     }
 }
 
-impl BuilderTransactions for FlashtestationsBuilderTx {
+impl<ExtraCtx: Debug + Default> BuilderTransactions<ExtraCtx> for FlashtestationsBuilderTx {
     fn simulate_builder_txs<Extra: Debug + Default>(
         &self,
         state_provider: impl StateProvider + Clone,
         info: &mut ExecutionInfo<Extra>,
-        ctx: &OpPayloadBuilderCtx,
+        ctx: &OpPayloadBuilderCtx<ExtraCtx>,
         db: &mut State<impl Database>,
     ) -> Result<Vec<BuilderTransactionCtx>, BuilderTransactionError> {
         let state = StateProviderDatabase::new(state_provider.clone());
@@ -574,11 +568,7 @@ impl BuilderTransactions for FlashtestationsBuilderTx {
                 ctx,
                 &mut evm,
             )?);
-        } else {
-            // Fallback to standard builder tx (either when block proofs are disabled or when verify block proof tx fails)
-            builder_txs.extend(self.fallback_builder_tx.simulate_builder_tx(ctx, db)?);
         }
-
         Ok(builder_txs)
     }
 }

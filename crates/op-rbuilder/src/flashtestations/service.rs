@@ -16,7 +16,6 @@ use super::{
 pub async fn bootstrap_flashtestations<Node>(
     args: FlashtestationsArgs,
     ctx: &BuilderContext<Node>,
-    builder_signer: Option<Signer>,
 ) -> eyre::Result<FlashtestationsBuilderTx>
 where
     Node: NodeBounds,
@@ -83,7 +82,7 @@ where
         (None, false)
     };
 
-    let builder_tx = FlashtestationsBuilderTx::new(FlashtestationsBuilderTxArgs {
+    let flashtestations_builder_tx = FlashtestationsBuilderTx::new(FlashtestationsBuilderTxArgs {
         attestation,
         tee_service_signer,
         funding_key,
@@ -91,7 +90,6 @@ where
         registry_address,
         builder_policy_address,
         builder_proof_version: args.builder_proof_version,
-        builder_signer,
         enable_block_proofs: args.enable_block_proofs,
         registered,
     });
@@ -115,7 +113,7 @@ where
             },
         );
 
-    Ok(builder_tx)
+    Ok(flashtestations_builder_tx)
 }
 
 #[cfg(test)]

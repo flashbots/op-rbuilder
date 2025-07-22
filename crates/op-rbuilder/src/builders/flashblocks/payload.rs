@@ -60,7 +60,7 @@ struct ExtraExecutionInfo {
 }
 
 #[derive(Debug, Default)]
-struct FlashblocksExtraCtx {
+pub struct FlashblocksExtraCtx {
     /// Current flashblock index
     pub flashblock_index: u64,
     /// Target flashblock count
@@ -113,7 +113,6 @@ pub struct OpPayloadBuilder<Pool, Client, BuilderTx> {
     /// The metrics for the builder
     pub metrics: Arc<OpRBuilderMetrics>,
     /// The end of builder transaction type
-    #[allow(dead_code)]
     pub builder_tx: BuilderTx,
 }
 
@@ -172,7 +171,7 @@ impl<Pool, Client, BuilderTx> OpPayloadBuilder<Pool, Client, BuilderTx>
 where
     Pool: PoolBounds,
     Client: ClientBounds,
-    BuilderTx: BuilderTransactions,
+    BuilderTx: BuilderTransactions<FlashblocksExtraCtx>,
 {
     /// Constructs an Optimism payload from the transactions sent via the
     /// Payload attributes by the sequencer. If the `no_tx_pool` argument is passed in
@@ -270,10 +269,8 @@ where
         ctx.metrics.sequencer_tx_gauge.set(sequencer_tx_time);
 
         // If we have payload with txpool we add first builder tx right after deposits
-        if !ctx.attributes().no_tx_pool {
-            self.builder_tx
-                .add_builder_txs(&state_provider, &mut info, &ctx, &mut db)?;
-        }
+        self.builder_tx
+            .add_builder_txs(&state_provider, &mut info, &ctx, &mut db)?;
 
         // We subtract gas limit and da limit for builder transaction from the whole limit
         let builder_txs = self
@@ -412,12 +409,13 @@ where
                         flashblock_count = ctx.flashblock_index(),
                         target_gas = total_gas_per_batch,
                         gas_used = info.cumulative_gas_used,
-                        target_da = total_da_per_batch,
+                        target_da = total_da_per_batch.unwrap_or(0),
                         da_used = info.cumulative_da_bytes_used,
                         "Building flashblock",
                     );
                     let flashblock_build_start_time = Instant::now();
                     let state = StateProviderDatabase::new(&state_provider);
+
                     total_gas_per_batch = total_gas_per_batch.saturating_sub(builder_tx_gas);
                     // saturating sub just in case, we will log an error if da_limit too small for builder_tx_da_size
                     if let Some(da_limit) = total_da_per_batch.as_mut() {
@@ -475,7 +473,8 @@ where
                         .payload_tx_simulation_gauge
                         .set(payload_tx_simulation_time);
 
-                    ctx.add_builder_tx(&mut info, &mut db, builder_tx_gas, message.clone());
+                    self.builder_tx
+                        .add_builder_txs(&state_provider, &mut info, &ctx, &mut db)?;
 
                     let total_block_built_duration = Instant::now();
                     let build_result = build_block(db, &ctx, &mut info);
@@ -682,7 +681,7 @@ impl<Pool, Client, BuilderTx> crate::builders::generator::PayloadBuilder
 where
     Pool: PoolBounds,
     Client: ClientBounds,
-    BuilderTx: BuilderTransactions + Clone + Send + Sync,
+    BuilderTx: BuilderTransactions<FlashblocksExtraCtx> + Clone + Send + Sync,
 {
     type Attributes = OpPayloadBuilderAttributes<OpTransactionSigned>;
     type BuiltPayload = OpBuiltPayload;

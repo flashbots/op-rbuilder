@@ -1,7 +1,8 @@
 use super::{payload::OpPayloadBuilder, FlashblocksConfig};
 use crate::{
     builders::{
-        builder_tx::{BuilderTransactions, StandardBuilderTx},
+        builder_tx::BuilderTransactions,
+        flashblocks::{builder_tx::FlashblocksBuilderTx, payload::FlashblocksExtraCtx},
         generator::BlockPayloadJobGenerator,
         BuilderConfig,
     },
@@ -27,7 +28,7 @@ impl FlashblocksServiceBuilder {
     where
         Node: NodeBounds,
         Pool: PoolBounds,
-        BuilderTx: BuilderTransactions + Unpin + Clone + Send + Sync + 'static,
+        BuilderTx: BuilderTransactions<FlashblocksExtraCtx> + Unpin + Clone + Send + Sync + 'static,
     {
         let payload_builder = OpPayloadBuilder::new(
             OpEvmConfig::optimism(ctx.chain_spec()),
@@ -72,27 +73,21 @@ where
         _: OpEvmConfig,
     ) -> eyre::Result<PayloadBuilderHandle<<Node::Types as NodeTypes>::Payload>> {
         let signer = self.0.builder_signer;
-        if self.0.flashtestations_config.flashtestations_enabled {
-            let flashtestations_builder_tx = match bootstrap_flashtestations(
-                self.0.flashtestations_config.clone(),
-                ctx,
-                signer,
-            )
-            .await
-            {
-                Ok(service) => service,
+        let flashtestations_builder_tx = if self.0.flashtestations_config.flashtestations_enabled {
+            match bootstrap_flashtestations(self.0.flashtestations_config.clone(), ctx).await {
+                Ok(builder_tx) => Some(builder_tx),
                 Err(e) => {
-                    tracing::warn!(error = %e, "Failed to bootstrap flashtestations, falling back to standard builder tx");
-                    return self.spawn_payload_builder_service(
-                        ctx,
-                        pool,
-                        StandardBuilderTx { signer },
-                    );
+                    tracing::warn!(error = %e, "Failed to bootstrap flashtestations, builderb will not include flashtestations txs");
+                    None
                 }
-            };
-
-            return self.spawn_payload_builder_service(ctx, pool, flashtestations_builder_tx);
-        }
-        self.spawn_payload_builder_service(ctx, pool, StandardBuilderTx { signer })
+            }
+        } else {
+            None
+        };
+        self.spawn_payload_builder_service(
+            ctx,
+            pool,
+            FlashblocksBuilderTx::new(signer, flashtestations_builder_tx),
+        )
     }
 }
