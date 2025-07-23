@@ -450,6 +450,7 @@ where
                         best_txs,
                         total_gas_per_batch.min(ctx.block_gas_limit()),
                         total_da_per_batch,
+                        Some(ctx.extra_ctx.flashblock_index),
                     )?;
                     // We got block cancelled, we won't need anything from the block at this point
                     // Caution: this assume that block cancel token only cancelled when new FCU is received

@@ -43,7 +43,7 @@ use crate::{
     metrics::OpRBuilderMetrics,
     primitives::reth::{ExecutionInfo, TxnExecutionResult},
     traits::PayloadTxsBounds,
-    tx::MaybeRevertingTransaction,
+    tx::{MaybeFlashblockFilter, MaybeRevertingTransaction},
     tx_signer::Signer,
 };
 
@@ -325,6 +325,7 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
         mut best_txs: impl PayloadTxsBounds,
         block_gas_limit: u64,
         block_da_limit: Option<u64>,
+        flashblock_number: Option<u64>,
     ) -> Result<Option<()>, PayloadBuilderError>
     where
         DB: Database<Error = ProviderError> + std::fmt::Debug,
@@ -364,6 +365,8 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
         while let Some(tx) = best_txs.next(()) {
             let interop = tx.interop_deadline();
             let reverted_hashes = tx.reverted_hashes().clone();
+            let flashblock_number_min = tx.flashblock_number_min();
+            let flashblock_number_max = tx.flashblock_number_max();
             let conditional = tx.conditional().cloned();
 
             let tx_da_size = tx.estimated_da_size();
@@ -396,6 +399,23 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
                 if !conditional.matches_block_attributes(&block_attr) {
                     best_txs.mark_invalid(tx.signer(), tx.nonce());
                     continue;
+                }
+            }
+
+            if let Some(flashblock_index) = flashblock_number {
+                if let Some(flashblock_number_min) = flashblock_number_min {
+                    if flashblock_index < flashblock_number_min {
+                        best_txs.mark_invalid(tx.signer(), tx.nonce());
+                        continue;
+                    }
+                }
+
+                if let Some(flashblock_number_max) = flashblock_number_max {
+                    if flashblock_index > flashblock_number_max {
+                        log_txn(TxnExecutionResult::FlashblockNumberMaxTooLow);
+                        best_txs.mark_invalid(tx.signer(), tx.nonce());
+                        continue;
+                    }
                 }
             }
 

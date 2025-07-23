@@ -13,7 +13,10 @@ use reth_primitives::{kzg::KzgSettings, Recovered};
 use reth_primitives_traits::InMemorySize;
 use reth_transaction_pool::{EthBlobTransactionSidecar, EthPoolTransaction, PoolTransaction};
 
-pub trait FBPoolTransaction: MaybeRevertingTransaction + OpPooledTx {}
+pub trait FBPoolTransaction:
+    MaybeRevertingTransaction + OpPooledTx + MaybeFlashblockFilter
+{
+}
 
 #[derive(Clone, Debug)]
 pub struct FBPooledTransaction {
@@ -55,8 +58,8 @@ impl MaybeRevertingTransaction for FBPooledTransaction {
 pub trait MaybeFlashblockFilter {
     fn with_flashblock_number_min(self, flashblock_number_min: Option<u64>) -> Self;
     fn with_flashblock_number_max(self, flashblock_number_max: Option<u64>) -> Self;
-    fn flashblock_number_min(self) -> Option<u64>;
-    fn flashblock_number_max(self) -> Option<u64>;
+    fn flashblock_number_min(&self) -> Option<u64>;
+    fn flashblock_number_max(&self) -> Option<u64>;
 }
 
 impl MaybeFlashblockFilter for FBPooledTransaction {
@@ -70,11 +73,11 @@ impl MaybeFlashblockFilter for FBPooledTransaction {
         self
     }
 
-    fn flashblock_number_min(self) -> Option<u64> {
+    fn flashblock_number_min(&self) -> Option<u64> {
         self.flashblock_number_min
     }
 
-    fn flashblock_number_max(self) -> Option<u64> {
+    fn flashblock_number_max(&self) -> Option<u64> {
         self.flashblock_number_max
     }
 }
