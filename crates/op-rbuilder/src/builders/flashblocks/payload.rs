@@ -282,14 +282,11 @@ where
         ctx.metrics.sequencer_tx_gauge.set(sequencer_tx_time);
 
         // If we have payload with txpool we add first builder tx right after deposits
-        self.builder_tx
-            .add_builder_txs(&state_provider, &mut info, &ctx, &mut db)?;
+        let builder_txs =
+            self.builder_tx
+                .add_builder_txs(&state_provider, &mut info, &ctx, &mut db)?;
 
         // We subtract gas limit and da limit for builder transaction from the whole limit
-        let builder_txs = self
-            .builder_tx
-            .simulate_builder_txs(&state_provider, &mut info, &ctx, &mut db)
-            .map_err(|err| PayloadBuilderError::Other(Box::new(err)))?;
         let builder_tx_gas = builder_txs.iter().fold(0, |acc, tx| acc + tx.gas_used);
         let builder_tx_da_size: u64 = builder_txs.iter().fold(0, |acc, tx| acc + tx.da_size);
 
@@ -430,18 +427,27 @@ where
                     );
                     let flashblock_build_start_time = Instant::now();
                     let state = StateProviderDatabase::new(&state_provider);
+                    let mut db = State::builder()
+                        .with_database(state)
+                        .with_bundle_update()
+                        .with_bundle_prestate(bundle_state.clone())
+                        .build();
+
+                    let builder_txs = self.builder_tx.simulate_builder_txs(
+                        &state_provider,
+                        &mut info,
+                        &ctx,
+                        &mut db,
+                    )?;
+                    let builder_tx_gas = builder_txs.iter().fold(0, |acc, tx| acc + tx.gas_used);
+                    let builder_tx_da_size: u64 =
+                        builder_txs.iter().fold(0, |acc, tx| acc + tx.da_size);
 
                     total_gas_per_batch = total_gas_per_batch.saturating_sub(builder_tx_gas);
                     // saturating sub just in case, we will log an error if da_limit too small for builder_tx_da_size
                     if let Some(da_limit) = total_da_per_batch.as_mut() {
                         *da_limit = da_limit.saturating_sub(builder_tx_da_size);
                     }
-
-                    let mut db = State::builder()
-                        .with_database(state)
-                        .with_bundle_update()
-                        .with_bundle_prestate(bundle_state.clone())
-                        .build();
 
                     let best_txs_start_time = Instant::now();
                     let best_txs = BestPayloadTransactions::new(
