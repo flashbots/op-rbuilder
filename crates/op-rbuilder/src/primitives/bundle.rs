@@ -88,11 +88,17 @@ pub enum BundleConditionalError {
     MinTooHighForDefaultRange { min: u64, max_allowed: u64 },
 }
 
+pub struct BundleConditional {
+    pub transaction_conditional: TransactionConditional,
+    pub flashblock_number_min: Option<u64>,
+    pub flashblock_number_max: Option<u64>,
+}
+
 impl Bundle {
     pub fn conditional(
         &self,
         last_block_number: u64,
-    ) -> Result<TransactionConditional, BundleConditionalError> {
+    ) -> Result<BundleConditional, BundleConditionalError> {
         let mut block_number_max = self.block_number_max;
         let block_number_min = self.block_number_min;
 
@@ -138,12 +144,16 @@ impl Bundle {
             }
         }
 
-        Ok(TransactionConditional {
-            block_number_min,
-            block_number_max,
-            known_accounts: Default::default(),
-            timestamp_max: self.max_timestamp,
-            timestamp_min: self.min_timestamp,
+        Ok(BundleConditional {
+            transaction_conditional: TransactionConditional {
+                block_number_min,
+                block_number_max,
+                known_accounts: Default::default(),
+                timestamp_max: self.max_timestamp,
+                timestamp_min: self.min_timestamp,
+            },
+            flashblock_number_min: self.flashblock_number_min,
+            flashblock_number_max: self.flashblock_number_max,
         })
     }
 }
@@ -166,7 +176,10 @@ mod tests {
         };
 
         let last_block = 1000;
-        let result = bundle.conditional(last_block).unwrap();
+        let result = bundle
+            .conditional(last_block)
+            .unwrap()
+            .transaction_conditional;
 
         assert_eq!(result.block_number_min, None);
         assert_eq!(
@@ -184,7 +197,10 @@ mod tests {
         };
 
         let last_block = 1000;
-        let result = bundle.conditional(last_block).unwrap();
+        let result = bundle
+            .conditional(last_block)
+            .unwrap()
+            .transaction_conditional;
 
         assert_eq!(result.block_number_min, Some(1002));
         assert_eq!(result.block_number_max, Some(1005));
@@ -276,7 +292,10 @@ mod tests {
         };
 
         let last_block = 1000;
-        let result = bundle.conditional(last_block).unwrap();
+        let result = bundle
+            .conditional(last_block)
+            .unwrap()
+            .transaction_conditional;
 
         assert_eq!(result.block_number_min, Some(1005));
         assert_eq!(result.block_number_max, Some(1010)); // last_block + MAX_BLOCK_RANGE_BLOCKS
@@ -290,7 +309,10 @@ mod tests {
         };
 
         let last_block = 1000;
-        let result = bundle.conditional(last_block).unwrap();
+        let result = bundle
+            .conditional(last_block)
+            .unwrap()
+            .transaction_conditional;
 
         assert_eq!(result.block_number_min, None);
         assert_eq!(result.block_number_max, Some(1008));
@@ -304,7 +326,10 @@ mod tests {
         };
 
         let last_block = 1000;
-        let result = bundle.conditional(last_block).unwrap();
+        let result = bundle
+            .conditional(last_block)
+            .unwrap()
+            .transaction_conditional;
 
         assert_eq!(result.block_number_min, Some(999));
         assert_eq!(result.block_number_max, Some(1010));
