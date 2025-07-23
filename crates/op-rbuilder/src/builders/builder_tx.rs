@@ -83,7 +83,7 @@ pub trait BuilderTransactions<ExtraCtx: Debug + Default = ()>: Debug {
         info: &mut ExecutionInfo<Extra>,
         builder_ctx: &OpPayloadBuilderCtx<ExtraCtx>,
         db: &mut State<impl Database>,
-    ) -> Result<(), BuilderTransactionError> {
+    ) -> Result<Vec<BuilderTransactionCtx>, BuilderTransactionError> {
         {
             let mut evm = builder_ctx
                 .evm_config
@@ -93,7 +93,7 @@ pub trait BuilderTransactions<ExtraCtx: Debug + Default = ()>: Debug {
 
             let builder_txs =
                 self.simulate_builder_txs(state_provider, info, builder_ctx, evm.db_mut())?;
-            for builder_tx in builder_txs {
+            for builder_tx in builder_txs.iter() {
                 if invalid.contains(&builder_tx.signed_tx.signer()) {
                     debug!(target: "payload_builder", tx_hash = ?builder_tx.signed_tx.tx_hash(), "builder signer invalid as previous builder tx reverted");
                     continue;
@@ -128,13 +128,13 @@ pub trait BuilderTransactions<ExtraCtx: Debug + Default = ()>: Debug {
                 // Append sender and transaction to the respective lists
                 info.executed_senders.push(builder_tx.signed_tx.signer());
                 info.executed_transactions
-                    .push(builder_tx.signed_tx.into_inner());
+                    .push(builder_tx.signed_tx.clone().into_inner());
             }
 
             // Release the db reference by dropping evm
             drop(evm);
 
-            Ok(())
+            Ok(builder_txs)
         }
     }
 
