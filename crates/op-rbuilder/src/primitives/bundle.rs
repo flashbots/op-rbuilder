@@ -5,13 +5,21 @@ use serde::{Deserialize, Serialize};
 
 pub const MAX_BLOCK_RANGE_BLOCKS: u64 = 10;
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct Bundle {
     #[serde(rename = "txs")]
     pub transactions: Vec<Bytes>,
 
     #[serde(rename = "revertingTxHashes")]
     pub reverting_hashes: Option<Vec<B256>>,
+
+    #[serde(
+        default,
+        rename = "minBlockNumber",
+        with = "alloy_serde::quantity::opt",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub block_number_min: Option<u64>,
 
     #[serde(
         default,
@@ -23,11 +31,19 @@ pub struct Bundle {
 
     #[serde(
         default,
-        rename = "minBlockNumber",
+        rename = "minFlashblockNumber",
         with = "alloy_serde::quantity::opt",
         skip_serializing_if = "Option::is_none"
     )]
-    pub block_number_min: Option<u64>,
+    pub flashblock_number_min: Option<u64>,
+
+    #[serde(
+        default,
+        rename = "maxFlashblockNumber",
+        with = "alloy_serde::quantity::opt",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub flashblock_number_max: Option<u64>,
 
     // Not recommended because this is subject to the builder node clock
     #[serde(
@@ -146,11 +162,7 @@ mod tests {
     fn test_bundle_conditional_no_bounds() {
         let bundle = Bundle {
             transactions: vec![],
-            reverting_hashes: None,
-            block_number_max: None,
-            block_number_min: None,
-            min_timestamp: None,
-            max_timestamp: None,
+            ..Default::default()
         };
 
         let last_block = 1000;
@@ -166,12 +178,9 @@ mod tests {
     #[test]
     fn test_bundle_conditional_with_valid_bounds() {
         let bundle = Bundle {
-            transactions: vec![],
-            reverting_hashes: None,
             block_number_max: Some(1005),
             block_number_min: Some(1002),
-            min_timestamp: None,
-            max_timestamp: None,
+            ..Default::default()
         };
 
         let last_block = 1000;
@@ -184,12 +193,9 @@ mod tests {
     #[test]
     fn test_bundle_conditional_min_greater_than_max() {
         let bundle = Bundle {
-            transactions: vec![],
-            reverting_hashes: None,
             block_number_max: Some(1005),
             block_number_min: Some(1010),
-            min_timestamp: None,
-            max_timestamp: None,
+            ..Default::default()
         };
 
         let last_block = 1000;
@@ -207,12 +213,8 @@ mod tests {
     #[test]
     fn test_bundle_conditional_max_in_past() {
         let bundle = Bundle {
-            transactions: vec![],
-            reverting_hashes: None,
             block_number_max: Some(999),
-            block_number_min: None,
-            min_timestamp: None,
-            max_timestamp: None,
+            ..Default::default()
         };
 
         let last_block = 1000;
@@ -230,12 +232,8 @@ mod tests {
     #[test]
     fn test_bundle_conditional_max_too_high() {
         let bundle = Bundle {
-            transactions: vec![],
-            reverting_hashes: None,
             block_number_max: Some(1020),
-            block_number_min: None,
-            min_timestamp: None,
-            max_timestamp: None,
+            ..Default::default()
         };
 
         let last_block = 1000;
@@ -254,12 +252,8 @@ mod tests {
     #[test]
     fn test_bundle_conditional_min_too_high_for_default_range() {
         let bundle = Bundle {
-            transactions: vec![],
-            reverting_hashes: None,
-            block_number_max: None,
             block_number_min: Some(1015),
-            min_timestamp: None,
-            max_timestamp: None,
+            ..Default::default()
         };
 
         let last_block = 1000;
@@ -277,12 +271,8 @@ mod tests {
     #[test]
     fn test_bundle_conditional_with_only_min() {
         let bundle = Bundle {
-            transactions: vec![],
-            reverting_hashes: None,
-            block_number_max: None,
             block_number_min: Some(1005),
-            min_timestamp: None,
-            max_timestamp: None,
+            ..Default::default()
         };
 
         let last_block = 1000;
@@ -295,12 +285,8 @@ mod tests {
     #[test]
     fn test_bundle_conditional_with_only_max() {
         let bundle = Bundle {
-            transactions: vec![],
-            reverting_hashes: None,
             block_number_max: Some(1008),
-            block_number_min: None,
-            min_timestamp: None,
-            max_timestamp: None,
+            ..Default::default()
         };
 
         let last_block = 1000;
@@ -313,12 +299,8 @@ mod tests {
     #[test]
     fn test_bundle_conditional_min_lower_than_last_block() {
         let bundle = Bundle {
-            transactions: vec![],
-            reverting_hashes: None,
-            block_number_max: None,
             block_number_min: Some(999),
-            min_timestamp: None,
-            max_timestamp: None,
+            ..Default::default()
         };
 
         let last_block = 1000;
