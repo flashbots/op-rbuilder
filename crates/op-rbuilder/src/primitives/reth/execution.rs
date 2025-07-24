@@ -19,7 +19,6 @@ pub enum TxnExecutionResult {
     Success,
     Reverted,
     RevertedAndExcluded,
-    FlashblockNumberMaxTooLow,
 }
 
 #[derive(Default, Debug)]
