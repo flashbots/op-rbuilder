@@ -25,6 +25,7 @@ use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
 use reth_optimism_forks::OpHardforks;
 use reth_optimism_node::{OpBuiltPayload, OpPayloadBuilderAttributes};
 use reth_optimism_primitives::{OpPrimitives, OpReceipt, OpTransactionSigned};
+use reth_payload_util::BestPayloadTransactions;
 use reth_provider::{
     ExecutionOutcome, HashedPostStateProvider, ProviderError, StateRootProvider,
     StorageRootProvider,
@@ -435,9 +436,11 @@ where
 
                     let best_txs_start_time = Instant::now();
                     let best_txs = BestFlashblocksTxs::new(
-                        // We are not using without_updates in here, so arriving transaction could target the current block
-                        self.pool
-                            .best_transactions_with_attributes(ctx.best_transaction_attributes()),
+                        BestPayloadTransactions::new(
+                            self.pool.best_transactions_with_attributes(
+                                ctx.best_transaction_attributes(),
+                            ),
+                        ),
                         ctx.extra_ctx.flashblock_index.clone(),
                     );
                     let transaction_pool_fetch_time = best_txs_start_time.elapsed();

@@ -1,14 +1,14 @@
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, VecDeque},
     sync::{
         atomic::{AtomicU64, Ordering},
         Arc,
     },
 };
 
-use alloy_primitives::{map::foldhash::HashSet, Address};
+use alloy_primitives::Address;
 use reth_payload_util::PayloadTransactions;
-use reth_transaction_pool::{PoolTransaction, ValidPoolTransaction};
+use reth_transaction_pool::PoolTransaction;
 use tracing::debug;
 
 use crate::tx::MaybeFlashblockFilter;
@@ -16,29 +16,21 @@ use crate::tx::MaybeFlashblockFilter;
 pub struct BestFlashblocksTxs<T, I>
 where
     T: PoolTransaction,
-    I: Iterator<Item = Arc<ValidPoolTransaction<T>>>,
+    I: PayloadTransactions<Transaction = T>,
 {
-    invalid: HashSet<Address>,
-    best: I,
-
-    // The following two fields are for filtering based on a user-specified
-    // flashblock range. If a user specifies a min flashblock number and we're
-    // not at that number yet, store the transaction until we get there. The
-    // key in the BTreeMap is the min flashblock number we need to wait until.
+    inner: I,
     current_flashblock_number: Arc<AtomicU64>,
-    early_transactions: BTreeMap<u64, T>,
+    early_transactions: BTreeMap<u64, VecDeque<T>>,
 }
 
 impl<T, I> BestFlashblocksTxs<T, I>
 where
     T: PoolTransaction,
-    I: Iterator<Item = Arc<ValidPoolTransaction<T>>>,
+    I: PayloadTransactions<Transaction = T>,
 {
-    /// Create a new `BestPayloadTransactions` with the given iterator.
-    pub fn new(best: I, current_flashblock_number: Arc<AtomicU64>) -> Self {
+    pub fn new(inner: I, current_flashblock_number: Arc<AtomicU64>) -> Self {
         Self {
-            invalid: Default::default(),
-            best,
+            inner,
             current_flashblock_number,
             early_transactions: Default::default(),
         }
@@ -48,53 +40,93 @@ where
 impl<T, I> PayloadTransactions for BestFlashblocksTxs<T, I>
 where
     T: PoolTransaction + MaybeFlashblockFilter,
-    I: Iterator<Item = Arc<ValidPoolTransaction<T>>>,
+    I: PayloadTransactions<Transaction = T>,
 {
     type Transaction = T;
 
-    fn next(&mut self, _ctx: ()) -> Option<Self::Transaction> {
+    fn next(&mut self, ctx: ()) -> Option<Self::Transaction> {
         loop {
             let flashblock_number = self.current_flashblock_number.load(Ordering::Relaxed);
 
-            if let Some((min_flashblock_number, tx)) = self.early_transactions.first_key_value() {
-                if *min_flashblock_number <= flashblock_number {
-                    return Some(tx.clone());
+            // Check for new transactions that can be executed with the higher flashblock number
+            while let Some((&min_flashblock, _)) = self.early_transactions.first_key_value() {
+                if min_flashblock > flashblock_number {
+                    break;
+                }
+
+                if let Some(mut txs) = self.early_transactions.remove(&min_flashblock) {
+                    while let Some(tx) = txs.pop_front() {
+                        // Re-check max flashblock number just in case
+                        if let Some(max) = tx.flashblock_number_max() {
+                            if flashblock_number > max {
+                                debug!(
+                                    target: "payload_builder",
+                                    sender = ?tx.sender(),
+                                    nonce = tx.nonce(),
+                                    current_flashblock = flashblock_number,
+                                    max_flashblock = max,
+                                    "Bundle flashblock max exceeded"
+                                );
+                                self.mark_invalid(tx.sender(), tx.nonce());
+                                continue;
+                            }
+                        }
+
+                        // The vecdeque isn't modified in place so we need to replace it
+                        if !txs.is_empty() {
+                            self.early_transactions.insert(min_flashblock, txs);
+                        }
+
+                        return Some(tx);
+                    }
                 }
             }
 
-            let tx = self.best.next()?;
-            if self.invalid.contains(tx.sender_ref()) {
-                continue;
-            }
+            let tx = self.inner.next(ctx)?;
 
-            let flashblock_number_min = tx.transaction.flashblock_number_min();
-            let flashblock_number_max = tx.transaction.flashblock_number_max();
+            let flashblock_number_min = tx.flashblock_number_min();
+            let flashblock_number_max = tx.flashblock_number_max();
 
-            if let Some(flashblock_number_min) = flashblock_number_min {
-                if flashblock_number < flashblock_number_min {
+            // Check min flashblock requirement
+            if let Some(min) = flashblock_number_min {
+                if flashblock_number < min {
                     self.early_transactions
-                        .insert(flashblock_number_min, tx.transaction.clone());
+                        .entry(min)
+                        .or_default()
+                        .push_back(tx);
                     continue;
                 }
             }
 
-            if let Some(flashblock_number_max) = flashblock_number_max {
-                if flashblock_number > flashblock_number_max {
+            // Check max flashblock requirement
+            if let Some(max) = flashblock_number_max {
+                if flashblock_number > max {
                     debug!(
                         target: "payload_builder",
-                        message = "Considering transaction",
-                        result = "FlashblockNumberMaxTooLow"
+                        sender = ?tx.sender(),
+                        nonce = tx.nonce(),
+                        current_flashblock = flashblock_number,
+                        max_flashblock = max,
+                        "Bundle flashblock max exceeded"
                     );
-                    self.mark_invalid(*tx.sender_ref(), tx.nonce());
+                    self.inner.mark_invalid(tx.sender(), tx.nonce());
                     continue;
                 }
             }
 
-            return Some(tx.transaction.clone());
+            return Some(tx);
         }
     }
 
-    fn mark_invalid(&mut self, sender: Address, _nonce: u64) {
-        self.invalid.insert(sender);
+    fn mark_invalid(&mut self, sender: Address, nonce: u64) {
+        self.inner.mark_invalid(sender, nonce);
+
+        // Clear early_transactions from this sender with a greater nonce as
+        // these transactions now will not execute because there would be a
+        // nonce gap
+        self.early_transactions.retain(|_, txs| {
+            txs.retain(|tx| !(tx.sender() == sender && tx.nonce() > nonce));
+            !txs.is_empty()
+        });
     }
 }
