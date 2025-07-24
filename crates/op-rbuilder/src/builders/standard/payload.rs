@@ -419,7 +419,6 @@ impl<Txs: PayloadTxsBounds> OpBuilder<'_, Txs> {
                     best_txs,
                     block_gas_limit,
                     block_da_limit,
-                    None,
                 )?
                 .is_some()
             {
