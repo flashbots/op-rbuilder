@@ -493,6 +493,11 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
             // add gas used by the transaction to cumulative gas used, before creating the
             // receipt
             let gas_used = result.gas_used();
+            if gas_used > self.max_gas_per_txn {
+                log_txn(TxnExecutionResult::MaxGasUsageExceeded);
+                best_txs.mark_invalid(tx.signer(), tx.nonce());
+                continue;
+            }
             info.cumulative_gas_used += gas_used;
             // record tx da size
             info.cumulative_da_bytes_used += tx_da_size;
@@ -568,10 +573,6 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
 
                 // Add gas used by the transaction to cumulative gas used, before creating the receipt
                 let gas_used = result.gas_used();
-                if gas_used > self.max_gas_per_txn {
-                    info!("builder txn took execessive gas. not included in block");
-                    return Ok(());
-                }
                 info.cumulative_gas_used += gas_used;
 
                 let ctx = ReceiptBuilderCtx {
