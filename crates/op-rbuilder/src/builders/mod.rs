@@ -113,7 +113,7 @@ pub struct BuilderConfig<Specific: Clone> {
     /// Configuration values that are specific to the block builder implementation used.
     pub specific: Specific,
     /// Maximum gas a transaction can use before being excluded.
-    pub max_gas_per_txn: u64,
+    pub max_gas_per_txn: Option<u64>,
 }
 
 impl<S: Debug + Clone> core::fmt::Debug for BuilderConfig<S> {
@@ -147,7 +147,7 @@ impl<S: Default + Clone> Default for BuilderConfig<S> {
             da_config: OpDAConfig::default(),
             specific: S::default(),
             sampling_ratio: 100,
-            max_gas_per_txn: 25_000,
+            max_gas_per_txn: Some(25_000),
         }
     }
 }
