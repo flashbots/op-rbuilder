@@ -101,14 +101,12 @@ jobs:
           git config --global --add safe.directory "$(pwd)"
           . $HOME/.cargo/env
           cargo build --release --features=${{ matrix.features }} --target ${{ matrix.configs.target }} --package op-rbuilder
-          mkdir -p artifacts
-          mv target/${{ matrix.configs.target }}/release/op-rbuilder artifacts/op-rbuilder-${{ needs.extract-version.outputs.VERSION }}-${{ matrix.configs.target }}${{ matrix.features && '-' }}${{ matrix.features }}
 
-      - name: Upload artifacts
+      - name: Upload op-rbuilder artifact
         uses: actions/upload-artifact@v4
         with:
           name: op-rbuilder-${{ needs.extract-version.outputs.VERSION }}-${{ matrix.configs.target }}${{ matrix.features && '-' }}${{ matrix.features }}
-          path: artifacts
+          path: target/${{ matrix.configs.target }}/release/op-rbuilder
 
   draft-release:
     name: Draft release
