@@ -251,6 +251,7 @@ where
                 flashblock_index: 0,
                 target_flashblock_count: self.config.flashblocks_per_block(),
             },
+            max_gas_per_txn: self.config.max_gas_per_txn,
         };
 
         let state_provider = self.client.state_by_block_hash(ctx.parent().hash())?;

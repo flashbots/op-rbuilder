@@ -1,5 +1,9 @@
-use crate::tests::{LocalInstance, TransactionBuilderExt};
+use crate::{
+    args::OpRbuilderArgs,
+    tests::{LocalInstance, TransactionBuilderExt},
+};
 use alloy_primitives::TxHash;
+
 use core::{
     sync::atomic::{AtomicBool, Ordering},
     time::Duration,
@@ -186,6 +190,50 @@ async fn test_no_tx_pool(rbuilder: LocalInstance) -> eyre::Result<()> {
 
     // now lets try to build a block with no transactions
     let _ = driver.build_new_block_with_no_tx_pool().await?;
+
+    Ok(())
+}
+
+#[rb_test(args = OpRbuilderArgs {
+    max_gas_per_txn: Some(21000),
+    ..Default::default()
+})]
+async fn chain_produces_big_txs(rbuilder: LocalInstance) -> eyre::Result<()> {
+    let driver = rbuilder.driver().await?;
+
+    #[cfg(target_os = "linux")]
+    let driver = driver
+        .with_validation_node(crate::tests::ExternalNode::reth().await?)
+        .await?;
+
+    let count = rand::random_range(1..8);
+    let mut tx_hashes = HashSet::<TxHash>::default();
+
+    for _ in 0..count {
+        // insert txns with gas = 210_000
+        let tx = driver
+            .create_transaction()
+            .random_big_transaction()
+            .send()
+            .await
+            .expect("Failed to send transaction");
+
+        tx_hashes.insert(*tx.tx_hash());
+    }
+
+    // insert 1 valid txn with gas=21_000
+    let _ = driver
+        .create_transaction()
+        .random_valid_transfer()
+        .send()
+        .await
+        .expect("Failed to send transaction");
+
+    let block = driver.build_new_block_with_current_timestamp(None).await?;
+
+    let txs = block.transactions;
+
+    assert!(txs.len() == 4);
 
     Ok(())
 }
