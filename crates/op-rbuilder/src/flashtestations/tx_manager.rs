@@ -102,6 +102,7 @@ impl TxManager {
     pub async fn fund_and_register_tee_service(
         &self,
         attestation: Vec<u8>,
+        extra_registration_data: Bytes,
         funding_amount: U256,
     ) -> Result<(), TxManagerError> {
         info!(target: "flashtestations", "funding TEE address at {}", self.tee_service_signer.address);
@@ -133,6 +134,7 @@ impl TxManager {
 
         let calldata = IFlashtestationRegistry::registerTEEServiceCall {
             rawQuote: quote_bytes,
+            extendedRegistrationData: extra_registration_data,
         }
         .abi_encode();
         let tx = TransactionRequest {

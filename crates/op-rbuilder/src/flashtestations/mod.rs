@@ -4,7 +4,7 @@ use alloy_sol_types::{sol, SolError};
 sol!(
     #[sol(rpc, abi)]
     interface IFlashtestationRegistry {
-        function registerTEEService(bytes calldata rawQuote) external;
+        function registerTEEService(bytes calldata rawQuote, bytes calldata extendedRegistrationData) external;
     }
 
     #[sol(rpc, abi)]
@@ -21,18 +21,25 @@ sol!(
 
     type WorkloadId is bytes32;
 
-    event TEEServiceRegistered(
-        address teeAddress, WorkloadId workloadId, bytes rawQuote, bytes publicKey, bool alreadyExists
-    );
+    event TEEServiceRegistered(address teeAddress, bytes rawQuote, bool alreadyExists);
 
     event BlockBuilderProofVerified(
-        address caller, WorkloadId workloadId, uint256 blockNumber, uint8 version, bytes32 blockContentHash
+        address caller,
+        WorkloadId workloadId,
+        uint256 blockNumber,
+        uint8 version,
+        bytes32 blockContentHash,
+        string commit_hash
     );
 
     // FlashtestationRegistry errors
     error InvalidQuote(bytes output);
-    error TEEServiceAlreadyRegistered(address teeAddress, WorkloadId workloadId);
+    error TEEServiceAlreadyRegistered(address teeAddress);
+    error InvalidRegistrationDataHash(bytes32 expected, bytes32 received);
     error SenderMustMatchTEEAddress(address sender, address teeAddress);
+    error ByteSizeExceeded(uint256 size);
+
+    // QuoteParser errors
     error InvalidTEEType(bytes4 teeType);
     error InvalidTEEVersion(uint16 version);
     error InvalidReportDataLength(uint256 length);
@@ -61,8 +68,12 @@ pub enum FlashtestationRevertReason {
 pub enum FlashtestationRegistryError {
     #[error("invalid quote: {0}")]
     InvalidQuote(Bytes),
-    #[error("tee address {0} already registered with workload id {1}")]
-    TEEServiceAlreadyRegistered(Address, B256),
+    #[error("tee address {0} already registered")]
+    TEEServiceAlreadyRegistered(Address),
+    #[error("invalid registration data hash: expected {0}, received {1}")]
+    InvalidRegistrationDataHash(B256, B256),
+    #[error("byte size exceeded: {0}")]
+    ByteSizeExceeded(U256),
     #[error("sender address {0} must match quote tee address {1}")]
     SenderMustMatchTEEAddress(Address, Address),
     #[error("invalid tee type: {0}")]
@@ -95,14 +106,20 @@ impl From<Bytes> for FlashtestationRegistryError {
             return FlashtestationRegistryError::InvalidQuote(output);
         }
 
-        if let Ok(TEEServiceAlreadyRegistered {
-            teeAddress,
-            workloadId,
-        }) = TEEServiceAlreadyRegistered::abi_decode(&value)
+        if let Ok(TEEServiceAlreadyRegistered { teeAddress }) =
+            TEEServiceAlreadyRegistered::abi_decode(&value)
         {
-            return FlashtestationRegistryError::TEEServiceAlreadyRegistered(
-                teeAddress, workloadId,
-            );
+            return FlashtestationRegistryError::TEEServiceAlreadyRegistered(teeAddress);
+        }
+
+        if let Ok(InvalidRegistrationDataHash { expected, received }) =
+            InvalidRegistrationDataHash::abi_decode(&value)
+        {
+            return FlashtestationRegistryError::InvalidRegistrationDataHash(expected, received);
+        }
+
+        if let Ok(ByteSizeExceeded { size }) = ByteSizeExceeded::abi_decode(&value) {
+            return FlashtestationRegistryError::ByteSizeExceeded(size);
         }
 
         if let Ok(SenderMustMatchTEEAddress { sender, teeAddress }) =

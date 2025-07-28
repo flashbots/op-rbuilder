@@ -1,3 +1,4 @@
+use alloy_primitives::{keccak256, Bytes};
 use reth_node_builder::BuilderContext;
 use tracing::{info, warn};
 
@@ -51,10 +52,26 @@ where
         quote_provider: args.quote_provider,
     });
 
-    // Prepare report data with public key (64 bytes, no 0x04 prefix)
+    // Prepare report data:
+    // - TEE address (20 bytes) at reportData[0:20]
+    // - Extended registration data hash (32 bytes) at reportData[20:52]
+    // - Total: 52 bytes, padded to 64 bytes with zeros
+
+    // Extract TEE address as 20 bytes
+    let tee_address_bytes: [u8; 20] = tee_service_signer.address.into();
+
+    // Calculate keccak256 hash of empty bytes (32 bytes)
+    let ext_data = Bytes::from(b"");
+    let ext_data_hash = keccak256(&ext_data);
+
+    // Create 64-byte report data array
     let mut report_data = [0u8; 64];
-    let pubkey_uncompressed = tee_service_signer.pubkey.serialize_uncompressed();
-    report_data.copy_from_slice(&pubkey_uncompressed[1..65]); // Skip 0x04 prefix
+
+    // Copy TEE address (20 bytes) to positions 0-19
+    report_data[0..20].copy_from_slice(&tee_address_bytes);
+
+    // Copy extended registration data hash (32 bytes) to positions 20-51
+    report_data[20..52].copy_from_slice(ext_data_hash.as_ref());
 
     // Request TDX attestation
     info!(target: "flashtestations", "requesting TDX attestation");
@@ -69,7 +86,11 @@ where
         );
         // Submit report onchain by registering the key of the tee service
         match tx_manager
-            .fund_and_register_tee_service(attestation.clone(), args.funding_amount)
+            .fund_and_register_tee_service(
+                attestation.clone(),
+                ext_data.clone(),
+                args.funding_amount,
+            )
             .await
         {
             Ok(_) => (Some(tx_manager), true),
@@ -84,6 +105,7 @@ where
 
     let flashtestations_builder_tx = FlashtestationsBuilderTx::new(FlashtestationsBuilderTxArgs {
         attestation,
+        extra_registration_data: ext_data,
         tee_service_signer,
         funding_key,
         funding_amount: args.funding_amount,
@@ -114,49 +136,4 @@ where
         );
 
     Ok(flashtestations_builder_tx)
-}
-
-#[cfg(test)]
-mod tests {
-    use alloy_primitives::Address;
-    use secp256k1::{PublicKey, Secp256k1, SecretKey};
-    use sha3::{Digest, Keccak256};
-
-    use crate::tx_signer::public_key_to_address;
-
-    /// Derives Ethereum address from report data using the same logic as the Solidity contract
-    fn derive_ethereum_address_from_report_data(pubkey_64_bytes: &[u8]) -> Address {
-        // This exactly matches the Solidity implementation:
-        // address(uint160(uint256(keccak256(reportData))))
-
-        // Step 1: keccak256(reportData)
-        let hash = Keccak256::digest(pubkey_64_bytes);
-
-        // Step 2: Take last 20 bytes (same as uint256 -> uint160 conversion)
-        let mut address_bytes = [0u8; 20];
-        address_bytes.copy_from_slice(&hash[12..32]);
-
-        Address::from(address_bytes)
-    }
-
-    #[test]
-    fn test_address_derivation_matches() {
-        // Test that our manual derivation is correct
-        let secp = Secp256k1::new();
-        let private_key = SecretKey::from_slice(&[0x01; 32]).unwrap();
-        let public_key = PublicKey::from_secret_key(&secp, &private_key);
-
-        // Get address using our implementation
-        let our_address = public_key_to_address(&public_key);
-
-        // Get address using our manual derivation (matching Solidity)
-        let pubkey_bytes = public_key.serialize_uncompressed();
-        let report_data = &pubkey_bytes[1..65]; // Skip 0x04 prefix
-        let manual_address = derive_ethereum_address_from_report_data(report_data);
-
-        assert_eq!(
-            our_address, manual_address,
-            "Address derivation should match"
-        );
-    }
 }

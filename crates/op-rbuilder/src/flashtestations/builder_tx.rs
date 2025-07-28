@@ -38,6 +38,7 @@ use crate::{
 
 pub struct FlashtestationsBuilderTxArgs {
     pub attestation: Vec<u8>,
+    pub extra_registration_data: Bytes,
     pub tee_service_signer: Signer,
     pub funding_key: Signer,
     pub funding_amount: U256,
@@ -52,6 +53,8 @@ pub struct FlashtestationsBuilderTxArgs {
 pub struct FlashtestationsBuilderTx {
     // Attestation for the builder
     attestation: Vec<u8>,
+    // Extra registration data for the builder
+    extra_registration_data: Bytes,
     // TEE service generated key
     tee_service_signer: Signer,
     // Funding key for the TEE signer
@@ -83,6 +86,7 @@ impl FlashtestationsBuilderTx {
     pub fn new(args: FlashtestationsBuilderTxArgs) -> Self {
         Self {
             attestation: args.attestation,
+            extra_registration_data: args.extra_registration_data,
             tee_service_signer: args.tee_service_signer,
             funding_key: args.funding_key,
             funding_amount: args.funding_amount,
@@ -128,6 +132,7 @@ impl FlashtestationsBuilderTx {
         let quote_bytes = Bytes::from(attestation);
         let calldata = IFlashtestationRegistry::registerTEEServiceCall {
             rawQuote: quote_bytes,
+            extendedRegistrationData: self.extra_registration_data.clone(),
         }
         .abi_encode();
 
@@ -438,7 +443,7 @@ impl FlashtestationsBuilderTx {
                 ))
             }
         } else if let Some(FlashtestationRevertReason::FlashtestationRegistry(
-            FlashtestationRegistryError::TEEServiceAlreadyRegistered(_, _),
+            FlashtestationRegistryError::TEEServiceAlreadyRegistered(_),
         )) = revert_reason
         {
             Ok((None, true))
