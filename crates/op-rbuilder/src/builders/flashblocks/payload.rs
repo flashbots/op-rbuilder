@@ -1,10 +1,11 @@
 use super::{config::FlashblocksConfig, wspub::WebSocketPublisher};
 use crate::{
     builders::{
-        context::{estimate_gas_for_builder_tx, OpPayloadBuilderCtx},
+        builder_tx::BuilderTransactions,
+        context::OpPayloadBuilderCtx,
         flashblocks::config::FlashBlocksConfigExt,
         generator::{BlockCell, BuildArguments},
-        BuilderConfig, BuilderTx,
+        BuilderConfig,
     },
     metrics::OpRBuilderMetrics,
     primitives::reth::ExecutionInfo,
@@ -59,11 +60,13 @@ struct ExtraExecutionInfo {
 }
 
 #[derive(Debug, Default)]
-struct FlashblocksExtraCtx {
+pub struct FlashblocksExtraCtx {
     /// Current flashblock index
     pub flashblock_index: u64,
     /// Target flashblock count
     pub target_flashblock_count: u64,
+    /// Whether the current flashblock is the first fallback block
+    pub is_first_fallback_block: bool,
 }
 
 impl OpPayloadBuilderCtx<FlashblocksExtraCtx> {
@@ -75,6 +78,11 @@ impl OpPayloadBuilderCtx<FlashblocksExtraCtx> {
     /// Returns the target flashblock count
     pub fn target_flashblock_count(&self) -> u64 {
         self.extra_ctx.target_flashblock_count
+    }
+
+    /// Returns if the flashblock is the first fallback block
+    pub fn is_first_fallback_block(&self) -> bool {
+        self.extra_ctx.is_first_fallback_block
     }
 
     /// Increments the flashblock index
@@ -89,6 +97,11 @@ impl OpPayloadBuilderCtx<FlashblocksExtraCtx> {
         self.extra_ctx.target_flashblock_count
     }
 
+    /// Sets the first fallback block flag
+    pub fn set_first_fallback_block(&mut self, is_first_fallback_block: bool) {
+        self.extra_ctx.is_first_fallback_block = is_first_fallback_block;
+    }
+
     /// Returns if the flashblock is the last one
     pub fn is_last_flashblock(&self) -> bool {
         self.flashblock_index() == self.target_flashblock_count() - 1
@@ -97,7 +110,7 @@ impl OpPayloadBuilderCtx<FlashblocksExtraCtx> {
 
 /// Optimism's payload builder
 #[derive(Debug, Clone)]
-pub struct OpPayloadBuilder<Pool, Client, BT> {
+pub struct OpPayloadBuilder<Pool, Client, BuilderTx> {
     /// The type responsible for creating the evm.
     pub evm_config: OpEvmConfig,
     /// The transaction pool
@@ -112,18 +125,17 @@ pub struct OpPayloadBuilder<Pool, Client, BT> {
     /// The metrics for the builder
     pub metrics: Arc<OpRBuilderMetrics>,
     /// The end of builder transaction type
-    #[allow(dead_code)]
-    pub builder_tx: BT,
+    pub builder_tx: BuilderTx,
 }
 
-impl<Pool, Client, BT> OpPayloadBuilder<Pool, Client, BT> {
+impl<Pool, Client, BuilderTx> OpPayloadBuilder<Pool, Client, BuilderTx> {
     /// `OpPayloadBuilder` constructor.
     pub fn new(
         evm_config: OpEvmConfig,
         pool: Pool,
         client: Client,
         config: BuilderConfig<FlashblocksConfig>,
-        builder_tx: BT,
+        builder_tx: BuilderTx,
     ) -> eyre::Result<Self> {
         let metrics = Arc::new(OpRBuilderMetrics::default());
         let ws_pub = WebSocketPublisher::new(config.specific.ws_addr, Arc::clone(&metrics))?.into();
@@ -139,12 +151,12 @@ impl<Pool, Client, BT> OpPayloadBuilder<Pool, Client, BT> {
     }
 }
 
-impl<Pool, Client, BT> reth_basic_payload_builder::PayloadBuilder
-    for OpPayloadBuilder<Pool, Client, BT>
+impl<Pool, Client, BuilderTx> reth_basic_payload_builder::PayloadBuilder
+    for OpPayloadBuilder<Pool, Client, BuilderTx>
 where
     Pool: Clone + Send + Sync,
     Client: Clone + Send + Sync,
-    BT: Clone + Send + Sync,
+    BuilderTx: Clone + Send + Sync,
 {
     type Attributes = OpPayloadBuilderAttributes<OpTransactionSigned>;
     type BuiltPayload = OpBuiltPayload;
@@ -167,11 +179,11 @@ where
     }
 }
 
-impl<Pool, Client, BT> OpPayloadBuilder<Pool, Client, BT>
+impl<Pool, Client, BuilderTx> OpPayloadBuilder<Pool, Client, BuilderTx>
 where
     Pool: PoolBounds,
     Client: ClientBounds,
-    BT: BuilderTx,
+    BuilderTx: BuilderTransactions<FlashblocksExtraCtx>,
 {
     /// Constructs an Optimism payload from the transactions sent via the
     /// Payload attributes by the sequencer. If the `no_tx_pool` argument is passed in
@@ -250,6 +262,7 @@ where
             extra_ctx: FlashblocksExtraCtx {
                 flashblock_index: 0,
                 target_flashblock_count: self.config.flashblocks_per_block(),
+                is_first_fallback_block: true,
             },
         };
 
@@ -263,24 +276,19 @@ where
             .with_bundle_update()
             .build();
 
-        // We subtract gas limit and da limit for builder transaction from the whole limit
-        let message = format!("Block Number: {}", ctx.block_number()).into_bytes();
-        let builder_tx_gas = ctx
-            .builder_signer()
-            .map_or(0, |_| estimate_gas_for_builder_tx(message.clone()));
-        let builder_tx_da_size = ctx
-            .estimate_builder_tx_da_size(&mut db, builder_tx_gas, message.clone())
-            .unwrap_or(0);
-
         let mut info = execute_pre_steps(&mut db, &ctx)?;
         let sequencer_tx_time = sequencer_tx_start_time.elapsed();
         ctx.metrics.sequencer_tx_duration.record(sequencer_tx_time);
         ctx.metrics.sequencer_tx_gauge.set(sequencer_tx_time);
 
         // If we have payload with txpool we add first builder tx right after deposits
-        if !ctx.attributes().no_tx_pool {
-            ctx.add_builder_tx(&mut info, &mut db, builder_tx_gas, message.clone());
-        }
+        let builder_txs =
+            self.builder_tx
+                .add_builder_txs(&state_provider, &mut info, &ctx, &mut db)?;
+
+        // We subtract gas limit and da limit for builder transaction from the whole limit
+        let builder_tx_gas = builder_txs.iter().fold(0, |acc, tx| acc + tx.gas_used);
+        let builder_tx_da_size: u64 = builder_txs.iter().fold(0, |acc, tx| acc + tx.da_size);
 
         let (payload, fb_payload, mut bundle_state) = build_block(db, &ctx, &mut info)?;
 
@@ -288,6 +296,8 @@ where
         self.ws_pub
             .publish(&fb_payload)
             .map_err(PayloadBuilderError::other)?;
+        // We set the first fallback block flag to false after building the first fallback block
+        ctx.set_first_fallback_block(false);
 
         info!(
             target: "payload_builder",
@@ -348,7 +358,9 @@ where
         if let Some(da_limit) = da_per_batch {
             // We error if we can't insert any tx aside from builder tx in flashblock
             if da_limit / 2 < builder_tx_da_size {
-                error!("Builder tx da size subtraction caused max_da_block_size to be 0. No transaction would be included.");
+                error!(
+                    "Builder tx da size subtraction caused max_da_block_size to be 0. No transaction would be included."
+                );
             }
         }
         let mut total_da_per_batch = da_per_batch;
@@ -415,19 +427,27 @@ where
                     );
                     let flashblock_build_start_time = Instant::now();
                     let state = StateProviderDatabase::new(&state_provider);
-                    // If it is the last flashblock, we need to account for the builder tx
-                    if ctx.is_last_flashblock() {
-                        total_gas_per_batch = total_gas_per_batch.saturating_sub(builder_tx_gas);
-                        // saturating sub just in case, we will log an error if da_limit too small for builder_tx_da_size
-                        if let Some(da_limit) = total_da_per_batch.as_mut() {
-                            *da_limit = da_limit.saturating_sub(builder_tx_da_size);
-                        }
-                    }
                     let mut db = State::builder()
                         .with_database(state)
                         .with_bundle_update()
-                        .with_bundle_prestate(bundle_state)
+                        .with_bundle_prestate(bundle_state.clone())
                         .build();
+
+                    let builder_txs = self.builder_tx.simulate_builder_txs(
+                        &state_provider,
+                        &mut info,
+                        &ctx,
+                        &mut db,
+                    )?;
+                    let builder_tx_gas = builder_txs.iter().fold(0, |acc, tx| acc + tx.gas_used);
+                    let builder_tx_da_size: u64 =
+                        builder_txs.iter().fold(0, |acc, tx| acc + tx.da_size);
+
+                    total_gas_per_batch = total_gas_per_batch.saturating_sub(builder_tx_gas);
+                    // saturating sub just in case, we will log an error if da_limit too small for builder_tx_da_size
+                    if let Some(da_limit) = total_da_per_batch.as_mut() {
+                        *da_limit = da_limit.saturating_sub(builder_tx_da_size);
+                    }
 
                     let best_txs_start_time = Instant::now();
                     let best_txs = BestPayloadTransactions::new(
@@ -474,10 +494,8 @@ where
                         .payload_tx_simulation_gauge
                         .set(payload_tx_simulation_time);
 
-                    // If it is the last flashblocks, add the builder txn to the block if enabled
-                    if ctx.is_last_flashblock() {
-                        ctx.add_builder_tx(&mut info, &mut db, builder_tx_gas, message.clone());
-                    };
+                    self.builder_tx
+                        .add_builder_txs(&state_provider, &mut info, &ctx, &mut db)?;
 
                     let total_block_built_duration = Instant::now();
                     let build_result = build_block(db, &ctx, &mut info);
@@ -531,7 +549,9 @@ where
                                 if let Some(da) = total_da_per_batch.as_mut() {
                                     *da += da_limit;
                                 } else {
-                                    error!("Builder end up in faulty invariant, if da_per_batch is set then total_da_per_batch must be set");
+                                    error!(
+                                        "Builder end up in faulty invariant, if da_per_batch is set then total_da_per_batch must be set"
+                                    );
                                 }
                             }
 
@@ -677,12 +697,12 @@ where
     }
 }
 
-impl<Pool, Client, BT> crate::builders::generator::PayloadBuilder
-    for OpPayloadBuilder<Pool, Client, BT>
+impl<Pool, Client, BuilderTx> crate::builders::generator::PayloadBuilder
+    for OpPayloadBuilder<Pool, Client, BuilderTx>
 where
     Pool: PoolBounds,
     Client: ClientBounds,
-    BT: BuilderTx + Clone + Send + Sync,
+    BuilderTx: BuilderTransactions<FlashblocksExtraCtx> + Clone + Send + Sync,
 {
     type Attributes = OpPayloadBuilderAttributes<OpTransactionSigned>;
     type BuiltPayload = OpBuiltPayload;
