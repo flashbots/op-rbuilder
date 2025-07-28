@@ -17,7 +17,7 @@ use revm::{
     DatabaseCommit,
     context::result::{EVMError, ResultAndState},
 };
-use tracing::warn;
+use tracing::{debug, warn};
 
 use crate::{builders::context::OpPayloadBuilderCtx, primitives::reth::ExecutionInfo};
 
@@ -25,16 +25,16 @@ use crate::{builders::context::OpPayloadBuilderCtx, primitives::reth::ExecutionI
 pub struct BuilderTransactionCtx {
     pub gas_used: u64,
     pub da_size: u64,
-    pub signed_tx: Recovered<OpTransactionSigned>,
+    pub signed_tx: Option<Recovered<OpTransactionSigned>>,
 }
 
 /// Possible error variants during construction of builder txs.
 #[derive(Debug, thiserror::Error)]
 pub enum BuilderTransactionError {
-    /// Builder account load fails to get builder nonce
+    /// Thrown when builder account load fails to get builder nonce
     #[error("failed to load account {0}")]
     AccountLoadFailed(Address),
-    /// Signature signing fails
+    /// Thrown when signature signing fails
     #[error("failed to sign transaction: {0}")]
     SigningError(secp256k1::Error),
     /// Unrecoverable error during evm execution.
@@ -75,6 +75,7 @@ pub trait BuilderTransactions<ExtraCtx: Debug + Default = ()>: Debug {
         info: &mut ExecutionInfo<Extra>,
         ctx: &OpPayloadBuilderCtx<ExtraCtx>,
         db: &mut State<impl Database>,
+        top_of_block: bool,
     ) -> Result<Vec<BuilderTransactionCtx>, BuilderTransactionError>;
 
     fn add_builder_txs<Extra: Debug + Default>(
@@ -83,6 +84,7 @@ pub trait BuilderTransactions<ExtraCtx: Debug + Default = ()>: Debug {
         info: &mut ExecutionInfo<Extra>,
         builder_ctx: &OpPayloadBuilderCtx<ExtraCtx>,
         db: &mut State<impl Database>,
+        top_of_block: bool,
     ) -> Result<Vec<BuilderTransactionCtx>, BuilderTransactionError> {
         {
             let mut evm = builder_ctx
@@ -91,21 +93,30 @@ pub trait BuilderTransactions<ExtraCtx: Debug + Default = ()>: Debug {
 
             let mut invalid: HashSet<Address> = HashSet::new();
 
-            let builder_txs =
-                self.simulate_builder_txs(state_provider, info, builder_ctx, evm.db_mut())?;
+            let builder_txs = self.simulate_builder_txs(
+                state_provider,
+                info,
+                builder_ctx,
+                evm.db_mut(),
+                top_of_block,
+            )?;
             for builder_tx in builder_txs.iter() {
-                if invalid.contains(&builder_tx.signed_tx.signer()) {
-                    warn!(target: "payload_builder", tx_hash = ?builder_tx.signed_tx.tx_hash(), "builder signer invalid as previous builder tx reverted");
+                let signed_tx = match builder_tx.signed_tx.clone() {
+                    Some(tx) => tx,
+                    None => continue,
+                };
+                if invalid.contains(&signed_tx.signer()) {
+                    debug!(target: "payload_builder", tx_hash = ?signed_tx.tx_hash(), "builder signer invalid as previous builder tx reverted");
                     continue;
                 }
 
                 let ResultAndState { result, state } = evm
-                    .transact(&builder_tx.signed_tx)
+                    .transact(&signed_tx)
                     .map_err(|err| BuilderTransactionError::EvmExecutionError(Box::new(err)))?;
 
                 if !result.is_success() {
-                    warn!(target: "payload_builder", tx_hash = ?builder_tx.signed_tx.tx_hash(), "builder tx reverted");
-                    invalid.insert(builder_tx.signed_tx.signer());
+                    warn!(target: "payload_builder", tx_hash = ?signed_tx.tx_hash(), "builder tx reverted");
+                    invalid.insert(signed_tx.signer());
                     continue;
                 }
 
@@ -114,7 +125,7 @@ pub trait BuilderTransactions<ExtraCtx: Debug + Default = ()>: Debug {
                 info.cumulative_gas_used += gas_used;
 
                 let ctx = ReceiptBuilderCtx {
-                    tx: builder_tx.signed_tx.inner(),
+                    tx: signed_tx.inner(),
                     evm: &evm,
                     result,
                     state: &state,
@@ -126,9 +137,9 @@ pub trait BuilderTransactions<ExtraCtx: Debug + Default = ()>: Debug {
                 evm.db_mut().commit(state);
 
                 // Append sender and transaction to the respective lists
-                info.executed_senders.push(builder_tx.signed_tx.signer());
+                info.executed_senders.push(signed_tx.signer());
                 info.executed_transactions
-                    .push(builder_tx.signed_tx.clone().into_inner());
+                    .push(signed_tx.clone().into_inner());
             }
 
             // Release the db reference by dropping evm
@@ -156,8 +167,12 @@ pub trait BuilderTransactions<ExtraCtx: Debug + Default = ()>: Debug {
             .evm_with_env(&mut simulation_state, ctx.evm_env.clone());
 
         for builder_tx in builder_txs {
+            let signed_tx = match builder_tx.signed_tx.clone() {
+                Some(tx) => tx,
+                None => continue,
+            };
             let ResultAndState { state, .. } = evm
-                .transact(&builder_tx.signed_tx)
+                .transact(&signed_tx)
                 .map_err(|err| BuilderTransactionError::EvmExecutionError(Box::new(err)))?;
 
             evm.db_mut().commit(state);

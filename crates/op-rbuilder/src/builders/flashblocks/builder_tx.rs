@@ -53,7 +53,7 @@ impl FlashblocksBuilderTx {
                 Ok(Some(BuilderTransactionCtx {
                     gas_used,
                     da_size,
-                    signed_tx,
+                    signed_tx: Some(signed_tx),
                 }))
             }
             None => Ok(None),
@@ -122,6 +122,7 @@ impl BuilderTransactions<FlashblocksExtraCtx> for FlashblocksBuilderTx {
         info: &mut ExecutionInfo<Extra>,
         ctx: &OpPayloadBuilderCtx<FlashblocksExtraCtx>,
         db: &mut State<impl Database>,
+        top_of_block: bool,
     ) -> Result<Vec<BuilderTransactionCtx>, BuilderTransactionError> {
         let mut builder_txs = Vec::<BuilderTransactionCtx>::new();
 
@@ -147,6 +148,7 @@ impl BuilderTransactions<FlashblocksExtraCtx> for FlashblocksBuilderTx {
                     info,
                     ctx,
                     &mut simulation_state,
+                    top_of_block,
                 )?;
                 builder_txs.extend(flashtestations_builder_txs);
             }
