@@ -85,7 +85,7 @@ where
             match bootstrap_flashtestations(self.0.flashtestations_config.clone(), ctx).await {
                 Ok(builder_tx) => Some(builder_tx),
                 Err(e) => {
-                    tracing::warn!(error = %e, "Failed to bootstrap flashtestations, builderb will not include flashtestations txs");
+                    tracing::warn!(error = %e, "Failed to bootstrap flashtestations, builder will not include flashtestations txs");
                     None
                 }
             }
