@@ -1,0 +1,16 @@
+[build]
+rustflags = [
+    "-C", "strip=symbols",
+    "-C", "codegen-units=1", 
+    "-C", "opt-level=3"
+]
+
+[profile.release]
+debug = false
+lto = "fat"
+panic = "abort" 
+codegen-units = 1
+incremental = false
+
+[env]
+SOURCE_DATE_EPOCH = { value = "0", force = true }
