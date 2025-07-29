@@ -458,7 +458,7 @@ where
                     );
                     let flashblock_build_start_time = Instant::now();
 
-                    let builder_txs = self.builder_tx.add_builder_txs(
+                    let builder_txs = self.builder_tx.simulate_builder_txs(
                         &state_provider,
                         &mut info,
                         &ctx,
@@ -528,6 +528,13 @@ where
                     ctx.metrics
                         .payload_tx_simulation_gauge
                         .set(payload_tx_simulation_time);
+
+                    self.builder_tx.add_builder_txs(
+                        &state_provider,
+                        &mut info,
+                        &ctx,
+                        &mut state,
+                    )?;
 
                     let total_block_built_duration = Instant::now();
                     let build_result =
