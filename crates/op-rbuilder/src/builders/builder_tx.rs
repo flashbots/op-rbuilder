@@ -31,7 +31,7 @@ pub struct BuilderTransactionCtx {
 /// Possible error variants during construction of builder txs.
 #[derive(Debug, thiserror::Error)]
 pub enum BuilderTransactionError {
-    /// Thrown when builder account load fails to get builder nonce
+    /// Builder account load fails to get builder nonce
     #[error("failed to load account {0}")]
     AccountLoadFailed(Address),
     /// Thrown when signature signing fails
