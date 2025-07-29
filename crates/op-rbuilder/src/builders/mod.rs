@@ -147,7 +147,7 @@ impl<S: Default + Clone> Default for BuilderConfig<S> {
             da_config: OpDAConfig::default(),
             specific: S::default(),
             sampling_ratio: 100,
-            max_gas_per_txn: Some(25_000),
+            max_gas_per_txn: None,
         }
     }
 }

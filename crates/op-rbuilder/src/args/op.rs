@@ -31,7 +31,7 @@ pub struct OpRbuilderArgs {
     pub chain_block_time: u64,
 
     /// max gas a transaction can use
-    #[arg(long = "builder.max_gas_per_txn", default_value = "25000")]
+    #[arg(long = "builder.max_gas_per_txn")]
     pub max_gas_per_txn: Option<u64>,
 
     /// Signals whether to log pool transaction events

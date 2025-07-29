@@ -195,10 +195,10 @@ async fn test_no_tx_pool(rbuilder: LocalInstance) -> eyre::Result<()> {
 }
 
 #[rb_test(args = OpRbuilderArgs {
-    max_gas_per_txn: Some(21000),
+    max_gas_per_txn: Some(25000),
     ..Default::default()
 })]
-async fn chain_produces_big_txs(rbuilder: LocalInstance) -> eyre::Result<()> {
+async fn chain_produces_big_tx_with_gas_limit(rbuilder: LocalInstance) -> eyre::Result<()> {
     let driver = rbuilder.driver().await?;
 
     #[cfg(target_os = "linux")]
@@ -206,22 +206,64 @@ async fn chain_produces_big_txs(rbuilder: LocalInstance) -> eyre::Result<()> {
         .with_validation_node(crate::tests::ExternalNode::reth().await?)
         .await?;
 
-    let count = rand::random_range(1..8);
-    let mut tx_hashes = HashSet::<TxHash>::default();
+    // insert txn with gas usage above limit
+    let _ = driver
+        .create_transaction()
+        .random_big_transaction()
+        .send()
+        .await
+        .expect("Failed to send transaction");
 
-    for _ in 0..count {
-        // insert txns with gas = 210_000
-        let tx = driver
-            .create_transaction()
-            .random_big_transaction()
-            .send()
-            .await
-            .expect("Failed to send transaction");
+    let block = driver.build_new_block_with_current_timestamp(None).await?;
+    let txs = block.transactions;
 
-        tx_hashes.insert(*tx.tx_hash());
-    }
+    println!("{}", txs.len());
+    assert!(txs.len() == 3);
 
-    // insert 1 valid txn with gas=21_000
+    Ok(())
+}
+
+#[rb_test(args = OpRbuilderArgs {
+    ..Default::default()
+})]
+async fn chain_produces_big_tx_without_gas_limit(rbuilder: LocalInstance) -> eyre::Result<()> {
+    let driver = rbuilder.driver().await?;
+
+    #[cfg(target_os = "linux")]
+    let driver = driver
+        .with_validation_node(crate::tests::ExternalNode::reth().await?)
+        .await?;
+
+    // insert txn with gas usage but there is no limit
+    let _ = driver
+        .create_transaction()
+        .random_big_transaction()
+        .send()
+        .await
+        .expect("Failed to send transaction");
+
+    let block = driver.build_new_block_with_current_timestamp(None).await?;
+    let txs = block.transactions;
+
+    println!("{}", txs.len());
+    assert!(txs.len() == 4);
+
+    Ok(())
+}
+
+#[rb_test(args = OpRbuilderArgs {
+    max_gas_per_txn: Some(25000),
+    ..Default::default()
+})]
+async fn chain_produces_small_tx(rbuilder: LocalInstance) -> eyre::Result<()> {
+    let driver = rbuilder.driver().await?;
+
+    #[cfg(target_os = "linux")]
+    let driver = driver
+        .with_validation_node(crate::tests::ExternalNode::reth().await?)
+        .await?;
+
+    // insert valid txn under limit
     let _ = driver
         .create_transaction()
         .random_valid_transfer()
@@ -230,7 +272,6 @@ async fn chain_produces_big_txs(rbuilder: LocalInstance) -> eyre::Result<()> {
         .expect("Failed to send transaction");
 
     let block = driver.build_new_block_with_current_timestamp(None).await?;
-
     let txs = block.transactions;
 
     assert!(txs.len() == 4);
