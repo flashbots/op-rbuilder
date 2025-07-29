@@ -95,7 +95,7 @@ pub trait BuilderTransactions<ExtraCtx: Debug + Default = ()>: Debug {
                 self.simulate_builder_txs(state_provider, info, builder_ctx, evm.db_mut())?;
             for builder_tx in builder_txs.iter() {
                 if invalid.contains(&builder_tx.signed_tx.signer()) {
-                    debug!(target: "payload_builder", tx_hash = ?builder_tx.signed_tx.tx_hash(), "builder signer invalid as previous builder tx reverted");
+                    warn!(target: "payload_builder", tx_hash = ?builder_tx.signed_tx.tx_hash(), "builder signer invalid as previous builder tx reverted");
                     continue;
                 }
 
