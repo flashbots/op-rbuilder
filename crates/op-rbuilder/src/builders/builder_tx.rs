@@ -34,7 +34,7 @@ pub enum BuilderTransactionError {
     /// Builder account load fails to get builder nonce
     #[error("failed to load account {0}")]
     AccountLoadFailed(Address),
-    /// Thrown when signature signing fails
+    /// Signature signing fails
     #[error("failed to sign transaction: {0}")]
     SigningError(secp256k1::Error),
     /// Unrecoverable error during evm execution.
