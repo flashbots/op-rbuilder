@@ -20,7 +20,8 @@ mod flashblocks;
 mod generator;
 mod standard;
 
-pub use builder_tx::BuilderTx;
+pub use builder_tx::{BuilderTransactionCtx, BuilderTransactionError, BuilderTransactions};
+pub use context::OpPayloadBuilderCtx;
 pub use flashblocks::FlashblocksBuilder;
 pub use standard::StandardBuilder;
 
