@@ -566,19 +566,21 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
                     .evm_config
                     .evm_with_env(&mut *state, self.evm_env.clone());
 
-                let transaction_result = evm
+                let ResultAndState {
+                    result,
+                    state: new_state,
+                } = evm
                     .transact(&builder_tx)
                     .map_err(|err| PayloadBuilderError::EvmExecutionError(Box::new(err)))?;
 
                 // Add gas used by the transaction to cumulative gas used, before creating the receipt
-                let gas_used = transaction_result.result.gas_used();
-                info.cumulative_gas_used += gas_used;
+                info.cumulative_gas_used += result.gas_used();
 
                 let ctx = ReceiptBuilderCtx {
                     tx: builder_tx.inner(),
                     evm: &evm,
-                    result: transaction_result.result,
-                    state: &transaction_result.state,
+                    result,
+                    state: &new_state,
                     cumulative_gas_used: info.cumulative_gas_used,
                 };
                 info.receipts.push(self.build_receipt(ctx, None));
@@ -586,7 +588,7 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
                 // Release the db reference by dropping evm
                 drop(evm);
                 // Commit changes
-                state.commit(transaction_result.state);
+                state.commit(new_state);
 
                 // Append sender and transaction to the respective lists
                 info.executed_senders.push(builder_tx.signer());
