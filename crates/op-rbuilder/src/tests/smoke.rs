@@ -206,6 +206,14 @@ async fn chain_produces_big_tx_with_gas_limit(rbuilder: LocalInstance) -> eyre::
         .with_validation_node(crate::tests::ExternalNode::reth().await?)
         .await?;
 
+    // insert valid txn under limit
+    let tx = driver
+        .create_transaction()
+        .random_valid_transfer()
+        .send()
+        .await
+        .expect("Failed to send transaction");
+
     // insert txn with gas usage above limit
     let _ = driver
         .create_transaction()
@@ -214,11 +222,14 @@ async fn chain_produces_big_tx_with_gas_limit(rbuilder: LocalInstance) -> eyre::
         .await
         .expect("Failed to send transaction");
 
+    let tx_hash = *tx.tx_hash();
+
     let block = driver.build_new_block_with_current_timestamp(None).await?;
     let txs = block.transactions;
 
-    println!("{}", txs.len());
-    assert!(txs.len() == 3);
+    assert!(txs.len() == 4);
+    let result = txs.hashes().find(|hash| hash == &tx_hash);
+    assert!(result.is_some());
 
     Ok(())
 }
@@ -238,35 +249,6 @@ async fn chain_produces_big_tx_without_gas_limit(rbuilder: LocalInstance) -> eyr
     let _ = driver
         .create_transaction()
         .random_big_transaction()
-        .send()
-        .await
-        .expect("Failed to send transaction");
-
-    let block = driver.build_new_block_with_current_timestamp(None).await?;
-    let txs = block.transactions;
-
-    println!("{}", txs.len());
-    assert!(txs.len() == 4);
-
-    Ok(())
-}
-
-#[rb_test(args = OpRbuilderArgs {
-    max_gas_per_txn: Some(25000),
-    ..Default::default()
-})]
-async fn chain_produces_small_tx(rbuilder: LocalInstance) -> eyre::Result<()> {
-    let driver = rbuilder.driver().await?;
-
-    #[cfg(target_os = "linux")]
-    let driver = driver
-        .with_validation_node(crate::tests::ExternalNode::reth().await?)
-        .await?;
-
-    // insert valid txn under limit
-    let _ = driver
-        .create_transaction()
-        .random_valid_transfer()
         .send()
         .await
         .expect("Failed to send transaction");
