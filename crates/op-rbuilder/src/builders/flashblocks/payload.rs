@@ -752,9 +752,8 @@ where
     P: StateRootProvider + HashedPostStateProvider + StorageRootProvider,
     ExtraCtx: std::fmt::Debug + Default,
 {
-    // TODO: We must run this only once per block, but we are running it on every flashblock
-    // merge all transitions into bundle state, this would apply the withdrawal balance changes
-    // and 4788 contract call
+    // We use it to preserve state, so we run merge_transitions on transition state at most once
+    let untouched_transition_state = state.transition_state.clone();
     let state_merge_start_time = Instant::now();
     state.merge_transitions(BundleRetention::Reverts);
     let state_transition_merge_time = state_merge_start_time.elapsed();
@@ -957,6 +956,10 @@ where
         },
         metadata: serde_json::to_value(&metadata).unwrap_or_default(),
     };
+
+    // We clean bundle and place initial state transaction back
+    state.take_bundle();
+    state.transition_state = untouched_transition_state;
 
     Ok((
         OpBuiltPayload::new(
