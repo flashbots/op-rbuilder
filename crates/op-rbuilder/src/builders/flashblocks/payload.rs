@@ -48,6 +48,9 @@ use std::{
     },
     time::Instant,
 };
+use reth_chain_state::{ExecutedBlock, ExecutedBlockWithTrieUpdates, ExecutedTrieUpdates};
+use reth_optimism_payload_builder::OpPayloadPrimitives;
+use reth_primitives_traits::RecoveredBlock;
 use tokio::sync::{
     mpsc,
     mpsc::{error::SendError, Sender},
@@ -287,7 +290,7 @@ where
             ctx.add_builder_tx(&mut info, &mut state, builder_tx_gas, message.clone());
         }
 
-        let (payload, fb_payload, mut bundle_state) = build_block(state, &ctx, &mut info)?;
+        let (payload, fb_payload) = build_block(&mut state, &ctx, &mut info)?;
 
         best_payload.set(payload.clone());
         self.ws_pub
@@ -419,7 +422,6 @@ where
                         "Building flashblock",
                     );
                     let flashblock_build_start_time = Instant::now();
-                    let db = StateProviderDatabase::new(&state_provider);
                     // If it is the last flashblock, we need to account for the builder tx
                     if ctx.is_last_flashblock() {
                         total_gas_per_batch = total_gas_per_batch.saturating_sub(builder_tx_gas);
@@ -428,11 +430,6 @@ where
                             *da_limit = da_limit.saturating_sub(builder_tx_da_size);
                         }
                     }
-                    let mut state = State::builder()
-                        .with_database(db)
-                        .with_bundle_update()
-                        .with_bundle_prestate(bundle_state)
-                        .build();
 
                     let best_txs_start_time = Instant::now();
                     let best_txs = BestFlashblocksTxs::new(
@@ -488,7 +485,7 @@ where
                     };
 
                     let total_block_built_duration = Instant::now();
-                    let build_result = build_block(state, &ctx, &mut info);
+                    let build_result = build_block(&mut state, &ctx, &mut info);
                     let total_block_built_duration = total_block_built_duration.elapsed();
                     ctx.metrics
                         .total_block_built_duration
@@ -506,7 +503,7 @@ where
                             // Return the error
                             return Err(err);
                         }
-                        Ok((new_payload, mut fb_payload, new_bundle_state)) => {
+                        Ok((new_payload, mut fb_payload)) => {
                             fb_payload.index = ctx.increment_flashblock_index(); // fallback block is index 0, so we need to increment here
                             fb_payload.base = None;
 
@@ -516,6 +513,21 @@ where
                                 tokio::runtime::Handle::current()
                                     .block_on(async { ctx.cancel.cancelled().await });
                             });
+
+                            // If main token got canceled in here that means we received get_payload and we should drop everything and now update best_payload
+                            // To ensure that we will return same blocks as rollup-boost (to leverage caches)
+                            if block_cancel.is_cancelled() {
+                                ctx.metrics.block_built_success.increment(1);
+                                ctx.metrics
+                                    .flashblock_count
+                                    .record(ctx.flashblock_index() as f64);
+                                debug!(
+                                    target: "payload_builder",
+                                    message = "Payload building complete, job cancelled during execution"
+                                );
+                                span.record("flashblock_count", ctx.flashblock_index());
+                                return Ok(());
+                            }
                             self.ws_pub
                                 .publish(&fb_payload)
                                 .map_err(PayloadBuilderError::other)?;
@@ -533,7 +545,6 @@ where
 
                             best_payload.set(new_payload.clone());
                             // Update bundle_state for next iteration
-                            bundle_state = new_bundle_state;
                             total_gas_per_batch += gas_per_batch;
                             if let Some(da_limit) = da_per_batch {
                                 if let Some(da) = total_da_per_batch.as_mut() {
@@ -732,10 +743,10 @@ where
 }
 
 fn build_block<DB, P, ExtraCtx>(
-    mut state: State<DB>,
+    state: &mut State<DB>,
     ctx: &OpPayloadBuilderCtx<ExtraCtx>,
     info: &mut ExecutionInfo<ExtraExecutionInfo>,
-) -> Result<(OpBuiltPayload, FlashblocksPayloadV1, BundleState), PayloadBuilderError>
+) -> Result<(OpBuiltPayload, FlashblocksPayloadV1), PayloadBuilderError>
 where
     DB: Database<Error = ProviderError> + AsRef<P>,
     P: StateRootProvider + HashedPostStateProvider + StorageRootProvider,
@@ -754,13 +765,11 @@ where
         .state_transition_merge_gauge
         .set(state_transition_merge_time);
 
-    let new_bundle = state.take_bundle();
-
     let block_number = ctx.block_number();
     assert_eq!(block_number, ctx.parent().number + 1);
 
     let execution_outcome = ExecutionOutcome::new(
-        new_bundle.clone(),
+        state.bundle_state.clone(),
         vec![info.receipts.clone()],
         block_number,
         vec![],
@@ -779,11 +788,12 @@ where
         .block_logs_bloom(block_number)
         .expect("Number is in range");
 
+    // TODO: maybe recreate state with bundle in here
     // // calculate the state root
     let state_root_start_time = Instant::now();
     let state_provider = state.database.as_ref();
     let hashed_state = state_provider.hashed_post_state(execution_outcome.state());
-    let (state_root, _trie_output) = {
+    let (state_root, trie_output) = {
         state
             .database
             .as_ref()
@@ -870,6 +880,19 @@ where
         },
     );
 
+    let recovered_block = RecoveredBlock::new_unhashed(block.clone(), info.executed_senders.clone());
+    // create the executed block data
+    let executed: ExecutedBlockWithTrieUpdates<OpPrimitives> = ExecutedBlockWithTrieUpdates {
+        block: ExecutedBlock {
+            recovered_block: Arc::new(recovered_block),
+            execution_output: Arc::new(execution_outcome),
+            hashed_state: Arc::new(hashed_state),
+        },
+        trie: ExecutedTrieUpdates::Present(Arc::new(trie_output)),
+    };
+    info!("Executed block Created");
+
+
     let sealed_block = Arc::new(block.seal_slow());
     debug!(target: "payload_builder", ?sealed_block, "sealed built block");
 
@@ -891,7 +914,7 @@ where
         .zip(new_receipts.iter())
         .map(|(tx, receipt)| (tx.tx_hash(), receipt.clone()))
         .collect::<HashMap<B256, OpReceipt>>();
-    let new_account_balances = new_bundle
+    let new_account_balances = state.bundle_state
         .state
         .iter()
         .filter_map(|(address, account)| account.info.as_ref().map(|info| (*address, info.balance)))
@@ -940,13 +963,8 @@ where
             ctx.payload_id(),
             sealed_block,
             info.total_fees,
-            // This must be set to NONE for now because we are doing merge transitions on every flashblock
-            // when it should only happen once per block, thus, it returns a confusing state back to op-reth.
-            // We can live without this for now because Op syncs up the executed block using new_payload
-            // calls, but eventually we would want to return the executed block here.
-            None,
+            Some(executed),
         ),
         fb_payload,
-        new_bundle,
     ))
 }
