@@ -33,9 +33,7 @@ use reth_provider::{
     StorageRootProvider,
 };
 use reth_revm::{
-    database::StateProviderDatabase,
-    db::states::bundle_state::BundleRetention,
-    State,
+    database::StateProviderDatabase, db::states::bundle_state::BundleRetention, State,
 };
 use revm::Database;
 use rollup_boost::{
