@@ -42,7 +42,7 @@ jobs:
         id: extract_version
         run: |
           if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
-            VERSION="${GITHUB_REF#refs/tags/}"
+            VERSION="${GITHUB_REF##*/}"
           else
             VERSION="$(echo ${GITHUB_SHA} | cut -c1-7)"
           fi
