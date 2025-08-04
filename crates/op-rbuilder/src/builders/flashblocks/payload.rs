@@ -33,7 +33,9 @@ use reth_provider::{
     StorageRootProvider,
 };
 use reth_revm::{
-    database::StateProviderDatabase, db::states::bundle_state::BundleRetention, State,
+    database::StateProviderDatabase,
+    db::states::bundle_state::BundleRetention,
+    State,
 };
 use revm::Database;
 use rollup_boost::{
@@ -48,9 +50,6 @@ use std::{
     },
     time::Instant,
 };
-use reth_chain_state::{ExecutedBlock, ExecutedBlockWithTrieUpdates, ExecutedTrieUpdates};
-use reth_optimism_payload_builder::OpPayloadPrimitives;
-use reth_primitives_traits::RecoveredBlock;
 use tokio::sync::{
     mpsc,
     mpsc::{error::SendError, Sender},
