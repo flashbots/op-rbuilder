@@ -460,6 +460,9 @@ where
                         ctx.metrics
                             .flashblock_count
                             .record(ctx.flashblock_index() as f64);
+                        ctx.metrics.missing_flashblocks_count.record(
+                            flashblocks_per_block.saturating_sub(ctx.flashblock_index()) as f64,
+                        );
                         debug!(
                             target: "payload_builder",
                             message = "Payload building complete, job cancelled during execution"
@@ -518,6 +521,10 @@ where
                                 ctx.metrics
                                     .flashblock_count
                                     .record(ctx.flashblock_index() as f64);
+                                ctx.metrics.missing_flashblocks_count.record(
+                                    flashblocks_per_block.saturating_sub(ctx.flashblock_index())
+                                        as f64,
+                                );
                                 debug!(
                                     target: "payload_builder",
                                     message = "Payload building complete, job cancelled during execution"
