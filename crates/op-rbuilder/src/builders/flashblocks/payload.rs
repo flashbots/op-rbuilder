@@ -18,6 +18,7 @@ use alloy_primitives::{map::foldhash::HashMap, Address, B256, U256};
 use core::time::Duration;
 use reth::payload::PayloadBuilderAttributes;
 use reth_basic_payload_builder::BuildOutcome;
+use reth_chain_state::{ExecutedBlock, ExecutedBlockWithTrieUpdates, ExecutedTrieUpdates};
 use reth_evm::{execute::BlockBuilder, ConfigureEvm};
 use reth_node_api::{Block, NodePrimitives, PayloadBuilderError};
 use reth_optimism_consensus::{calculate_receipt_root_no_memo_optimism, isthmus};
@@ -26,13 +27,14 @@ use reth_optimism_forks::OpHardforks;
 use reth_optimism_node::{OpBuiltPayload, OpPayloadBuilderAttributes};
 use reth_optimism_primitives::{OpPrimitives, OpReceipt, OpTransactionSigned};
 use reth_payload_util::BestPayloadTransactions;
+use reth_primitives_traits::RecoveredBlock;
 use reth_provider::{
     ExecutionOutcome, HashedPostStateProvider, ProviderError, StateRootProvider,
     StorageRootProvider,
 };
 use reth_revm::{
     database::StateProviderDatabase,
-    db::{states::bundle_state::BundleRetention, BundleState},
+    db::states::bundle_state::BundleRetention,
     State,
 };
 use revm::Database;
@@ -48,9 +50,6 @@ use std::{
     },
     time::Instant,
 };
-use reth_chain_state::{ExecutedBlock, ExecutedBlockWithTrieUpdates, ExecutedTrieUpdates};
-use reth_optimism_payload_builder::OpPayloadPrimitives;
-use reth_primitives_traits::RecoveredBlock;
 use tokio::sync::{
     mpsc,
     mpsc::{error::SendError, Sender},
@@ -879,7 +878,8 @@ where
         },
     );
 
-    let recovered_block = RecoveredBlock::new_unhashed(block.clone(), info.executed_senders.clone());
+    let recovered_block =
+        RecoveredBlock::new_unhashed(block.clone(), info.executed_senders.clone());
     // create the executed block data
     let executed: ExecutedBlockWithTrieUpdates<OpPrimitives> = ExecutedBlockWithTrieUpdates {
         block: ExecutedBlock {
@@ -890,7 +890,6 @@ where
         trie: ExecutedTrieUpdates::Present(Arc::new(trie_output)),
     };
     info!("Executed block Created");
-
 
     let sealed_block = Arc::new(block.seal_slow());
     debug!(target: "payload_builder", ?sealed_block, "sealed built block");
@@ -913,7 +912,8 @@ where
         .zip(new_receipts.iter())
         .map(|(tx, receipt)| (tx.tx_hash(), receipt.clone()))
         .collect::<HashMap<B256, OpReceipt>>();
-    let new_account_balances = state.bundle_state
+    let new_account_balances = state
+        .bundle_state
         .state
         .iter()
         .filter_map(|(address, account)| account.info.as_ref().map(|info| (*address, info.balance)))
