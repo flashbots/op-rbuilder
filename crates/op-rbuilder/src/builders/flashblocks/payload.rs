@@ -2,7 +2,10 @@ use super::{config::FlashblocksConfig, wspub::WebSocketPublisher};
 use crate::{
     builders::{
         context::{estimate_gas_for_builder_tx, OpPayloadBuilderCtx},
-        flashblocks::{best_txs::BestFlashblocksTxs, config::FlashBlocksConfigExt},
+        flashblocks::{
+            best_txs::BestFlashblocksTxs, config::FlashBlocksConfigExt,
+            util::calculate_flashblock_byte_size,
+        },
         generator::{BlockCell, BuildArguments},
         BuilderConfig, BuilderTx,
     },
@@ -535,7 +538,7 @@ where
                                 .record(flashblock_build_start_time.elapsed());
                             ctx.metrics
                                 .flashblock_byte_size_histogram
-                                .record(new_payload.block().size() as f64);
+                                .record(calculate_flashblock_byte_size(&fb_payload) as f64);
                             ctx.metrics
                                 .flashblock_num_tx_histogram
                                 .record(info.executed_transactions.len() as f64);

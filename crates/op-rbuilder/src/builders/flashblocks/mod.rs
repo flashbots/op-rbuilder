@@ -8,6 +8,7 @@ mod config;
 mod best_txs;
 mod payload;
 mod service;
+mod util;
 mod wspub;
 
 /// Block building strategy that progressively builds chunks of a block and makes them available
