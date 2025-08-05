@@ -24,7 +24,6 @@ use core::{
 use futures::{FutureExt, StreamExt};
 use moka::future::Cache;
 use nanoid::nanoid;
-use op_alloy_network::Optimism;
 use rblib::prelude::*;
 use reth::{
     args::{DatadirArgs, NetworkArgs, RpcServerArgs},
@@ -252,8 +251,8 @@ impl LocalInstance {
         ChainDriver::<Ipc>::local(self).await
     }
 
-    pub async fn provider(&self) -> eyre::Result<RootProvider<Optimism>> {
-        ProviderBuilder::<Identity, Identity, Optimism>::default()
+    pub async fn provider(&self) -> eyre::Result<RootProvider<op_alloy_network::Optimism>> {
+        ProviderBuilder::<Identity, Identity, op_alloy_network::Optimism>::default()
             .connect_ipc(self.rpc_ipc().to_string().into())
             .await
             .map_err(|e| eyre::eyre!("Failed to connect to provider: {e}"))
@@ -355,8 +354,8 @@ fn pool_component(args: &OpRbuilderArgs) -> OpPoolBuilder<FBPooledTransaction> {
 
 async fn payload_builder_events_handler(
     pool: impl crate::traits::PoolBounds,
-    provider: impl traits::ProviderBounds<rblib::prelude::Optimism>,
-    handle: PayloadBuilderHandle<types::PayloadTypes<rblib::prelude::Optimism>>,
+    provider: impl traits::ProviderBounds<Optimism>,
+    handle: PayloadBuilderHandle<types::PayloadTypes<Optimism>>,
 ) -> eyre::Result<()> {
     tracing::info!(">--> Handling payload builder events");
     use reth_payload_builder_primitives::Events;
@@ -370,20 +369,18 @@ async fn payload_builder_events_handler(
     loop {
         tokio::select! {
             Some(Ok(Events::Attributes(attrs))) = payload_events.next() => {
-                let Ok(state) = provider
-                        .state_by_block_hash(attrs.parent()) else {
-                            continue;
-                        };
+                let state = provider.state_by_block_hash(attrs.parent())
+                    .expect("Failed to get state by block hash");
 
-                    let Ok(Some(parent)) = provider
-                        .sealed_header_by_hash(attrs.parent()) else {
-                            continue;
-                        };
-                    let chainspec = provider.chain_spec();
-                    last_block_ctx.replace(
-                        BlockContext::<rblib::prelude::Optimism>::new(parent, attrs, state, chainspec)?
-                    );
-                    tracing::debug!(">--> I have block context: {last_block_ctx:#?}");
+                let parent = provider.sealed_header_by_hash(attrs.parent())
+                    .expect("Failed to get parent header by hash")
+                    .expect("Parent header not found");
+
+                let chainspec = provider.chain_spec();
+                let block_ctx = BlockContext::<Optimism>::new(parent, attrs, state, chainspec)
+                    .expect("Failed to create block context");
+                tracing::info!(">--> block context created: {block_ctx:#?}");
+                last_block_ctx.replace(block_ctx);
             }
             Some(txpool_event) = txpool_events.recv() => {
                 tracing::info!(">--> txpool event: {:?}", txpool_event);
@@ -393,8 +390,7 @@ async fn payload_builder_events_handler(
 
                 let init = last_block_ctx.start();
                 let tx = txpool_event.transaction;
-                let checkpoint = init.apply(tx.to_consensus())?;
-
+                let checkpoint = init.apply(tx.to_consensus());
                 tracing::info!(">--> checkpoint created with tx: {tx:#?}, checkpoint: {checkpoint:#?}");
             }
         };
