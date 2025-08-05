@@ -124,6 +124,8 @@ ureq = "2.10"
 
 rollup-boost = { git = "http://github.com/flashbots/rollup-boost", branch = "main" }
 
+rblib = { git = "ssh://git@github.com/flashbots/rblib.git", tag = "v0.1.0" }
+
 dashmap = { version = "6.1", optional = true }
 nanoid = { version = "0.4", optional = true }
 reth-ipc = { workspace = true, optional = true }
@@ -160,6 +162,7 @@ jemalloc = [
     "dep:tikv-jemallocator",
     "reth-cli-util/jemalloc",
     "reth-optimism-cli/jemalloc",
+    "rblib/jemalloc",
 ]
 jemalloc-prof = [
     "jemalloc",

@@ -1,5 +1,7 @@
 use eyre::Result;
+use futures::StreamExt;
 use reth_optimism_rpc::OpEthApiBuilder;
+use reth_payload_builder::PayloadBuilderHandle;
 
 use crate::{
     args::*,
@@ -12,6 +14,7 @@ use crate::{
 };
 use core::fmt::Debug;
 use moka::future::Cache;
+use rblib::prelude::*;
 use reth::builder::{NodeBuilder, WithLaunchContext};
 use reth_cli_commands::launcher::Launcher;
 use reth_db::mdbx::DatabaseEnv;
@@ -169,6 +172,7 @@ where
                     let task = monitor_tx_pool(listener, reverted_cache_copy);
                     ctx.task_executor.spawn_critical("txlogging", task);
                 }
+
                 Ok(())
             })
             .launch()

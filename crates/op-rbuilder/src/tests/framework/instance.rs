@@ -21,10 +21,11 @@ use core::{
     task::{Context, Poll},
     time::Duration,
 };
-use futures::FutureExt;
+use futures::{FutureExt, StreamExt};
 use moka::future::Cache;
 use nanoid::nanoid;
 use op_alloy_network::Optimism;
+use rblib::prelude::*;
 use reth::{
     args::{DatadirArgs, NetworkArgs, RpcServerArgs},
     core::exit::NodeExitFuture,
@@ -38,7 +39,8 @@ use reth_optimism_node::{
     OpNode,
 };
 use reth_optimism_rpc::OpEthApiBuilder;
-use reth_transaction_pool::{AllTransactionsEvents, TransactionPool};
+use reth_payload_builder::PayloadBuilderHandle;
+use reth_transaction_pool::{AllTransactionsEvents, TransactionListenerKind, TransactionPool};
 use std::sync::{Arc, LazyLock};
 use tokio::sync::oneshot;
 
@@ -147,7 +149,11 @@ impl LocalInstance {
                 txpool_ready_tx
                     .send(ctx.pool.all_transactions_event_listener())
                     .expect("Failed to send txpool ready signal");
-
+                tokio::spawn(payload_builder_events_handler(
+                    ctx.pool,
+                    ctx.provider,
+                    ctx.payload_builder_handle,
+                ));
                 Ok(())
             });
 
@@ -345,4 +351,52 @@ fn pool_component(args: &OpRbuilderArgs) -> OpPoolBuilder<FBPooledTransaction> {
             rollup_args.supervisor_http.clone(),
             rollup_args.supervisor_safety_level,
         )
+}
+
+async fn payload_builder_events_handler(
+    pool: impl crate::traits::PoolBounds,
+    provider: impl traits::ProviderBounds<rblib::prelude::Optimism>,
+    handle: PayloadBuilderHandle<types::PayloadTypes<rblib::prelude::Optimism>>,
+) -> eyre::Result<()> {
+    tracing::info!(">--> Handling payload builder events");
+    use reth_payload_builder_primitives::Events;
+    use reth_payload_primitives::PayloadBuilderAttributes;
+
+    let mut payload_events = handle.subscribe().await?.into_stream();
+    let mut txpool_events = pool.new_transactions_listener_for(TransactionListenerKind::All);
+
+    let mut last_block_ctx = None;
+
+    loop {
+        tokio::select! {
+            Some(Ok(Events::Attributes(attrs))) = payload_events.next() => {
+                let Ok(state) = provider
+                        .state_by_block_hash(attrs.parent()) else {
+                            continue;
+                        };
+
+                    let Ok(Some(parent)) = provider
+                        .sealed_header_by_hash(attrs.parent()) else {
+                            continue;
+                        };
+                    let chainspec = provider.chain_spec();
+                    last_block_ctx.replace(
+                        BlockContext::<rblib::prelude::Optimism>::new(parent, attrs, state, chainspec)?
+                    );
+                    tracing::debug!(">--> I have block context: {last_block_ctx:#?}");
+            }
+            Some(txpool_event) = txpool_events.recv() => {
+                tracing::info!(">--> txpool event: {:?}", txpool_event);
+                let Some(ref last_block_ctx) = last_block_ctx else {
+                    continue;
+                };
+
+                let init = last_block_ctx.start();
+                let tx = txpool_event.transaction;
+                let checkpoint = init.apply(tx.to_consensus())?;
+
+                tracing::info!(">--> checkpoint created with tx: {tx:#?}, checkpoint: {checkpoint:#?}");
+            }
+        };
+    }
 }
