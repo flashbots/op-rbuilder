@@ -588,8 +588,9 @@ where
         debug!(
             target: "payload_builder",
             message = message,
-            missing_flashblocks = flashblocks_per_block.saturating_sub(ctx.flashblock_index()),
-            reduced_flashblocks = self.config.flashblocks_per_block().saturating_sub(flashblocks_per_block),
+            flashblocks_per_block = flashblocks_per_block,
+            flashblock_index = ctx.flashblock_index(),
+            config_flashblocks_per_block = self.config.flashblocks_per_block(),
         );
 
         span.record("flashblock_count", ctx.flashblock_index());
