@@ -8,7 +8,9 @@ use reth_basic_payload_builder::{
     BasicPayloadJobGeneratorConfig, HeaderForPayload, PayloadConfig, PrecachedState,
 };
 use reth_node_api::{NodePrimitives, PayloadBuilderAttributes, PayloadKind};
-use reth_payload_builder::{KeepPayloadJobAlive, PayloadBuilderError, PayloadBuilderHandle, PayloadJob, PayloadJobGenerator};
+use reth_payload_builder::{
+    KeepPayloadJobAlive, PayloadBuilderError, PayloadJob, PayloadJobGenerator,
+};
 use reth_payload_primitives::BuiltPayload;
 use reth_primitives_traits::HeaderTy;
 use reth_provider::CanonStateNotification;
@@ -234,9 +236,6 @@ use std::{
     pin::Pin,
     task::{Context, Poll},
 };
-use tokio::sync::broadcast::Sender;
-use reth_optimism_node::OpEngineTypes;
-use reth_payload_builder_primitives::Events;
 
 /// A [PayloadJob] that builds empty blocks.
 pub struct BlockPayloadJob<Tasks, Builder>

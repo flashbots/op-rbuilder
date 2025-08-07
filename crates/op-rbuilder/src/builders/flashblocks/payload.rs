@@ -26,6 +26,7 @@ use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
 use reth_optimism_forks::OpHardforks;
 use reth_optimism_node::{OpBuiltPayload, OpEngineTypes, OpPayloadBuilderAttributes};
 use reth_optimism_primitives::{OpPrimitives, OpReceipt, OpTransactionSigned};
+use reth_payload_builder_primitives::Events;
 use reth_payload_util::BestPayloadTransactions;
 use reth_primitives_traits::RecoveredBlock;
 use reth_provider::{
@@ -44,12 +45,10 @@ use std::{
     ops::{Div, Rem},
     sync::{
         atomic::{AtomicU64, Ordering},
-        Arc,
+        Arc, Mutex,
     },
     time::Instant,
 };
-use std::sync::Mutex;
-use reth_payload_builder_primitives::Events;
 use tokio::sync::{
     mpsc,
     mpsc::{error::SendError, Sender},
@@ -122,7 +121,8 @@ pub struct OpPayloadBuilder<Pool, Client, BT> {
     #[allow(dead_code)]
     pub builder_tx: BT,
     /// Builder events handle to send BuiltPayload events
-    payload_builder_handle: Arc<Mutex<Option<tokio::sync::broadcast::Sender<Events<OpEngineTypes>>>>>
+    payload_builder_handle:
+        Arc<Mutex<Option<tokio::sync::broadcast::Sender<Events<OpEngineTypes>>>>>,
 }
 
 impl<Pool, Client, BT> OpPayloadBuilder<Pool, Client, BT> {
@@ -133,7 +133,9 @@ impl<Pool, Client, BT> OpPayloadBuilder<Pool, Client, BT> {
         client: Client,
         config: BuilderConfig<FlashblocksConfig>,
         builder_tx: BT,
-        payload_builder_handle: Arc<Mutex<Option<tokio::sync::broadcast::Sender<Events<OpEngineTypes>>>>>
+        payload_builder_handle: Arc<
+            Mutex<Option<tokio::sync::broadcast::Sender<Events<OpEngineTypes>>>>,
+        >,
     ) -> eyre::Result<Self> {
         let metrics = Arc::new(OpRBuilderMetrics::default());
         let ws_pub = WebSocketPublisher::new(config.specific.ws_addr, Arc::clone(&metrics))?.into();
@@ -619,15 +621,17 @@ where
         // Send built payload as create one
         match self.payload_builder_handle.lock().as_deref() {
             Ok(Some(handle)) => {
-                let res = handle.send(Events::BuiltPayload(payload.clone().into()));
+                let res = handle.send(Events::BuiltPayload(payload.clone()));
                 if let Err(e) = res {
                     error!(
                         message = "Failed to send payload via payload builder handle",
                         error = ?e,
                     );
                 }
-            },
-            Ok(None) => error!(message = "Payload builder handle is not setup, skipping sending payload"),
+            }
+            Ok(None) => {
+                error!(message = "Payload builder handle is not setup, skipping sending payload")
+            }
             Err(e) => error!(
                 message = "Failed to get access to payload builder handle",
                 error = ?e,
