@@ -40,63 +40,63 @@ codegen-units = 1
 incremental = false
 
 [workspace.dependencies]
-reth = { git = "https://github.com/SozinM/reth", rev = "9a3e900178327b93d16f90594ffd28516ba6123c" }
-reth-chain-state = { git = "https://github.com/SozinM/reth", rev = "9a3e900178327b93d16f90594ffd28516ba6123c" }
-reth-cli = { git = "https://github.com/SozinM/reth", rev = "9a3e900178327b93d16f90594ffd28516ba6123c" }
-reth-cli-commands = { git = "https://github.com/SozinM/reth", rev = "9a3e900178327b93d16f90594ffd28516ba6123c" }
-reth-cli-util = { git = "https://github.com/SozinM/reth", rev = "9a3e900178327b93d16f90594ffd28516ba6123c" }
-reth-db = { git = "https://github.com/SozinM/reth", rev = "9a3e900178327b93d16f90594ffd28516ba6123c" }
-reth-db-common = { git = "https://github.com/SozinM/reth", rev = "9a3e900178327b93d16f90594ffd28516ba6123c" }
-reth-errors = { git = "https://github.com/SozinM/reth", rev = "9a3e900178327b93d16f90594ffd28516ba6123c" }
-reth-payload-builder = { git = "https://github.com/SozinM/reth", rev = "9a3e900178327b93d16f90594ffd28516ba6123c" }
-reth-node-api = { git = "https://github.com/SozinM/reth", rev = "9a3e900178327b93d16f90594ffd28516ba6123c" }
-reth-rpc-engine-api = { git = "https://github.com/SozinM/reth", rev = "9a3e900178327b93d16f90594ffd28516ba6123c" }
-reth-node-ethereum = { git = "https://github.com/SozinM/reth", rev = "9a3e900178327b93d16f90594ffd28516ba6123c" }
-reth-trie = { git = "https://github.com/SozinM/reth", rev = "9a3e900178327b93d16f90594ffd28516ba6123c" }
-reth-trie-parallel = { git = "https://github.com/SozinM/reth", rev = "9a3e900178327b93d16f90594ffd28516ba6123c" }
-reth-basic-payload-builder = { git = "https://github.com/SozinM/reth", rev = "9a3e900178327b93d16f90594ffd28516ba6123c" }
-reth-node-core = { git = "https://github.com/SozinM/reth", rev = "9a3e900178327b93d16f90594ffd28516ba6123c" }
-reth-primitives = { git = "https://github.com/SozinM/reth", rev = "9a3e900178327b93d16f90594ffd28516ba6123c" }
-reth-primitives-traits = { git = "https://github.com/SozinM/reth", rev = "9a3e900178327b93d16f90594ffd28516ba6123c" }
-reth-provider = { git = "https://github.com/SozinM/reth", rev = "9a3e900178327b93d16f90594ffd28516ba6123c", features = [
+reth = { git = "https://github.com/SozinM/reth", rev = "6d52844ee613673d0b95a7c547cfd0098039a3b0" }
+reth-chain-state = { git = "https://github.com/SozinM/reth", rev = "6d52844ee613673d0b95a7c547cfd0098039a3b0" }
+reth-cli = { git = "https://github.com/SozinM/reth", rev = "6d52844ee613673d0b95a7c547cfd0098039a3b0" }
+reth-cli-commands = { git = "https://github.com/SozinM/reth", rev = "6d52844ee613673d0b95a7c547cfd0098039a3b0" }
+reth-cli-util = { git = "https://github.com/SozinM/reth", rev = "6d52844ee613673d0b95a7c547cfd0098039a3b0" }
+reth-db = { git = "https://github.com/SozinM/reth", rev = "6d52844ee613673d0b95a7c547cfd0098039a3b0" }
+reth-db-common = { git = "https://github.com/SozinM/reth", rev = "6d52844ee613673d0b95a7c547cfd0098039a3b0" }
+reth-errors = { git = "https://github.com/SozinM/reth", rev = "6d52844ee613673d0b95a7c547cfd0098039a3b0" }
+reth-payload-builder = { git = "https://github.com/SozinM/reth", rev = "6d52844ee613673d0b95a7c547cfd0098039a3b0" }
+reth-node-api = { git = "https://github.com/SozinM/reth", rev = "6d52844ee613673d0b95a7c547cfd0098039a3b0" }
+reth-rpc-engine-api = { git = "https://github.com/SozinM/reth", rev = "6d52844ee613673d0b95a7c547cfd0098039a3b0" }
+reth-node-ethereum = { git = "https://github.com/SozinM/reth", rev = "6d52844ee613673d0b95a7c547cfd0098039a3b0" }
+reth-trie = { git = "https://github.com/SozinM/reth", rev = "6d52844ee613673d0b95a7c547cfd0098039a3b0" }
+reth-trie-parallel = { git = "https://github.com/SozinM/reth", rev = "6d52844ee613673d0b95a7c547cfd0098039a3b0" }
+reth-basic-payload-builder = { git = "https://github.com/SozinM/reth", rev = "6d52844ee613673d0b95a7c547cfd0098039a3b0" }
+reth-node-core = { git = "https://github.com/SozinM/reth", rev = "6d52844ee613673d0b95a7c547cfd0098039a3b0" }
+reth-primitives = { git = "https://github.com/SozinM/reth", rev = "6d52844ee613673d0b95a7c547cfd0098039a3b0" }
+reth-primitives-traits = { git = "https://github.com/SozinM/reth", rev = "6d52844ee613673d0b95a7c547cfd0098039a3b0" }
+reth-provider = { git = "https://github.com/SozinM/reth", rev = "6d52844ee613673d0b95a7c547cfd0098039a3b0", features = [
     "test-utils",
 ] }
 
-reth-chainspec = { git = "https://github.com/SozinM/reth", rev = "9a3e900178327b93d16f90594ffd28516ba6123c" }
-reth-storage-api = { git = "https://github.com/SozinM/reth", rev = "9a3e900178327b93d16f90594ffd28516ba6123c" }
-reth-rpc-api = { git = "https://github.com/SozinM/reth", rev = "9a3e900178327b93d16f90594ffd28516ba6123c" }
-reth-evm = { git = "https://github.com/SozinM/reth", rev = "9a3e900178327b93d16f90594ffd28516ba6123c" }
-reth-evm-ethereum = { git = "https://github.com/SozinM/reth", rev = "9a3e900178327b93d16f90594ffd28516ba6123c" }
-reth-execution-errors = { git = "https://github.com/SozinM/reth", rev = "9a3e900178327b93d16f90594ffd28516ba6123c" }
-reth-exex = { git = "https://github.com/SozinM/reth", rev = "9a3e900178327b93d16f90594ffd28516ba6123c" }
-reth-tasks = { git = "https://github.com/SozinM/reth", rev = "9a3e900178327b93d16f90594ffd28516ba6123c" }
-reth-metrics = { git = "https://github.com/SozinM/reth", rev = "9a3e900178327b93d16f90594ffd28516ba6123c" }
-reth-trie-db = { git = "https://github.com/SozinM/reth", rev = "9a3e900178327b93d16f90594ffd28516ba6123c" }
-reth-payload-primitives = { git = "https://github.com/SozinM/reth", rev = "9a3e900178327b93d16f90594ffd28516ba6123c" }
-reth-transaction-pool = { git = "https://github.com/SozinM/reth", rev = "9a3e900178327b93d16f90594ffd28516ba6123c" }
-reth-execution-types = { git = "https://github.com/SozinM/reth", rev = "9a3e900178327b93d16f90594ffd28516ba6123c" }
-reth-revm = { git = "https://github.com/SozinM/reth", rev = "9a3e900178327b93d16f90594ffd28516ba6123c" }
-reth-payload-builder-primitives = { git = "https://github.com/SozinM/reth", rev = "9a3e900178327b93d16f90594ffd28516ba6123c" }
-reth-payload-util = { git = "https://github.com/SozinM/reth", rev = "9a3e900178327b93d16f90594ffd28516ba6123c" }
-reth-rpc-layer = { git = "https://github.com/SozinM/reth", rev = "9a3e900178327b93d16f90594ffd28516ba6123c" }
-reth-network-peers = { git = "https://github.com/SozinM/reth", rev = "9a3e900178327b93d16f90594ffd28516ba6123c" }
-reth-testing-utils = { git = "https://github.com/SozinM/reth", rev = "9a3e900178327b93d16f90594ffd28516ba6123c" }
-reth-node-builder = { git = "https://github.com/SozinM/reth", rev = "9a3e900178327b93d16f90594ffd28516ba6123c" }
-reth-rpc-eth-types = { git = "https://github.com/SozinM/reth", rev = "9a3e900178327b93d16f90594ffd28516ba6123c" }
-reth-tracing-otlp = { git = "https://github.com/SozinM/reth", rev = "9a3e900178327b93d16f90594ffd28516ba6123c" }
-reth-ipc = { git = "https://github.com/SozinM/reth", rev = "9a3e900178327b93d16f90594ffd28516ba6123c" }
+reth-chainspec = { git = "https://github.com/SozinM/reth", rev = "6d52844ee613673d0b95a7c547cfd0098039a3b0" }
+reth-storage-api = { git = "https://github.com/SozinM/reth", rev = "6d52844ee613673d0b95a7c547cfd0098039a3b0" }
+reth-rpc-api = { git = "https://github.com/SozinM/reth", rev = "6d52844ee613673d0b95a7c547cfd0098039a3b0" }
+reth-evm = { git = "https://github.com/SozinM/reth", rev = "6d52844ee613673d0b95a7c547cfd0098039a3b0" }
+reth-evm-ethereum = { git = "https://github.com/SozinM/reth", rev = "6d52844ee613673d0b95a7c547cfd0098039a3b0" }
+reth-execution-errors = { git = "https://github.com/SozinM/reth", rev = "6d52844ee613673d0b95a7c547cfd0098039a3b0" }
+reth-exex = { git = "https://github.com/SozinM/reth", rev = "6d52844ee613673d0b95a7c547cfd0098039a3b0" }
+reth-tasks = { git = "https://github.com/SozinM/reth", rev = "6d52844ee613673d0b95a7c547cfd0098039a3b0" }
+reth-metrics = { git = "https://github.com/SozinM/reth", rev = "6d52844ee613673d0b95a7c547cfd0098039a3b0" }
+reth-trie-db = { git = "https://github.com/SozinM/reth", rev = "6d52844ee613673d0b95a7c547cfd0098039a3b0" }
+reth-payload-primitives = { git = "https://github.com/SozinM/reth", rev = "6d52844ee613673d0b95a7c547cfd0098039a3b0" }
+reth-transaction-pool = { git = "https://github.com/SozinM/reth", rev = "6d52844ee613673d0b95a7c547cfd0098039a3b0" }
+reth-execution-types = { git = "https://github.com/SozinM/reth", rev = "6d52844ee613673d0b95a7c547cfd0098039a3b0" }
+reth-revm = { git = "https://github.com/SozinM/reth", rev = "6d52844ee613673d0b95a7c547cfd0098039a3b0" }
+reth-payload-builder-primitives = { git = "https://github.com/SozinM/reth", rev = "6d52844ee613673d0b95a7c547cfd0098039a3b0" }
+reth-payload-util = { git = "https://github.com/SozinM/reth", rev = "6d52844ee613673d0b95a7c547cfd0098039a3b0" }
+reth-rpc-layer = { git = "https://github.com/SozinM/reth", rev = "6d52844ee613673d0b95a7c547cfd0098039a3b0" }
+reth-network-peers = { git = "https://github.com/SozinM/reth", rev = "6d52844ee613673d0b95a7c547cfd0098039a3b0" }
+reth-testing-utils = { git = "https://github.com/SozinM/reth", rev = "6d52844ee613673d0b95a7c547cfd0098039a3b0" }
+reth-node-builder = { git = "https://github.com/SozinM/reth", rev = "6d52844ee613673d0b95a7c547cfd0098039a3b0" }
+reth-rpc-eth-types = { git = "https://github.com/SozinM/reth", rev = "6d52844ee613673d0b95a7c547cfd0098039a3b0" }
+reth-tracing-otlp = { git = "https://github.com/SozinM/reth", rev = "6d52844ee613673d0b95a7c547cfd0098039a3b0" }
+reth-ipc = { git = "https://github.com/SozinM/reth", rev = "6d52844ee613673d0b95a7c547cfd0098039a3b0" }
 
 # reth optimism
-reth-optimism-primitives = { git = "https://github.com/SozinM/reth", rev = "9a3e900178327b93d16f90594ffd28516ba6123c" }
-reth-optimism-consensus = { git = "https://github.com/SozinM/reth", rev = "9a3e900178327b93d16f90594ffd28516ba6123c" }
-reth-optimism-cli = { git = "https://github.com/SozinM/reth", rev = "9a3e900178327b93d16f90594ffd28516ba6123c" }
-reth-optimism-forks = { git = "https://github.com/SozinM/reth", rev = "9a3e900178327b93d16f90594ffd28516ba6123c" }
-reth-optimism-evm = { git = "https://github.com/SozinM/reth", rev = "9a3e900178327b93d16f90594ffd28516ba6123c" }
-reth-optimism-node = { git = "https://github.com/SozinM/reth", rev = "9a3e900178327b93d16f90594ffd28516ba6123c" }
-reth-optimism-payload-builder = { git = "https://github.com/SozinM/reth", rev = "9a3e900178327b93d16f90594ffd28516ba6123c" }
-reth-optimism-chainspec = { git = "https://github.com/SozinM/reth", rev = "9a3e900178327b93d16f90594ffd28516ba6123c" }
-reth-optimism-txpool = { git = "https://github.com/SozinM/reth", rev = "9a3e900178327b93d16f90594ffd28516ba6123c" }
-reth-optimism-rpc = { git = "https://github.com/SozinM/reth", rev = "9a3e900178327b93d16f90594ffd28516ba6123c", features = [
+reth-optimism-primitives = { git = "https://github.com/SozinM/reth", rev = "6d52844ee613673d0b95a7c547cfd0098039a3b0" }
+reth-optimism-consensus = { git = "https://github.com/SozinM/reth", rev = "6d52844ee613673d0b95a7c547cfd0098039a3b0" }
+reth-optimism-cli = { git = "https://github.com/SozinM/reth", rev = "6d52844ee613673d0b95a7c547cfd0098039a3b0" }
+reth-optimism-forks = { git = "https://github.com/SozinM/reth", rev = "6d52844ee613673d0b95a7c547cfd0098039a3b0" }
+reth-optimism-evm = { git = "https://github.com/SozinM/reth", rev = "6d52844ee613673d0b95a7c547cfd0098039a3b0" }
+reth-optimism-node = { git = "https://github.com/SozinM/reth", rev = "6d52844ee613673d0b95a7c547cfd0098039a3b0" }
+reth-optimism-payload-builder = { git = "https://github.com/SozinM/reth", rev = "6d52844ee613673d0b95a7c547cfd0098039a3b0" }
+reth-optimism-chainspec = { git = "https://github.com/SozinM/reth", rev = "6d52844ee613673d0b95a7c547cfd0098039a3b0" }
+reth-optimism-txpool = { git = "https://github.com/SozinM/reth", rev = "6d52844ee613673d0b95a7c547cfd0098039a3b0" }
+reth-optimism-rpc = { git = "https://github.com/SozinM/reth", rev = "6d52844ee613673d0b95a7c547cfd0098039a3b0", features = [
     "client",
 ] }
 
