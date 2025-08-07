@@ -56,7 +56,7 @@ impl FlashblocksServiceBuilder {
         let (payload_service, payload_builder) =
             PayloadBuilderService::new(payload_generator, ctx.provider().canonical_state_stream());
 
-        payload_builder_handle.lock()?.replace(payload_service.payload_events_handle());
+        payload_builder_handle.lock().expect("store payload builder handle in mutex").replace(payload_service.payload_events_handle());
 
         ctx.task_executor()
             .spawn_critical("custom payload builder service", Box::pin(payload_service));

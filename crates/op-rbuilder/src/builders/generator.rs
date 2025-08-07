@@ -197,7 +197,6 @@ where
             deadline,
             build_complete: None,
             cached_reads: self.maybe_pre_cached(parent_header.hash()),
-            payload_builder_handle: self.payload_builder_handle.clone(),
         };
 
         job.spawn_build_job();
@@ -263,7 +262,6 @@ where
     /// This is used to avoid reading the same state over and over again when new attempts are
     /// triggered, because during the building process we'll repeatedly execute the transactions.
     pub(crate) cached_reads: Option<CachedReads>,
-    pub(crate) payload_builder_handle: Arc<Mutex<Option<Sender<Events<OpEngineTypes>>>>>,
 }
 
 impl<Tasks, Builder> PayloadJob for BlockPayloadJob<Tasks, Builder>

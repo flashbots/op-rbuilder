@@ -630,7 +630,7 @@ where
             Ok(None) => error!(message = "Payload builder handle is not setup, skipping sending payload"),
             Err(e) => error!(
                 message = "Failed to get access to payload builder handle",
-                error = ?e.
+                error = ?e,
             ),
         }
     }
