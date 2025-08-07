@@ -8,9 +8,7 @@ use reth_basic_payload_builder::{
     BasicPayloadJobGeneratorConfig, HeaderForPayload, PayloadConfig, PrecachedState,
 };
 use reth_node_api::{NodePrimitives, PayloadBuilderAttributes, PayloadKind};
-use reth_payload_builder::{
-    KeepPayloadJobAlive, PayloadBuilderError, PayloadJob, PayloadJobGenerator,
-};
+use reth_payload_builder::{KeepPayloadJobAlive, PayloadBuilderError, PayloadBuilderHandle, PayloadJob, PayloadJobGenerator};
 use reth_payload_primitives::BuiltPayload;
 use reth_primitives_traits::HeaderTy;
 use reth_provider::CanonStateNotification;
@@ -199,6 +197,7 @@ where
             deadline,
             build_complete: None,
             cached_reads: self.maybe_pre_cached(parent_header.hash()),
+            payload_builder_handle: self.payload_builder_handle.clone(),
         };
 
         job.spawn_build_job();
@@ -236,6 +235,9 @@ use std::{
     pin::Pin,
     task::{Context, Poll},
 };
+use tokio::sync::broadcast::Sender;
+use reth_optimism_node::OpEngineTypes;
+use reth_payload_builder_primitives::Events;
 
 /// A [PayloadJob] that builds empty blocks.
 pub struct BlockPayloadJob<Tasks, Builder>
@@ -261,6 +263,7 @@ where
     /// This is used to avoid reading the same state over and over again when new attempts are
     /// triggered, because during the building process we'll repeatedly execute the transactions.
     pub(crate) cached_reads: Option<CachedReads>,
+    pub(crate) payload_builder_handle: Arc<Mutex<Option<Sender<Events<OpEngineTypes>>>>>,
 }
 
 impl<Tasks, Builder> PayloadJob for BlockPayloadJob<Tasks, Builder>
