@@ -13,6 +13,7 @@ use reth_node_builder::{components::PayloadServiceBuilder, BuilderContext};
 use reth_optimism_evm::OpEvmConfig;
 use reth_payload_builder::{PayloadBuilderHandle, PayloadBuilderService};
 use reth_provider::CanonStateSubscriptions;
+use std::sync::{Arc, Mutex};
 
 pub struct FlashblocksServiceBuilder(pub BuilderConfig<FlashblocksConfig>);
 
@@ -28,12 +29,16 @@ impl FlashblocksServiceBuilder {
         Pool: PoolBounds,
         BT: BuilderTx + Unpin + Clone + Send + Sync + 'static,
     {
+        let handle = Arc::new(Mutex::new(None));
+        let payload_builder_handle = handle.clone();
+
         let payload_builder = OpPayloadBuilder::new(
             OpEvmConfig::optimism(ctx.chain_spec()),
             pool,
             ctx.provider().clone(),
             self.0.clone(),
             builder_tx,
+            handle,
         )?;
 
         let payload_job_config = BasicPayloadJobGeneratorConfig::default();
@@ -49,6 +54,11 @@ impl FlashblocksServiceBuilder {
 
         let (payload_service, payload_builder) =
             PayloadBuilderService::new(payload_generator, ctx.provider().canonical_state_stream());
+
+        payload_builder_handle
+            .lock()
+            .expect("store payload builder handle in mutex")
+            .replace(payload_service.payload_events_handle());
 
         ctx.task_executor()
             .spawn_critical("custom payload builder service", Box::pin(payload_service));
