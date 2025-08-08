@@ -215,21 +215,24 @@ async fn chain_produces_big_tx_with_gas_limit(rbuilder: LocalInstance) -> eyre::
         .expect("Failed to send transaction");
 
     // insert txn with gas usage above limit
-    let _ = driver
+    let tx_high_gas = driver
         .create_transaction()
         .random_big_transaction()
         .send()
         .await
         .expect("Failed to send transaction");
 
-    let tx_hash = *tx.tx_hash();
-
     let block = driver.build_new_block_with_current_timestamp(None).await?;
     let txs = block.transactions;
 
     assert!(txs.len() == 4);
-    let result = txs.hashes().find(|hash| hash == &tx_hash);
-    assert!(result.is_some());
+    // assert we included the tx with gas under limit
+    let inclusion_result = txs.hashes().find(|hash| hash == tx.tx_hash());
+    assert!(inclusion_result.is_some());
+
+    // assert we do not include the tx with gas above limit
+    let exclusion_result = txs.hashes().find(|hash| hash == tx_high_gas.tx_hash());
+    assert!(exclusion_result.is_none());
 
     Ok(())
 }
@@ -246,7 +249,7 @@ async fn chain_produces_big_tx_without_gas_limit(rbuilder: LocalInstance) -> eyr
         .await?;
 
     // insert txn with gas usage but there is no limit
-    let _ = driver
+    let tx = driver
         .create_transaction()
         .random_big_transaction()
         .send()
@@ -255,6 +258,10 @@ async fn chain_produces_big_tx_without_gas_limit(rbuilder: LocalInstance) -> eyr
 
     let block = driver.build_new_block_with_current_timestamp(None).await?;
     let txs = block.transactions;
+
+    // assert we included the tx
+    let inclusion_result = txs.hashes().find(|hash| hash == tx.tx_hash());
+    assert!(inclusion_result.is_some());
 
     assert!(txs.len() == 4);
 
