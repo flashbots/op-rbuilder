@@ -71,6 +71,10 @@ alloy-serde.workspace = true
 alloy-json-rpc.workspace = true
 alloy-signer-local.workspace = true
 alloy-sol-types.workspace = true
+alloy = { workspace = true, features = [
+    "rpc-types-admin",
+] }
+
 
 # op
 alloy-op-evm.workspace = true
@@ -143,9 +147,6 @@ vergen-git2.workspace = true
 [dev-dependencies]
 alloy-provider = { workspace = true, default-features = true, features = [
     "txpool-api",
-] }
-alloy = { workspace = true, default-features = true, features = [
-    "rpc-types-admin",
 ] }
 tempfile = "3.8"
 macros = { path = "src/tests/framework/macros" }

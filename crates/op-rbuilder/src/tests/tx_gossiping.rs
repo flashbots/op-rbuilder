@@ -25,7 +25,6 @@ async fn test_txgossiping_with_peer() {
     let mut command = node_command.ext.clone();
     // We enable peering and appoint node2 as rbuilder peer
     command.rbuilder_peers = vec![enode2.clone()];
-    command.rbuilder_disable_txpool_gossip = false;
     let instance = LocalInstance::new_with_config::<StandardBuilder>(command, config)
         .await
         .expect("testing node");
@@ -77,9 +76,6 @@ async fn test_txgossiping_no_rbuilder_peers() {
     let Commands::Node(ref node_command) = args.command else {
         unreachable!()
     };
-    let mut command = node_command.ext.clone();
-    // We enabled gossiping but have not provided peers
-    command.rbuilder_disable_txpool_gossip = false;
     let instance =
         LocalInstance::new_with_config::<StandardBuilder>(node_command.ext.clone(), config)
             .await
@@ -136,9 +132,8 @@ async fn test_txgossiping_no_rbuilder_gossiping() {
         unreachable!()
     };
     let mut command = node_command.ext.clone();
-    // We enabled regular mechanism, bit disable rbuilder gossip mechanism. this should result in no gossiping
+    // We enabled regular mechanism, bit have not provided rbuilder peers, this should result in no propagation
     command.rollup_args.disable_txpool_gossip = false;
-    command.rbuilder_disable_txpool_gossip = true;
     // We add rbuilder peer too, to ensure that it won't receive txs
     command.rbuilder_peers = vec![enode2.clone()];
     let instance =
