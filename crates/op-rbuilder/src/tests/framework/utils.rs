@@ -1,9 +1,12 @@
+use super::{TransactionBuilder, FUNDED_PRIVATE_KEYS};
 use crate::{
-    tests::{framework::driver::ChainDriver, Protocol, ONE_ETH},
+    tests::{framework::driver::ChainDriver, ExternalNode, Protocol, ONE_ETH},
     tx_signer::Signer,
 };
+use alloy::rpc::types::admin::NodeInfo;
 use alloy_eips::Encodable2718;
 use alloy_primitives::{hex, Address, BlockHash, TxHash, TxKind, B256, U256};
+use alloy_provider::Provider;
 use alloy_rpc_types_eth::{Block, BlockTransactionHashes};
 use core::future::Future;
 use op_alloy_consensus::{OpTypedTransaction, TxDeposit};
@@ -14,11 +17,11 @@ use reth_db::{
     test_utils::{TempDatabase, ERROR_DB_CREATION},
     ClientVersion, DatabaseEnv,
 };
+use reth_network_peers::TrustedPeer;
 use reth_node_core::{args::DatadirArgs, dirs::DataDirPath, node_config::NodeConfig};
 use reth_optimism_chainspec::OpChainSpec;
-use std::sync::Arc;
-
-use super::{TransactionBuilder, FUNDED_PRIVATE_KEYS};
+use std::{str::FromStr, sync::Arc};
+use testcontainers::bollard::Docker;
 
 pub trait TransactionBuilderExt {
     fn random_valid_transfer(self) -> Self;
@@ -219,4 +222,31 @@ pub fn create_test_db(config: NodeConfig<OpChainSpec>) -> Arc<TempDatabase<Datab
     )
     .expect(ERROR_DB_CREATION);
     Arc::new(TempDatabase::new(db, path))
+}
+
+/// Creates reth node and returns it alongside with enode (ip is replaced to real docker one)
+pub async fn setup_external_peer_node() -> (ExternalNode, TrustedPeer) {
+    let docker = Docker::connect_with_local_defaults().expect("failed to connect to docker");
+    let node = ExternalNode::reth().await.expect("create reth docker node");
+    let node_info = node
+        .provider()
+        .raw_request::<_, NodeInfo>("admin_nodeInfo".into(), ()) // empty params list
+        .await
+        .expect("request node admin info");
+    let node_ip = docker
+        .inspect_container(node.container_id().as_str(), None)
+        .await
+        .expect("inspect created container")
+        .network_settings
+        .expect("get container network")
+        .ip_address;
+    let enode = node_info.enode.replace(
+        "127.0.0.1",
+        node_ip
+            .expect("Checking created reth docker instance ip")
+            .as_str(),
+    );
+    let enode = TrustedPeer::from_str(enode.as_str()).expect("Parsing enode");
+    // Create node and set node1 as trusted peer and node2 as rbuilder peer
+    (node, enode)
 }

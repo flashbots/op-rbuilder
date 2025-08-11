@@ -71,6 +71,10 @@ alloy-serde.workspace = true
 alloy-json-rpc.workspace = true
 alloy-signer-local.workspace = true
 alloy-sol-types.workspace = true
+alloy = { workspace = true, features = [
+    "rpc-types-admin",
+] }
+
 
 # op
 alloy-op-evm.workspace = true
@@ -182,6 +186,7 @@ testing = [
     "ctor",
     "macros",
     "rlimit",
+    "alloy/rpc-types-admin"
 ]
 
 interop = []
