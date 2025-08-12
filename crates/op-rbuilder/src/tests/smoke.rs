@@ -225,7 +225,22 @@ async fn chain_produces_big_tx_with_gas_limit(rbuilder: LocalInstance) -> eyre::
     let block = driver.build_new_block_with_current_timestamp(None).await?;
     let txs = block.transactions;
 
-    assert!(txs.len() == 4);
+    if_standard! {
+        assert_eq!(
+            txs.len(),
+            3,
+            "Should have 3 transactions"
+        );
+    }
+
+    if_flashblocks! {
+        assert_eq!(
+            txs.len(),
+            4,
+            "Should have 4 transactions"
+        );
+    }
+
     // assert we included the tx with gas under limit
     let inclusion_result = txs.hashes().find(|hash| hash == tx.tx_hash());
     assert!(inclusion_result.is_some());
@@ -263,7 +278,21 @@ async fn chain_produces_big_tx_without_gas_limit(rbuilder: LocalInstance) -> eyr
     let inclusion_result = txs.hashes().find(|hash| hash == tx.tx_hash());
     assert!(inclusion_result.is_some());
 
-    assert!(txs.len() == 4);
+    if_standard! {
+        assert_eq!(
+            txs.len(),
+            3,
+            "Should have 3 transactions"
+        );
+    }
+
+    if_flashblocks! {
+        assert_eq!(
+            txs.len(),
+            4,
+            "Should have 4 transactions"
+        );
+    }
 
     Ok(())
 }
