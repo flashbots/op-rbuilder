@@ -7,6 +7,26 @@ GIT_TAG ?= $(shell git describe --tags --abbrev=0)
 
 FEATURES ?=
 
+# Environment variables for reproducible builds
+# Initialize RUSTFLAGS
+RUST_BUILD_FLAGS =
+# Enable static linking to ensure reproducibility across builds
+RUST_BUILD_FLAGS += --C target-feature=+crt-static
+# Set the linker to use static libgcc to ensure reproducibility across builds
+RUST_BUILD_FLAGS += -C link-arg=-static-libgcc
+# Remove build ID from the binary to ensure reproducibility across builds
+RUST_BUILD_FLAGS += -C link-arg=-Wl,--build-id=none
+# Remove metadata hash from symbol names to ensure reproducible builds
+RUST_BUILD_FLAGS += -C metadata=''
+# Set timestamp from last git commit for reproducible builds
+SOURCE_DATE ?= $(shell git log -1 --pretty=%ct)
+# Disable incremental compilation to avoid non-deterministic artifacts
+CARGO_INCREMENTAL_VAL = 0
+# Set C locale for consistent string handling and sorting
+LOCALE_VAL = C
+# Set UTC timezone for consistent time handling across builds
+TZ_VAL = UTC
+
 ##@ Help
 
 .PHONY: help
@@ -30,6 +50,15 @@ build: ## Build (debug version)
 .PHONY: op-rbuilder
 op-rbuilder: ## Build op-rbuilder (debug version)
 	cargo build -p op-rbuilder --bin op-rbuilder --features "$(FEATURES)"
+
+.PHONY: build-reproducible
+build-reproducible: ## Build the reth binary into `target` directory with reproducible builds. Only works for x86_64-unknown-linux-gnu currently
+	SOURCE_DATE_EPOCH=$(SOURCE_DATE) \
+	RUSTFLAGS="${RUST_BUILD_FLAGS} --remap-path-prefix $$(pwd)=." \
+	CARGO_INCREMENTAL=${CARGO_INCREMENTAL_VAL} \
+	LC_ALL=${LOCALE_VAL} \
+	TZ=${TZ_VAL} \
+	cargo build -p op-rbuilder --bin op-rbuilder --features "$(FEATURES)" --profile "release" --locked --target x86_64-unknown-linux-gnu --features "$(FEATURES)"
 
 .PHONY: tdx-quote-provider
 tdx-quote-provider: ## Build tdx-quote-provider (debug version)
