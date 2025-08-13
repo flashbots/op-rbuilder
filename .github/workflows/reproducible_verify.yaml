@@ -1,0 +1,33 @@
+name: Verify Reproducible Build
+
+on:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    name: Verify reproducible builds
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build twice and compare
+        run: |
+          export REPRO_FLAGS="--C target-feature=+crt-static -C link-arg=-static-libgcc -C link-arg=-Wl,--build-id=none -C metadata='' --remap-path-prefix=$(pwd)=."
+          export SOURCE_DATE_EPOCH=$(git log -1 --pretty=%ct)
+
+          RUSTFLAGS="$REPRO_FLAGS" CARGO_INCREMENTAL=0 LC_ALL=C TZ=UTC \
+          cargo build --release --locked -p op-rbuilder
+          mv target/release/op-rbuilder build1
+
+          cargo clean
+
+          RUSTFLAGS="$REPRO_FLAGS" CARGO_INCREMENTAL=0 LC_ALL=C TZ=UTC \
+          cargo build --release --locked -p op-rbuilder
+          mv target/release/op-rbuilder build2
+
+          if cmp -s build1 build2; then
+            echo "✅ Builds are reproducible"
+          else
+            echo "❌ Builds differ"
+            exit 1
+          fi
