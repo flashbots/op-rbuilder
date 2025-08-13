@@ -52,13 +52,13 @@ op-rbuilder: ## Build op-rbuilder (debug version)
 	cargo build -p op-rbuilder --bin op-rbuilder --features "$(FEATURES)"
 
 .PHONY: build-reproducible
-build-reproducible: ## Build the reth binary into `target` directory with reproducible builds. Only works for x86_64-unknown-linux-gnu currently
+build-reproducible: ## Build the reth binary into `target` directory with reproducible builds
 	SOURCE_DATE_EPOCH=$(SOURCE_DATE) \
 	RUSTFLAGS="${RUST_BUILD_FLAGS} --remap-path-prefix $$(pwd)=." \
 	CARGO_INCREMENTAL=${CARGO_INCREMENTAL_VAL} \
 	LC_ALL=${LOCALE_VAL} \
 	TZ=${TZ_VAL} \
-	cargo build -p op-rbuilder --bin op-rbuilder --features "$(FEATURES)" --profile "release" --locked --target x86_64-unknown-linux-gnu --features "$(FEATURES)"
+	cargo build -p op-rbuilder --bin op-rbuilder --features "$(FEATURES)" --profile "release" --locked --features "$(FEATURES)"
 
 .PHONY: tdx-quote-provider
 tdx-quote-provider: ## Build tdx-quote-provider (debug version)
