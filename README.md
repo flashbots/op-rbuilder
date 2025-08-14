@@ -67,7 +67,7 @@ Note that `--rollup.builder-secret-key` must be set and funded in order for the 
 To verify whether a builder block has landed on-chain, you can add the `--rollup.builder-secret-key` flag or `BUILDER_SECRET_KEY` environment variable.
 This will add an additional transaction to the end of the block from the builder key. The transaction will have `Block Number: {}` in the input data as a transfer to the zero address. Ensure that the key has sufficient balance to pay for the transaction at the end of the block.
 
-To enable metrics, set the `--metrics` flag like in [reth](https://reth.rs/run/observability.html) which will expose reth metrics in addition to op-rbuilder metrics. op-rbuilder exposes on-chain metrics via [reth execution extensions](https://reth.rs/developers/exex/exex.html) such as the number of blocks landed and builder balance. Note that the accuracy of the on-chain metrics will be dependent on the sync status of the builder node. There are also additional block building metrics such as:
+To enable metrics, set the `--metrics` flag like in [reth](https://reth.rs/run/monitoring) which will expose reth metrics in addition to op-rbuilder metrics. op-rbuilder exposes on-chain metrics via [reth execution extensions](https://reth.rs/exex/overview) such as the number of blocks landed and builder balance. Note that the accuracy of the on-chain metrics will be dependent on the sync status of the builder node. There are also additional block building metrics such as:
 
 -   Block building latency
 -   State root calculation latency
@@ -75,7 +75,7 @@ To enable metrics, set the `--metrics` flag like in [reth](https://reth.rs/run/o
 -   Transaction simulation latency
 -   Number of transactions included in the built block
 
-To see the full list of op-rbuilder metrics, see [`src/metrics.rs`](./src/metrics.rs).
+To see the full list of op-rbuilder metrics, see [`src/metrics.rs`](./crates/op-rbuilder/src/metrics.rs).
 
 ## Integration Testing
 
