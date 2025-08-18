@@ -21,6 +21,7 @@ use crate::{
         flashblocks_block_time: 200,
         flashblocks_leeway_time: 100,
         flashblocks_fixed: false,
+        flashblocks_calculate_state_root: true,
     },
     ..Default::default()
 })]
@@ -89,6 +90,7 @@ async fn smoke_dynamic_base(rbuilder: LocalInstance) -> eyre::Result<()> {
         flashblocks_block_time: 200,
         flashblocks_leeway_time: 100,
         flashblocks_fixed: false,
+        flashblocks_calculate_state_root: true,
     },
     ..Default::default()
 })]
@@ -157,6 +159,7 @@ async fn smoke_dynamic_unichain(rbuilder: LocalInstance) -> eyre::Result<()> {
         flashblocks_block_time: 200,
         flashblocks_leeway_time: 50,
         flashblocks_fixed: true,
+        flashblocks_calculate_state_root: true,
     },
     ..Default::default()
 })]
@@ -225,6 +228,7 @@ async fn smoke_classic_unichain(rbuilder: LocalInstance) -> eyre::Result<()> {
         flashblocks_block_time: 200,
         flashblocks_leeway_time: 50,
         flashblocks_fixed: true,
+        flashblocks_calculate_state_root: true,
     },
     ..Default::default()
 })]
@@ -293,6 +297,7 @@ async fn smoke_classic_base(rbuilder: LocalInstance) -> eyre::Result<()> {
         flashblocks_block_time: 200,
         flashblocks_leeway_time: 100,
         flashblocks_fixed: false,
+        flashblocks_calculate_state_root: true,
     },
     ..Default::default()
 })]
@@ -363,6 +368,7 @@ async fn unichain_dynamic_with_lag(rbuilder: LocalInstance) -> eyre::Result<()> 
         flashblocks_block_time: 200,
         flashblocks_leeway_time: 0,
         flashblocks_fixed: false,
+        flashblocks_calculate_state_root: true,
     },
     ..Default::default()
 })]
@@ -430,6 +436,7 @@ async fn dynamic_with_full_block_lag(rbuilder: LocalInstance) -> eyre::Result<()
         flashblocks_block_time: 200,
         flashblocks_leeway_time: 100,
         flashblocks_fixed: false,
+        flashblocks_calculate_state_root: true,
     },
     ..Default::default()
 })]
@@ -525,6 +532,7 @@ async fn test_flashblock_min_filtering(rbuilder: LocalInstance) -> eyre::Result<
         flashblocks_block_time: 200,
         flashblocks_leeway_time: 100,
         flashblocks_fixed: false,
+        flashblocks_calculate_state_root: true,
     },
     ..Default::default()
 })]
