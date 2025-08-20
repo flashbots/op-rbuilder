@@ -624,7 +624,7 @@ where
 
     /// Sends built payload via payload builder handle broadcast channel to the engine
     pub fn send_payload_to_engine(&self, payload: OpBuiltPayload) {
-        // Send built payload as create one
+        // Send built payload as created one
         match self.payload_builder_handle.get() {
             Some(handle) => {
                 let res = handle.send(Events::BuiltPayload(payload.clone()));
