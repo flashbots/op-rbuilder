@@ -3,16 +3,53 @@ use alloy_rpc_types_eth::erc4337::TransactionConditional;
 use reth_rpc_eth_types::EthApiError;
 use serde::{Deserialize, Serialize};
 
+/// Maximum number of blocks allowed in the block range for bundle execution.
+///
+/// This constant limits how far into the future a bundle can be scheduled to
+/// prevent excessive resource usage and ensure timely execution. When no
+/// maximum block number is specified, this value is added to the current block
+/// number to set the default upper bound.
 pub const MAX_BLOCK_RANGE_BLOCKS: u64 = 10;
 
+/// A bundle represents a collection of transactions that should be executed
+/// together with specific conditional constraints.
+///
+/// Bundles allow for sophisticated transaction ordering and conditional
+/// execution based on block numbers, flashblock numbers, and timestamps. They
+/// are a key primitive in MEV (Maximal Extractable Value) strategies and block
+/// building.
+///
+/// # Validation
+///
+/// The following validations are performed before adding the transaction to the
+/// mempool:
+/// - Block number ranges are valid (min ≤ max)
+/// - Maximum block numbers are not in the past
+/// - Block ranges don't exceed `MAX_BLOCK_RANGE_BLOCKS` (currently 10)
+/// - There's only one transaction in the bundle
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct Bundle {
+    /// List of raw transaction data to be included in the bundle.
+    ///
+    /// Each transaction is represented as raw bytes that will be decoded and
+    /// executed in the specified order when the bundle conditions are met.
     #[serde(rename = "txs")]
     pub transactions: Vec<Bytes>,
 
+    /// Optional list of transaction hashes that are allowed to revert.
+    ///
+    /// By default, if any transaction in a bundle reverts, the entire bundle is
+    /// considered invalid. This field allows specific transactions to revert
+    /// without invalidating the bundle, enabling more sophisticated MEV
+    /// strategies.
     #[serde(rename = "revertingTxHashes")]
     pub reverting_hashes: Option<Vec<B256>>,
 
+    /// Minimum block number at which this bundle can be included.
+    ///
+    /// If specified, the bundle will only be considered for inclusion in blocks
+    /// at or after this block number. This allows for scheduling bundles for
+    /// future execution.
     #[serde(
         default,
         rename = "minBlockNumber",
@@ -21,6 +58,11 @@ pub struct Bundle {
     )]
     pub block_number_min: Option<u64>,
 
+    /// Maximum block number at which this bundle can be included.
+    ///
+    /// If specified, the bundle will be considered invalid for inclusion in
+    /// blocks after this block number. If not specified, defaults to the
+    /// current block number plus `MAX_BLOCK_RANGE_BLOCKS`.
     #[serde(
         default,
         rename = "maxBlockNumber",
@@ -29,6 +71,11 @@ pub struct Bundle {
     )]
     pub block_number_max: Option<u64>,
 
+    /// Minimum flashblock number at which this bundle can be included.
+    ///
+    /// Flashblocks are preconfirmations that are built incrementally. This
+    /// field along with `maxFlashblockNumber` allows bundles to be scheduled
+    /// for more precise execution.
     #[serde(
         default,
         rename = "minFlashblockNumber",
@@ -37,6 +84,10 @@ pub struct Bundle {
     )]
     pub flashblock_number_min: Option<u64>,
 
+    /// Maximum flashblock number at which this bundle can be included.
+    ///
+    /// Similar to `minFlashblockNumber`, this sets an upper bound on which
+    /// flashblocks can include this bundle.
     #[serde(
         default,
         rename = "maxFlashblockNumber",
@@ -45,7 +96,12 @@ pub struct Bundle {
     )]
     pub flashblock_number_max: Option<u64>,
 
-    // Not recommended because this is subject to the builder node clock
+    /// Minimum timestamp (Unix epoch seconds) for bundle inclusion.
+    ///
+    /// **Warning**: Not recommended for production use as it depends on the
+    /// builder node's clock, which may not be perfectly synchronized with
+    /// network time. Block number constraints are preferred for deterministic
+    /// behavior.
     #[serde(
         default,
         rename = "minTimestamp",
@@ -53,7 +109,12 @@ pub struct Bundle {
     )]
     pub min_timestamp: Option<u64>,
 
-    // Not recommended because this is subject to the builder node clock
+    /// Maximum timestamp (Unix epoch seconds) for bundle inclusion.
+    ///
+    /// **Warning**: Not recommended for production use as it depends on the
+    /// builder node's clock, which may not be perfectly synchronized with
+    /// network time. Block number constraints are preferred for deterministic
+    /// behavior.
     #[serde(
         default,
         rename = "maxTimestamp",
@@ -74,6 +135,9 @@ pub enum BundleConditionalError {
     MinGreaterThanMax { min: u64, max: u64 },
     #[error("block_number_max ({max}) is a past block (current: {current})")]
     MaxBlockInPast { max: u64, current: u64 },
+    /// To prevent resource exhaustion and ensure timely execution, bundles
+    /// cannot be scheduled more than `MAX_BLOCK_RANGE_BLOCKS` blocks into the
+    /// future.
     #[error(
         "block_number_max ({max}) is too high (current: {current}, max allowed: {max_allowed})"
     )]
@@ -82,6 +146,9 @@ pub enum BundleConditionalError {
         current: u64,
         max_allowed: u64,
     },
+    /// When no explicit maximum block number is provided, the system uses
+    /// `current_block + MAX_BLOCK_RANGE_BLOCKS` as the default maximum. This
+    /// error occurs when the specified minimum exceeds this default maximum.
     #[error(
         "block_number_min ({min}) is too high with default max range (max allowed: {max_allowed})"
     )]
@@ -158,8 +225,18 @@ impl Bundle {
     }
 }
 
+/// Result returned after successfully submitting a bundle for inclusion.
+///
+/// This struct contains the unique identifier for the submitted bundle, which
+/// can be used to track the bundle's status and inclusion in future blocks.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct BundleResult {
+    /// Transaction hash of the single transaction in the bundle.
+    ///
+    /// This hash can be used to:
+    /// - Track bundle inclusion in blocks
+    /// - Query bundle status
+    /// - Reference the bundle in subsequent operations
     #[serde(rename = "bundleHash")]
     pub bundle_hash: B256,
 }
