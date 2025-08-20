@@ -27,6 +27,7 @@ pub const MAX_BLOCK_RANGE_BLOCKS: u64 = 10;
 /// - Maximum block numbers are not in the past
 /// - Block ranges don't exceed `MAX_BLOCK_RANGE_BLOCKS` (currently 10)
 /// - There's only one transaction in the bundle
+/// - Flashblock number ranges are valid (min ≤ max)
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct Bundle {
     /// List of raw transaction data to be included in the bundle.
@@ -153,6 +154,8 @@ pub enum BundleConditionalError {
         "block_number_min ({min}) is too high with default max range (max allowed: {max_allowed})"
     )]
     MinTooHighForDefaultRange { min: u64, max_allowed: u64 },
+    #[error("flashblock_number_min ({min}) is greater than flashblock_number_max ({max})")]
+    FlashblockMinGreaterThanMax { min: u64, max: u64 },
 }
 
 pub struct BundleConditional {
@@ -207,6 +210,15 @@ impl Bundle {
                         min,
                         max_allowed: default_max,
                     });
+                }
+            }
+        }
+
+        // Validate flashblock number range
+        if let Some(min) = self.flashblock_number_min {
+            if let Some(max) = self.flashblock_number_max {
+                if min > max {
+                    return Err(BundleConditionalError::FlashblockMinGreaterThanMax { min, max });
                 }
             }
         }
@@ -410,5 +422,80 @@ mod tests {
 
         assert_eq!(result.block_number_min, Some(999));
         assert_eq!(result.block_number_max, Some(1010));
+    }
+
+    #[test]
+    fn test_bundle_conditional_flashblock_min_greater_than_max() {
+        let bundle = Bundle {
+            flashblock_number_min: Some(105),
+            flashblock_number_max: Some(100),
+            ..Default::default()
+        };
+
+        let last_block = 1000;
+        let result = bundle.conditional(last_block);
+
+        assert!(matches!(
+            result,
+            Err(BundleConditionalError::FlashblockMinGreaterThanMax { min: 105, max: 100 })
+        ));
+    }
+
+    #[test]
+    fn test_bundle_conditional_with_valid_flashblock_range() {
+        let bundle = Bundle {
+            flashblock_number_min: Some(100),
+            flashblock_number_max: Some(105),
+            ..Default::default()
+        };
+
+        let last_block = 1000;
+        let result = bundle.conditional(last_block).unwrap();
+
+        assert_eq!(result.flashblock_number_min, Some(100));
+        assert_eq!(result.flashblock_number_max, Some(105));
+    }
+
+    #[test]
+    fn test_bundle_conditional_with_only_flashblock_min() {
+        let bundle = Bundle {
+            flashblock_number_min: Some(100),
+            ..Default::default()
+        };
+
+        let last_block = 1000;
+        let result = bundle.conditional(last_block).unwrap();
+
+        assert_eq!(result.flashblock_number_min, Some(100));
+        assert_eq!(result.flashblock_number_max, None);
+    }
+
+    #[test]
+    fn test_bundle_conditional_with_only_flashblock_max() {
+        let bundle = Bundle {
+            flashblock_number_max: Some(105),
+            ..Default::default()
+        };
+
+        let last_block = 1000;
+        let result = bundle.conditional(last_block).unwrap();
+
+        assert_eq!(result.flashblock_number_min, None);
+        assert_eq!(result.flashblock_number_max, Some(105));
+    }
+
+    #[test]
+    fn test_bundle_conditional_flashblock_equal_values() {
+        let bundle = Bundle {
+            flashblock_number_min: Some(100),
+            flashblock_number_max: Some(100),
+            ..Default::default()
+        };
+
+        let last_block = 1000;
+        let result = bundle.conditional(last_block).unwrap();
+
+        assert_eq!(result.flashblock_number_min, Some(100));
+        assert_eq!(result.flashblock_number_max, Some(100));
     }
 }
