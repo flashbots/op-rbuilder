@@ -1,4 +1,4 @@
-name: Checks
+name: "[op-rbuilder] Checks"
 
 on:
   workflow_dispatch:
