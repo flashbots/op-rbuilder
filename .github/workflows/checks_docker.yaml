@@ -29,4 +29,5 @@ jobs:
           cache-to: type=gha,mode=max
           platforms: linux/amd64
           context: .
+          target: rbuilder-runtime
           push: false
