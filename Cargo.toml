@@ -175,6 +175,7 @@ warp = "0.3.7"
 flate2 = "1.0.35"
 prometheus = "0.13.4"
 ctor = "0.2"
+dashmap = "6.1"
 
 lazy_static = "1.4.0"
 tikv-jemallocator = { version = "0.6" }
