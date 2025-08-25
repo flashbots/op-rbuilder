@@ -1,28 +1,28 @@
 use crate::{
-    tests::{framework::driver::ChainDriver, Protocol, ONE_ETH},
+    tests::{ONE_ETH, Protocol, framework::driver::ChainDriver},
     tx_signer::Signer,
 };
 use alloy_eips::Encodable2718;
-use alloy_primitives::{hex, Address, BlockHash, TxHash, TxKind, B256, U256};
+use alloy_primitives::{Address, B256, BlockHash, TxHash, TxKind, U256, hex};
 use alloy_rpc_types_eth::{Block, BlockTransactionHashes};
 use core::future::Future;
 use op_alloy_consensus::{OpTypedTransaction, TxDeposit};
 use op_alloy_rpc_types::Transaction;
 use reth_db::{
-    init_db,
-    mdbx::{DatabaseArguments, MaxReadTransactionDuration, KILOBYTE, MEGABYTE},
-    test_utils::{TempDatabase, ERROR_DB_CREATION},
-    ClientVersion, DatabaseEnv,
+    ClientVersion, DatabaseEnv, init_db,
+    mdbx::{DatabaseArguments, KILOBYTE, MEGABYTE, MaxReadTransactionDuration},
+    test_utils::{ERROR_DB_CREATION, TempDatabase},
 };
 use reth_node_core::{args::DatadirArgs, dirs::DataDirPath, node_config::NodeConfig};
 use reth_optimism_chainspec::OpChainSpec;
 use std::sync::Arc;
 
-use super::{TransactionBuilder, FUNDED_PRIVATE_KEYS};
+use super::{FUNDED_PRIVATE_KEYS, TransactionBuilder};
 
 pub trait TransactionBuilderExt {
     fn random_valid_transfer(self) -> Self;
     fn random_reverting_transaction(self) -> Self;
+    fn random_big_transaction(self) -> Self;
 }
 
 impl TransactionBuilderExt for TransactionBuilder {
@@ -32,6 +32,12 @@ impl TransactionBuilderExt for TransactionBuilder {
 
     fn random_reverting_transaction(self) -> Self {
         self.with_create().with_input(hex!("60006000fd").into()) // PUSH1 0x00 PUSH1 0x00 REVERT
+    }
+
+    fn random_big_transaction(self) -> Self {
+        // PUSH13 0x63ffffffff60005260046000f3 PUSH1 0x00 MSTORE PUSH1 0x02 PUSH1 0x0d PUSH1 0x13 PUSH1 0x00 CREATE2
+        self.with_create()
+            .with_input(hex!("6c63ffffffff60005260046000f36000526002600d60136000f5").into())
     }
 }
 
@@ -43,7 +49,7 @@ pub trait ChainDriverExt {
         amount: u128,
     ) -> impl Future<Output = eyre::Result<BlockHash>>;
     fn fund(&self, address: Address, amount: u128)
-        -> impl Future<Output = eyre::Result<BlockHash>>;
+    -> impl Future<Output = eyre::Result<BlockHash>>;
     fn first_funded_address(&self) -> Address {
         FUNDED_PRIVATE_KEYS[0]
             .parse()

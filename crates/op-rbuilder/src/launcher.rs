@@ -4,10 +4,10 @@ use reth_optimism_rpc::OpEthApiBuilder;
 use crate::{
     args::*,
     builders::{BuilderConfig, BuilderMode, FlashblocksBuilder, PayloadBuilder, StandardBuilder},
-    metrics::{record_flag_gauge_metrics, VERSION},
+    metrics::{VERSION, record_flag_gauge_metrics},
     monitor_tx_pool::monitor_tx_pool,
     primitives::reth::engine_api_builder::OpEngineApiBuilder,
-    revert_protection::{EthApiExtServer, EthApiOverrideServer, RevertProtectionExt},
+    revert_protection::{EthApiExtServer, RevertProtectionExt},
     tx::FBPooledTransaction,
 };
 use core::fmt::Debug;
@@ -18,8 +18,8 @@ use reth_db::mdbx::DatabaseEnv;
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_cli::chainspec::OpChainSpecParser;
 use reth_optimism_node::{
-    node::{OpAddOns, OpAddOnsBuilder, OpEngineValidatorBuilder, OpPoolBuilder},
     OpNode,
+    node::{OpAddOns, OpAddOnsBuilder, OpEngineValidatorBuilder, OpPoolBuilder},
 };
 use reth_transaction_pool::TransactionPool;
 use std::{marker::PhantomData, sync::Arc};
@@ -149,14 +149,15 @@ where
 
                     let pool = ctx.pool().clone();
                     let provider = ctx.provider().clone();
-                    let revert_protection_ext =
-                        RevertProtectionExt::new(pool, provider, ctx.registry.eth_api().clone());
+                    let revert_protection_ext = RevertProtectionExt::new(
+                        pool,
+                        provider,
+                        ctx.registry.eth_api().clone(),
+                        reverted_cache,
+                    );
 
                     ctx.modules
-                        .merge_configured(revert_protection_ext.bundle_api().into_rpc())?;
-                    ctx.modules.replace_configured(
-                        revert_protection_ext.eth_api(reverted_cache).into_rpc(),
-                    )?;
+                        .add_or_replace_configured(revert_protection_ext.into_rpc())?;
                 }
 
                 Ok(())

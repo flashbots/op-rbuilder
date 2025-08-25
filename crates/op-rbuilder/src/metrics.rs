@@ -1,7 +1,7 @@
 use metrics::IntoF64;
 use reth_metrics::{
-    metrics::{gauge, Counter, Gauge, Histogram},
     Metrics,
+    metrics::{Counter, Gauge, Histogram, gauge},
 };
 
 use crate::args::OpRbuilderArgs;
@@ -23,6 +23,22 @@ pub const VERGEN_CARGO_FEATURES: &str = env!("VERGEN_CARGO_FEATURES");
 
 /// The build profile name.
 pub const BUILD_PROFILE_NAME: &str = env!("OP_RBUILDER_BUILD_PROFILE");
+
+/// The short version information for op-rbuilder.
+pub const SHORT_VERSION: &str = env!("OP_RBUILDER_SHORT_VERSION");
+
+/// The long version information for op-rbuilder.
+pub const LONG_VERSION: &str = concat!(
+    env!("OP_RBUILDER_LONG_VERSION_0"),
+    "\n",
+    env!("OP_RBUILDER_LONG_VERSION_1"),
+    "\n",
+    env!("OP_RBUILDER_LONG_VERSION_2"),
+    "\n",
+    env!("OP_RBUILDER_LONG_VERSION_3"),
+    "\n",
+    env!("OP_RBUILDER_LONG_VERSION_4"),
+);
 
 pub const VERSION: VersionInfo = VersionInfo {
     version: CARGO_PKG_VERSION,
@@ -49,7 +65,7 @@ pub struct OpRBuilderMetrics {
     pub total_block_built_gauge: Gauge,
     /// Histogram of the time taken to build a Flashblock
     pub flashblock_build_duration: Histogram,
-    /// Flashblock byte size histogram
+    /// Flashblock UTF8 payload byte size histogram
     pub flashblock_byte_size_histogram: Histogram,
     /// Histogram of transactions in a Flashblock
     pub flashblock_num_tx_histogram: Histogram,

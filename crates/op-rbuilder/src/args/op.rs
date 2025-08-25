@@ -5,7 +5,7 @@
 //! clap [Args](clap::Args) for optimism rollup configuration
 
 use crate::{flashtestations::args::FlashtestationsArgs, tx_signer::Signer};
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use clap::Parser;
 use reth_optimism_cli::commands::Commands;
 use reth_optimism_node::args::RollupArgs;
@@ -29,6 +29,10 @@ pub struct OpRbuilderArgs {
         env = "CHAIN_BLOCK_TIME"
     )]
     pub chain_block_time: u64,
+
+    /// max gas a transaction can use
+    #[arg(long = "builder.max_gas_per_txn")]
+    pub max_gas_per_txn: Option<u64>,
 
     /// Signals whether to log pool transaction events
     #[arg(long = "builder.log-pool-transactions", default_value = "false")]

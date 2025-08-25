@@ -12,14 +12,13 @@ use std::{io, net::TcpListener, sync::Arc};
 use tokio::{
     net::TcpStream,
     sync::{
-        broadcast::{self, error::RecvError, Receiver},
+        broadcast::{self, Receiver, error::RecvError},
         watch,
     },
 };
 use tokio_tungstenite::{
-    accept_async,
+    WebSocketStream, accept_async,
     tungstenite::{Message, Utf8Bytes},
-    WebSocketStream,
 };
 use tracing::{debug, warn};
 
@@ -62,7 +61,7 @@ impl WebSocketPublisher {
         })
     }
 
-    pub fn publish(&self, payload: &FlashblocksPayloadV1) -> io::Result<()> {
+    pub fn publish(&self, payload: &FlashblocksPayloadV1) -> io::Result<usize> {
         // Serialize the payload to a UTF-8 string
         // serialize only once, then just copy around only a pointer
         // to the serialized data for each subscription.
@@ -76,12 +75,12 @@ impl WebSocketPublisher {
 
         let serialized = serde_json::to_string(payload)?;
         let utf8_bytes = Utf8Bytes::from(serialized);
-
+        let size = utf8_bytes.len();
         // Send the serialized payload to all subscribers
         self.pipe
             .send(utf8_bytes)
             .map_err(|e| io::Error::new(io::ErrorKind::ConnectionAborted, e))?;
-        Ok(())
+        Ok(size)
     }
 }
 

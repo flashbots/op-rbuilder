@@ -2,11 +2,10 @@ use crate::{
     args::OpRbuilderArgs,
     builders::{BuilderConfig, FlashblocksBuilder, PayloadBuilder, StandardBuilder},
     primitives::reth::engine_api_builder::OpEngineApiBuilder,
-    revert_protection::{EthApiExtServer, EthApiOverrideServer, RevertProtectionExt},
+    revert_protection::{EthApiExtServer, RevertProtectionExt},
     tests::{
-        create_test_db,
-        framework::{driver::ChainDriver, BUILDER_PRIVATE_KEY},
-        EngineApi, Ipc, TransactionPoolObserver,
+        EngineApi, Ipc, TransactionPoolObserver, create_test_db,
+        framework::{BUILDER_PRIVATE_KEY, driver::ChainDriver},
     },
     tx::FBPooledTransaction,
     tx_signer::Signer,
@@ -34,8 +33,8 @@ use reth_node_builder::{NodeBuilder, NodeConfig};
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_cli::commands::Commands;
 use reth_optimism_node::{
-    node::{OpAddOns, OpAddOnsBuilder, OpEngineValidatorBuilder, OpPoolBuilder},
     OpNode,
+    node::{OpAddOns, OpAddOnsBuilder, OpEngineValidatorBuilder, OpPoolBuilder},
 };
 use reth_optimism_rpc::OpEthApiBuilder;
 use reth_transaction_pool::{AllTransactionsEvents, TransactionPool};
@@ -126,15 +125,15 @@ impl LocalInstance {
 
                     let pool = ctx.pool().clone();
                     let provider = ctx.provider().clone();
-                    let revert_protection_ext =
-                        RevertProtectionExt::new(pool, provider, ctx.registry.eth_api().clone());
+                    let revert_protection_ext = RevertProtectionExt::new(
+                        pool,
+                        provider,
+                        ctx.registry.eth_api().clone(),
+                        reverted_cache,
+                    );
 
                     ctx.modules
-                        .merge_configured(revert_protection_ext.bundle_api().into_rpc())?;
-
-                    ctx.modules.replace_configured(
-                        revert_protection_ext.eth_api(reverted_cache).into_rpc(),
-                    )?;
+                        .add_or_replace_configured(revert_protection_ext.into_rpc())?;
                 }
 
                 Ok(())
