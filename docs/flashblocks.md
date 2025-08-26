@@ -1,9 +1,12 @@
 # Flashblock flow details
-FCU w/ attr - engine_forkchoiceUpdated with payloadAttributes. This starts block building.
-FCU w/o attr - engine_forkchoiceUpdated without payloadAttributes. This progresses the unsafe/safe/finalized head.
-newPayload - engine_newPayload. This provides the execution client with new canonical block. 
-getPayload - engine_getPayload. Collects block building results. In flashblocks, this is only used to terminate block building
-as flashblocks are assembled on rollup-boost side. 
+
+**FCU w/ attr - engine_forkchoiceUpdated with payloadAttributes**. This starts block building.
+
+**FCU w/o attr - engine_forkchoiceUpdated without payloadAttributes**. This progresses the unsafe/safe/finalized head.
+
+**newPayload - engine_newPayload**. This provides the execution client with new canonical block.
+ 
+**getPayload - engine_getPayload**. Collects block building results. In flashblocks, this is only used to terminate block building as flashblocks are assembled on rollup-boost side. 
 
 ## build_payload Function Overview
 This is the function that produces the block and contains all logic responsible for building the block and producing flashblocks
