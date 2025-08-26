@@ -56,6 +56,8 @@ jobs:
     steps:
       - name: checkout sources
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: docker qemu
         uses: docker/setup-qemu-action@v3
