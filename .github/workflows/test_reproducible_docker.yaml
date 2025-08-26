@@ -1,0 +1,105 @@
+name: Test Reproducible Docker Build
+
+on:
+  pull_request:
+    paths:
+      - 'Dockerfile'
+      - '.github/workflows/test_reproducible_docker.yaml'
+  workflow_dispatch:
+
+jobs:
+  test-reproducible-build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Important: full history for git log
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build reproducible Docker image (first build)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          target: rbuilder-reproducible-runtime
+          platforms: linux/amd64
+          push: false
+          load: true
+          tags: test-reproducible:build1
+          build-args: |
+            RBUILDER_BIN=op-rbuilder
+            FEATURES=
+
+      - name: Extract binary from first build
+        run: |
+          docker create --name temp1 test-reproducible:build1
+          docker cp temp1:/app/rbuilder build1
+          docker rm temp1
+          sha256sum build1 > build1.sha256
+          echo "Build 1 SHA256:"
+          cat build1.sha256
+
+      - name: Clean Docker build cache
+        run: |
+          docker builder prune -af
+          docker system prune -af
+
+      - name: Build reproducible Docker image (second build)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          target: rbuilder-reproducible-runtime
+          platforms: linux/amd64
+          push: false
+          load: true
+          tags: test-reproducible:build2
+          build-args: |
+            RBUILDER_BIN=op-rbuilder
+            FEATURES=
+
+      - name: Extract binary from second build
+        run: |
+          docker create --name temp2 test-reproducible:build2
+          docker cp temp2:/app/rbuilder build2
+          docker rm temp2
+          sha256sum build2 > build2.sha256
+          echo "Build 2 SHA256:"
+          cat build2.sha256
+
+      - name: Compare builds
+        run: |
+          echo "=== Comparing SHA256 hashes ==="
+          if diff build1.sha256 build2.sha256; then
+            echo "✅ SUCCESS: Builds are reproducible!"
+          else
+            echo "❌ FAILURE: Builds are NOT reproducible"
+            echo "Build 1:" && cat build1.sha256
+            echo "Build 2:" && cat build2.sha256
+            exit 1
+          fi
+
+      - name: Test git log command in build stage
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          target: rbuilder-reproducible  # Build stage, not runtime
+          platforms: linux/amd64
+          push: false
+          load: true
+          tags: test-reproducible:buildstage
+          build-args: |
+            RBUILDER_BIN=op-rbuilder
+            FEATURES=optimism
+
+      - name: Verify git log works in container
+        run: |
+          echo "=== Testing git log command in build container ==="
+          docker run --rm test-reproducible:buildstage sh -c "cd /app && git log -1 --pretty=%ct"
+          if [ $? -eq 0 ]; then
+            echo "✅ git log command works in container"
+          else
+            echo "❌ git log command failed in container"
+            exit 1
+          fi
