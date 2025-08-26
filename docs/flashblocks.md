@@ -132,10 +132,10 @@ This is done to rely on the canonical implementation for such blocks as they are
 
 ```mermaid
 sequenceDiagram
-    participant ON as op-node
-    participant RB as rollup-boost
-    participant OG as op-geth
     participant OR as op-rbuilder
+    participant OG as op-geth
+    participant RB as rollup-boost
+    participant ON as op-node
     participant WP as websocket-proxy
 
     rect rgba(230, 240, 250, 0.2)
@@ -189,10 +189,10 @@ sequenceDiagram
 
 ```mermaid
 sequenceDiagram
-    participant ON as op-node
-    participant RB as rollup-boost
-    participant OG as op-geth
     participant OR as op-rbuilder
+    participant OG as op-geth
+    participant RB as rollup-boost
+    participant ON as op-node
 
     rect rgba(255, 245, 230, 0.2)
         note over ON, OR: Block building
