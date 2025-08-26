@@ -58,7 +58,7 @@ build-reproducible: ## Build the reth binary into `target` directory with reprod
 	CARGO_INCREMENTAL=${CARGO_INCREMENTAL_VAL} \
 	LC_ALL=${LOCALE_VAL} \
 	TZ=${TZ_VAL} \
-	cargo build -p op-rbuilder --bin op-rbuilder --features "$(FEATURES)" --profile "release" --locked --features "$(FEATURES)"
+	cargo build -p op-rbuilder --bin op-rbuilder --features "$(FEATURES)" --profile "release" --locked --features "$(FEATURES)" --target x86_64-unknown-linux-gnu
 
 .PHONY: tdx-quote-provider
 tdx-quote-provider: ## Build tdx-quote-provider (debug version)
