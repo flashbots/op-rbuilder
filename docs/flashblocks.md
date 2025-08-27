@@ -8,6 +8,10 @@
  
 **getPayload - engine_getPayload**. Collects block building results. In flashblocks, this is only used to terminate block building as flashblocks are assembled on rollup-boost side. 
 
+Flashblocks uses similar to canonical mechanism of block building, with the exception that it current implementation does not rely on getPayload.
+
+It starts block building process on FCU w/ attr and try to time flashblocks, so all of them would be delivered before op-node issue getPayload to rollup-boost.
+
 ## build_payload Function Overview
 This is the function that produces the block and contains all logic responsible for building the block and producing flashblocks
 ```pseudocode
