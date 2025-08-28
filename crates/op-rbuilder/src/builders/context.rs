@@ -40,6 +40,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, trace, warn};
 
 use crate::{
+    gas_limiter::AddressGasLimiter,
     metrics::OpRBuilderMetrics,
     primitives::reth::{ExecutionInfo, TxnExecutionResult},
     traits::PayloadTxsBounds,
@@ -72,6 +73,8 @@ pub struct OpPayloadBuilderCtx<ExtraCtx: Debug + Default = ()> {
     pub extra_ctx: ExtraCtx,
     /// Max gas that can be used by a transaction.
     pub max_gas_per_txn: Option<u64>,
+    /// Rate limiting based on gas. This is an optional feature.
+    pub address_gas_limiter: Option<AddressGasLimiter>,
 }
 
 impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
@@ -499,6 +502,17 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
             let gas_used = result.gas_used();
             if let Some(max_gas_per_txn) = self.max_gas_per_txn {
                 if gas_used > max_gas_per_txn {
+                    log_txn(TxnExecutionResult::MaxGasUsageExceeded);
+                    best_txs.mark_invalid(tx.signer(), tx.nonce());
+                    continue;
+                }
+            }
+
+            if let Some(address_gas_limiter) = &self.address_gas_limiter {
+                if address_gas_limiter
+                    .consume_gas(tx.signer(), gas_used)
+                    .is_err()
+                {
                     log_txn(TxnExecutionResult::MaxGasUsageExceeded);
                     best_txs.mark_invalid(tx.signer(), tx.nonce());
                     continue;
