@@ -74,7 +74,7 @@ pub struct OpPayloadBuilderCtx<ExtraCtx: Debug + Default = ()> {
     /// Max gas that can be used by a transaction.
     pub max_gas_per_txn: Option<u64>,
     /// Rate limiting based on gas. This is an optional feature.
-    pub address_gas_limiter: Option<AddressGasLimiter>,
+    pub address_gas_limiter: AddressGasLimiter,
 }
 
 impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
@@ -508,15 +508,14 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
                 }
             }
 
-            if let Some(address_gas_limiter) = &self.address_gas_limiter {
-                if address_gas_limiter
-                    .consume_gas(tx.signer(), gas_used)
-                    .is_err()
-                {
-                    log_txn(TxnExecutionResult::MaxGasUsageExceeded);
-                    best_txs.mark_invalid(tx.signer(), tx.nonce());
-                    continue;
-                }
+            if self
+                .address_gas_limiter
+                .consume_gas(tx.signer(), gas_used)
+                .is_err()
+            {
+                log_txn(TxnExecutionResult::MaxGasUsageExceeded);
+                best_txs.mark_invalid(tx.signer(), tx.nonce());
+                continue;
             }
 
             info.cumulative_gas_used += gas_used;

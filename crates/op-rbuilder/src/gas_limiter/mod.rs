@@ -11,6 +11,11 @@ mod metrics;
 
 #[derive(Debug, Clone)]
 pub struct AddressGasLimiter {
+    inner: Option<AddressGasLimiterInner>,
+}
+
+#[derive(Debug, Clone)]
+struct AddressGasLimiterInner {
     config: GasLimiterArgs,
     // We don't need an Arc<Mutex<_>> here, we can get away with RefCell, but
     // the reth PayloadBuilder trait needs this to be Send + Sync
@@ -25,7 +30,32 @@ struct TokenBucket {
 }
 
 impl AddressGasLimiter {
-    pub fn try_new(config: GasLimiterArgs) -> Option<Self> {
+    pub fn new(config: GasLimiterArgs) -> Self {
+        Self {
+            inner: AddressGasLimiterInner::try_new(config),
+        }
+    }
+
+    /// Check if there's enough gas for this address and consume it. Returns
+    /// Ok(()) if there's enough otherwise returns an error.
+    pub fn consume_gas(&self, address: Address, gas_requested: u64) -> Result<(), GasLimitError> {
+        if let Some(inner) = &self.inner {
+            inner.consume_gas(address, gas_requested)
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Should be called upon each new block. Refills buckets/Garbage collection
+    pub fn refresh(&self) {
+        if let Some(inner) = self.inner.as_ref() {
+            inner.refresh()
+        }
+    }
+}
+
+impl AddressGasLimiterInner {
+    fn try_new(config: GasLimiterArgs) -> Option<Self> {
         if !config.gas_limiter_enabled {
             return None;
         }
@@ -65,9 +95,7 @@ impl AddressGasLimiter {
         Ok(created_new_bucket)
     }
 
-    /// Check if there's enough gas for this address and consume it. Returns
-    /// Ok(()) if there's enough otherwise returns an error.
-    pub fn consume_gas(&self, address: Address, gas_requested: u64) -> Result<(), GasLimitError> {
+    fn consume_gas(&self, address: Address, gas_requested: u64) -> Result<(), GasLimitError> {
         let start = Instant::now();
         let result = self.consume_gas_inner(address, gas_requested);
 
@@ -76,7 +104,6 @@ impl AddressGasLimiter {
         result.map(|_| ())
     }
 
-    /// Should be called upon each new block. Refills buckets/Garbage collection
     fn refresh_inner(&self) -> usize {
         let active_addresses = self.address_buckets.len();
 
@@ -89,7 +116,7 @@ impl AddressGasLimiter {
         active_addresses - self.address_buckets.len()
     }
 
-    pub fn refresh(&self) {
+    fn refresh(&self) {
         let start = Instant::now();
         let removed_addresses = self.refresh_inner();
 

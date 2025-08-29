@@ -120,7 +120,7 @@ pub struct OpPayloadBuilder<Pool, Client, BT> {
     pub payload_builder_handle:
         Arc<OnceLock<tokio::sync::broadcast::Sender<Events<OpEngineTypes>>>>,
     /// Rate limiting based on gas. This is an optional feature.
-    pub address_gas_limiter: Option<AddressGasLimiter>,
+    pub address_gas_limiter: AddressGasLimiter,
 }
 
 impl<Pool, Client, BT> OpPayloadBuilder<Pool, Client, BT> {
@@ -137,7 +137,7 @@ impl<Pool, Client, BT> OpPayloadBuilder<Pool, Client, BT> {
     ) -> eyre::Result<Self> {
         let metrics = Arc::new(OpRBuilderMetrics::default());
         let ws_pub = WebSocketPublisher::new(config.specific.ws_addr, Arc::clone(&metrics))?.into();
-        let address_gas_limiter = AddressGasLimiter::try_new(config.gas_limiter_config.clone());
+        let address_gas_limiter = AddressGasLimiter::new(config.gas_limiter_config.clone());
         Ok(Self {
             evm_config,
             pool,
@@ -271,9 +271,7 @@ where
         let state_provider = self.client.state_by_block_hash(ctx.parent().hash())?;
         let db = StateProviderDatabase::new(&state_provider);
 
-        if let Some(address_gas_limiter) = &self.address_gas_limiter {
-            address_gas_limiter.refresh();
-        }
+        self.address_gas_limiter.refresh();
 
         // 1. execute the pre steps and seal an early block with that
         let sequencer_tx_start_time = Instant::now();

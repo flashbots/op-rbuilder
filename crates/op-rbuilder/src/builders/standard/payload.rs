@@ -101,7 +101,7 @@ pub struct StandardOpPayloadBuilder<Pool, Client, Txs = ()> {
     /// The metrics for the builder
     pub metrics: Arc<OpRBuilderMetrics>,
     /// Rate limiting based on gas. This is an optional feature.
-    pub address_gas_limiter: Option<AddressGasLimiter>,
+    pub address_gas_limiter: AddressGasLimiter,
 }
 
 impl<Pool, Client> StandardOpPayloadBuilder<Pool, Client> {
@@ -112,7 +112,7 @@ impl<Pool, Client> StandardOpPayloadBuilder<Pool, Client> {
         client: Client,
         config: BuilderConfig<()>,
     ) -> Self {
-        let address_gas_limiter = AddressGasLimiter::try_new(config.gas_limiter_config.clone());
+        let address_gas_limiter = AddressGasLimiter::new(config.gas_limiter_config.clone());
         Self {
             pool,
             client,
@@ -286,9 +286,7 @@ where
 
         let builder = OpBuilder::new(best);
 
-        if let Some(address_gas_limiter) = &self.address_gas_limiter {
-            address_gas_limiter.refresh();
-        }
+        self.address_gas_limiter.refresh();
 
         let state_provider = self.client.state_by_block_hash(ctx.parent().hash())?;
         let db = StateProviderDatabase::new(state_provider);
