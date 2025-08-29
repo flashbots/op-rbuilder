@@ -86,6 +86,8 @@ RUN SOURCE_DATE_EPOCH=$(git log -1 --pretty=%ct) \
     CARGO_INCREMENTAL=0 \
     LC_ALL=C \
     TZ=UTC \
+    CFLAGS="-D__TIME__=\"\" -D__DATE__=\"\"" \
+    CXXFLAGS="-D__TIME__=\"\" -D__DATE__=\"\"" \
     cargo build --release --locked --features="$FEATURES" --package=${RBUILDER_BIN} --target x86_64-unknown-linux-gnu
 
 # Runtime container for rbuilder

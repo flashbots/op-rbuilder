@@ -105,6 +105,8 @@ jobs:
           CARGO_INCREMENTAL=0 \
           LC_ALL=C \
           TZ=UTC \
+          CFLAGS="-D__TIME__=\"\" -D__DATE__=\"\"" \
+          CXXFLAGS="-D__TIME__=\"\" -D__DATE__=\"\"" \
           cargo build --release --features=${{ matrix.features }} --locked --target ${{ matrix.configs.target }} --package op-rbuilder
       - name: Upload op-rbuilder artifact
         uses: actions/upload-artifact@v4
