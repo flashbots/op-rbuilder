@@ -1,4 +1,4 @@
-name: TDX Quote Provider CI
+name: "[tdx-quote-provider] Checks"
 
 on:
   push:

@@ -1,4 +1,4 @@
-name: Release TDX Quote Provider
+name: "[tdx-quote-provider] Release"
 
 on:
   push:

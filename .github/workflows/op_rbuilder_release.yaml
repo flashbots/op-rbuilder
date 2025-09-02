@@ -1,4 +1,4 @@
-name: Release Optimism
+name: "[op-rbuilder] Release"
 
 on:
   push:
@@ -42,7 +42,7 @@ jobs:
         id: extract_version
         run: |
           if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
-            VERSION="${GITHUB_REF#refs/tags/}"
+            VERSION="${GITHUB_REF#refs/tags/op-rbuilder/}"
           else
             VERSION="$(echo ${GITHUB_SHA} | cut -c1-7)"
           fi
@@ -114,7 +114,7 @@ jobs:
     needs: [extract-version, build-binary]
     runs-on: warp-ubuntu-latest-x64-16x
     env:
-      VERSION: op-${{ needs.extract-version.outputs.VERSION }}
+      VERSION: op-rbuilder/${{ needs.extract-version.outputs.VERSION }}
     permissions:
       contents: write
     steps:
