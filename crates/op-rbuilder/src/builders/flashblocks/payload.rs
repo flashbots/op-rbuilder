@@ -24,8 +24,9 @@ use reth_node_api::{Block, NodePrimitives, PayloadBuilderError};
 use reth_optimism_consensus::{calculate_receipt_root_no_memo_optimism, isthmus};
 use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
 use reth_optimism_forks::OpHardforks;
-use reth_optimism_node::{OpBuiltPayload, OpPayloadBuilderAttributes};
+use reth_optimism_node::{OpBuiltPayload, OpEngineTypes, OpPayloadBuilderAttributes};
 use reth_optimism_primitives::{OpPrimitives, OpReceipt, OpTransactionSigned};
+use reth_payload_builder_primitives::Events;
 use reth_payload_util::BestPayloadTransactions;
 use reth_primitives_traits::RecoveredBlock;
 use reth_provider::{
@@ -45,7 +46,7 @@ use std::{
     ops::{Div, Rem},
     sync::{
         atomic::{AtomicU64, Ordering},
-        Arc,
+        Arc, OnceLock,
     },
     time::{Instant, SystemTime, UNIX_EPOCH},
 };
@@ -120,6 +121,9 @@ pub struct OpPayloadBuilder<Pool, Client, BT> {
     /// The end of builder transaction type
     #[allow(dead_code)]
     pub builder_tx: BT,
+    /// Builder events handle to send BuiltPayload events
+    pub payload_builder_handle:
+        Arc<OnceLock<tokio::sync::broadcast::Sender<Events<OpEngineTypes>>>>,
 }
 
 impl<Pool, Client, BT> OpPayloadBuilder<Pool, Client, BT> {
@@ -130,6 +134,9 @@ impl<Pool, Client, BT> OpPayloadBuilder<Pool, Client, BT> {
         client: Client,
         config: BuilderConfig<FlashblocksConfig>,
         builder_tx: BT,
+        payload_builder_handle: Arc<
+            OnceLock<tokio::sync::broadcast::Sender<Events<OpEngineTypes>>>,
+        >,
     ) -> eyre::Result<Self> {
         let metrics = Arc::new(OpRBuilderMetrics::default());
         let ws_pub = WebSocketPublisher::new(config.specific.ws_addr, Arc::clone(&metrics))?.into();
@@ -141,6 +148,7 @@ impl<Pool, Client, BT> OpPayloadBuilder<Pool, Client, BT> {
             config,
             metrics,
             builder_tx,
+            payload_builder_handle,
         })
     }
 }
@@ -302,6 +310,7 @@ where
         let (payload, fb_payload) = build_block(&mut state, &ctx, &mut info, calculate_state_root)?;
 
         best_payload.set(payload.clone());
+        self.send_payload_to_engine(payload);
         if !is_doing_historical_sync {
             let flashblock_byte_size = self
                 .ws_pub
@@ -556,6 +565,7 @@ where
                                 .record(info.executed_transactions.len() as f64);
 
                             best_payload.set(new_payload.clone());
+                            self.send_payload_to_engine(new_payload);
                             // Update bundle_state for next iteration
                             total_gas_per_batch += gas_per_batch;
                             if let Some(da_limit) = da_per_batch {
@@ -623,6 +633,25 @@ where
         );
 
         span.record("flashblock_count", ctx.flashblock_index());
+    }
+
+    /// Sends built payload via payload builder handle broadcast channel to the engine
+    pub fn send_payload_to_engine(&self, payload: OpBuiltPayload) {
+        // Send built payload as created one
+        match self.payload_builder_handle.get() {
+            Some(handle) => {
+                let res = handle.send(Events::BuiltPayload(payload.clone()));
+                if let Err(e) = res {
+                    error!(
+                        message = "Failed to send payload via payload builder handle",
+                        error = ?e,
+                    );
+                }
+            }
+            None => {
+                error!(message = "Payload builder handle is not setup, skipping sending payload")
+            }
+        }
     }
 
     /// Spawn task that will send new flashblock level cancel token in steady intervals (first interval
