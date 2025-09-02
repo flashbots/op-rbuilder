@@ -286,7 +286,7 @@ where
 
         let builder = OpBuilder::new(best);
 
-        self.address_gas_limiter.refresh();
+        self.address_gas_limiter.refresh(ctx.block_number());
 
         let state_provider = self.client.state_by_block_hash(ctx.parent().hash())?;
         let db = StateProviderDatabase::new(state_provider);

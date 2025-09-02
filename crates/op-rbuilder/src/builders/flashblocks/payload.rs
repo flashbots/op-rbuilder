@@ -271,7 +271,7 @@ where
         let state_provider = self.client.state_by_block_hash(ctx.parent().hash())?;
         let db = StateProviderDatabase::new(&state_provider);
 
-        self.address_gas_limiter.refresh();
+        self.address_gas_limiter.refresh(ctx.block_number());
 
         // 1. execute the pre steps and seal an early block with that
         let sequencer_tx_start_time = Instant::now();

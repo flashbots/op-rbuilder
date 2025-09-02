@@ -21,4 +21,8 @@ pub struct GasLimiterArgs {
         default_value = "1000000"
     )]
     pub refill_rate_per_block: u64,
+
+    /// How many blocks to wait before cleaning up stale buckets for addresses.
+    #[arg(long = "gas-limiter.cleanup-interval", env, default_value = "100")]
+    pub cleanup_interval: u64,
 }

@@ -1,4 +1,4 @@
-use std::{sync::Arc, time::Instant};
+use std::{cmp::min, sync::Arc, time::Instant};
 
 use alloy_primitives::Address;
 use dashmap::DashMap;
@@ -47,9 +47,9 @@ impl AddressGasLimiter {
     }
 
     /// Should be called upon each new block. Refills buckets/Garbage collection
-    pub fn refresh(&self) {
+    pub fn refresh(&self, block_number: u64) {
         if let Some(inner) = self.inner.as_ref() {
-            inner.refresh()
+            inner.refresh(block_number)
         }
     }
 }
@@ -104,21 +104,28 @@ impl AddressGasLimiterInner {
         result.map(|_| ())
     }
 
-    fn refresh_inner(&self) -> usize {
+    fn refresh_inner(&self, block_number: u64) -> usize {
         let active_addresses = self.address_buckets.len();
 
         self.address_buckets.iter_mut().for_each(|mut bucket| {
-            bucket.available += self.config.refill_rate_per_block;
+            bucket.available = min(
+                bucket.capacity,
+                bucket.available + self.config.refill_rate_per_block,
+            )
         });
-        self.address_buckets
-            .retain(|_, bucket| bucket.available <= bucket.capacity);
+
+        // Only clean up stale buckets every `cleanup_interval` blocks
+        if block_number % self.config.cleanup_interval == 0 {
+            self.address_buckets
+                .retain(|_, bucket| bucket.available <= bucket.capacity);
+        }
 
         active_addresses - self.address_buckets.len()
     }
 
-    fn refresh(&self) {
+    fn refresh(&self, block_number: u64) {
         let start = Instant::now();
-        let removed_addresses = self.refresh_inner();
+        let removed_addresses = self.refresh_inner(block_number);
 
         self.metrics
             .record_refresh(removed_addresses, start.elapsed());
