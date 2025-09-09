@@ -229,8 +229,8 @@ impl TransactionBuilder {
                 },
                 block_number_min: bundle_opts.block_number_min,
                 block_number_max: bundle_opts.block_number_max,
-                flashblock_number_min: bundle_opts.block_number_min,
-                flashblock_number_max: bundle_opts.block_number_max,
+                flashblock_number_min: bundle_opts.flashblock_number_min,
+                flashblock_number_max: bundle_opts.flashblock_number_max,
                 min_timestamp: bundle_opts.min_timestamp,
                 max_timestamp: bundle_opts.max_timestamp,
             };
