@@ -598,3 +598,47 @@ async fn test_flashblock_max_filtering(rbuilder: LocalInstance) -> eyre::Result<
 
     Ok(())
 }
+
+#[rb_test(flashblocks, args = OpRbuilderArgs {
+    chain_block_time: 1000,
+    flashblocks: FlashblocksArgs {
+        enabled: true,
+        flashblocks_port: 1239,
+        flashblocks_addr: "127.0.0.1".into(),
+        flashblocks_block_time: 200,
+        flashblocks_leeway_time: 100,
+        flashblocks_fixed: false,
+        flashblocks_calculate_state_root: false,
+    },
+    ..Default::default()
+})]
+async fn test_flashblocks_no_state_root_calculation(rbuilder: LocalInstance) -> eyre::Result<()> {
+    use alloy_primitives::B256;
+
+    let driver = rbuilder.driver().await?;
+
+    // Send a transaction to ensure block has some activity
+    let _tx = driver
+        .create_transaction()
+        .random_valid_transfer()
+        .send()
+        .await?;
+
+    // Build a block with current timestamp (not historical) and calculate_state_root: false
+    let block = driver.build_new_block_with_current_timestamp(None).await?;
+
+    // Verify that flashblocks are still produced (block should have transactions)
+    assert!(
+        block.transactions.len() > 2,
+        "Block should contain transactions"
+    ); // deposit + builder tx + user tx
+
+    // Verify that state root is not calculated (should be zero)
+    assert_eq!(
+        block.header.state_root,
+        B256::ZERO,
+        "State root should be zero when calculate_state_root is false"
+    );
+
+    Ok(())
+}
