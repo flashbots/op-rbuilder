@@ -466,10 +466,7 @@ async fn test_flashblock_min_filtering(rbuilder: LocalInstance) -> eyre::Result<
     let tx1 = driver
         .create_transaction()
         .random_valid_transfer()
-        .with_bundle(BundleOpts {
-            flashblock_number_min: Some(0),
-            ..Default::default()
-        })
+        .with_bundle(BundleOpts::default().with_flashblock_number_min(0))
         .with_max_priority_fee_per_gas(0)
         .send()
         .await?;
@@ -477,10 +474,7 @@ async fn test_flashblock_min_filtering(rbuilder: LocalInstance) -> eyre::Result<
     let tx2 = driver
         .create_transaction()
         .random_valid_transfer()
-        .with_bundle(BundleOpts {
-            flashblock_number_min: Some(3),
-            ..Default::default()
-        })
+        .with_bundle(BundleOpts::default().with_flashblock_number_min(3))
         .with_max_priority_fee_per_gas(10)
         .send()
         .await?;
@@ -575,10 +569,7 @@ async fn test_flashblock_max_filtering(rbuilder: LocalInstance) -> eyre::Result<
     let tx1 = driver
         .create_transaction()
         .random_valid_transfer()
-        .with_bundle(BundleOpts {
-            flashblock_number_max: Some(1),
-            ..Default::default()
-        })
+        .with_bundle(BundleOpts::default().with_flashblock_number_max(1))
         .send()
         .await?;
 
