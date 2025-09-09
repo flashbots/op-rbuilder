@@ -1,5 +1,5 @@
 [workspace.package]
-version = "0.2.0"
+version = "0.2.1"
 edition = "2024"
 rust-version = "1.86"
 license = "MIT OR Apache-2.0"
@@ -175,6 +175,7 @@ warp = "0.3.7"
 flate2 = "1.0.35"
 prometheus = "0.13.4"
 ctor = "0.2"
+dashmap = "6.1"
 
 lazy_static = "1.4.0"
 tikv-jemallocator = { version = "0.6" }
