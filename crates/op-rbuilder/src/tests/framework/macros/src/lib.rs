@@ -231,6 +231,16 @@ pub fn rb_test(args: TokenStream, input: TokenStream) -> TokenStream {
         generated_functions.push(quote! {
             #test_attribute
             async fn #test_name() -> eyre::Result<()> {
+                let subscriber = tracing_subscriber::fmt()
+                    .with_env_filter(std::env::var("RUST_LOG")
+                        .unwrap_or_else(|_| "info".to_string()))
+                    .with_file(true)
+                    .with_line_number(true)
+                    .with_test_writer()
+                    .finish();
+                let _guard = tracing::subscriber::set_global_default(subscriber);
+                tracing::info!("{} start", stringify!(#test_name));
+
                 let instance = #instance_init;
                 #original_name(instance).await
             }
