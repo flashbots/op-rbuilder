@@ -155,7 +155,7 @@ pub trait BuilderTransactions<ExtraCtx: Debug + Default = ()>: Debug {
         let state = StateProviderDatabase::new(state_provider.clone());
         let mut simulation_state = State::builder()
             .with_database(state)
-            .with_bundle_prestate(db.bundle_state.clone())
+            .with_cached_prestate(db.cache.clone())
             .with_bundle_update()
             .build();
         let mut evm = ctx
@@ -177,4 +177,13 @@ pub trait BuilderTransactions<ExtraCtx: Debug + Default = ()>: Debug {
 
         Ok(simulation_state)
     }
+}
+
+pub(super) fn get_nonce(
+    db: &mut State<impl Database>,
+    address: Address,
+) -> Result<u64, BuilderTransactionError> {
+    db.load_cache_account(address)
+        .map(|acc| acc.account_info().unwrap_or_default().nonce)
+        .map_err(|_| BuilderTransactionError::AccountLoadFailed(address))
 }
