@@ -46,7 +46,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     ops::{Div, Rem},
     sync::{Arc, OnceLock},
-    time::{Instant, SystemTime, UNIX_EPOCH},
+    time::Instant,
 };
 use tokio::sync::{
     mpsc,
@@ -201,10 +201,6 @@ where
         best_payload: BlockCell<OpBuiltPayload>,
     ) -> Result<(), PayloadBuilderError> {
         let block_build_start_time = Instant::now();
-        let current_timestamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
         let BuildArguments {
             mut cached_reads,
             config,
@@ -309,6 +305,7 @@ where
 
         best_payload.set(payload.clone());
         self.send_payload_to_engine(payload);
+        // not emitting flashblock if no_tx_pool in FCU, it's just syncing
         if !ctx.attributes().no_tx_pool {
             let flashblock_byte_size = self
                 .ws_pub
