@@ -227,12 +227,7 @@ where
 
         let chain_spec = self.client.chain_spec();
         let timestamp = config.attributes.timestamp();
-        let is_doing_historical_sync = timestamp < current_timestamp;
-        let calculate_state_root = if is_doing_historical_sync {
-            true
-        } else {
-            self.config.specific.calculate_state_root
-        };
+        let calculate_state_root = self.config.specific.calculate_state_root;
         let block_env_attributes = OpNextBlockEnvAttributes {
             timestamp,
             suggested_fee_recipient: config.attributes.suggested_fee_recipient(),
@@ -314,7 +309,7 @@ where
 
         best_payload.set(payload.clone());
         self.send_payload_to_engine(payload);
-        if !is_doing_historical_sync {
+        if !ctx.attributes().no_tx_pool {
             let flashblock_byte_size = self
                 .ws_pub
                 .publish(&fb_payload)
