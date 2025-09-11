@@ -877,8 +877,8 @@ where
 
     if calculate_state_root {
         let state_provider = state.database.as_ref();
-        let _hashed_state = state_provider.hashed_post_state(execution_outcome.state());
-        let (_state_root, _trie_output) = {
+        hashed_state = state_provider.hashed_post_state(execution_outcome.state());
+        (state_root, trie_output) = {
             state
                 .database
                 .as_ref()
@@ -898,9 +898,6 @@ where
         ctx.metrics
             .state_root_calculation_gauge
             .set(state_root_calculation_time);
-        state_root = _state_root;
-        trie_output = _trie_output;
-        hashed_state = _hashed_state;
     }
 
     let mut requests_hash = None;
