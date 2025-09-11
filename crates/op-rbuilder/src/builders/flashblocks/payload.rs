@@ -581,17 +581,16 @@ where
         );
         let flashblock_build_start_time = Instant::now();
 
-        let builder_txs =
-            match self
-                .builder_tx
-                .add_builder_txs(&state_provider, info, ctx, state, true)
-            {
-                Ok(builder_txs) => builder_txs,
-                Err(e) => {
-                    error!(target: "payload_builder", "Error simulating builder txs: {}", e);
-                    vec![]
-                }
-            };
+        let builder_txs = match self
+            .builder_tx
+            .add_builder_txs(&state_provider, info, &ctx, state, true)
+        {
+            Ok(builder_txs) => builder_txs,
+            Err(e) => {
+                error!(target: "payload_builder", "Error simulating builder txs: {}", e);
+                vec![]
+            }
+        };
 
         let builder_tx_gas = builder_txs.iter().fold(0, |acc, tx| acc + tx.gas_used);
         let builder_tx_da_size: u64 = builder_txs.iter().fold(0, |acc, tx| acc + tx.da_size);
@@ -659,7 +658,7 @@ where
             .builder_tx
             .add_builder_txs(&state_provider, info, ctx, state, false)
         {
-            Ok(_) => {}
+            Ok(builder_txs) => builder_txs,
             Err(e) => {
                 error!(target: "payload_builder", "Error simulating builder txs: {}", e);
             }
