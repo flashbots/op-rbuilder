@@ -48,6 +48,7 @@ use std::{
     sync::{Arc, OnceLock},
     time::Instant,
 };
+use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, metadata::Level, span, warn};
 
@@ -194,7 +195,7 @@ impl<Pool, Client, BT> OpPayloadBuilder<Pool, Client, BT>
 where
     Pool: PoolBounds,
     Client: ClientBounds,
-    BT: BuilderTx,
+    BT: BuilderTx + Send + Sync,
 {
     /// Constructs an Optimism payload from the transactions sent via the
     /// Payload attributes by the sequencer. If the `no_tx_pool` argument is passed in
@@ -398,15 +399,36 @@ where
             self.pool
                 .best_transactions_with_attributes(ctx.best_transaction_attributes()),
         ));
+        let interval = self.config.specific.interval;
+        let (tx, mut rx) = mpsc::channel((self.config.flashblocks_per_block() + 1) as usize);
 
-        let mut timer = tokio::time::interval_at(
-            tokio::time::Instant::now()
-                .checked_add(first_flashblock_offset)
-                .expect("can add flashblock offset to current time"),
-            self.config.specific.interval,
-        );
-        let sleep = tokio::time::sleep(Duration::from_secs(0));
-        tokio::pin!(sleep);
+        tokio::spawn({
+            let block_cancel = block_cancel.clone();
+            async move {
+                let mut timer = tokio::time::interval_at(
+                    tokio::time::Instant::now()
+                        .checked_add(first_flashblock_offset)
+                        .expect("can add flashblock offset to current time"),
+                    interval,
+                );
+
+                loop {
+                    tokio::select! {
+                        _ = timer.tick() => {
+                            // this will tick at first_flashblock_offset,
+                            // starting the second flashblock
+                            if let Err(_) = tx.send(()).await {
+                                // receiver channel was dropped, return
+                                return;
+                            }
+                        }
+                        _ = block_cancel.cancelled() => {
+                            return;
+                        }
+                    }
+                }
+            }
+        });
 
         // Process flashblocks in a blocking loop
         loop {
@@ -421,7 +443,7 @@ where
             };
             let _entered = fb_span.enter();
 
-            // build base flashblock immediately
+            // build first flashblock immediately
             ctx.cancel = block_cancel.child_token();
             match self.build_next_flashblock(
                 &mut ctx,
@@ -454,15 +476,10 @@ where
             }
 
             tokio::select! {
-                _ = &mut sleep => {
-                    // immediately after the base flashblock, we want to start the first non-base flashblock
+                Some(()) = rx.recv() => {
+                    // cancel current flashblock building, it's time to move to the next one
                     ctx.cancel.cancel();
-                }
-                _ = timer.tick() => {
-                    // this will tick at first_flashblock_offset,
-                    // starting the second (non-base) flashblock
-                    ctx.cancel.cancel();
-                }
+                },
                 _ = block_cancel.cancelled() => {
                     self.record_flashblocks_metrics(
                         &ctx,
