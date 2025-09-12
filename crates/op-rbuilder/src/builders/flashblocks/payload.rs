@@ -479,6 +479,7 @@ where
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn build_next_flashblock<
         DB: Database<Error = ProviderError> + std::fmt::Debug + AsRef<P>,
         P: StateRootProvider + HashedPostStateProvider + StorageRootProvider,
@@ -490,7 +491,7 @@ where
         total_da_per_batch: &mut Option<u64>,
         builder_tx_da_size: u64,
         builder_tx_gas: u64,
-        mut state: &mut State<DB>,
+        state: &mut State<DB>,
         best_txs: &mut NextBestFlashblocksTxs<Pool>,
         block_cancel: &CancellationToken,
         flashblocks_per_block: u64,
@@ -552,7 +553,7 @@ where
         let tx_execution_start_time = Instant::now();
         ctx.execute_best_transactions(
             info,
-            &mut state,
+            state,
             best_txs,
             (*total_gas_per_batch).min(ctx.block_gas_limit()),
             *total_da_per_batch,
@@ -569,10 +570,10 @@ where
         // Caution: this assume that block cancel token only cancelled when new FCU is received
         if block_cancel.is_cancelled() {
             self.record_flashblocks_metrics(
-                &ctx,
-                &info,
+                ctx,
+                info,
                 flashblocks_per_block,
-                &span,
+                span,
                 "Payload building complete, channel closed or job cancelled",
             );
             return Ok(());
@@ -588,11 +589,11 @@ where
 
         // If it is the last flashblocks, add the builder txn to the block if enabled
         if ctx.is_last_flashblock() {
-            ctx.add_builder_tx(info, &mut state, builder_tx_gas, message.clone());
+            ctx.add_builder_tx(info, state, builder_tx_gas, message.clone());
         };
 
         let total_block_built_duration = Instant::now();
-        let build_result = build_block(&mut state, &ctx, info);
+        let build_result = build_block(state, ctx, info);
         let total_block_built_duration = total_block_built_duration.elapsed();
         ctx.metrics
             .total_block_built_duration
@@ -618,10 +619,10 @@ where
                 // To ensure that we will return same blocks as rollup-boost (to leverage caches)
                 if block_cancel.is_cancelled() {
                     self.record_flashblocks_metrics(
-                        &ctx,
-                        &info,
+                        ctx,
+                        info,
                         flashblocks_per_block,
-                        &span,
+                        span,
                         "Payload building complete, channel closed or job cancelled",
                     );
                     return Ok(());
