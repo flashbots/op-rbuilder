@@ -399,24 +399,14 @@ where
                 .best_transactions_with_attributes(ctx.best_transaction_attributes()),
         ));
 
-        let mut timer = tokio::time::interval(self.config.specific.interval);
-        let first_flashblock_offset_signal = tokio::time::sleep(first_flashblock_offset);
-
-        tokio::select! {
-            _ = first_flashblock_offset_signal => {
-                // wait for the first offset to pass
-            }
-            _ = block_cancel.cancelled() => {
-                self.record_flashblocks_metrics(
-                    &ctx,
-                    &info,
-                    flashblocks_per_block,
-                    &span,
-                    "Payload building cancelled before starting",
-                );
-                return Ok(());
-            }
-        }
+        let mut timer = tokio::time::interval_at(
+            tokio::time::Instant::now()
+                .checked_add(first_flashblock_offset)
+                .expect("can add flashblock offset to current time"),
+            self.config.specific.interval,
+        );
+        let sleep = tokio::time::sleep(Duration::from_secs(0));
+        tokio::pin!(sleep);
 
         // Process flashblocks in a blocking loop
         loop {
@@ -431,22 +421,8 @@ where
             };
             let _entered = fb_span.enter();
 
-            tokio::select! {
-                _ = timer.tick() => {
-                    // time to build next flashblock
-                }
-                _ = block_cancel.cancelled() => {
-                    self.record_flashblocks_metrics(
-                        &ctx,
-                        &info,
-                        flashblocks_per_block,
-                        &span,
-                        "Payload building complete, channel closed or job cancelled",
-                    );
-                    return Ok(());
-                }
-            }
-
+            // build base flashblock immediately
+            ctx.cancel = block_cancel.child_token();
             match self.build_next_flashblock(
                 &mut ctx,
                 &mut info,
@@ -474,6 +450,28 @@ where
                         err
                     );
                     return Err(err);
+                }
+            }
+
+            tokio::select! {
+                _ = &mut sleep => {
+                    // immediately after the base flashblock, we want to start the first non-base flashblock
+                    ctx.cancel.cancel();
+                }
+                _ = timer.tick() => {
+                    // this will tick at first_flashblock_offset,
+                    // starting the second (non-base) flashblock
+                    ctx.cancel.cancel();
+                }
+                _ = block_cancel.cancelled() => {
+                    self.record_flashblocks_metrics(
+                        &ctx,
+                        &info,
+                        flashblocks_per_block,
+                        &span,
+                        "Payload building complete, channel closed or job cancelled",
+                    );
+                    return Ok(());
                 }
             }
         }
