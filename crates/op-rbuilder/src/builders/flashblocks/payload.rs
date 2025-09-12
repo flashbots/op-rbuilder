@@ -401,9 +401,12 @@ where
         ));
         let interval = self.config.specific.interval;
         let (tx, mut rx) = mpsc::channel((self.config.flashblocks_per_block() + 1) as usize);
+        let mut fb_cancel = block_cancel.child_token();
+        ctx.cancel = fb_cancel.clone();
 
         tokio::spawn({
             let block_cancel = block_cancel.clone();
+
             async move {
                 let mut timer = tokio::time::interval_at(
                     tokio::time::Instant::now()
@@ -415,10 +418,16 @@ where
                 loop {
                     tokio::select! {
                         _ = timer.tick() => {
+                            // cancel current payload building job
+                            fb_cancel.cancel();
+                            fb_cancel = block_cancel.child_token();
                             // this will tick at first_flashblock_offset,
                             // starting the second flashblock
-                            if let Err(_) = tx.send(()).await {
-                                // receiver channel was dropped, return
+                            if tx.send(fb_cancel.clone()).await.is_err() {
+                                // receiver channel was dropped, return.
+                                // this will only happen if the `build_payload` function returns,
+                                // due to payload building error or the main cancellation token being
+                                // cancelled.
                                 return;
                             }
                         }
@@ -444,7 +453,6 @@ where
             let _entered = fb_span.enter();
 
             // build first flashblock immediately
-            ctx.cancel = block_cancel.child_token();
             match self.build_next_flashblock(
                 &mut ctx,
                 &mut info,
@@ -476,9 +484,8 @@ where
             }
 
             tokio::select! {
-                Some(()) = rx.recv() => {
-                    // cancel current flashblock building, it's time to move to the next one
-                    ctx.cancel.cancel();
+                Some(fb_cancel) = rx.recv() => {
+                    ctx.cancel = fb_cancel;
                 },
                 _ = block_cancel.cancelled() => {
                     self.record_flashblocks_metrics(
