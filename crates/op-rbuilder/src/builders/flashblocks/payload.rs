@@ -399,15 +399,6 @@ where
                 .best_transactions_with_attributes(ctx.best_transaction_attributes()),
         ));
 
-        //     // This channel coordinates flashblock building
-        //     let (fb_cancel_token_tx, mut fb_cancel_token_rx) =
-        //     tokio::sync::mpsc::channel((self.config.flashblocks_per_block() + 1) as usize);
-        // self.spawn_timer_task(
-        //     block_cancel.clone(),
-        //     fb_cancel_token_tx,
-        //     first_flashblock_offset,
-        // );
-
         let mut timer = tokio::time::interval(self.config.specific.interval);
         let first_flashblock_offset_signal = tokio::time::sleep(first_flashblock_offset);
 
@@ -439,23 +430,6 @@ where
                 )
             };
             let _entered = fb_span.enter();
-
-            //             // We get token from time loop. Token from this channel means that we need to start build flashblock
-            // // Cancellation of this token means that we need to stop building flashblock.
-            // // If channel return None it means that we built all flashblock or parent_token got cancelled
-            // let fb_cancel_token =
-            //     tokio::task::block_in_place(|| fb_cancel_token_rx.blocking_recv()).flatten();
-
-            // if fb_cancel_token.is_none() {
-            //     self.record_flashblocks_metrics(
-            //         &ctx,
-            //         &info,
-            //         flashblocks_per_block,
-            //         &span,
-            //         "Payload building complete, channel closed or job cancelled",
-            //     );
-            //     return Ok(());
-            // }
 
             tokio::select! {
                 _ = timer.tick() => {
