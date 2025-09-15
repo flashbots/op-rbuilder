@@ -65,7 +65,7 @@ impl TryFrom<OpRbuilderArgs> for FlashblocksConfig {
     }
 }
 
-pub trait FlashBlocksConfigExt {
+pub(super) trait FlashBlocksConfigExt {
     fn flashblocks_per_block(&self) -> u64;
 }
 

@@ -39,12 +39,6 @@ lto = "fat"
 codegen-units = 1
 incremental = false
 
-[workspace.lints.clippy]
-match_same_arms = "warn"
-unused_async = "warn"
-uninlined_format_args = "warn"
-manual_let_else = "warn"
-
 [workspace.lints.rust]
 unreachable_pub = "warn"
 
