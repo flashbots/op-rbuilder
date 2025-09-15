@@ -131,7 +131,7 @@ jobs:
         working-directory: artifacts
         run: |
           find ./ || true
-          for file in *; do sha256sum "$file" >> sha256sums.txt; done;
+          for file in $( find ./ -type f ); do sha256sum "$file" >> sha256sums.txt; done;
           cat sha256sums.txt
 
       - name: Create release draft
