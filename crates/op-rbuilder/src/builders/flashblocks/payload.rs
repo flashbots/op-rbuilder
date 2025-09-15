@@ -301,7 +301,7 @@ where
             ctx.add_builder_tx(&mut info, &mut state, builder_tx_gas, message.clone());
         }
 
-        let (payload, fb_payload) = build_block(&mut state, &ctx, &mut info, calculate_state_root)?;
+        let (payload, fb_payload) = build_block(&mut state, &ctx, &mut info, true)?;
 
         best_payload.set(payload.clone());
         self.send_payload_to_engine(payload);

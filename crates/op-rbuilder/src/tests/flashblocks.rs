@@ -362,6 +362,7 @@ async fn test_flashblock_max_filtering(rbuilder: LocalInstance) -> eyre::Result<
         flashblocks_block_time: 200,
         flashblocks_leeway_time: 100,
         flashblocks_fixed: false,
+        flashblocks_calculate_state_root: true,
     },
     ..Default::default()
 })]
