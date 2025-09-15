@@ -130,8 +130,15 @@ jobs:
       - name: Record artifacts checksums
         working-directory: artifacts
         run: |
+          for dir in $( find . -type d -name "op-rbuilder-*" -printf "%f\n" ); do
+            mv    ./$dir                 ./$dir.bak
+            mv    ./$dir.bak/op-rbuilder ./$dir
+            rm -r ./$dir.bak
+          done
           find ./ || true
-          for file in $( find ./ -type f ); do sha256sum "$file" >> sha256sums.txt; done;
+          for file in $( find ./ -type f ); do
+            sha256sum "$file" >> sha256sums.txt
+          done;
           cat sha256sums.txt
 
       - name: Create release draft
