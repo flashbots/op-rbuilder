@@ -74,36 +74,40 @@ struct ExtraExecutionInfo {
 #[derive(Debug, Default)]
 struct FlashblocksExtraCtx {
     /// Current flashblock index
-    pub flashblock_index: u64,
-    /// Target flashblock count
-    pub target_flashblock_count: u64,
+    flashblock_index: u64,
+    /// Target flashblock count per block
+    target_flashblock_count: u64,
+    total_gas_per_batch: u64,
+    total_da_per_batch: Option<u64>,
+    gas_per_batch: u64,
+    da_per_batch: Option<u64>,
 }
 
 impl OpPayloadBuilderCtx<FlashblocksExtraCtx> {
     /// Returns the current flashblock index
-    pub fn flashblock_index(&self) -> u64 {
+    pub(crate) fn flashblock_index(&self) -> u64 {
         self.extra_ctx.flashblock_index
     }
 
     /// Returns the target flashblock count
-    pub fn target_flashblock_count(&self) -> u64 {
+    pub(crate) fn target_flashblock_count(&self) -> u64 {
         self.extra_ctx.target_flashblock_count
     }
 
     /// Increments the flashblock index
-    pub fn increment_flashblock_index(&mut self) -> u64 {
+    pub(crate) fn increment_flashblock_index(&mut self) -> u64 {
         self.extra_ctx.flashblock_index += 1;
         self.extra_ctx.flashblock_index
     }
 
     /// Sets the target flashblock count
-    pub fn set_target_flashblock_count(&mut self, target_flashblock_count: u64) -> u64 {
+    pub(crate) fn set_target_flashblock_count(&mut self, target_flashblock_count: u64) -> u64 {
         self.extra_ctx.target_flashblock_count = target_flashblock_count;
         self.extra_ctx.target_flashblock_count
     }
 
     /// Returns if the flashblock is the last one
-    pub fn is_last_flashblock(&self) -> bool {
+    pub(crate) fn is_last_flashblock(&self) -> bool {
         self.flashblock_index() == self.target_flashblock_count() - 1
     }
 }
@@ -274,6 +278,10 @@ where
             extra_ctx: FlashblocksExtraCtx {
                 flashblock_index: 0,
                 target_flashblock_count: self.config.flashblocks_per_block(),
+                total_gas_per_batch: 0,
+                total_da_per_batch: None,
+                gas_per_batch: 0,
+                da_per_batch: None,
             },
             max_gas_per_txn: self.config.max_gas_per_txn,
             address_gas_limiter: self.address_gas_limiter.clone(),
@@ -372,7 +380,7 @@ where
             .first_flashblock_time_offset
             .record(first_flashblock_offset.as_millis() as f64);
         let gas_per_batch = ctx.block_gas_limit() / ctx.target_flashblock_count();
-        let mut total_gas_per_batch = gas_per_batch;
+        let total_gas_per_batch = gas_per_batch;
         let da_per_batch = ctx
             .da_config
             .max_da_block_size()
@@ -389,10 +397,13 @@ where
         let mut total_da_per_batch = da_per_batch;
 
         // Account for already included builder tx
-        total_gas_per_batch = total_gas_per_batch.saturating_sub(builder_tx_gas);
+        ctx.extra_ctx.total_gas_per_batch = total_gas_per_batch.saturating_sub(builder_tx_gas);
         if let Some(da_limit) = total_da_per_batch.as_mut() {
             *da_limit = da_limit.saturating_sub(builder_tx_da_size);
         }
+        ctx.extra_ctx.total_da_per_batch = total_da_per_batch;
+        ctx.extra_ctx.gas_per_batch = gas_per_batch;
+        ctx.extra_ctx.da_per_batch = da_per_batch;
 
         // Create best_transaction iterator
         let mut best_txs = BestFlashblocksTxs::new(BestPayloadTransactions::new(
@@ -456,18 +467,11 @@ where
             match self.build_next_flashblock(
                 &mut ctx,
                 &mut info,
-                &mut total_gas_per_batch,
-                &mut total_da_per_batch,
-                builder_tx_da_size,
-                builder_tx_gas,
                 &mut state,
                 &mut best_txs,
                 &block_cancel,
-                flashblocks_per_block,
                 message.clone(),
                 &best_payload,
-                gas_per_batch,
-                da_per_batch,
                 &fb_span,
             ) {
                 Ok(()) => {}
@@ -509,18 +513,11 @@ where
         &self,
         ctx: &mut OpPayloadBuilderCtx<FlashblocksExtraCtx>,
         info: &mut ExecutionInfo<ExtraExecutionInfo>,
-        total_gas_per_batch: &mut u64,
-        total_da_per_batch: &mut Option<u64>,
-        builder_tx_da_size: u64,
-        builder_tx_gas: u64,
         state: &mut State<DB>,
         best_txs: &mut NextBestFlashblocksTxs<Pool>,
         block_cancel: &CancellationToken,
-        flashblocks_per_block: u64,
         message: Vec<u8>,
         best_payload: &BlockCell<OpBuiltPayload>,
-        gas_per_batch: u64,
-        da_per_batch: Option<u64>,
         span: &tracing::Span,
     ) -> Result<(), PayloadBuilderError> {
         // TODO: remove this
@@ -535,7 +532,17 @@ where
             return Ok(());
         };
 
+        let builder_tx_gas = ctx
+            .builder_signer()
+            .map_or(0, |_| estimate_gas_for_builder_tx(message.clone()));
+        let builder_tx_da_size = ctx
+            .estimate_builder_tx_da_size(state, builder_tx_gas, message.clone())
+            .unwrap_or(0);
+
         // Continue with flashblock building
+        let mut total_gas_per_batch = ctx.extra_ctx.total_gas_per_batch;
+        let mut total_da_per_batch = ctx.extra_ctx.total_da_per_batch;
+
         info!(
             target: "payload_builder",
             block_number = ctx.block_number(),
@@ -549,7 +556,7 @@ where
         let flashblock_build_start_time = Instant::now();
         // If it is the last flashblock, we need to account for the builder tx
         if ctx.is_last_flashblock() {
-            *total_gas_per_batch = total_gas_per_batch.saturating_sub(builder_tx_gas);
+            total_gas_per_batch = total_gas_per_batch.saturating_sub(builder_tx_gas);
             // saturating sub just in case, we will log an error if da_limit too small for builder_tx_da_size
             if let Some(da_limit) = total_da_per_batch.as_mut() {
                 *da_limit = da_limit.saturating_sub(builder_tx_da_size);
@@ -577,8 +584,8 @@ where
             info,
             state,
             best_txs,
-            (*total_gas_per_batch).min(ctx.block_gas_limit()),
-            *total_da_per_batch,
+            total_gas_per_batch.min(ctx.block_gas_limit()),
+            total_da_per_batch,
         )?;
         // Extract last transactions
         let new_transactions = info.executed_transactions[info.extra.last_flashblock_index..]
@@ -594,7 +601,7 @@ where
             self.record_flashblocks_metrics(
                 ctx,
                 info,
-                flashblocks_per_block,
+                ctx.target_flashblock_count(),
                 span,
                 "Payload building complete, channel closed or job cancelled",
             );
@@ -643,7 +650,7 @@ where
                     self.record_flashblocks_metrics(
                         ctx,
                         info,
-                        flashblocks_per_block,
+                        ctx.target_flashblock_count(),
                         span,
                         "Payload building complete, channel closed or job cancelled",
                     );
@@ -668,8 +675,8 @@ where
                 best_payload.set(new_payload.clone());
                 self.send_payload_to_engine(new_payload);
                 // Update bundle_state for next iteration
-                *total_gas_per_batch += gas_per_batch;
-                if let Some(da_limit) = da_per_batch {
+                total_gas_per_batch += ctx.extra_ctx.gas_per_batch;
+                if let Some(da_limit) = ctx.extra_ctx.da_per_batch {
                     if let Some(da) = total_da_per_batch.as_mut() {
                         *da += da_limit;
                     } else {
@@ -679,13 +686,16 @@ where
                     }
                 }
 
+                ctx.extra_ctx.total_gas_per_batch = total_gas_per_batch;
+                ctx.extra_ctx.total_da_per_batch = total_da_per_batch;
+
                 info!(
                     target: "payload_builder",
                     message = "Flashblock built",
                     flashblock_count = ctx.flashblock_index(),
                     current_gas = info.cumulative_gas_used,
                     current_da = info.cumulative_da_bytes_used,
-                    target_flashblocks = flashblocks_per_block,
+                    target_flashblocks = ctx.target_flashblock_count(),
                 );
             }
         }
