@@ -16,6 +16,7 @@ use revm::{
     context::result::{ExecutionResult, ResultAndState},
     inspector::NoOpInspector,
 };
+use tracing::warn;
 
 use crate::{
     builders::{
@@ -257,18 +258,33 @@ impl BuilderTransactions<FlashblocksExtraCtx> for FlashblocksNumberBuilderTx {
 
                 let nonce = get_nonce(evm.db_mut(), signer.address)?;
 
-                let gas_used =
-                    self.estimate_flashblock_number_tx_gas(ctx, &mut evm, signer, nonce)?;
-                // Due to EIP-150, 63/64 of available gas is forwarded to external calls so need to add a buffer
-                let tx =
-                    self.signed_flashblock_number_tx(ctx, gas_used * 64 / 63, nonce, signer)?;
-                let da_size =
-                    op_alloy_flz::tx_estimated_size_fjord_bytes(tx.encoded_2718().as_slice());
-                builder_txs.push(BuilderTransactionCtx {
-                    gas_used,
-                    da_size,
-                    signed_tx: tx,
-                });
+                let tx = match self.estimate_flashblock_number_tx_gas(ctx, &mut evm, signer, nonce)
+                {
+                    Ok(gas_used) => {
+                        // Due to EIP-150, 63/64 of available gas is forwarded to external calls so need to add a buffer
+                        let flashblocks_tx = self.signed_flashblock_number_tx(
+                            ctx,
+                            gas_used * 64 / 63,
+                            nonce,
+                            signer,
+                        )?;
+
+                        let da_size = op_alloy_flz::tx_estimated_size_fjord_bytes(
+                            flashblocks_tx.encoded_2718().as_slice(),
+                        );
+                        Some(BuilderTransactionCtx {
+                            gas_used,
+                            da_size,
+                            signed_tx: flashblocks_tx,
+                        })
+                    }
+                    Err(e) => {
+                        warn!(target: "builder_tx", error = ?e, "Flashblocks number contract tx simulation failed, defaulting to fallback builder tx");
+                        self.base_builder_tx.simulate_builder_tx(ctx, db)?
+                    }
+                };
+
+                builder_txs.extend(tx);
             }
         }
 
