@@ -37,7 +37,7 @@ use tracing::{error, info, warn};
 
 /// Optimism's payload builder
 #[derive(Debug, Clone)]
-pub struct StandardOpPayloadBuilder<Pool, Client, BuilderTx, Txs = ()> {
+pub(super) struct StandardOpPayloadBuilder<Pool, Client, BuilderTx, Txs = ()> {
     /// The type responsible for creating the evm.
     pub evm_config: OpEvmConfig,
     /// The transaction pool
@@ -59,7 +59,7 @@ pub struct StandardOpPayloadBuilder<Pool, Client, BuilderTx, Txs = ()> {
 
 impl<Pool, Client, BuilderTx> StandardOpPayloadBuilder<Pool, Client, BuilderTx> {
     /// `OpPayloadBuilder` constructor.
-    pub fn new(
+    pub(super) fn new(
         evm_config: OpEvmConfig,
         pool: Pool,
         client: Client,
@@ -81,7 +81,9 @@ impl<Pool, Client, BuilderTx> StandardOpPayloadBuilder<Pool, Client, BuilderTx> 
 }
 
 /// A type that returns a the [`PayloadTransactions`] that should be included in the pool.
-pub trait OpPayloadTransactions<Transaction>: Clone + Send + Sync + Unpin + 'static {
+pub(super) trait OpPayloadTransactions<Transaction>:
+    Clone + Send + Sync + Unpin + 'static
+{
     /// Returns an iterator that yields the transaction in the order they should get included in the
     /// new payload.
     fn best_transactions<Pool: TransactionPool<Transaction = Transaction>>(

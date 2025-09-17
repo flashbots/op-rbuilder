@@ -46,7 +46,7 @@ use crate::{
 
 /// Container type that holds all necessities to build a new payload.
 #[derive(Debug)]
-pub(super) struct OpPayloadBuilderCtx<ExtraCtx: Debug + Default = ()> {
+pub struct OpPayloadBuilderCtx<ExtraCtx: Debug + Default = ()> {
     /// The type that knows how to perform system calls and configure the evm.
     pub evm_config: OpEvmConfig,
     /// The DA config for the payload builder
@@ -190,11 +190,6 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
     /// Returns the chain id
     pub(super) fn chain_id(&self) -> u64 {
         self.chain_spec.chain_id()
-    }
-
-    /// Returns the builder signer
-    pub(super) fn builder_signer(&self) -> Option<Signer> {
-        self.builder_signer
     }
 }
 

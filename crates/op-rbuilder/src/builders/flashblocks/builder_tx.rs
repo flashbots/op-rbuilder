@@ -21,13 +21,13 @@ use crate::{
 
 // This will be the end of block transaction of a regular block
 #[derive(Debug, Clone)]
-pub struct FlashblocksBuilderTx {
+pub(super) struct FlashblocksBuilderTx {
     pub signer: Option<Signer>,
     pub flashtestations_builder_tx: Option<FlashtestationsBuilderTx>,
 }
 
 impl FlashblocksBuilderTx {
-    pub fn new(
+    pub(super) fn new(
         signer: Option<Signer>,
         flashtestations_builder_tx: Option<FlashtestationsBuilderTx>,
     ) -> Self {
@@ -37,7 +37,7 @@ impl FlashblocksBuilderTx {
         }
     }
 
-    pub fn simulate_builder_tx<ExtraCtx: Debug + Default>(
+    pub(super) fn simulate_builder_tx<ExtraCtx: Debug + Default>(
         &self,
         ctx: &OpPayloadBuilderCtx<ExtraCtx>,
         db: &mut State<impl Database>,

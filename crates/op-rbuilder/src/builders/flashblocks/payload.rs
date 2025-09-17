@@ -106,7 +106,7 @@ impl OpPayloadBuilderCtx<FlashblocksExtraCtx> {
 
 /// Optimism's payload builder
 #[derive(Debug, Clone)]
-pub struct OpPayloadBuilder<Pool, Client, BuilderTx> {
+pub(super) struct OpPayloadBuilder<Pool, Client, BuilderTx> {
     /// The type responsible for creating the evm.
     pub evm_config: OpEvmConfig,
     /// The transaction pool
