@@ -100,7 +100,7 @@ impl OpPayloadBuilderCtx<FlashblocksExtraCtx> {
 
     /// Returns if the flashblock is the last one
     pub(crate) fn is_last_flashblock(&self) -> bool {
-        self.flashblock_index() == self.target_flashblock_count() - 1
+        self.flashblock_index() == self.target_flashblock_count()
     }
 }
 
@@ -439,7 +439,7 @@ where
                         info!(
                             target: "payload_builder",
                             target = ctx.target_flashblock_count(),
-                            flashblock_count = ctx.flashblock_index(),
+                            flashblock_index = ctx.flashblock_index(),
                             block_number = ctx.block_number(),
                             "Skipping flashblock reached target",
                         );
@@ -449,7 +449,7 @@ where
                     info!(
                         target: "payload_builder",
                         block_number = ctx.block_number(),
-                        flashblock_count = ctx.flashblock_index(),
+                        flashblock_index = ctx.flashblock_index(),
                         target_gas = total_gas_per_batch,
                         gas_used = info.cumulative_gas_used,
                         target_da = total_da_per_batch.unwrap_or(0),
@@ -614,7 +614,7 @@ where
                             info!(
                                 target: "payload_builder",
                                 message = "Flashblock built",
-                                flashblock_count = ctx.flashblock_index(),
+                                flashblock_index = ctx.flashblock_index(),
                                 current_gas = info.cumulative_gas_used,
                                 current_da = info.cumulative_da_bytes_used,
                                 target_flashblocks = flashblocks_per_block,
