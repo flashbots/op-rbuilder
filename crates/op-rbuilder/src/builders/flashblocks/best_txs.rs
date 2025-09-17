@@ -6,7 +6,7 @@ use tracing::debug;
 
 use crate::tx::MaybeFlashblockFilter;
 
-pub struct BestFlashblocksTxs<T, I>
+pub(super) struct BestFlashblocksTxs<T, I>
 where
     T: PoolTransaction,
     I: Iterator<Item = Arc<ValidPoolTransaction<T>>>,
@@ -23,7 +23,7 @@ where
     T: PoolTransaction,
     I: Iterator<Item = Arc<ValidPoolTransaction<T>>>,
 {
-    pub fn new(inner: reth_payload_util::BestPayloadTransactions<T, I>) -> Self {
+    pub(super) fn new(inner: reth_payload_util::BestPayloadTransactions<T, I>) -> Self {
         Self {
             inner,
             current_flashblock_number: 0,
@@ -33,7 +33,7 @@ where
 
     /// Replaces current iterator with new one. We use it on new flashblock building, to refresh
     /// priority boundaries
-    pub fn refresh_iterator(
+    pub(super) fn refresh_iterator(
         &mut self,
         inner: reth_payload_util::BestPayloadTransactions<T, I>,
         current_flashblock_number: u64,
@@ -43,7 +43,7 @@ where
     }
 
     /// Remove transaction from next iteration and it already in the state
-    pub fn mark_commited(&mut self, txs: Vec<TxHash>) {
+    pub(super) fn mark_commited(&mut self, txs: Vec<TxHash>) {
         self.commited_transactions.extend(txs);
     }
 }

@@ -39,6 +39,9 @@ lto = "fat"
 codegen-units = 1
 incremental = false
 
+[workspace.lints.rust]
+unreachable_pub = "warn"
+
 [workspace.dependencies]
 reth = { git = "https://github.com/paradigmxyz/reth", tag = "v1.7.0" }
 reth-chain-state = { git = "https://github.com/paradigmxyz/reth", tag = "v1.7.0" }
