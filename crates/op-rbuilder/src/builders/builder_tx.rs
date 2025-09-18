@@ -106,8 +106,12 @@ pub trait BuilderTransactions<ExtraCtx: Debug + Default = ()>: Debug {
                 top_of_block,
             )?;
             for builder_tx in builder_txs.iter() {
-                if invalid.contains(&builder_tx.signed_tx.signer()) {
-                    warn!(target: "payload_builder", tx_hash = ?builder_tx.signed_tx.tx_hash(), "builder signer invalid as previous builder tx reverted");
+                let signed_tx = match builder_tx.signed_tx.clone() {
+                    Some(tx) => tx,
+                    None => continue,
+                };
+                if invalid.contains(&signed_tx.signer()) {
+                    warn!(target: "payload_builder", tx_hash = ?signed_tx.tx_hash(), "builder signer invalid as previous builder tx reverted");
                     continue;
                 }
 
@@ -210,7 +214,7 @@ impl BuilderTxBase {
                 Ok(Some(BuilderTransactionCtx {
                     gas_used,
                     da_size,
-                    signed_tx,
+                    signed_tx: Some(signed_tx),
                 }))
             }
             None => Ok(None),

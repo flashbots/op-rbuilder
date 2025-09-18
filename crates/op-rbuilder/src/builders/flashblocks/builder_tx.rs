@@ -127,7 +127,18 @@ impl BuilderTransactions<FlashblocksExtraCtx> for FlashblocksBuilderTx {
 
         if ctx.is_last_flashblock() {
             let flashblocks_builder_tx = self.base_builder_tx.simulate_builder_tx(ctx, db)?;
-            builder_txs.extend(flashblocks_builder_tx.clone());
+            if let Some(tx) = flashblocks_builder_tx.clone() {
+                if top_of_block {
+                    // don't commit the builder if top of block, we only return the gas used to reserve gas for the builder tx
+                    builder_txs.push(BuilderTransactionCtx {
+                        gas_used: tx.gas_used,
+                        da_size: tx.da_size,
+                        signed_tx: None,
+                    });
+                } else {
+                    builder_txs.push(tx);
+                }
+            }
             if let Some(flashtestations_builder_tx) = &self.flashtestations_builder_tx {
                 // We only include flashtestations txs in the last flashblock
                 let mut simulation_state = self.simulate_builder_txs_state::<FlashblocksExtraCtx>(
@@ -234,6 +245,7 @@ impl BuilderTransactions<FlashblocksExtraCtx> for FlashblocksNumberBuilderTx {
         info: &mut ExecutionInfo<Extra>,
         ctx: &OpPayloadBuilderCtx<FlashblocksExtraCtx>,
         db: &mut State<impl Database>,
+        top_of_block: bool,
     ) -> Result<Vec<BuilderTransactionCtx>, BuilderTransactionError> {
         let mut builder_txs = Vec::<BuilderTransactionCtx>::new();
         let state = StateProviderDatabase::new(state_provider.clone());
@@ -275,12 +287,28 @@ impl BuilderTransactions<FlashblocksExtraCtx> for FlashblocksNumberBuilderTx {
                         Some(BuilderTransactionCtx {
                             gas_used,
                             da_size,
-                            signed_tx: flashblocks_tx,
+                            signed_tx: if top_of_block {
+                                Some(flashblocks_tx)
+                            } else {
+                                None
+                            }, // number tx at top of flashblock
                         })
                     }
                     Err(e) => {
                         warn!(target: "builder_tx", error = ?e, "Flashblocks number contract tx simulation failed, defaulting to fallback builder tx");
-                        self.base_builder_tx.simulate_builder_tx(ctx, db)?
+                        let builder_tx = self.base_builder_tx.simulate_builder_tx(ctx, db)?;
+                        if let Some(tx) = &builder_tx
+                            && top_of_block
+                        {
+                            // don't commit the builder if top of block, we only return the gas used to reserve gas for the builder tx
+                            Some(BuilderTransactionCtx {
+                                gas_used: tx.gas_used,
+                                da_size: tx.da_size,
+                                signed_tx: None,
+                            })
+                        } else {
+                            builder_tx
+                        }
                     }
                 };
 
@@ -303,6 +331,7 @@ impl BuilderTransactions<FlashblocksExtraCtx> for FlashblocksNumberBuilderTx {
                     info,
                     ctx,
                     &mut simulation_state,
+                    top_of_block,
                 )?;
                 builder_txs.extend(flashtestations_builder_txs);
             }
