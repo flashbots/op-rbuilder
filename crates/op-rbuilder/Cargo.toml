@@ -126,6 +126,7 @@ http = "1.0"
 sha3 = "0.10"
 hex = "0.4"
 ureq = "2.10"
+k256 = "0.13.4"
 
 # TODO: change to rev from main once https://github.com/flashbots/rollup-boost/pull/401 is merged
 rollup-boost = { git = "http://github.com/flashbots/rollup-boost", rev = "0c1fb4ce7e00f0afc350f5bf7573b19da6d485ec" }
