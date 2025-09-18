@@ -14,7 +14,7 @@ use crate::{
         BuilderTransactionCtx, BuilderTransactionError, BuilderTransactions,
         context::OpPayloadBuilderCtx, flashblocks::payload::FlashblocksExtraCtx,
     },
-    flashtestations::service::FlashtestationsBuilderTx,
+    flashtestations::builder_tx::FlashtestationsBuilderTx,
     primitives::reth::ExecutionInfo,
     tx_signer::Signer,
 };

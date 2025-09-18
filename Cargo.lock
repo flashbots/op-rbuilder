@@ -6200,6 +6200,7 @@ dependencies = [
  "jsonrpsee",
  "jsonrpsee-core",
  "jsonrpsee-types",
+ "k256",
  "macros",
  "metrics",
  "moka",
