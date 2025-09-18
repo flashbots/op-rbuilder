@@ -47,6 +47,7 @@ impl AttestationProvider for RemoteAttestationProvider {
     }
 }
 
+#[allow(clippy::if_same_then_else)]
 pub fn get_attestation_provider(
     config: AttestationConfig,
 ) -> Box<dyn AttestationProvider + Send + Sync> {
