@@ -93,6 +93,12 @@ To enable metrics, set the `--metrics` flag like in [reth](https://reth.rs/run/m
 
 To see the full list of op-rbuilder metrics, see [`src/metrics.rs`](./crates/op-rbuilder/src/metrics.rs).
 
+Default `debug` level trace logs can be found at:
+
+- `~/.cache/op-rbuilder/logs` on Linux
+- `~/Library/Caches/op-rbuilder/logs` on macOS
+- `%localAppData%/op-rbuilder/logs` on Windows
+
 ## Integration Testing
 
 op-rbuilder has an integration test framework that runs the builder against mock engine api payloads and ensures that the builder produces valid blocks.
