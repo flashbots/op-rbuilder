@@ -119,6 +119,12 @@ pub struct BuilderConfig<Specific: Clone> {
 
     /// Address gas limiter stuff
     pub gas_limiter_config: GasLimiterArgs,
+
+    /// Port for the p2p node
+    pub p2p_port: u16,
+
+    /// Optional hex-encoded private key for the p2p node
+    pub p2p_private_key_hex: Option<String>,
 }
 
 impl<S: Debug + Clone> core::fmt::Debug for BuilderConfig<S> {
@@ -156,6 +162,8 @@ impl<S: Default + Clone> Default for BuilderConfig<S> {
             sampling_ratio: 100,
             max_gas_per_txn: None,
             gas_limiter_config: GasLimiterArgs::default(),
+            p2p_port: 9001,
+            p2p_private_key_hex: None,
         }
     }
 }
@@ -177,6 +185,8 @@ where
             sampling_ratio: args.telemetry.sampling_ratio,
             max_gas_per_txn: args.max_gas_per_txn,
             gas_limiter_config: args.gas_limiter.clone(),
+            p2p_port: args.flashblocks.flashblocks_p2p_port,
+            p2p_private_key_hex: Some(args.flashblocks.flashblocks_p2p_private_key_hex.clone()),
             specific: S::try_from(args)?,
         })
     }

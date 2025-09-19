@@ -155,6 +155,21 @@ pub struct FlashblocksArgs {
         env = "FLASHBLOCKS_CALCULATE_STATE_ROOT"
     )]
     pub flashblocks_calculate_state_root: bool,
+
+    #[arg(
+        long = "flasblocks.p2p_port",
+        env = "FLASHBLOCK_P2P_PORT",
+        default_value = "9001"
+    )]
+    pub flashblocks_p2p_port: u16,
+
+    // TODO: this should be loaded from a file
+    #[arg(
+        long = "flashblocks.p2p_private_key_hex",
+        env = "FLASHBLOCK_P2P_PRIVATE_KEY_HEX",
+        default_value = "c71a3d30a484e67dcbd01c4c4ce0704989becc51b2e768d74cc0515276f542bc00dfb848648148c134fd75ea041b62391a6389a7fb1e0bf664aedf92668f68e5"
+    )]
+    pub flashblocks_p2p_private_key_hex: String,
 }
 
 impl Default for FlashblocksArgs {

@@ -9,6 +9,7 @@ use crate::{
     flashtestations::service::bootstrap_flashtestations,
     traits::{NodeBounds, PoolBounds},
 };
+use eyre::WrapErr as _;
 use reth_basic_payload_builder::BasicPayloadJobGeneratorConfig;
 use reth_node_api::NodeTypes;
 use reth_node_builder::{BuilderContext, components::PayloadServiceBuilder};
@@ -32,6 +33,23 @@ impl FlashblocksServiceBuilder {
         BuilderTx: BuilderTransactions<FlashblocksExtraCtx> + Unpin + Clone + Send + Sync + 'static,
     {
         let once_lock = Arc::new(std::sync::OnceLock::new());
+
+        let mut builder = p2p::NodeBuilder::new().with_port(self.0.p2p_port);
+
+        if let Some(ref private_key_hex) = self.0.p2p_private_key_hex {
+            builder = builder.with_keypair_hex_string(private_key_hex.clone());
+        }
+
+        let (node, payload_tx, _) = builder
+            .try_build()
+            .wrap_err("failed to build flashblocks p2p node")?;
+        let multiaddrs = node.multiaddrs();
+        ctx.task_executor().spawn(async move {
+            if let Err(e) = node.run().await {
+                tracing::error!(error = %e, "p2p node exited");
+            }
+        });
+        tracing::info!(multiaddrs = ?multiaddrs, "flashblocks p2p node started");
 
         let payload_builder = OpPayloadBuilder::new(
             OpEvmConfig::optimism(ctx.chain_spec()),

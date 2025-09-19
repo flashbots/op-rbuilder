@@ -12,6 +12,8 @@ default-run = "op-rbuilder"
 workspace = true
 
 [dependencies]
+p2p = { path = "../p2p" }
+
 reth.workspace = true
 reth-optimism-node.workspace = true
 reth-optimism-cli.workspace = true

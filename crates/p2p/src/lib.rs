@@ -17,13 +17,14 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 
+// TODO: put this on NodeBuilder
 const FLASHBLOCKS_STREAM_PROTOCOL: StreamProtocol = StreamProtocol::new("/flashblocks/1.0.0");
 const DEFAULT_AGENT_VERSION: &str = "rollup-boost/1.0.0";
 
 // TODO: change this to an actual message type
 pub(crate) type Message = String;
 
-pub(crate) struct Node {
+pub struct Node {
     peer_id: PeerId,
     listen_addrs: Vec<libp2p::Multiaddr>,
     swarm: Swarm<Behaviour>,
@@ -35,7 +36,7 @@ pub(crate) struct Node {
 
 impl Node {
     /// Returns the multiaddresses that this node is listening on, with the peer ID included.
-    pub(crate) fn multiaddrs(&self) -> Vec<libp2p::Multiaddr> {
+    pub fn multiaddrs(&self) -> Vec<libp2p::Multiaddr> {
         self.listen_addrs
             .iter()
             .map(|addr| {
@@ -46,7 +47,7 @@ impl Node {
             .collect()
     }
 
-    pub(crate) async fn run(self) -> eyre::Result<()> {
+    pub async fn run(self) -> eyre::Result<()> {
         use libp2p::futures::StreamExt as _;
 
         let Node {
@@ -143,7 +144,7 @@ impl Node {
     }
 }
 
-pub(crate) struct NodeBuilder {
+pub struct NodeBuilder {
     port: Option<u16>,
     listen_addrs: Vec<libp2p::Multiaddr>,
     keypair_hex: Option<String>,
@@ -158,7 +159,7 @@ impl Default for NodeBuilder {
 }
 
 impl NodeBuilder {
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             port: None,
             listen_addrs: Vec::new(),
@@ -168,7 +169,7 @@ impl NodeBuilder {
         }
     }
 
-    pub(crate) fn with_port(mut self, port: u16) -> Self {
+    pub fn with_port(mut self, port: u16) -> Self {
         self.port = Some(port);
         self
     }
@@ -179,7 +180,7 @@ impl NodeBuilder {
         self
     }
 
-    pub(crate) fn with_keypair_hex_string(mut self, keypair_hex: String) -> Self {
+    pub fn with_keypair_hex_string(mut self, keypair_hex: String) -> Self {
         self.keypair_hex = Some(keypair_hex);
         self
     }
@@ -196,13 +197,7 @@ impl NodeBuilder {
         self
     }
 
-    pub(crate) fn try_build(
-        self,
-    ) -> eyre::Result<(
-        Node,
-        tokio::sync::mpsc::Sender<Message>,
-        Control,
-    )> {
+    pub fn try_build(self) -> eyre::Result<(Node, tokio::sync::mpsc::Sender<Message>, Control)> {
         let Self {
             port,
             mut listen_addrs,
