@@ -227,25 +227,18 @@ where
         best_payload: BlockCell<OpBuiltPayload>,
     ) -> Result<(), PayloadBuilderError> {
         let block_build_start_time = Instant::now();
-        let BuildArguments {
-            mut cached_reads,
-            config,
-            cancel: block_cancel,
-        } = args;
+        let BuildArguments { mut cached_reads, config, cancel: block_cancel } = args;
 
         // We log only every 100th block to reduce usage
-        let span = if cfg!(feature = "telemetry")
-            && config.parent_header.number % self.config.sampling_ratio == 0
+        let span = if cfg!(feature = "telemetry") &&
+            config.parent_header.number % self.config.sampling_ratio == 0
         {
             span!(Level::INFO, "build_payload")
         } else {
             tracing::Span::none()
         };
         let _entered = span.enter();
-        span.record(
-            "payload_id",
-            config.attributes.payload_attributes.id.to_string(),
-        );
+        span.record("payload_id", config.attributes.payload_attributes.id.to_string());
 
         let chain_spec = self.client.chain_spec();
         let timestamp = config.attributes.timestamp();
@@ -254,14 +247,8 @@ where
             timestamp,
             suggested_fee_recipient: config.attributes.suggested_fee_recipient(),
             prev_randao: config.attributes.prev_randao(),
-            gas_limit: config
-                .attributes
-                .gas_limit
-                .unwrap_or(config.parent_header.gas_limit),
-            parent_beacon_block_root: config
-                .attributes
-                .payload_attributes
-                .parent_beacon_block_root,
+            gas_limit: config.attributes.gas_limit.unwrap_or(config.parent_header.gas_limit),
+            parent_beacon_block_root: config.attributes.payload_attributes.parent_beacon_block_root,
             extra_data: if chain_spec.is_holocene_active_at_timestamp(timestamp) {
                 config
                     .attributes
@@ -308,10 +295,8 @@ where
 
         // 1. execute the pre steps and seal an early block with that
         let sequencer_tx_start_time = Instant::now();
-        let mut state = State::builder()
-            .with_database(cached_reads.as_db_mut(db))
-            .with_bundle_update()
-            .build();
+        let mut state =
+            State::builder().with_database(cached_reads.as_db_mut(db)).with_bundle_update().build();
 
         let mut info = execute_pre_steps(&mut state, &ctx)?;
         let sequencer_tx_time = sequencer_tx_start_time.elapsed();
@@ -322,8 +307,7 @@ where
         let builder_txs = if ctx.attributes().no_tx_pool {
             vec![]
         } else {
-            self.builder_tx
-                .add_builder_txs(&state_provider, &mut info, &ctx, &mut state)?
+            self.builder_tx.add_builder_txs(&state_provider, &mut info, &ctx, &mut state)?
         };
 
         // We subtract gas limit and da limit for builder transaction from the whole limit
@@ -334,20 +318,17 @@ where
             &mut state,
             &ctx,
             &mut info,
-            calculate_state_root || ctx.attributes().no_tx_pool, // need to calculate state root for CL sync
+            calculate_state_root || ctx.attributes().no_tx_pool, /* need to calculate state root
+                                                                  * for CL sync */
         )?;
 
         best_payload.set(payload.clone());
         self.send_payload_to_engine(payload);
         // not emitting flashblock if no_tx_pool in FCU, it's just syncing
         if !ctx.attributes().no_tx_pool {
-            let flashblock_byte_size = self
-                .ws_pub
-                .publish(&fb_payload)
-                .map_err(PayloadBuilderError::other)?;
-            ctx.metrics
-                .flashblock_byte_size_histogram
-                .record(flashblock_byte_size as f64);
+            let flashblock_byte_size =
+                self.ws_pub.publish(&fb_payload).map_err(PayloadBuilderError::other)?;
+            ctx.metrics.flashblock_byte_size_histogram.record(flashblock_byte_size as f64);
         }
 
         info!(
@@ -363,18 +344,10 @@ where
             );
 
             let total_block_building_time = block_build_start_time.elapsed();
-            ctx.metrics
-                .total_block_built_duration
-                .record(total_block_building_time);
-            ctx.metrics
-                .total_block_built_gauge
-                .set(total_block_building_time);
-            ctx.metrics
-                .payload_num_tx
-                .record(info.executed_transactions.len() as f64);
-            ctx.metrics
-                .payload_num_tx_gauge
-                .set(info.executed_transactions.len() as f64);
+            ctx.metrics.total_block_built_duration.record(total_block_building_time);
+            ctx.metrics.total_block_built_gauge.set(total_block_building_time);
+            ctx.metrics.payload_num_tx.record(info.executed_transactions.len() as f64);
+            ctx.metrics.payload_num_tx_gauge.set(info.executed_transactions.len() as f64);
 
             // return early since we don't need to build a block with transactions from the pool
             return Ok(());
@@ -391,13 +364,10 @@ where
             flashblocks_interval = self.config.specific.interval.as_millis(),
         );
         ctx.metrics.reduced_flashblocks_number.record(
-            self.config
-                .flashblocks_per_block()
-                .saturating_sub(ctx.target_flashblock_count()) as f64,
+            self.config.flashblocks_per_block().saturating_sub(ctx.target_flashblock_count())
+                as f64,
         );
-        ctx.metrics
-            .first_flashblock_time_offset
-            .record(first_flashblock_offset.as_millis() as f64);
+        ctx.metrics.first_flashblock_time_offset.record(first_flashblock_offset.as_millis() as f64);
         let gas_per_batch = ctx.block_gas_limit() / ctx.target_flashblock_count();
         let target_gas_for_batch = gas_per_batch;
         let da_per_batch = ctx
@@ -426,8 +396,7 @@ where
 
         // Create best_transaction iterator
         let mut best_txs = BestFlashblocksTxs::new(BestPayloadTransactions::new(
-            self.pool
-                .best_transactions_with_attributes(ctx.best_transaction_attributes()),
+            self.pool.best_transactions_with_attributes(ctx.best_transaction_attributes()),
         ));
         let interval = self.config.specific.interval;
         let (tx, mut rx) = mpsc::channel((self.config.flashblocks_per_block() + 1) as usize);
@@ -571,14 +540,14 @@ where
         let flashblock_build_start_time = Instant::now();
 
         let builder_txs =
-            self.builder_tx
-                .simulate_builder_txs(&state_provider, info, ctx, state)?;
+            self.builder_tx.simulate_builder_txs(&state_provider, info, ctx, state)?;
 
         let builder_tx_gas = builder_txs.iter().fold(0, |acc, tx| acc + tx.gas_used);
         let builder_tx_da_size: u64 = builder_txs.iter().fold(0, |acc, tx| acc + tx.da_size);
         target_gas_for_batch = target_gas_for_batch.saturating_sub(builder_tx_gas);
 
-        // saturating sub just in case, we will log an error if da_limit too small for builder_tx_da_size
+        // saturating sub just in case, we will log an error if da_limit too small for
+        // builder_tx_da_size
         if let Some(da_limit) = total_da_per_batch.as_mut() {
             *da_limit = da_limit.saturating_sub(builder_tx_da_size);
         }
@@ -586,18 +555,13 @@ where
         let best_txs_start_time = Instant::now();
         best_txs.refresh_iterator(
             BestPayloadTransactions::new(
-                self.pool
-                    .best_transactions_with_attributes(ctx.best_transaction_attributes()),
+                self.pool.best_transactions_with_attributes(ctx.best_transaction_attributes()),
             ),
             ctx.flashblock_index(),
         );
         let transaction_pool_fetch_time = best_txs_start_time.elapsed();
-        ctx.metrics
-            .transaction_pool_fetch_duration
-            .record(transaction_pool_fetch_time);
-        ctx.metrics
-            .transaction_pool_fetch_gauge
-            .set(transaction_pool_fetch_time);
+        ctx.metrics.transaction_pool_fetch_duration.record(transaction_pool_fetch_time);
+        ctx.metrics.transaction_pool_fetch_gauge.set(transaction_pool_fetch_time);
 
         let tx_execution_start_time = Instant::now();
         ctx.execute_best_transactions(
@@ -629,15 +593,10 @@ where
         }
 
         let payload_tx_simulation_time = tx_execution_start_time.elapsed();
-        ctx.metrics
-            .payload_tx_simulation_duration
-            .record(payload_tx_simulation_time);
-        ctx.metrics
-            .payload_tx_simulation_gauge
-            .set(payload_tx_simulation_time);
+        ctx.metrics.payload_tx_simulation_duration.record(payload_tx_simulation_time);
+        ctx.metrics.payload_tx_simulation_gauge.set(payload_tx_simulation_time);
 
-        self.builder_tx
-            .add_builder_txs(&state_provider, info, ctx, state)?;
+        self.builder_tx.add_builder_txs(&state_provider, info, ctx, state)?;
 
         let total_block_built_duration = Instant::now();
         let build_result = build_block(
@@ -647,12 +606,8 @@ where
             ctx.extra_ctx.calculate_state_root || ctx.attributes().no_tx_pool,
         );
         let total_block_built_duration = total_block_built_duration.elapsed();
-        ctx.metrics
-            .total_block_built_duration
-            .record(total_block_built_duration);
-        ctx.metrics
-            .total_block_built_gauge
-            .set(total_block_built_duration);
+        ctx.metrics.total_block_built_duration.record(total_block_built_duration);
+        ctx.metrics.total_block_built_gauge.set(total_block_built_duration);
 
         // Handle build errors with match pattern
         match build_result {
@@ -667,8 +622,9 @@ where
                 fb_payload.index = ctx.flashblock_index();
                 fb_payload.base = None;
 
-                // If main token got canceled in here that means we received get_payload and we should drop everything and now update best_payload
-                // To ensure that we will return same blocks as rollup-boost (to leverage caches)
+                // If main token got canceled in here that means we received get_payload and we
+                // should drop everything and now update best_payload To ensure that
+                // we will return same blocks as rollup-boost (to leverage caches)
                 if block_cancel.is_cancelled() {
                     self.record_flashblocks_metrics(
                         ctx,
@@ -679,18 +635,12 @@ where
                     );
                     return Ok(());
                 }
-                let flashblock_byte_size = self
-                    .ws_pub
-                    .publish(&fb_payload)
-                    .map_err(PayloadBuilderError::other)?;
+                let flashblock_byte_size =
+                    self.ws_pub.publish(&fb_payload).map_err(PayloadBuilderError::other)?;
 
                 // Record flashblock build duration
-                ctx.metrics
-                    .flashblock_build_duration
-                    .record(flashblock_build_start_time.elapsed());
-                ctx.metrics
-                    .flashblock_byte_size_histogram
-                    .record(flashblock_byte_size as f64);
+                ctx.metrics.flashblock_build_duration.record(flashblock_build_start_time.elapsed());
+                ctx.metrics.flashblock_byte_size_histogram.record(flashblock_byte_size as f64);
                 ctx.metrics
                     .flashblock_num_tx_histogram
                     .record(info.executed_transactions.len() as f64);
@@ -734,18 +684,12 @@ where
         message: &str,
     ) {
         ctx.metrics.block_built_success.increment(1);
-        ctx.metrics
-            .flashblock_count
-            .record(ctx.flashblock_index() as f64);
+        ctx.metrics.flashblock_count.record(ctx.flashblock_index() as f64);
         ctx.metrics
             .missing_flashblocks_count
             .record(flashblocks_per_block.saturating_sub(ctx.flashblock_index()) as f64);
-        ctx.metrics
-            .payload_num_tx
-            .record(info.executed_transactions.len() as f64);
-        ctx.metrics
-            .payload_num_tx_gauge
-            .set(info.executed_transactions.len() as f64);
+        ctx.metrics.payload_num_tx.record(info.executed_transactions.len() as f64);
+        ctx.metrics.payload_num_tx_gauge.set(info.executed_transactions.len() as f64);
 
         debug!(
             target: "payload_builder",
@@ -783,18 +727,20 @@ where
         if self.config.specific.fixed {
             return (
                 self.config.flashblocks_per_block(),
-                // We adjust first FB to ensure that we have at least some time to make all FB in time
+                // We adjust first FB to ensure that we have at least some time to make all FB in
+                // time
                 self.config.specific.interval - self.config.specific.leeway_time,
             );
         }
         // We use this system time to determine remining time to build a block
         // Things to consider:
         // FCU(a) - FCU with attributes
-        // FCU(a) could arrive with `block_time - fb_time < delay`. In this case we could only produce 1 flashblock
-        // FCU(a) could arrive with `delay < fb_time` - in this case we will shrink first flashblock
-        // FCU(a) could arrive with `fb_time < delay < block_time - fb_time` - in this case we will issue less flashblocks
-        let target_time = std::time::SystemTime::UNIX_EPOCH + Duration::from_secs(timestamp)
-            - self.config.specific.leeway_time;
+        // FCU(a) could arrive with `block_time - fb_time < delay`. In this case we could only
+        // produce 1 flashblock FCU(a) could arrive with `delay < fb_time` - in this case we
+        // will shrink first flashblock FCU(a) could arrive with `fb_time < delay <
+        // block_time - fb_time` - in this case we will issue less flashblocks
+        let target_time = std::time::SystemTime::UNIX_EPOCH + Duration::from_secs(timestamp) -
+            self.config.specific.leeway_time;
         let now = std::time::SystemTime::now();
         let Ok(time_drift) = target_time.duration_since(now) else {
             error!(
@@ -803,16 +749,10 @@ where
                 ?target_time,
                 ?now,
             );
-            return (
-                self.config.flashblocks_per_block(),
-                self.config.specific.interval,
-            );
+            return (self.config.flashblocks_per_block(), self.config.specific.interval);
         };
         self.metrics.flashblocks_time_drift.record(
-            self.config
-                .block_time
-                .as_millis()
-                .saturating_sub(time_drift.as_millis()) as f64,
+            self.config.block_time.as_millis().saturating_sub(time_drift.as_millis()) as f64,
         );
         debug!(
             target: "payload_builder",
@@ -821,7 +761,8 @@ where
             time_drift = self.config.block_time.as_millis().saturating_sub(time_drift.as_millis()),
             ?timestamp
         );
-        // This is extra check to ensure that we would account at least for block time in case we have any timer discrepancies.
+        // This is extra check to ensure that we would account at least for block time in case we
+        // have any timer discrepancies.
         let time_drift = time_drift.min(self.config.block_time);
         let interval = self.config.specific.interval.as_millis() as u64;
         let time_drift = time_drift.as_millis() as u64;
@@ -831,10 +772,7 @@ where
             (time_drift.div(interval), Duration::from_millis(interval))
         } else {
             // Non-perfect division, so we account for it.
-            (
-                time_drift.div(interval) + 1,
-                Duration::from_millis(first_flashblock_offset),
-            )
+            (time_drift.div(interval) + 1, Duration::from_millis(first_flashblock_offset))
         }
     }
 }
@@ -901,12 +839,8 @@ where
     let state_merge_start_time = Instant::now();
     state.merge_transitions(BundleRetention::Reverts);
     let state_transition_merge_time = state_merge_start_time.elapsed();
-    ctx.metrics
-        .state_transition_merge_duration
-        .record(state_transition_merge_time);
-    ctx.metrics
-        .state_transition_merge_gauge
-        .set(state_transition_merge_time);
+    ctx.metrics.state_transition_merge_duration.record(state_transition_merge_time);
+    ctx.metrics.state_transition_merge_gauge.set(state_transition_merge_time);
 
     let block_number = ctx.block_number();
     assert_eq!(block_number, ctx.parent().number + 1);
@@ -927,9 +861,7 @@ where
             )
         })
         .expect("Number is in range");
-    let logs_bloom = execution_outcome
-        .block_logs_bloom(block_number)
-        .expect("Number is in range");
+    let logs_bloom = execution_outcome.block_logs_bloom(block_number).expect("Number is in range");
 
     // TODO: maybe recreate state with bundle in here
     // // calculate the state root
@@ -942,49 +874,38 @@ where
         let state_provider = state.database.as_ref();
         hashed_state = state_provider.hashed_post_state(execution_outcome.state());
         (state_root, trie_output) = {
-            state
-                .database
-                .as_ref()
-                .state_root_with_updates(hashed_state.clone())
-                .inspect_err(|err| {
+            state.database.as_ref().state_root_with_updates(hashed_state.clone()).inspect_err(
+                |err| {
                     warn!(target: "payload_builder",
                     parent_header=%ctx.parent().hash(),
                         %err,
                         "failed to calculate state root for payload"
                     );
-                })?
+                },
+            )?
         };
         let state_root_calculation_time = state_root_start_time.elapsed();
-        ctx.metrics
-            .state_root_calculation_duration
-            .record(state_root_calculation_time);
-        ctx.metrics
-            .state_root_calculation_gauge
-            .set(state_root_calculation_time);
+        ctx.metrics.state_root_calculation_duration.record(state_root_calculation_time);
+        ctx.metrics.state_root_calculation_gauge.set(state_root_calculation_time);
     }
 
     let mut requests_hash = None;
-    let withdrawals_root = if ctx
-        .chain_spec
-        .is_isthmus_active_at_timestamp(ctx.attributes().timestamp())
-    {
-        // always empty requests hash post isthmus
-        requests_hash = Some(EMPTY_REQUESTS_HASH);
+    let withdrawals_root =
+        if ctx.chain_spec.is_isthmus_active_at_timestamp(ctx.attributes().timestamp()) {
+            // always empty requests hash post isthmus
+            requests_hash = Some(EMPTY_REQUESTS_HASH);
 
-        // withdrawals root field in block header is used for storage root of L2 predeploy
-        // `l2tol1-message-passer`
-        Some(
-            isthmus::withdrawals_root(execution_outcome.state(), state.database.as_ref())
-                .map_err(PayloadBuilderError::other)?,
-        )
-    } else if ctx
-        .chain_spec
-        .is_canyon_active_at_timestamp(ctx.attributes().timestamp())
-    {
-        Some(EMPTY_WITHDRAWALS)
-    } else {
-        None
-    };
+            // withdrawals root field in block header is used for storage root of L2 predeploy
+            // `l2tol1-message-passer`
+            Some(
+                isthmus::withdrawals_root(execution_outcome.state(), state.database.as_ref())
+                    .map_err(PayloadBuilderError::other)?,
+            )
+        } else if ctx.chain_spec.is_canyon_active_at_timestamp(ctx.attributes().timestamp()) {
+            Some(EMPTY_WITHDRAWALS)
+        } else {
+            None
+        };
 
     // create the block header
     let transactions_root = proofs::calculate_transaction_root(&info.executed_transactions);
@@ -1050,11 +971,8 @@ where
     // pick the new transactions from the info field and update the last flashblock index
     let new_transactions = info.executed_transactions[info.extra.last_flashblock_index..].to_vec();
 
-    let new_transactions_encoded = new_transactions
-        .clone()
-        .into_iter()
-        .map(|tx| tx.encoded_2718().into())
-        .collect::<Vec<_>>();
+    let new_transactions_encoded =
+        new_transactions.clone().into_iter().map(|tx| tx.encoded_2718().into()).collect::<Vec<_>>();
 
     let new_receipts = info.receipts[info.extra.last_flashblock_index..].to_vec();
     info.extra.last_flashblock_index = info.executed_transactions.len();
@@ -1113,12 +1031,7 @@ where
     state.transition_state = untouched_transition_state;
 
     Ok((
-        OpBuiltPayload::new(
-            ctx.payload_id(),
-            sealed_block,
-            info.total_fees,
-            Some(executed),
-        ),
+        OpBuiltPayload::new(ctx.payload_id(), sealed_block, info.total_fees, Some(executed)),
         fb_payload,
     ))
 }

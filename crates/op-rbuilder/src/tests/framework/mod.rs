@@ -23,8 +23,8 @@ pub const DEFAULT_JWT_TOKEN: &str =
 
 pub const ONE_ETH: u128 = 1_000_000_000_000_000_000;
 
-/// This gets invoked before any tests, when the cargo test framework loads the test library.
-/// It injects itself into
+/// This gets invoked before any tests, when the cargo test framework loads the
+/// test library. It injects itself into
 #[ctor::ctor]
 fn init_tests() {
     use tracing_subscriber::{filter::filter_fn, prelude::*};
@@ -45,10 +45,8 @@ fn init_tests() {
         tracing_subscriber::registry()
             .with(tracing_subscriber::fmt::layer())
             .with(filter_fn(move |metadata| {
-                metadata.level() <= &level
-                    && !prefix_blacklist
-                        .iter()
-                        .any(|prefix| metadata.target().starts_with(prefix))
+                metadata.level() <= &level &&
+                    !prefix_blacklist.iter().any(|prefix| metadata.target().starts_with(prefix))
             }))
             .init();
     }

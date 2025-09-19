@@ -47,8 +47,9 @@ use tokio_tungstenite::{connect_async, tungstenite::Message};
 use tokio_util::sync::CancellationToken;
 use tracing::warn;
 
-/// Represents a type that emulates a local in-process instance of the OP builder node.
-/// This node uses IPC as the communication channel for the RPC server Engine API.
+/// Represents a type that emulates a local in-process instance of the OP
+/// builder node. This node uses IPC as the communication channel for the RPC
+/// server Engine API.
 pub struct LocalInstance {
     signer: Signer,
     config: NodeConfig<OpChainSpec>,
@@ -60,20 +61,20 @@ pub struct LocalInstance {
 }
 
 impl LocalInstance {
-    /// Creates a new local instance of the OP builder node with the given arguments,
-    /// with the default Reth node configuration.
+    /// Creates a new local instance of the OP builder node with the given
+    /// arguments, with the default Reth node configuration.
     ///
-    /// This method does not prefund any accounts, so before sending any transactions
-    /// make sure that sender accounts are funded.
+    /// This method does not prefund any accounts, so before sending any
+    /// transactions make sure that sender accounts are funded.
     pub async fn new<P: PayloadBuilder>(args: OpRbuilderArgs) -> eyre::Result<Self> {
         Box::pin(Self::new_with_config::<P>(args, default_node_config())).await
     }
 
-    /// Creates a new local instance of the OP builder node with the given arguments,
-    /// with a given Reth node configuration.
+    /// Creates a new local instance of the OP builder node with the given
+    /// arguments, with a given Reth node configuration.
     ///
-    /// This method does not prefund any accounts, so before sending any transactions
-    /// make sure that sender accounts are funded.
+    /// This method does not prefund any accounts, so before sending any
+    /// transactions make sure that sender accounts are funded.
     pub async fn new_with_config<P: PayloadBuilder>(
         args: OpRbuilderArgs,
         config: NodeConfig<OpChainSpec>,
@@ -90,9 +91,7 @@ impl LocalInstance {
 
         let signer = args.builder_signer.unwrap_or_else(|| {
             Signer::try_from_secret(
-                BUILDER_PRIVATE_KEY
-                    .parse()
-                    .expect("Invalid builder private key"),
+                BUILDER_PRIVATE_KEY.parse().expect("Invalid builder private key"),
             )
             .expect("Failed to create signer from private key")
         });
@@ -138,8 +137,7 @@ impl LocalInstance {
                         reverted_cache,
                     );
 
-                    ctx.modules
-                        .add_or_replace_configured(revert_protection_ext.into_rpc())?;
+                    ctx.modules.add_or_replace_configured(revert_protection_ext.into_rpc())?;
                 }
 
                 Ok(())
@@ -163,9 +161,7 @@ impl LocalInstance {
 
         // Wait for all required components to be ready
         rpc_ready_rx.await.expect("Failed to receive ready signal");
-        let pool_monitor = txpool_ready_rx
-            .await
-            .expect("Failed to receive txpool ready signal");
+        let pool_monitor = txpool_ready_rx.await.expect("Failed to receive txpool ready signal");
 
         Ok(Self {
             args,
@@ -178,23 +174,21 @@ impl LocalInstance {
         })
     }
 
-    /// Creates new local instance of the OP builder node with the standard builder configuration.
-    /// This method prefunds the default accounts with 1 ETH each.
+    /// Creates new local instance of the OP builder node with the standard
+    /// builder configuration. This method prefunds the default accounts
+    /// with 1 ETH each.
     pub async fn standard() -> eyre::Result<Self> {
         let args = crate::args::Cli::parse_from(["dummy", "node"]);
-        let Commands::Node(ref node_command) = args.command else {
-            unreachable!()
-        };
+        let Commands::Node(ref node_command) = args.command else { unreachable!() };
         Self::new::<StandardBuilder>(node_command.ext.clone()).await
     }
 
-    /// Creates new local instance of the OP builder node with the flashblocks builder configuration.
-    /// This method prefunds the default accounts with 1 ETH each.
+    /// Creates new local instance of the OP builder node with the flashblocks
+    /// builder configuration. This method prefunds the default accounts
+    /// with 1 ETH each.
     pub async fn flashblocks() -> eyre::Result<Self> {
         let mut args = crate::args::Cli::parse_from(["dummy", "node"]);
-        let Commands::Node(ref mut node_command) = args.command else {
-            unreachable!()
-        };
+        let Commands::Node(ref mut node_command) = args.command else { unreachable!() };
         node_command.ext.flashblocks.enabled = true;
         node_command.ext.flashblocks.flashblocks_port = 0; // use random os assigned port
         Self::new::<FlashblocksBuilder>(node_command.ext.clone()).await
@@ -220,11 +214,7 @@ impl LocalInstance {
             .parse()
             .expect("Failed to parse flashblocks IP address");
 
-        let ipaddr = if ipaddr.is_unspecified() {
-            Ipv4Addr::LOCALHOST
-        } else {
-            ipaddr
-        };
+        let ipaddr = if ipaddr.is_unspecified() { Ipv4Addr::LOCALHOST } else { ipaddr };
 
         let port = self.args.flashblocks.flashblocks_port;
 
@@ -268,10 +258,7 @@ impl Drop for LocalInstance {
         if let Some(task_manager) = self.task_manager.take() {
             task_manager.graceful_shutdown_with_timeout(Duration::from_secs(3));
             std::fs::remove_dir_all(self.config().datadir().to_string()).unwrap_or_else(|e| {
-                panic!(
-                    "Failed to remove temporary data directory {}: {e}",
-                    self.config().datadir()
-                )
+                panic!("Failed to remove temporary data directory {}: {e}", self.config().datadir())
             });
         }
     }
@@ -289,19 +276,13 @@ pub fn default_node_config() -> NodeConfig<OpChainSpec> {
     let tempdir = std::env::temp_dir();
     let random_id = nanoid!();
 
-    let data_path = tempdir
-        .join(format!("rbuilder.{random_id}.datadir"))
-        .to_path_buf();
+    let data_path = tempdir.join(format!("rbuilder.{random_id}.datadir")).to_path_buf();
 
     std::fs::create_dir_all(&data_path).expect("Failed to create temporary data directory");
 
-    let rpc_ipc_path = tempdir
-        .join(format!("rbuilder.{random_id}.rpc-ipc"))
-        .to_path_buf();
+    let rpc_ipc_path = tempdir.join(format!("rbuilder.{random_id}.rpc-ipc")).to_path_buf();
 
-    let auth_ipc_path = tempdir
-        .join(format!("rbuilder.{random_id}.auth-ipc"))
-        .to_path_buf();
+    let auth_ipc_path = tempdir.join(format!("rbuilder.{random_id}.auth-ipc")).to_path_buf();
 
     let mut rpc = RpcServerArgs::default().with_auth_ipc();
     rpc.ws = false;
@@ -314,10 +295,7 @@ pub fn default_node_config() -> NodeConfig<OpChainSpec> {
     network.discovery.disable_discovery = true;
 
     let datadir = DatadirArgs {
-        datadir: data_path
-            .to_string_lossy()
-            .parse()
-            .expect("Failed to parse data dir path"),
+        datadir: data_path.to_string_lossy().parse().expect("Failed to parse data dir path"),
         static_files_path: None,
     };
 
@@ -350,16 +328,14 @@ fn pool_component(args: &OpRbuilderArgs) -> OpPoolBuilder<FBPooledTransaction> {
             // to garbage collect transactions out of the bundle range.
             rollup_args.enable_tx_conditional || args.enable_revert_protection,
         )
-        .with_supervisor(
-            rollup_args.supervisor_http.clone(),
-            rollup_args.supervisor_safety_level,
-        )
+        .with_supervisor(rollup_args.supervisor_http.clone(), rollup_args.supervisor_safety_level)
 }
 
 /// A utility for listening to flashblocks WebSocket messages during tests.
 ///
-/// This provides a reusable way to capture and inspect flashblocks that are produced
-/// during test execution, eliminating the need for duplicate WebSocket listening code.
+/// This provides a reusable way to capture and inspect flashblocks that are
+/// produced during test execution, eliminating the need for duplicate WebSocket
+/// listening code.
 pub struct FlashblocksListener {
     pub flashblocks: Arc<Mutex<Vec<FlashblocksPayloadV1>>>,
     pub cancellation_token: CancellationToken,
@@ -367,9 +343,11 @@ pub struct FlashblocksListener {
 }
 
 impl FlashblocksListener {
-    /// Create a new flashblocks listener that connects to the given WebSocket URL.
+    /// Create a new flashblocks listener that connects to the given WebSocket
+    /// URL.
     ///
-    /// The listener will automatically parse incoming messages as FlashblocksPayloadV1.
+    /// The listener will automatically parse incoming messages as
+    /// FlashblocksPayloadV1.
     fn new(flashblocks_ws_url: String) -> Self {
         let flashblocks = Arc::new(Mutex::new(Vec::new()));
         let cancellation_token = CancellationToken::new();
@@ -395,11 +373,7 @@ impl FlashblocksListener {
             }
         });
 
-        Self {
-            flashblocks,
-            cancellation_token,
-            handle,
-        }
+        Self { flashblocks, cancellation_token, handle }
     }
 
     /// Get a snapshot of all received flashblocks
@@ -409,21 +383,17 @@ impl FlashblocksListener {
 
     /// Find a flashblock by index
     pub fn find_flashblock(&self, index: u64) -> Option<FlashblocksPayloadV1> {
-        self.flashblocks
-            .lock()
-            .iter()
-            .find(|fb| fb.index == index)
-            .cloned()
+        self.flashblocks.lock().iter().find(|fb| fb.index == index).cloned()
     }
 
     /// Check if any flashblock contains the given transaction hash
     pub fn contains_transaction(&self, tx_hash: &B256) -> bool {
         let tx_hash_str = format!("{tx_hash:#x}");
         self.flashblocks.lock().iter().any(|fb| {
-            if let Some(receipts) = fb.metadata.get("receipts") {
-                if let Some(receipts_obj) = receipts.as_object() {
-                    return receipts_obj.contains_key(&tx_hash_str);
-                }
+            if let Some(receipts) = fb.metadata.get("receipts") &&
+                let Some(receipts_obj) = receipts.as_object()
+            {
+                return receipts_obj.contains_key(&tx_hash_str);
             }
             false
         })
@@ -433,12 +403,11 @@ impl FlashblocksListener {
     pub fn find_transaction_flashblock(&self, tx_hash: &B256) -> Option<u64> {
         let tx_hash_str = format!("{tx_hash:#x}");
         self.flashblocks.lock().iter().find_map(|fb| {
-            if let Some(receipts) = fb.metadata.get("receipts") {
-                if let Some(receipts_obj) = receipts.as_object() {
-                    if receipts_obj.contains_key(&tx_hash_str) {
-                        return Some(fb.index);
-                    }
-                }
+            if let Some(receipts) = fb.metadata.get("receipts") &&
+                let Some(receipts_obj) = receipts.as_object() &&
+                receipts_obj.contains_key(&tx_hash_str)
+            {
+                return Some(fb.index);
             }
             None
         })

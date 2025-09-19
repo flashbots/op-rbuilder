@@ -11,9 +11,9 @@ use crate::{
     },
 };
 
-/// This test ensures that the transactions that get reverted and not included in the block,
-/// are eventually dropped from the pool once their block range is reached.
-/// This test creates N transactions with different block ranges.
+/// This test ensures that the transactions that get reverted and not included
+/// in the block, are eventually dropped from the pool once their block range is
+/// reached. This test creates N transactions with different block ranges.
 #[rb_test(args = OpRbuilderArgs {
     enable_revert_protection: true,
     ..Default::default()
@@ -53,9 +53,10 @@ async fn monitor_transaction_gc(rbuilder: LocalInstance) -> eyre::Result<()> {
             assert_eq!(generated_block.transactions.len(), 3);
         }
 
-        // since we created the 10 transactions with increasing block ranges, as we generate blocks
-        // one transaction will be gc on each block.
-        // transactions from [0, i] should be dropped, transactions from [i+1, 10] should be queued
+        // since we created the 10 transactions with increasing block ranges, as we
+        // generate blocks one transaction will be gc on each block.
+        // transactions from [0, i] should be dropped, transactions from [i+1, 10]
+        // should be queued
         for j in 0..=i {
             assert!(rbuilder.pool().is_dropped(*pending_txn[j].tx_hash()));
         }
@@ -67,23 +68,17 @@ async fn monitor_transaction_gc(rbuilder: LocalInstance) -> eyre::Result<()> {
     Ok(())
 }
 
-/// If revert protection is disabled, the transactions that revert are included in the block.
+/// If revert protection is disabled, the transactions that revert are included
+/// in the block.
 #[rb_test]
 async fn disabled(rbuilder: LocalInstance) -> eyre::Result<()> {
     let driver = rbuilder.driver().await?;
 
     for _ in 0..10 {
-        let valid_tx = driver
-            .create_transaction()
-            .random_valid_transfer()
-            .send()
-            .await?;
+        let valid_tx = driver.create_transaction().random_valid_transfer().send().await?;
 
-        let reverting_tx = driver
-            .create_transaction()
-            .random_reverting_transaction()
-            .send()
-            .await?;
+        let reverting_tx =
+            driver.create_transaction().random_reverting_transaction().send().await?;
         let block = driver.build_new_block().await?;
 
         assert!(block.includes(valid_tx.tx_hash()));
@@ -93,29 +88,22 @@ async fn disabled(rbuilder: LocalInstance) -> eyre::Result<()> {
     Ok(())
 }
 
-/// If revert protection is disabled, it should not be possible to send a revert bundle
-/// since the revert RPC endpoint is not available.
+/// If revert protection is disabled, it should not be possible to send a revert
+/// bundle since the revert RPC endpoint is not available.
 #[rb_test]
 async fn disabled_bundle_endpoint_error(rbuilder: LocalInstance) -> eyre::Result<()> {
     let driver = rbuilder.driver().await?;
 
-    let res = driver
-        .create_transaction()
-        .with_bundle(BundleOpts::default())
-        .send()
-        .await;
+    let res = driver.create_transaction().with_bundle(BundleOpts::default()).send().await;
 
-    assert!(
-        res.is_err(),
-        "Expected error because method is not available"
-    );
+    assert!(res.is_err(), "Expected error because method is not available");
     Ok(())
 }
 
-/// Test the behaviour of the revert protection bundle, if the bundle **does not** revert
-/// the transaction is included in the block. If the bundle reverts, the transaction
-/// is not included in the block and tried again for the next bundle range blocks
-/// when it will be dropped from the pool.
+/// Test the behaviour of the revert protection bundle, if the bundle **does
+/// not** revert the transaction is included in the block. If the bundle
+/// reverts, the transaction is not included in the block and tried again for
+/// the next bundle range blocks when it will be dropped from the pool.
 #[rb_test(args = OpRbuilderArgs {
     enable_revert_protection: true,
     ..Default::default()
@@ -133,12 +121,7 @@ async fn bundle(rbuilder: LocalInstance) -> eyre::Result<()> {
         .await?;
 
     let block2 = driver.build_new_block().await?; // Block 2
-    assert!(
-        block2
-            .transactions
-            .hashes()
-            .includes(valid_bundle.tx_hash())
-    );
+    assert!(block2.transactions.hashes().includes(valid_bundle.tx_hash()));
 
     let bundle_opts = BundleOpts::default().with_block_number_max(4);
 
@@ -156,7 +139,8 @@ async fn bundle(rbuilder: LocalInstance) -> eyre::Result<()> {
     // After the block the transaction is still pending in the pool
     assert!(rbuilder.pool().is_pending(*reverted_bundle.tx_hash()));
 
-    // Test 3: Chain progresses beyond the bundle range. The transaction is dropped from the pool
+    // Test 3: Chain progresses beyond the bundle range. The transaction is dropped
+    // from the pool
     driver.build_new_block().await?; // Block 4
     assert!(rbuilder.pool().is_dropped(*reverted_bundle.tx_hash()));
 
@@ -194,11 +178,7 @@ async fn bundle_min_block_number(rbuilder: LocalInstance) -> eyre::Result<()> {
         .create_transaction()
         .with_revert()
         .with_reverted_hash()
-        .with_bundle(
-            BundleOpts::default()
-                .with_block_number_max(4)
-                .with_block_number_min(4),
-        )
+        .with_bundle(BundleOpts::default().with_block_number_max(4).with_block_number_min(4))
         .send()
         .await?;
 
@@ -220,7 +200,8 @@ async fn bundle_min_timestamp(rbuilder: LocalInstance) -> eyre::Result<()> {
     let driver = rbuilder.driver().await?;
     let initial_timestamp = driver.latest().await?.header.timestamp;
 
-    // The bundle is valid when the min timestamp is equal to the current block's timestamp
+    // The bundle is valid when the min timestamp is equal to the current block's
+    // timestamp
     let bundle_with_min_timestamp = driver
         .create_transaction()
         .with_revert() // the transaction reverts but it is included in the block
@@ -229,7 +210,8 @@ async fn bundle_min_timestamp(rbuilder: LocalInstance) -> eyre::Result<()> {
         .send()
         .await?;
 
-    // Each block advances the timestamp by block_time_secs which is 1 when chain_block_time isn't set
+    // Each block advances the timestamp by block_time_secs which is 1 when
+    // chain_block_time isn't set
     let block = driver.build_new_block().await?; // Block 1, initial_timestamp + 1
     assert!(!block.includes(bundle_with_min_timestamp.tx_hash()));
 
@@ -257,22 +239,15 @@ async fn bundle_range_limits(rbuilder: LocalInstance) -> eyre::Result<()> {
     }
 
     // Max block cannot be a past block
-    assert!(
-        send_bundle(&driver, BundleOpts::default().with_block_number_max(1))
-            .await
-            .is_err()
-    );
+    assert!(send_bundle(&driver, BundleOpts::default().with_block_number_max(1)).await.is_err());
 
-    // Bundles are valid if their max block in in between the current block and the max block range
+    // Bundles are valid if their max block in in between the current block and the
+    // max block range
     let current_block = 2;
     let next_valid_block = current_block + 1;
 
     for i in next_valid_block..next_valid_block + MAX_BLOCK_RANGE_BLOCKS {
-        assert!(
-            send_bundle(&driver, BundleOpts::default().with_block_number_max(i))
-                .await
-                .is_ok()
-        );
+        assert!(send_bundle(&driver, BundleOpts::default().with_block_number_max(i)).await.is_ok());
     }
 
     // A bundle with a block out of range is invalid
@@ -290,9 +265,7 @@ async fn bundle_range_limits(rbuilder: LocalInstance) -> eyre::Result<()> {
     assert!(
         send_bundle(
             &driver,
-            BundleOpts::default()
-                .with_block_number_max(1)
-                .with_block_number_min(2)
+            BundleOpts::default().with_block_number_max(1).with_block_number_min(2)
         )
         .await
         .is_err()
@@ -310,12 +283,9 @@ async fn bundle_range_limits(rbuilder: LocalInstance) -> eyre::Result<()> {
         .is_ok()
     );
     assert!(
-        send_bundle(
-            &driver,
-            BundleOpts::default().with_block_number_max(next_valid_block)
-        )
-        .await
-        .is_ok()
+        send_bundle(&driver, BundleOpts::default().with_block_number_max(next_valid_block))
+            .await
+            .is_ok()
     );
 
     // A bundle with a min block equal to max block is valid
@@ -334,46 +304,34 @@ async fn bundle_range_limits(rbuilder: LocalInstance) -> eyre::Result<()> {
     // A bundle with only min block that's within the default range is valid
     let default_max = current_block + MAX_BLOCK_RANGE_BLOCKS;
     assert!(
-        send_bundle(
-            &driver,
-            BundleOpts::default().with_block_number_min(current_block)
-        )
-        .await
-        .is_ok()
+        send_bundle(&driver, BundleOpts::default().with_block_number_min(current_block))
+            .await
+            .is_ok()
     );
     assert!(
-        send_bundle(
-            &driver,
-            BundleOpts::default().with_block_number_min(default_max - 1)
-        )
-        .await
-        .is_ok()
+        send_bundle(&driver, BundleOpts::default().with_block_number_min(default_max - 1))
+            .await
+            .is_ok()
     );
     assert!(
-        send_bundle(
-            &driver,
-            BundleOpts::default().with_block_number_min(default_max)
-        )
-        .await
-        .is_ok()
+        send_bundle(&driver, BundleOpts::default().with_block_number_min(default_max))
+            .await
+            .is_ok()
     );
 
     // A bundle with only min block that exceeds the default max range is invalid
     assert!(
-        send_bundle(
-            &driver,
-            BundleOpts::default().with_block_number_min(default_max + 1)
-        )
-        .await
-        .is_err()
+        send_bundle(&driver, BundleOpts::default().with_block_number_min(default_max + 1))
+            .await
+            .is_err()
     );
 
     Ok(())
 }
 
-/// If a transaction reverts and was sent as a normal transaction through the eth_sendRawTransaction
-/// bundle, the transaction should be included in the block.
-/// This behaviour is the same as the 'disabled' test.
+/// If a transaction reverts and was sent as a normal transaction through the
+/// eth_sendRawTransaction bundle, the transaction should be included in the
+/// block. This behaviour is the same as the 'disabled' test.
 #[rb_test(args = OpRbuilderArgs {
     enable_revert_protection: true,
     ..Default::default()
@@ -382,16 +340,9 @@ async fn allow_reverted_transactions_without_bundle(rbuilder: LocalInstance) -> 
     let driver = rbuilder.driver().await?;
 
     for _ in 0..10 {
-        let valid_tx = driver
-            .create_transaction()
-            .random_valid_transfer()
-            .send()
-            .await?;
-        let reverting_tx = driver
-            .create_transaction()
-            .random_reverting_transaction()
-            .send()
-            .await?;
+        let valid_tx = driver.create_transaction().random_valid_transfer().send().await?;
+        let reverting_tx =
+            driver.create_transaction().random_reverting_transaction().send().await?;
         let block = driver.build_new_block().await?;
 
         assert!(block.includes(valid_tx.tx_hash()));
@@ -401,8 +352,8 @@ async fn allow_reverted_transactions_without_bundle(rbuilder: LocalInstance) -> 
     Ok(())
 }
 
-/// If a transaction reverts and gets dropped it, the eth_getTransactionReceipt should return
-/// an error message that it was dropped.
+/// If a transaction reverts and gets dropped it, the eth_getTransactionReceipt
+/// should return an error message that it was dropped.
 #[rb_test(args = OpRbuilderArgs {
     enable_revert_protection: true,
     ..OpRbuilderArgs::test_default()

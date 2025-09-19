@@ -23,9 +23,7 @@ async fn gas_limiter_blocks_excessive_usage(rbuilder: LocalInstance) -> eyre::Re
     let driver = rbuilder.driver().await?;
 
     // Fund some accounts for testing
-    let funded_accounts = driver
-        .fund_accounts(2, 10_000_000_000_000_000_000u128)
-        .await?; // 10 ETH each
+    let funded_accounts = driver.fund_accounts(2, 10_000_000_000_000_000_000u128).await?; // 10 ETH each
 
     // These transactions should not be throttled
     let tx1 = driver
@@ -49,7 +47,8 @@ async fn gas_limiter_blocks_excessive_usage(rbuilder: LocalInstance) -> eyre::Re
     assert!(tx_hashes.contains(tx1.tx_hash()), "tx1 should be included");
     assert!(tx_hashes.contains(tx2.tx_hash()), "tx2 should be included");
 
-    // Send multiple big transactions from the same address - these should hit the gas limiter
+    // Send multiple big transactions from the same address - these should hit the
+    // gas limiter
     let mut sent_txs = Vec::new();
     for i in 0..5 {
         let big_tx = driver
@@ -59,11 +58,7 @@ async fn gas_limiter_blocks_excessive_usage(rbuilder: LocalInstance) -> eyre::Re
             .send()
             .await?;
         sent_txs.push(*big_tx.tx_hash());
-        info!(
-            "Sent big transaction {} from address {}",
-            i + 1,
-            funded_accounts[0].address
-        );
+        info!("Sent big transaction {} from address {}", i + 1, funded_accounts[0].address);
     }
 
     // Meanwhile, the other address should not be throttled
@@ -87,10 +82,7 @@ async fn gas_limiter_blocks_excessive_usage(rbuilder: LocalInstance) -> eyre::Re
         "Gas limiter should have rejected some transactions, included: {}/5",
         included_count
     );
-    assert!(
-        included_count > 0,
-        "Gas limiter should have allowed at least one transaction"
-    );
+    assert!(included_count > 0, "Gas limiter should have allowed at least one transaction");
 
     assert!(
         tx_hashes.contains(legit_tx.tx_hash()),

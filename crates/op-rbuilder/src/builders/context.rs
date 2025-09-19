@@ -93,9 +93,7 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
 
     /// Returns the block gas limit to target.
     pub(super) fn block_gas_limit(&self) -> u64 {
-        self.attributes()
-            .gas_limit
-            .unwrap_or(self.evm_env.block_env.gas_limit)
+        self.attributes().gas_limit.unwrap_or(self.evm_env.block_env.gas_limit)
     }
 
     /// Returns the block number for the block.
@@ -110,10 +108,7 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
 
     /// Returns the current blob gas price.
     pub(super) fn get_blob_gasprice(&self) -> Option<u64> {
-        self.evm_env
-            .block_env
-            .blob_gasprice()
-            .map(|gasprice| gasprice as u64)
+        self.evm_env.block_env.blob_gasprice().map(|gasprice| gasprice as u64)
     }
 
     /// Returns the blob fields for the header.
@@ -123,11 +118,7 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
         // OP doesn't support blobs/EIP-4844.
         // https://specs.optimism.io/protocol/exec-engine.html#ecotone-disable-blob-transactions
         // Need [Some] or [None] based on hardfork to match block hash.
-        if self.is_ecotone_active() {
-            (Some(0), Some(0))
-        } else {
-            (None, None)
-        }
+        if self.is_ecotone_active() { (Some(0), Some(0)) } else { (None, None) }
     }
 
     /// Returns the extra data for the block.
@@ -159,32 +150,27 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
 
     /// Returns true if regolith is active for the payload.
     pub(super) fn is_regolith_active(&self) -> bool {
-        self.chain_spec
-            .is_regolith_active_at_timestamp(self.attributes().timestamp())
+        self.chain_spec.is_regolith_active_at_timestamp(self.attributes().timestamp())
     }
 
     /// Returns true if ecotone is active for the payload.
     pub(super) fn is_ecotone_active(&self) -> bool {
-        self.chain_spec
-            .is_ecotone_active_at_timestamp(self.attributes().timestamp())
+        self.chain_spec.is_ecotone_active_at_timestamp(self.attributes().timestamp())
     }
 
     /// Returns true if canyon is active for the payload.
     pub(super) fn is_canyon_active(&self) -> bool {
-        self.chain_spec
-            .is_canyon_active_at_timestamp(self.attributes().timestamp())
+        self.chain_spec.is_canyon_active_at_timestamp(self.attributes().timestamp())
     }
 
     /// Returns true if holocene is active for the payload.
     pub(super) fn is_holocene_active(&self) -> bool {
-        self.chain_spec
-            .is_holocene_active_at_timestamp(self.attributes().timestamp())
+        self.chain_spec.is_holocene_active_at_timestamp(self.attributes().timestamp())
     }
 
     /// Returns true if isthmus is active for the payload.
     pub(super) fn is_isthmus_active(&self) -> bool {
-        self.chain_spec
-            .is_isthmus_active_at_timestamp(self.attributes().timestamp())
+        self.chain_spec.is_isthmus_active_at_timestamp(self.attributes().timestamp())
     }
 
     /// Returns the chain id
@@ -247,12 +233,9 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
             // purely for the purposes of utilizing the `evm_config.tx_env`` function.
             // Deposit transactions do not have signatures, so if the tx is a deposit, this
             // will just pull in its `from` address.
-            let sequencer_tx = sequencer_tx
-                .value()
-                .try_clone_into_recovered()
-                .map_err(|_| {
-                    PayloadBuilderError::other(OpPayloadBuilderError::TransactionEcRecoverFailed)
-                })?;
+            let sequencer_tx = sequencer_tx.value().try_clone_into_recovered().map_err(|_| {
+                PayloadBuilderError::other(OpPayloadBuilderError::TransactionEcRecoverFailed)
+            })?;
 
             // Cache the depositor account prior to the state transition for the deposit nonce.
             //
@@ -339,12 +322,8 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
 
         // Remove once we merge Reth 1.4.4
         // Fixed in https://github.com/paradigmxyz/reth/pull/16514
-        self.metrics
-            .da_block_size_limit
-            .set(block_da_limit.map_or(-1.0, |v| v as f64));
-        self.metrics
-            .da_tx_size_limit
-            .set(tx_da_limit.map_or(-1.0, |v| v as f64));
+        self.metrics.da_block_size_limit.set(block_da_limit.map_or(-1.0, |v| v as f64));
+        self.metrics.da_tx_size_limit.set(tx_da_limit.map_or(-1.0, |v| v as f64));
 
         let block_attr = BlockConditionalAttributes {
             number: self.block_number(),
@@ -361,9 +340,11 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
             let tx_hash = tx.tx_hash();
 
             // exclude reverting transaction if:
-            // - the transaction comes from a bundle (is_some) and the hash **is not** in reverted hashes
-            // Note that we need to use the Option to signal whether the transaction comes from a bundle,
-            // otherwise, we would exclude all transactions that are not in the reverted hashes.
+            // - the transaction comes from a bundle (is_some) and the hash **is not** in reverted
+            //   hashes
+            // Note that we need to use the Option to signal whether the transaction comes from a
+            // bundle, otherwise, we would exclude all transactions that are not in the
+            // reverted hashes.
             let is_bundle_tx = reverted_hashes.is_some();
             let exclude_reverting_txs =
                 is_bundle_tx && !reverted_hashes.unwrap().contains(&tx_hash);
@@ -382,19 +363,20 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
             num_txs_considered += 1;
 
             // TODO: ideally we should get this from the txpool stream
-            if let Some(conditional) = conditional
-                && !conditional.matches_block_attributes(&block_attr)
+            if let Some(conditional) = conditional &&
+                !conditional.matches_block_attributes(&block_attr)
             {
                 best_txs.mark_invalid(tx.signer(), tx.nonce());
                 continue;
             }
 
-            // TODO: remove this condition and feature once we are comfortable enabling interop for everything
+            // TODO: remove this condition and feature once we are comfortable enabling interop for
+            // everything
             if cfg!(feature = "interop") {
-                // We skip invalid cross chain txs, they would be removed on the next block update in
-                // the maintenance job
-                if let Some(interop) = interop
-                    && !is_valid_interop(interop, self.config.attributes.timestamp())
+                // We skip invalid cross chain txs, they would be removed on the next block update
+                // in the maintenance job
+                if let Some(interop) = interop &&
+                    !is_valid_interop(interop, self.config.attributes.timestamp())
                 {
                     log_txn(TxnExecutionResult::InteropFailed);
                     best_txs.mark_invalid(tx.signer(), tx.nonce());
@@ -455,9 +437,7 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
                 }
             };
 
-            self.metrics
-                .tx_simulation_duration
-                .record(tx_simulation_start_time.elapsed());
+            self.metrics.tx_simulation_duration.record(tx_simulation_start_time.elapsed());
             self.metrics.tx_byte_size.record(tx.inner().size() as f64);
             num_txs_simulated += 1;
 
@@ -465,11 +445,7 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
             // reverted or not, as this is a check against maliciously searchers
             // sending txs that are expensive to compute but always revert.
             let gas_used = result.gas_used();
-            if self
-                .address_gas_limiter
-                .consume_gas(tx.signer(), gas_used)
-                .is_err()
-            {
+            if self.address_gas_limiter.consume_gas(tx.signer(), gas_used).is_err() {
                 log_txn(TxnExecutionResult::MaxGasUsageExceeded);
                 best_txs.mark_invalid(tx.signer(), tx.nonce());
                 continue;
@@ -495,12 +471,12 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
 
             // add gas used by the transaction to cumulative gas used, before creating the
             // receipt
-            if let Some(max_gas_per_txn) = self.max_gas_per_txn {
-                if gas_used > max_gas_per_txn {
-                    log_txn(TxnExecutionResult::MaxGasUsageExceeded);
-                    best_txs.mark_invalid(tx.signer(), tx.nonce());
-                    continue;
-                }
+            if let Some(max_gas_per_txn) = self.max_gas_per_txn &&
+                gas_used > max_gas_per_txn
+            {
+                log_txn(TxnExecutionResult::MaxGasUsageExceeded);
+                best_txs.mark_invalid(tx.signer(), tx.nonce());
+                continue;
             }
 
             info.cumulative_gas_used += gas_used;

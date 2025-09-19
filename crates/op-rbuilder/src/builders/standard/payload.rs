@@ -101,10 +101,7 @@ impl<T: PoolTransaction> OpPayloadTransactions<T> for () {
     ) -> impl PayloadTransactions<Transaction = T> {
         // TODO: once this issue is fixed we could remove without_updates and rely on regular impl
         // https://github.com/paradigmxyz/reth/issues/17325
-        BestPayloadTransactions::new(
-            pool.best_transactions_with_attributes(attr)
-                .without_updates(),
-        )
+        BestPayloadTransactions::new(pool.best_transactions_with_attributes(attr).without_updates())
     }
 }
 
@@ -132,16 +129,11 @@ where
             best_payload: _,
         } = args;
 
-        let args = BuildArguments {
-            cached_reads,
-            config,
-            cancel: CancellationToken::new(),
-        };
+        let args = BuildArguments { cached_reads, config, cancel: CancellationToken::new() };
 
         self.build_payload(args, |attrs| {
             #[allow(clippy::unit_arg)]
-            self.best_transactions
-                .best_transactions(pool.clone(), attrs)
+            self.best_transactions.best_transactions(pool.clone(), attrs)
         })
     }
 
@@ -159,16 +151,11 @@ where
             reth_basic_payload_builder::HeaderForPayload<Self::BuiltPayload>,
         >,
     ) -> Result<Self::BuiltPayload, PayloadBuilderError> {
-        let args = BuildArguments {
-            config,
-            cached_reads: Default::default(),
-            cancel: Default::default(),
-        };
-        self.build_payload(args, |_| {
-            NoopPayloadTransactions::<Pool::Transaction>::default()
-        })?
-        .into_payload()
-        .ok_or_else(|| PayloadBuilderError::MissingPayload)
+        let args =
+            BuildArguments { config, cached_reads: Default::default(), cancel: Default::default() };
+        self.build_payload(args, |_| NoopPayloadTransactions::<Pool::Transaction>::default())?
+            .into_payload()
+            .ok_or_else(|| PayloadBuilderError::MissingPayload)
     }
 }
 
@@ -193,11 +180,7 @@ where
     ) -> Result<BuildOutcome<OpBuiltPayload>, PayloadBuilderError> {
         let block_build_start_time = Instant::now();
 
-        let BuildArguments {
-            mut cached_reads,
-            config,
-            cancel,
-        } = args;
+        let BuildArguments { mut cached_reads, config, cancel } = args;
 
         let chain_spec = self.client.chain_spec();
         let timestamp = config.attributes.timestamp();
@@ -205,14 +188,8 @@ where
             timestamp,
             suggested_fee_recipient: config.attributes.suggested_fee_recipient(),
             prev_randao: config.attributes.prev_randao(),
-            gas_limit: config
-                .attributes
-                .gas_limit
-                .unwrap_or(config.parent_header.gas_limit),
-            parent_beacon_block_root: config
-                .attributes
-                .payload_attributes
-                .parent_beacon_block_root,
+            gas_limit: config.attributes.gas_limit.unwrap_or(config.parent_header.gas_limit),
+            parent_beacon_block_root: config.attributes.payload_attributes.parent_beacon_block_root,
             extra_data: if chain_spec.is_holocene_active_at_timestamp(timestamp) {
                 config
                     .attributes
@@ -251,10 +228,7 @@ where
         let db = StateProviderDatabase::new(&state_provider);
         let metrics = ctx.metrics.clone();
         if ctx.attributes().no_tx_pool {
-            let state = State::builder()
-                .with_database(db)
-                .with_bundle_update()
-                .build();
+            let state = State::builder().with_database(db).with_bundle_update().build();
             builder.build(state, &state_provider, ctx, self.builder_tx.clone())
         } else {
             // sequencer mode we can reuse cachedreads from previous runs
@@ -266,12 +240,8 @@ where
         }
         .map(|out| {
             let total_block_building_time = block_build_start_time.elapsed();
-            metrics
-                .total_block_built_duration
-                .record(total_block_building_time);
-            metrics
-                .total_block_built_gauge
-                .set(total_block_building_time);
+            metrics.total_block_built_duration.record(total_block_building_time);
+            metrics.total_block_built_gauge.set(total_block_building_time);
 
             out.with_cached_reads(cached_reads)
         })
@@ -301,9 +271,7 @@ pub(super) struct OpBuilder<'a, Txs> {
 
 impl<'a, Txs> OpBuilder<'a, Txs> {
     fn new(best: impl FnOnce(BestTransactionsAttributes) -> Txs + Send + Sync + 'a) -> Self {
-        Self {
-            best: Box::new(best),
-        }
+        Self { best: Box::new(best) }
     }
 }
 
@@ -372,12 +340,8 @@ impl<Txs: PayloadTxsBounds> OpBuilder<'_, Txs> {
             let best_txs_start_time = Instant::now();
             let mut best_txs = best(ctx.best_transaction_attributes());
             let transaction_pool_fetch_time = best_txs_start_time.elapsed();
-            ctx.metrics
-                .transaction_pool_fetch_duration
-                .record(transaction_pool_fetch_time);
-            ctx.metrics
-                .transaction_pool_fetch_gauge
-                .set(transaction_pool_fetch_time);
+            ctx.metrics.transaction_pool_fetch_duration.record(transaction_pool_fetch_time);
+            ctx.metrics.transaction_pool_fetch_gauge.set(transaction_pool_fetch_time);
 
             if ctx
                 .execute_best_transactions(
@@ -403,19 +367,11 @@ impl<Txs: PayloadTxsBounds> OpBuilder<'_, Txs> {
         db.merge_transitions(BundleRetention::Reverts);
 
         let state_transition_merge_time = state_merge_start_time.elapsed();
-        ctx.metrics
-            .state_transition_merge_duration
-            .record(state_transition_merge_time);
-        ctx.metrics
-            .state_transition_merge_gauge
-            .set(state_transition_merge_time);
+        ctx.metrics.state_transition_merge_duration.record(state_transition_merge_time);
+        ctx.metrics.state_transition_merge_gauge.set(state_transition_merge_time);
 
-        ctx.metrics
-            .payload_num_tx
-            .record(info.executed_transactions.len() as f64);
-        ctx.metrics
-            .payload_num_tx_gauge
-            .set(info.executed_transactions.len() as f64);
+        ctx.metrics.payload_num_tx.record(info.executed_transactions.len() as f64);
+        ctx.metrics.payload_num_tx_gauge.set(info.executed_transactions.len() as f64);
 
         let payload = ExecutedPayload { info };
 
@@ -434,10 +390,7 @@ impl<Txs: PayloadTxsBounds> OpBuilder<'_, Txs> {
     where
         BuilderTx: BuilderTransactions,
     {
-        let mut db = State::builder()
-            .with_database(state)
-            .with_bundle_update()
-            .build();
+        let mut db = State::builder().with_database(state).with_bundle_update().build();
         let ExecutedPayload { info } =
             match self.execute(&state_provider, &mut db, &ctx, builder_tx)? {
                 BuildOutcomeKind::Better { payload } | BuildOutcomeKind::Freeze(payload) => payload,
@@ -448,12 +401,8 @@ impl<Txs: PayloadTxsBounds> OpBuilder<'_, Txs> {
             };
 
         let block_number = ctx.block_number();
-        let execution_outcome = ExecutionOutcome::new(
-            db.take_bundle(),
-            vec![info.receipts],
-            block_number,
-            Vec::new(),
-        );
+        let execution_outcome =
+            ExecutionOutcome::new(db.take_bundle(), vec![info.receipts], block_number, Vec::new());
         let receipts_root = execution_outcome
             .generic_receipts_root_slow(block_number, |receipts| {
                 calculate_receipt_root_no_memo_optimism(
@@ -463,33 +412,26 @@ impl<Txs: PayloadTxsBounds> OpBuilder<'_, Txs> {
                 )
             })
             .expect("Number is in range");
-        let logs_bloom = execution_outcome
-            .block_logs_bloom(block_number)
-            .expect("Number is in range");
+        let logs_bloom =
+            execution_outcome.block_logs_bloom(block_number).expect("Number is in range");
 
         // calculate the state root
         let state_root_start_time = Instant::now();
 
         let hashed_state = state_provider.hashed_post_state(execution_outcome.state());
         let (state_root, trie_output) = {
-            state_provider
-                .state_root_with_updates(hashed_state.clone())
-                .inspect_err(|err| {
-                    warn!(target: "payload_builder",
-                    parent_header=%ctx.parent().hash(),
-                        %err,
-                        "failed to calculate state root for payload"
-                    );
-                })?
+            state_provider.state_root_with_updates(hashed_state.clone()).inspect_err(|err| {
+                warn!(target: "payload_builder",
+                parent_header=%ctx.parent().hash(),
+                    %err,
+                    "failed to calculate state root for payload"
+                );
+            })?
         };
 
         let state_root_calculation_time = state_root_start_time.elapsed();
-        ctx.metrics
-            .state_root_calculation_duration
-            .record(state_root_calculation_time);
-        ctx.metrics
-            .state_root_calculation_gauge
-            .set(state_root_calculation_time);
+        ctx.metrics.state_root_calculation_duration.record(state_root_calculation_time);
+        ctx.metrics.state_root_calculation_gauge.set(state_root_calculation_time);
 
         let (withdrawals_root, requests_hash) = if ctx.is_isthmus_active() {
             // withdrawals root field in block header is used for storage root of L2 predeploy
@@ -569,19 +511,11 @@ impl<Txs: PayloadTxsBounds> OpBuilder<'_, Txs> {
 
         let no_tx_pool = ctx.attributes().no_tx_pool;
 
-        let payload = OpBuiltPayload::new(
-            ctx.payload_id(),
-            sealed_block,
-            info.total_fees,
-            Some(executed),
-        );
+        let payload =
+            OpBuiltPayload::new(ctx.payload_id(), sealed_block, info.total_fees, Some(executed));
 
-        ctx.metrics
-            .payload_byte_size
-            .record(payload.block().size() as f64);
-        ctx.metrics
-            .payload_byte_size_gauge
-            .set(payload.block().size() as f64);
+        ctx.metrics.payload_byte_size.record(payload.block().size() as f64);
+        ctx.metrics.payload_byte_size_gauge.set(payload.block().size() as f64);
 
         if no_tx_pool {
             // if `no_tx_pool` is set only transactions from the payload attributes will be included

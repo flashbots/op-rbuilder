@@ -35,20 +35,14 @@ async fn transaction_event_log(
                 "Transaction event received"
             )
         }
-        FullTransactionEvent::Mined {
-            tx_hash,
-            block_hash,
-        } => info!(
+        FullTransactionEvent::Mined { tx_hash, block_hash } => info!(
             target = "monitoring",
             tx_hash = tx_hash.to_string(),
             kind = "mined",
             block_hash = block_hash.to_string(),
             "Transaction event received"
         ),
-        FullTransactionEvent::Replaced {
-            transaction,
-            replaced_by,
-        } => info!(
+        FullTransactionEvent::Replaced { transaction, replaced_by } => info!(
             target = "monitoring",
             tx_hash = transaction.hash().to_string(),
             kind = "replaced",

@@ -55,7 +55,8 @@ fn get_variant_names() -> Vec<&'static str> {
 }
 
 struct TestConfig {
-    variants: std::collections::HashMap<String, Option<Expr>>, // variant name -> custom expression (None = default)
+    variants: std::collections::HashMap<String, Option<Expr>>, /* variant name -> custom
+                                                                * expression (None = default) */
     args: Option<Expr>,   // Expression to pass to LocalInstance::new()
     config: Option<Expr>, // NodeConfig<OpChainSpec> for new_with_config
     multi_threaded: bool, // Whether to use multi_thread flavor
@@ -148,8 +149,8 @@ impl syn::parse::Parse for TestConfig {
         }
 
         // If only args/config/multi_threaded is specified, generate all variants
-        if config.variants.is_empty()
-            && (config.args.is_some() || config.config.is_some() || config.multi_threaded)
+        if config.variants.is_empty() &&
+            (config.args.is_some() || config.config.is_some() || config.multi_threaded)
         {
             for variant in BUILDER_VARIANTS {
                 config.variants.insert(variant.name.to_string(), None);
@@ -207,9 +208,7 @@ pub fn rb_test(args: TokenStream, input: TokenStream) -> TokenStream {
 
     // Create the original function without test attributes (helper function)
     let mut helper_fn = input_fn.clone();
-    helper_fn
-        .attrs
-        .retain(|attr| !attr.path().is_ident("test") && !attr.path().is_ident("tokio"));
+    helper_fn.attrs.retain(|attr| !attr.path().is_ident("test") && !attr.path().is_ident("tokio"));
 
     let original_name = &input_fn.sig.ident;
     let mut generated_functions = vec![quote! { #helper_fn }];
@@ -260,12 +259,7 @@ fn validate_signature(item_fn: &ItemFn) {
         panic!("Function must have exactly one parameter of type LocalInstance.");
     }
 
-    let output_types = item_fn
-        .sig
-        .output
-        .to_token_stream()
-        .to_string()
-        .replace(" ", "");
+    let output_types = item_fn.sig.output.to_token_stream().to_string().replace(" ", "");
 
     if output_types != "->eyre::Result<()>" {
         panic!("Function must return Result<(), eyre::Error>. Actual: {output_types}",);

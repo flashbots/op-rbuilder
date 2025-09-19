@@ -11,19 +11,21 @@ pub struct FlashblocksConfig {
     /// new flashblocks updates.
     pub ws_addr: SocketAddr,
 
-    /// How often a flashblock is produced. This is independent of the block time of the chain.
-    /// Each block will contain one or more flashblocks. On average, the number of flashblocks
-    /// per block is equal to the block time divided by the flashblock interval.
+    /// How often a flashblock is produced. This is independent of the block
+    /// time of the chain. Each block will contain one or more flashblocks.
+    /// On average, the number of flashblocks per block is equal to the
+    /// block time divided by the flashblock interval + 1 with the initial
+    /// flashblock in the block.
     pub interval: Duration,
 
-    /// How much time would be deducted from block build time to account for latencies in
-    /// milliseconds.
+    /// How much time would be deducted from block build time to account for
+    /// latencies in milliseconds.
     ///
-    /// If dynamic_adjustment is false this value would be deducted from first flashblock and
-    /// it shouldn't be more than interval
+    /// If dynamic_adjustment is false this value would be deducted from first
+    /// flashblock and it shouldn't be more than interval
     ///
-    /// If dynamic_adjustment is true this value would be deducted from first flashblock and
-    /// it shouldn't be more than interval
+    /// If dynamic_adjustment is true this value would be deducted from first
+    /// flashblock and it shouldn't be more than interval
     pub leeway_time: Duration,
 
     /// Disables dynamic flashblocks number adjustment based on FCU arrival time
@@ -62,13 +64,7 @@ impl TryFrom<OpRbuilderArgs> for FlashblocksConfig {
 
         let calculate_state_root = args.flashblocks.flashblocks_calculate_state_root;
 
-        Ok(Self {
-            ws_addr,
-            interval,
-            leeway_time,
-            fixed,
-            calculate_state_root,
-        })
+        Ok(Self { ws_addr, interval, leeway_time, fixed, calculate_state_root })
     }
 }
 

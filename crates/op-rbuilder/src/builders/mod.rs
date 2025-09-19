@@ -29,23 +29,27 @@ pub use standard::StandardBuilder;
 /// Defines the payload building mode for the OP builder.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum BuilderMode {
-    /// Uses the plain OP payload builder that produces blocks every chain blocktime.
+    /// Uses the plain OP payload builder that produces blocks every chain
+    /// blocktime.
     #[default]
     Standard,
-    /// Uses the flashblocks payload builder that progressively builds chunks of a
-    /// block every short interval and makes it available through a websocket update
-    /// then merges them into a full block every chain block time.
+    /// Uses the flashblocks payload builder that progressively builds chunks of
+    /// a block every short interval and makes it available through a
+    /// websocket update then merges them into a full block every chain
+    /// block time.
     Flashblocks,
 }
 
 /// Defines the interface for any block builder implementation API entry point.
 ///
-/// Instances of this trait are used during Reth node construction as an argument
-/// to the `NodeBuilder::with_components` method to construct the payload builder
-/// service that gets called whenver the current node is asked to build a block.
+/// Instances of this trait are used during Reth node construction as an
+/// argument to the `NodeBuilder::with_components` method to construct the
+/// payload builder service that gets called whenever the current node is asked
+/// to build a block.
 pub trait PayloadBuilder: Send + Sync + 'static {
-    /// The type that has an implementation specific variant of the Config<T> struct.
-    /// This is used to configure the payload builder service during startup.
+    /// The type that has an implementation specific variant of the Config<T>
+    /// struct. This is used to configure the payload builder service during
+    /// startup.
     type Config: TryFrom<OpRbuilderArgs, Error: Debug> + Clone + Debug + Send + Sync + 'static;
 
     /// The type that is used to instantiate the payload builder service
@@ -56,9 +60,9 @@ pub trait PayloadBuilder: Send + Sync + 'static {
         Node: NodeBounds,
         Pool: PoolBounds;
 
-    /// Called during node startup by reth. Returns a [`PayloadBuilderService`] instance
-    /// that is preloaded with a [`PayloadJobGenerator`] instance specific to the builder
-    /// type.
+    /// Called during node startup by reth. Returns a [`PayloadBuilderService`]
+    /// instance that is preloaded with a [`PayloadJobGenerator`] instance
+    /// specific to the builder type.
     fn new_service<Node, Pool>(
         config: BuilderConfig<Self::Config>,
     ) -> eyre::Result<Self::ServiceBuilder<Node, Pool>>
@@ -70,25 +74,27 @@ pub trait PayloadBuilder: Send + Sync + 'static {
 /// Configuration values that are applicable to any type of block builder.
 #[derive(Clone)]
 pub struct BuilderConfig<Specific: Clone> {
-    /// Secret key of the builder that is used to sign the end of block transaction.
+    /// Secret key of the builder that is used to sign the end of block
+    /// transaction.
     pub builder_signer: Option<Signer>,
 
-    /// When set to true, transactions are simulated by the builder and excluded from the block
-    /// if they revert. They may still be included in the block if individual transactions
-    /// opt-out of revert protection.
+    /// When set to true, transactions are simulated by the builder and excluded
+    /// from the block if they revert. They may still be included in the
+    /// block if individual transactions opt-out of revert protection.
     pub revert_protection: bool,
 
-    /// When enabled, this will invoke the flashtestions workflow. This involves a
-    /// bootstrapping step that generates a new pubkey for the TEE service
+    /// When enabled, this will invoke the flashtestions workflow. This involves
+    /// a bootstrapping step that generates a new pubkey for the TEE service
     pub flashtestations_config: FlashtestationsArgs,
 
     /// The interval at which blocks are added to the chain.
-    /// This is also the frequency at which the builder will be receiving FCU requests from the
-    /// sequencer.
+    /// This is also the frequency at which the builder will be receiving FCU
+    /// requests from the sequencer.
     pub block_time: Duration,
 
     /// Data Availability configuration for the OP builder
-    /// Defines constraints for the maximum size of data availability transactions.
+    /// Defines constraints for the maximum size of data availability
+    /// transactions.
     pub da_config: OpDAConfig,
 
     // The deadline is critical for payload availability. If we reach the deadline,
@@ -109,10 +115,12 @@ pub struct BuilderConfig<Specific: Clone> {
     // (not just 0.5s) because of that.
     pub block_time_leeway: Duration,
 
-    /// Inverted sampling frequency in blocks. 1 - each block, 100 - every 100th block.
+    /// Inverted sampling frequency in blocks. 1 - each block, 100 - every 100th
+    /// block.
     pub sampling_ratio: u64,
 
-    /// Configuration values that are specific to the block builder implementation used.
+    /// Configuration values that are specific to the block builder
+    /// implementation used.
     pub specific: Specific,
     /// Maximum gas a transaction can use before being excluded.
     pub max_gas_per_txn: Option<u64>,
@@ -121,7 +129,7 @@ pub struct BuilderConfig<Specific: Clone> {
     pub gas_limiter_config: GasLimiterArgs,
 }
 
-impl<S: Debug + Clone> core::fmt::Debug for BuilderConfig<S> {
+impl<S: Debug + Clone> Debug for BuilderConfig<S> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("Config")
             .field(

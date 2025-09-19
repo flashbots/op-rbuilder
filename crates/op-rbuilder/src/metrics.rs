@@ -111,13 +111,17 @@ pub struct OpRBuilderMetrics {
     pub payload_num_tx: Histogram,
     /// Latest number of transactions in the payload
     pub payload_num_tx_gauge: Gauge,
-    /// Histogram of transactions in the payload that were successfully simulated
+    /// Histogram of transactions in the payload that were successfully
+    /// simulated
     pub payload_num_tx_simulated: Histogram,
-    /// Latest number of transactions in the payload that were successfully simulated
+    /// Latest number of transactions in the payload that were successfully
+    /// simulated
     pub payload_num_tx_simulated_gauge: Gauge,
-    /// Histogram of transactions in the payload that were successfully simulated
+    /// Histogram of transactions in the payload that were successfully
+    /// simulated
     pub payload_num_tx_simulated_success: Histogram,
-    /// Latest number of transactions in the payload that were successfully simulated
+    /// Latest number of transactions in the payload that were successfully
+    /// simulated
     pub payload_num_tx_simulated_success_gauge: Gauge,
     /// Histogram of transactions in the payload that failed simulation
     pub payload_num_tx_simulated_fail: Histogram,
@@ -133,7 +137,8 @@ pub struct OpRBuilderMetrics {
     pub da_tx_size_limit: Gauge,
     /// How much less flashblocks we issue to be on time with block construction
     pub reduced_flashblocks_number: Histogram,
-    /// How much less flashblocks we issued in reality, comparing to calculated number for block
+    /// How much less flashblocks we issued in reality, comparing to calculated
+    /// number for block
     pub missing_flashblocks_count: Histogram,
     /// How much time we have deducted from block building time
     pub flashblocks_time_drift: Histogram,
@@ -161,22 +166,16 @@ impl OpRBuilderMetrics {
         num_txs_simulated_fail: impl IntoF64 + Copy,
         num_bundles_reverted: impl IntoF64,
     ) {
-        self.payload_tx_simulation_duration
-            .record(payload_tx_simulation_time);
-        self.payload_tx_simulation_gauge
-            .set(payload_tx_simulation_time);
+        self.payload_tx_simulation_duration.record(payload_tx_simulation_time);
+        self.payload_tx_simulation_gauge.set(payload_tx_simulation_time);
         self.payload_num_tx_considered.record(num_txs_considered);
         self.payload_num_tx_considered_gauge.set(num_txs_considered);
         self.payload_num_tx_simulated.record(num_txs_simulated);
         self.payload_num_tx_simulated_gauge.set(num_txs_simulated);
-        self.payload_num_tx_simulated_success
-            .record(num_txs_simulated_success);
-        self.payload_num_tx_simulated_success_gauge
-            .set(num_txs_simulated_success);
-        self.payload_num_tx_simulated_fail
-            .record(num_txs_simulated_fail);
-        self.payload_num_tx_simulated_fail_gauge
-            .set(num_txs_simulated_fail);
+        self.payload_num_tx_simulated_success.record(num_txs_simulated_success);
+        self.payload_num_tx_simulated_success_gauge.set(num_txs_simulated_success);
+        self.payload_num_tx_simulated_fail.record(num_txs_simulated_fail);
+        self.payload_num_tx_simulated_fail_gauge.set(num_txs_simulated_fail);
         self.bundles_reverted.record(num_bundles_reverted);
     }
 }

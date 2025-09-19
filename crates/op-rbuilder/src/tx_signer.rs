@@ -23,11 +23,7 @@ impl Signer {
         let pubkey = secret.public_key(SECP256K1);
         let address = public_key_to_address(&pubkey);
 
-        Ok(Self {
-            address,
-            pubkey,
-            secret,
-        })
+        Ok(Self { address, pubkey, secret })
     }
 
     pub fn sign_message(&self, message: B256) -> Result<Signature, secp256k1::Error> {
@@ -140,23 +136,12 @@ mod test {
         let pubkey_bytes = public_key.serialize_uncompressed();
 
         // Verify the public key format
-        assert_eq!(
-            pubkey_bytes.len(),
-            65,
-            "Uncompressed public key should be 65 bytes"
-        );
-        assert_eq!(
-            pubkey_bytes[0], 0x04,
-            "Uncompressed public key should start with 0x04"
-        );
+        assert_eq!(pubkey_bytes.len(), 65, "Uncompressed public key should be 65 bytes");
+        assert_eq!(pubkey_bytes[0], 0x04, "Uncompressed public key should start with 0x04");
 
         // Verify report data would be 64 bytes
         let report_data = &pubkey_bytes[1..65];
-        assert_eq!(
-            report_data.len(),
-            64,
-            "Report data should be exactly 64 bytes"
-        );
+        assert_eq!(report_data.len(), 64, "Report data should be exactly 64 bytes");
     }
 
     #[test]
@@ -169,9 +154,6 @@ mod test {
         let address1 = public_key_to_address(&public_key);
         let address2 = public_key_to_address(&public_key);
 
-        assert_eq!(
-            address1, address2,
-            "Address derivation should be deterministic"
-        );
+        assert_eq!(address1, address2, "Address derivation should be deterministic");
     }
 }

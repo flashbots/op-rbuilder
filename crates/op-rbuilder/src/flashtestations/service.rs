@@ -39,11 +39,7 @@ pub struct FlashtestationsService {
 impl FlashtestationsService {
     pub fn new(args: FlashtestationsArgs) -> Self {
         let (private_key, public_key, address) = generate_ethereum_keypair();
-        let tee_service_signer = Signer {
-            address,
-            pubkey: public_key,
-            secret: private_key,
-        };
+        let tee_service_signer = Signer { address, pubkey: public_key, secret: private_key };
 
         let attestation_provider = Arc::new(get_attestation_provider(AttestationConfig {
             debug: args.debug,
@@ -52,11 +48,9 @@ impl FlashtestationsService {
 
         let tx_manager = TxManager::new(
             tee_service_signer,
-            args.funding_key
-                .expect("funding key required when flashtestations enabled"),
+            args.funding_key.expect("funding key required when flashtestations enabled"),
             args.rpc_url,
-            args.registry_address
-                .expect("registry address required when flashtestations enabled"),
+            args.registry_address.expect("registry address required when flashtestations enabled"),
             args.builder_policy_address
                 .expect("builder policy address required when flashtestations enabled"),
             args.builder_proof_version,
@@ -81,9 +75,7 @@ impl FlashtestationsService {
         let attestation = self.attestation_provider.get_attestation(report_data)?;
 
         // Submit report onchain by registering the key of the tee service
-        self.tx_manager
-            .fund_and_register_tee_service(attestation, self.funding_amount)
-            .await
+        self.tx_manager.fund_and_register_tee_service(attestation, self.funding_amount).await
     }
 
     pub async fn clean_up(&self) -> eyre::Result<()> {
@@ -120,22 +112,21 @@ where
     flashtestations_service.bootstrap().await?;
 
     let flashtestations_clone = flashtestations_service.clone();
-    ctx.task_executor()
-        .spawn_critical_with_graceful_shutdown_signal(
-            "flashtestations clean up task",
-            |shutdown| {
-                Box::pin(async move {
-                    let graceful_guard = shutdown.await;
-                    if let Err(e) = flashtestations_clone.clean_up().await {
-                        warn!(
-                            error = %e,
-                            "Failed to complete clean up for flashtestations service",
-                        )
-                    };
-                    drop(graceful_guard)
-                })
-            },
-        );
+    ctx.task_executor().spawn_critical_with_graceful_shutdown_signal(
+        "flashtestations clean up task",
+        |shutdown| {
+            Box::pin(async move {
+                let graceful_guard = shutdown.await;
+                if let Err(e) = flashtestations_clone.clean_up().await {
+                    warn!(
+                        error = %e,
+                        "Failed to complete clean up for flashtestations service",
+                    )
+                };
+                drop(graceful_guard)
+            })
+        },
+    );
 
     Ok(FlashtestationsBuilderTx {})
 }
@@ -148,7 +139,8 @@ mod tests {
 
     use crate::tx_signer::public_key_to_address;
 
-    /// Derives Ethereum address from report data using the same logic as the Solidity contract
+    /// Derives Ethereum address from report data using the same logic as the
+    /// Solidity contract
     fn derive_ethereum_address_from_report_data(pubkey_64_bytes: &[u8]) -> Address {
         // This exactly matches the Solidity implementation:
         // address(uint160(uint256(keccak256(reportData))))
@@ -178,9 +170,6 @@ mod tests {
         let report_data = &pubkey_bytes[1..65]; // Skip 0x04 prefix
         let manual_address = derive_ethereum_address_from_report_data(report_data);
 
-        assert_eq!(
-            our_address, manual_address,
-            "Address derivation should match"
-        );
+        assert_eq!(our_address, manual_address, "Address derivation should match");
     }
 }

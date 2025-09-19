@@ -11,12 +11,11 @@ mod op;
 mod playground;
 
 /// This trait is used to extend Reth's CLI with additional functionality that
-/// are specific to the OP builder, such as populating default values for CLI arguments
-/// when running in the playground mode or checking the builder mode.
-///
+/// are specific to the OP builder, such as populating default values for CLI
+/// arguments when running in the playground mode or checking the builder mode.
 pub trait CliExt {
-    /// Populates the default values for the CLI arguments when the user specifies
-    /// the `--builder.playground` flag.
+    /// Populates the default values for the CLI arguments when the user
+    /// specifies the `--builder.playground` flag.
     fn populate_defaults(self) -> Self;
 
     /// Returns the builder mode that the node is started with.
@@ -38,13 +37,15 @@ impl CliExt for Cli {
     /// and if so, populates the default values for the CLI arguments from the
     /// playground configuration.
     ///
-    /// The `--builder.playground` flag is used to populate the CLI arguments with
-    /// default values for running the builder against the playground environment.
+    /// The `--builder.playground` flag is used to populate the CLI arguments
+    /// with default values for running the builder against the playground
+    /// environment.
     ///
     /// The values are populated from the default directory of the playground
     /// configuration, which is `$HOME/.playground/devnet/` by default.
     ///
-    /// Any manually specified CLI arguments by the user will override the defaults.
+    /// Any manually specified CLI arguments by the user will override the
+    /// defaults.
     fn populate_defaults(self) -> Self {
         let Commands::Node(ref node_command) = self.command else {
             // playground defaults are only relevant if running the node commands.
@@ -65,13 +66,13 @@ impl CliExt for Cli {
         Cli::set_version().populate_defaults()
     }
 
-    /// Returns the type of builder implementation that the node is started with.
-    /// Currently supports `Standard` and `Flashblocks` modes.
+    /// Returns the type of builder implementation that the node is started
+    /// with. Currently supports `Standard` and `Flashblocks` modes.
     fn builder_mode(&self) -> BuilderMode {
-        if let Commands::Node(ref node_command) = self.command {
-            if node_command.ext.flashblocks.enabled {
-                return BuilderMode::Flashblocks;
-            }
+        if let Commands::Node(ref node_command) = self.command &&
+            node_command.ext.flashblocks.enabled
+        {
+            return BuilderMode::Flashblocks;
         }
         BuilderMode::Standard
     }

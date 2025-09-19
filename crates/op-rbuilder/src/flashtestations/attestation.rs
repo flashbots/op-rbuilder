@@ -36,9 +36,7 @@ impl AttestationProvider for DebugAttestationProvider {
 
         info!(target: "flashtestations", url = url, "fetching quote in debug mode");
 
-        let response = ureq::get(&url)
-            .timeout(std::time::Duration::from_secs(10))
-            .call()?;
+        let response = ureq::get(&url).timeout(std::time::Duration::from_secs(10)).call()?;
 
         let mut body = Vec::new();
         response.into_reader().read_to_end(&mut body)?;
@@ -52,14 +50,10 @@ pub fn get_attestation_provider(
 ) -> Box<dyn AttestationProvider + Send + Sync> {
     if config.debug {
         Box::new(DebugAttestationProvider::new(
-            config
-                .debug_url
-                .unwrap_or(DEBUG_QUOTE_SERVICE_URL.to_string()),
+            config.debug_url.unwrap_or(DEBUG_QUOTE_SERVICE_URL.to_string()),
         ))
     } else {
         // TODO: replace with real attestation provider
-        Box::new(DebugAttestationProvider::new(
-            DEBUG_QUOTE_SERVICE_URL.to_string(),
-        ))
+        Box::new(DebugAttestationProvider::new(DEBUG_QUOTE_SERVICE_URL.to_string()))
     }
 }

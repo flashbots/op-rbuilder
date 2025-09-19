@@ -93,10 +93,7 @@ async fn test_mock_attest() {
     let response = harness.attest(report_data).await;
     assert!(response.is_ok());
     let body = response.unwrap();
-    assert_eq!(
-        body,
-        Bytes::from_static(include_bytes!("./test_data/quote.bin"))
-    );
+    assert_eq!(body, Bytes::from_static(include_bytes!("./test_data/quote.bin")));
 }
 
 #[tokio::test]

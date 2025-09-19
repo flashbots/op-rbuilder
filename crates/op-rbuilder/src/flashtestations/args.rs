@@ -16,11 +16,7 @@ pub struct FlashtestationsArgs {
     pub flashtestations_enabled: bool,
 
     /// Whether to use the debug HTTP service for quotes
-    #[arg(
-        long = "flashtestations.debug",
-        default_value = "false",
-        env = "FLASHTESTATIONS_DEBUG"
-    )]
+    #[arg(long = "flashtestations.debug", default_value = "false", env = "FLASHTESTATIONS_DEBUG")]
     pub debug: bool,
 
     // Debug url for attestations

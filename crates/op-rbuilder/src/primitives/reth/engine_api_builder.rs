@@ -41,9 +41,7 @@ where
     EV: Default,
 {
     fn default() -> Self {
-        Self {
-            engine_validator_builder: EV::default(),
-        }
+        Self { engine_validator_builder: EV::default() }
     }
 }
 
@@ -56,9 +54,7 @@ where
     type EngineApi = OpEngineApiExt<N::Provider, N::Pool, EV::Validator>;
 
     async fn build_engine_api(self, ctx: &AddOnsContext<'_, N>) -> eyre::Result<Self::EngineApi> {
-        let Self {
-            engine_validator_builder,
-        } = self;
+        let Self { engine_validator_builder } = self;
 
         let engine_validator = engine_validator_builder.build(ctx).await?;
         let client = ClientVersionV1 {
@@ -117,9 +113,7 @@ where
         versioned_hashes: Vec<B256>,
         parent_beacon_block_root: B256,
     ) -> RpcResult<PayloadStatus> {
-        self.inner
-            .new_payload_v3(payload, versioned_hashes, parent_beacon_block_root)
-            .await
+        self.inner.new_payload_v3(payload, versioned_hashes, parent_beacon_block_root).await
     }
 
     async fn new_payload_v4(
@@ -130,12 +124,7 @@ where
         execution_requests: Requests,
     ) -> RpcResult<PayloadStatus> {
         self.inner
-            .new_payload_v4(
-                payload,
-                versioned_hashes,
-                parent_beacon_block_root,
-                execution_requests,
-            )
+            .new_payload_v4(payload, versioned_hashes, parent_beacon_block_root, execution_requests)
             .await
     }
 
@@ -144,9 +133,7 @@ where
         fork_choice_state: ForkchoiceState,
         payload_attributes: Option<OpPayloadAttributes>,
     ) -> RpcResult<ForkchoiceUpdated> {
-        self.inner
-            .fork_choice_updated_v1(fork_choice_state, payload_attributes)
-            .await
+        self.inner.fork_choice_updated_v1(fork_choice_state, payload_attributes).await
     }
 
     async fn fork_choice_updated_v2(
@@ -154,9 +141,7 @@ where
         fork_choice_state: ForkchoiceState,
         payload_attributes: Option<OpPayloadAttributes>,
     ) -> RpcResult<ForkchoiceUpdated> {
-        self.inner
-            .fork_choice_updated_v2(fork_choice_state, payload_attributes)
-            .await
+        self.inner.fork_choice_updated_v2(fork_choice_state, payload_attributes).await
     }
 
     async fn fork_choice_updated_v3(
@@ -164,9 +149,7 @@ where
         fork_choice_state: ForkchoiceState,
         payload_attributes: Option<OpPayloadAttributes>,
     ) -> RpcResult<ForkchoiceUpdated> {
-        self.inner
-            .fork_choice_updated_v3(fork_choice_state, payload_attributes)
-            .await
+        self.inner.fork_choice_updated_v3(fork_choice_state, payload_attributes).await
     }
 
     async fn get_payload_v2(
@@ -202,9 +185,7 @@ where
         start: U64,
         count: U64,
     ) -> RpcResult<ExecutionPayloadBodiesV1> {
-        self.inner
-            .get_payload_bodies_by_range_v1(start, count)
-            .await
+        self.inner.get_payload_bodies_by_range_v1(start, count).await
     }
 
     async fn signal_superchain_v1(&self, signal: SuperchainSignal) -> RpcResult<ProtocolVersion> {
@@ -241,7 +222,8 @@ where
 /// <https://specs.optimism.io/protocol/exec-engine.html#engine-api>
 #[rpc(server, namespace = "engine", server_bounds(Engine::PayloadAttributes: jsonrpsee::core::DeserializeOwned))]
 pub trait OpRbuilderEngineApi<Engine: EngineTypes> {
-    /// Sends the given payload to the execution layer client, as specified for the Shanghai fork.
+    /// Sends the given payload to the execution layer client, as specified for
+    /// the Shanghai fork.
     ///
     /// See also <https://github.com/ethereum/execution-apis/blob/584905270d8ad665718058060267061ecfd79ca5/src/engine/shanghai.md#engine_newpayloadv2>
     ///
@@ -249,7 +231,8 @@ pub trait OpRbuilderEngineApi<Engine: EngineTypes> {
     #[method(name = "newPayloadV2")]
     async fn new_payload_v2(&self, payload: ExecutionPayloadInputV2) -> RpcResult<PayloadStatus>;
 
-    /// Sends the given payload to the execution layer client, as specified for the Cancun fork.
+    /// Sends the given payload to the execution layer client, as specified for
+    /// the Cancun fork.
     ///
     /// See also <https://github.com/ethereum/execution-apis/blob/main/src/engine/cancun.md#engine_newpayloadv3>
     ///
@@ -267,7 +250,8 @@ pub trait OpRbuilderEngineApi<Engine: EngineTypes> {
         parent_beacon_block_root: B256,
     ) -> RpcResult<PayloadStatus>;
 
-    /// Sends the given payload to the execution layer client, as specified for the Prague fork.
+    /// Sends the given payload to the execution layer client, as specified for
+    /// the Prague fork.
     ///
     /// See also <https://github.com/ethereum/execution-apis/blob/03911ffc053b8b806123f1fc237184b0092a485a/src/engine/prague.md#engine_newpayloadv4>
     ///
@@ -286,7 +270,8 @@ pub trait OpRbuilderEngineApi<Engine: EngineTypes> {
     ///
     /// This exists because it is used by op-node: <https://github.com/ethereum-optimism/optimism/blob/0bc5fe8d16155dc68bcdf1fa5733abc58689a618/op-node/rollup/types.go#L615-L617>
     ///
-    /// Caution: This should not accept the `withdrawals` field in the payload attributes.
+    /// Caution: This should not accept the `withdrawals` field in the payload
+    /// attributes.
     #[method(name = "forkchoiceUpdatedV1")]
     async fn fork_choice_updated_v1(
         &self,
@@ -294,10 +279,11 @@ pub trait OpRbuilderEngineApi<Engine: EngineTypes> {
         payload_attributes: Option<Engine::PayloadAttributes>,
     ) -> RpcResult<ForkchoiceUpdated>;
 
-    /// Updates the execution layer client with the given fork choice, as specified for the Shanghai
-    /// fork.
+    /// Updates the execution layer client with the given fork choice, as
+    /// specified for the Shanghai fork.
     ///
-    /// Caution: This should not accept the `parentBeaconBlockRoot` field in the payload attributes.
+    /// Caution: This should not accept the `parentBeaconBlockRoot` field in the
+    /// payload attributes.
     ///
     /// See also <https://github.com/ethereum/execution-apis/blob/6709c2a795b707202e93c4f2867fa0bf2640a84f/src/engine/shanghai.md#engine_forkchoiceupdatedv2>
     ///
@@ -310,8 +296,8 @@ pub trait OpRbuilderEngineApi<Engine: EngineTypes> {
         payload_attributes: Option<Engine::PayloadAttributes>,
     ) -> RpcResult<ForkchoiceUpdated>;
 
-    /// Updates the execution layer client with the given fork choice, as specified for the Cancun
-    /// fork.
+    /// Updates the execution layer client with the given fork choice, as
+    /// specified for the Cancun fork.
     ///
     /// See also <https://github.com/ethereum/execution-apis/blob/main/src/engine/cancun.md#engine_forkchoiceupdatedv3>
     ///
@@ -326,13 +312,14 @@ pub trait OpRbuilderEngineApi<Engine: EngineTypes> {
         payload_attributes: Option<Engine::PayloadAttributes>,
     ) -> RpcResult<ForkchoiceUpdated>;
 
-    /// Retrieves an execution payload from a previously started build process, as specified for the
-    /// Shanghai fork.
+    /// Retrieves an execution payload from a previously started build process,
+    /// as specified for the Shanghai fork.
     ///
     /// See also <https://github.com/ethereum/execution-apis/blob/6709c2a795b707202e93c4f2867fa0bf2640a84f/src/engine/shanghai.md#engine_getpayloadv2>
     ///
     /// Note:
-    /// > Provider software MAY stop the corresponding build process after serving this call.
+    /// > Provider software MAY stop the corresponding build process after
+    /// > serving this call.
     ///
     /// No modifications needed for OP compatibility.
     #[method(name = "getPayloadV2")]
@@ -341,13 +328,14 @@ pub trait OpRbuilderEngineApi<Engine: EngineTypes> {
         payload_id: PayloadId,
     ) -> RpcResult<Engine::ExecutionPayloadEnvelopeV2>;
 
-    /// Retrieves an execution payload from a previously started build process, as specified for the
-    /// Cancun fork.
+    /// Retrieves an execution payload from a previously started build process,
+    /// as specified for the Cancun fork.
     ///
     /// See also <https://github.com/ethereum/execution-apis/blob/main/src/engine/cancun.md#engine_getpayloadv3>
     ///
     /// Note:
-    /// > Provider software MAY stop the corresponding build process after serving this call.
+    /// > Provider software MAY stop the corresponding build process after
+    /// > serving this call.
     ///
     /// OP modifications:
     /// - the response type is extended to [`EngineTypes::ExecutionPayloadEnvelopeV3`].
@@ -357,13 +345,15 @@ pub trait OpRbuilderEngineApi<Engine: EngineTypes> {
         payload_id: PayloadId,
     ) -> RpcResult<Engine::ExecutionPayloadEnvelopeV3>;
 
-    /// Returns the most recent version of the payload that is available in the corresponding
-    /// payload build process at the time of receiving this call.
+    /// Returns the most recent version of the payload that is available in the
+    /// corresponding payload build process at the time of receiving this
+    /// call.
     ///
     /// See also <https://github.com/ethereum/execution-apis/blob/main/src/engine/prague.md#engine_getpayloadv4>
     ///
     /// Note:
-    /// > Provider software MAY stop the corresponding build process after serving this call.
+    /// > Provider software MAY stop the corresponding build process after
+    /// > serving this call.
     ///
     /// OP modifications:
     /// - the response type is extended to [`EngineTypes::ExecutionPayloadEnvelopeV4`].
@@ -382,16 +372,16 @@ pub trait OpRbuilderEngineApi<Engine: EngineTypes> {
         block_hashes: Vec<BlockHash>,
     ) -> RpcResult<ExecutionPayloadBodiesV1>;
 
-    /// Returns the execution payload bodies by the range starting at `start`, containing `count`
-    /// blocks.
+    /// Returns the execution payload bodies by the range starting at `start`,
+    /// containing `count` blocks.
     ///
-    /// WARNING: This method is associated with the BeaconBlocksByRange message in the consensus
-    /// layer p2p specification, meaning the input should be treated as untrusted or potentially
-    /// adversarial.
+    /// WARNING: This method is associated with the BeaconBlocksByRange message
+    /// in the consensus layer p2p specification, meaning the input should
+    /// be treated as untrusted or potentially adversarial.
     ///
-    /// Implementers should take care when acting on the input to this method, specifically
-    /// ensuring that the range is limited properly, and that the range boundaries are computed
-    /// correctly and without panics.
+    /// Implementers should take care when acting on the input to this method,
+    /// specifically ensuring that the range is limited properly, and that
+    /// the range boundaries are computed correctly and without panics.
     ///
     /// See also <https://github.com/ethereum/execution-apis/blob/6452a6b194d7db269bf1dbd087a267251d3cc7f8/src/engine/shanghai.md#engine_getpayloadbodiesbyrangev1>
     #[method(name = "getPayloadBodiesByRangeV1")]
@@ -402,8 +392,8 @@ pub trait OpRbuilderEngineApi<Engine: EngineTypes> {
     ) -> RpcResult<ExecutionPayloadBodiesV1>;
 
     /// Signals superchain information to the Engine.
-    /// Returns the latest supported OP-Stack protocol version of the execution engine.
-    /// See also <https://specs.optimism.io/protocol/exec-engine.html#engine_signalsuperchainv1>
+    /// Returns the latest supported OP-Stack protocol version of the execution
+    /// engine. See also <https://specs.optimism.io/protocol/exec-engine.html#engine_signalsuperchainv1>
     #[method(name = "engine_signalSuperchainV1")]
     async fn signal_superchain_v1(&self, _signal: SuperchainSignal) -> RpcResult<ProtocolVersion>;
 
@@ -419,7 +409,8 @@ pub trait OpRbuilderEngineApi<Engine: EngineTypes> {
         client_version: ClientVersionV1,
     ) -> RpcResult<Vec<ClientVersionV1>>;
 
-    /// Returns the list of Engine API methods supported by the execution layer client software.
+    /// Returns the list of Engine API methods supported by the execution layer
+    /// client software.
     ///
     /// See also <https://github.com/ethereum/execution-apis/blob/6452a6b194d7db269bf1dbd087a267251d3cc7f8/src/engine/common.md#capabilities>
     #[method(name = "exchangeCapabilities")]

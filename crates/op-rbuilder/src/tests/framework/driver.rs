@@ -20,9 +20,10 @@ use crate::{
 
 const DEFAULT_GAS_LIMIT: u64 = 10_000_000;
 
-/// The ChainDriver is a type that allows driving the op builder node to build new blocks manually
-/// by calling the `build_new_block` method. It uses the Engine API to interact with the node
-/// and the provider to fetch blocks and transactions.
+/// The ChainDriver is a type that allows driving the op builder node to build
+/// new blocks manually by calling the `build_new_block` method. It uses the
+/// Engine API to interact with the node and the provider to fetch blocks and
+/// transactions.
 pub struct ChainDriver<RpcProtocol: Protocol = Ipc> {
     engine_api: EngineApi<RpcProtocol>,
     provider: RootProvider<Optimism>,
@@ -36,8 +37,8 @@ pub struct ChainDriver<RpcProtocol: Protocol = Ipc> {
 impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
     const MIN_BLOCK_TIME: Duration = Duration::from_secs(1);
 
-    /// Creates a new ChainDriver instance for a local instance of RBuilder running in-process
-    /// communicating over IPC.
+    /// Creates a new ChainDriver instance for a local instance of RBuilder
+    /// running in-process communicating over IPC.
     pub async fn local(instance: &LocalInstance) -> eyre::Result<ChainDriver<Ipc>> {
         Ok(ChainDriver::<Ipc> {
             engine_api: instance.engine_api(),
@@ -64,27 +65,28 @@ impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
         }
     }
 
-    /// Specifies the block builder signing key used to sign builder transactions.
-    /// If not specified, a random signer will be used.
+    /// Specifies the block builder signing key used to sign builder
+    /// transactions. If not specified, a random signer will be used.
     pub fn with_signer(mut self, signer: Signer) -> Self {
         self.signer = Some(signer);
         self
     }
 
-    /// Specifies a custom gas limit for blocks being built, otherwise the limit is
-    /// set to a default value of 10_000_000.
+    /// Specifies a custom gas limit for blocks being built, otherwise the limit
+    /// is set to a default value of 10_000_000.
     pub fn with_gas_limit(mut self, gas_limit: u64) -> Self {
         self.gas_limit = Some(gas_limit);
         self
     }
 
-    /// Adds an external Optimism execution client node that will receive all newly built
-    /// blocks by this driver and ensure that they are valid. This validation process is
-    /// transparent and happens in the background when building new blocks.
+    /// Adds an external Optimism execution client node that will receive all
+    /// newly built blocks by this driver and ensure that they are valid.
+    /// This validation process is transparent and happens in the background
+    /// when building new blocks.
     ///
-    /// If there are validation nodes specified any newly built block will be submitted to
-    /// the validation EL and the driver will fail if the block is rejected by the
-    /// validation node.
+    /// If there are validation nodes specified any newly built block will be
+    /// submitted to the validation EL and the driver will fail if the block
+    /// is rejected by the validation node.
     pub async fn with_validation_node(mut self, node: ExternalNode) -> eyre::Result<Self> {
         node.catch_up_with(self.provider()).await?;
         self.validation_nodes.push(node);
@@ -95,22 +97,22 @@ impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
 // public test api
 impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
     pub async fn build_new_block_with_no_tx_pool(&self) -> eyre::Result<Block<Transaction>> {
-        self.build_new_block_with_txs_timestamp(vec![], Some(true), None, None)
-            .await
+        self.build_new_block_with_txs_timestamp(vec![], Some(true), None, None).await
     }
 
-    /// Builds a new block using the current state of the chain and the transactions in the pool.
+    /// Builds a new block using the current state of the chain and the
+    /// transactions in the pool.
     pub async fn build_new_block(&self) -> eyre::Result<Block<Transaction>> {
         self.build_new_block_with_txs(vec![]).await
     }
 
-    /// Builds a new block with block_timestamp calculated as block time right before sending FCU
+    /// Builds a new block with block_timestamp calculated as block time right
+    /// before sending FCU
     pub async fn build_new_block_with_current_timestamp(
         &self,
         timestamp_jitter: Option<Duration>,
     ) -> eyre::Result<Block<Transaction>> {
-        self.build_new_block_with_txs_timestamp(vec![], None, None, timestamp_jitter)
-            .await
+        self.build_new_block_with_txs_timestamp(vec![], None, None, timestamp_jitter).await
     }
 
     /// Builds a new block with provided txs and timestamp
@@ -127,10 +129,11 @@ impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
         // Add L1 block info as the first transaction in every L2 block
         // This deposit transaction contains L1 block metadata required by the L2 chain
         // Currently using hardcoded data from L1 block 124665056
-        // If this info is not provided, Reth cannot decode the receipt for any transaction
-        // in the block since it also includes this info as part of the result.
-        // It does not matter if the to address (4200000000000000000000000000000000000015) is
-        // not deployed on the L2 chain since Reth queries the block to get the info and not the contract.
+        // If this info is not provided, Reth cannot decode the receipt for any
+        // transaction in the block since it also includes this info as part of
+        // the result. It does not matter if the to address
+        // (4200000000000000000000000000000000000015) is not deployed on the L2
+        // chain since Reth queries the block to get the info and not the contract.
         let block_info_tx: Bytes = {
             let deposit_tx = TxDeposit {
                 source_hash: B256::default(),
@@ -150,20 +153,23 @@ impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
         };
 
         let mut wait_until = None;
-        // If block_timestamp we need to produce new timestamp according to current clocks
+        // If block_timestamp we need to produce new timestamp according to current
+        // clocks
         let block_timestamp = if let Some(block_timestamp) = block_timestamp {
             block_timestamp.as_secs()
         } else {
-            // We take the following second, until which we will need to wait before issuing FCU
+            // We take the following second, until which we will need to wait before issuing
+            // FCU
             let latest_timestamp = (chrono::Utc::now().timestamp() + 1) as u64;
             wait_until = Some(latest_timestamp);
-            latest_timestamp
-                + Duration::from_millis(self.args.chain_block_time)
+            latest_timestamp +
+                Duration::from_millis(self.args.chain_block_time)
                     .as_secs()
                     .max(Self::MIN_BLOCK_TIME.as_secs())
         };
 
-        // This step will alight time at which we send FCU. ideally we must send FCU and the beginning of the second.
+        // This step will alight time at which we send FCU. ideally we must send FCU and
+        // the beginning of the second.
         if let Some(wait_until) = wait_until {
             let sleep_time = Duration::from_secs(wait_until).saturating_sub(Duration::from_millis(
                 chrono::Utc::now().timestamp_millis() as u64,
@@ -223,16 +229,14 @@ impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
             .engine_api
             .new_payload(payload.clone(), vec![], B256::ZERO, Requests::default())
             .await?
-            .status
-            != PayloadStatusEnum::Valid
+            .status !=
+            PayloadStatusEnum::Valid
         {
             return Err(eyre::eyre!("Invalid validation status from builder"));
         }
 
         let new_block_hash = payload.payload_inner.payload_inner.payload_inner.block_hash;
-        self.engine_api
-            .update_forkchoice(latest.header.hash, new_block_hash, None)
-            .await?;
+        self.engine_api.update_forkchoice(latest.header.hash, new_block_hash, None).await?;
 
         let block = self
             .provider
@@ -256,8 +260,9 @@ impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
         Ok(block)
     }
 
-    /// Builds a new block using the current state of the chain and the transactions in the pool with a list
-    /// of mandatory builder transactions. Those are usually deposit transactions.
+    /// Builds a new block using the current state of the chain and the
+    /// transactions in the pool with a list of mandatory builder
+    /// transactions. Those are usually deposit transactions.
     pub async fn build_new_block_with_txs(
         &self,
         txs: Vec<Bytes>,
@@ -266,8 +271,7 @@ impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
         let latest_timestamp = Duration::from_secs(latest.header.timestamp);
         let block_timestamp = latest_timestamp + Self::MIN_BLOCK_TIME;
 
-        self.build_new_block_with_txs_timestamp(txs, None, Some(block_timestamp), None)
-            .await
+        self.build_new_block_with_txs_timestamp(txs, None, Some(block_timestamp), None).await
     }
 
     /// Retreives the latest built block and returns only a list of transaction
@@ -289,8 +293,8 @@ impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
             .ok_or_else(|| eyre::eyre!("Failed to get latest full block"))
     }
 
-    /// retreives a specific block by its number or tag and returns a list of transaction
-    /// hashes from its body.
+    /// retreives a specific block by its number or tag and returns a list of
+    /// transaction hashes from its body.
     pub async fn get_block(
         &self,
         number: BlockNumberOrTag,
@@ -298,8 +302,8 @@ impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
         Ok(self.provider.get_block_by_number(number).await?)
     }
 
-    /// retreives a specific block by its number or tag and returns a list of full transaction
-    /// contents in its body.
+    /// retreives a specific block by its number or tag and returns a list of
+    /// full transaction contents in its body.
     pub async fn get_block_full(
         &self,
         number: BlockNumberOrTag,
@@ -307,7 +311,8 @@ impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
         Ok(self.provider.get_block_by_number(number).full().await?)
     }
 
-    /// Returns a transaction builder that can be used to create and send transactions.
+    /// Returns a transaction builder that can be used to create and send
+    /// transactions.
     pub fn create_transaction(&self) -> TransactionBuilder {
         TransactionBuilder::new(self.provider.clone())
     }
@@ -323,16 +328,14 @@ impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
 impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
     async fn fcu(&self, attribs: OpPayloadAttributes) -> eyre::Result<ForkchoiceUpdated> {
         let latest = self.latest().await?.header.hash;
-        let response = self
-            .engine_api
-            .update_forkchoice(latest, latest, Some(attribs))
-            .await?;
+        let response = self.engine_api.update_forkchoice(latest, latest, Some(attribs)).await?;
 
         Ok(response)
     }
 }
 
-// L1 block info for OP mainnet block 124665056 (stored in input of tx at index 0)
+// L1 block info for OP mainnet block 124665056 (stored in input of tx at index
+// 0)
 //
 // https://optimistic.etherscan.io/tx/0x312e290cf36df704a2217b015d6455396830b0ce678b860ebfcc30f41403d7b1
 const FJORD_DATA: &[u8] = &hex!(

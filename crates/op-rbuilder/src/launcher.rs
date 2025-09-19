@@ -70,9 +70,7 @@ where
     B: PayloadBuilder,
 {
     pub fn new() -> Self {
-        Self {
-            _builder: PhantomData,
-        }
+        Self { _builder: PhantomData }
     }
 }
 
@@ -130,10 +128,11 @@ where
                     .pool(
                         OpPoolBuilder::<FBPooledTransaction>::default()
                             .with_enable_tx_conditional(
-                                // Revert protection uses the same internal pool logic as conditional transactions
+                                // Revert protection uses the same internal pool logic as
+                                // conditional transactions
                                 // to garbage collect transactions out of the bundle range.
-                                rollup_args.enable_tx_conditional
-                                    || builder_args.enable_revert_protection,
+                                rollup_args.enable_tx_conditional ||
+                                    builder_args.enable_revert_protection,
                             )
                             .with_supervisor(
                                 rollup_args.supervisor_http.clone(),
@@ -156,8 +155,7 @@ where
                         reverted_cache,
                     );
 
-                    ctx.modules
-                        .add_or_replace_configured(revert_protection_ext.into_rpc())?;
+                    ctx.modules.add_or_replace_configured(revert_protection_ext.into_rpc())?;
                 }
 
                 Ok(())

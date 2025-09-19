@@ -37,7 +37,8 @@ impl TransactionBuilderExt for TransactionBuilder {
     // This transaction is big in the sense that it uses a lot of gas. The exact
     // amount it uses is 86220 gas.
     fn random_big_transaction(self) -> Self {
-        // PUSH13 0x63ffffffff60005260046000f3 PUSH1 0x00 MSTORE PUSH1 0x02 PUSH1 0x0d PUSH1 0x13 PUSH1 0x00 CREATE2
+        // PUSH13 0x63ffffffff60005260046000f3 PUSH1 0x00 MSTORE PUSH1 0x02 PUSH1 0x0d
+        // PUSH1 0x13 PUSH1 0x00 CREATE2
         self.with_create()
             .with_input(hex!("6c63ffffffff60005260046000f36000526002600d60136000f5").into())
     }
@@ -53,9 +54,7 @@ pub trait ChainDriverExt {
     fn fund(&self, address: Address, amount: u128)
     -> impl Future<Output = eyre::Result<BlockHash>>;
     fn first_funded_address(&self) -> Address {
-        FUNDED_PRIVATE_KEYS[0]
-            .parse()
-            .expect("Invalid funded private key")
+        FUNDED_PRIVATE_KEYS[0].parse().expect("Invalid funded private key")
     }
 
     fn fund_accounts(
@@ -65,8 +64,7 @@ pub trait ChainDriverExt {
     ) -> impl Future<Output = eyre::Result<Vec<Signer>>> {
         async move {
             let accounts = (0..count).map(|_| Signer::random()).collect::<Vec<_>>();
-            self.fund_many(accounts.iter().map(|a| a.address).collect(), amount)
-                .await?;
+            self.fund_many(accounts.iter().map(|a| a.address).collect(), amount).await?;
             Ok(accounts)
         }
     }
@@ -128,32 +126,20 @@ impl<P: Protocol> ChainDriverExt for ChainDriver<P> {
         let signer = Signer::random();
         let signed_tx = signer.sign_tx(OpTypedTransaction::Deposit(deposit))?;
         let signed_tx_rlp = signed_tx.encoded_2718();
-        Ok(self
-            .build_new_block_with_txs(vec![signed_tx_rlp.into()])
-            .await?
-            .header
-            .hash)
+        Ok(self.build_new_block_with_txs(vec![signed_tx_rlp.into()]).await?.header.hash)
     }
 
     async fn build_new_block_with_valid_transaction(
         &self,
     ) -> eyre::Result<(TxHash, Block<Transaction>)> {
-        let tx = self
-            .create_transaction()
-            .random_valid_transfer()
-            .send()
-            .await?;
+        let tx = self.create_transaction().random_valid_transfer().send().await?;
         Ok((*tx.tx_hash(), self.build_new_block().await?))
     }
 
     async fn build_new_block_with_reverrting_transaction(
         &self,
     ) -> eyre::Result<(TxHash, Block<Transaction>)> {
-        let tx = self
-            .create_transaction()
-            .random_reverting_transaction()
-            .send()
-            .await?;
+        let tx = self.create_transaction().random_reverting_transaction().send().await?;
 
         Ok((*tx.tx_hash(), self.build_new_block().await?))
     }
@@ -165,18 +151,14 @@ pub trait BlockTransactionsExt {
 
 impl BlockTransactionsExt for Block<Transaction> {
     fn includes(&self, txs: &impl AsTxs) -> bool {
-        txs.as_txs()
-            .into_iter()
-            .all(|tx| self.transactions.hashes().any(|included| included == tx))
+        txs.as_txs().into_iter().all(|tx| self.transactions.hashes().any(|included| included == tx))
     }
 }
 
 impl BlockTransactionsExt for BlockTransactionHashes<'_, Transaction> {
     fn includes(&self, txs: &impl AsTxs) -> bool {
         let mut included_tx_iter = self.clone();
-        txs.as_txs()
-            .iter()
-            .all(|tx| included_tx_iter.any(|included| included == *tx))
+        txs.as_txs().iter().all(|tx| included_tx_iter.any(|included| included == *tx))
     }
 }
 
@@ -212,10 +194,8 @@ pub fn create_test_db(config: NodeConfig<OpChainSpec>) -> Arc<TempDatabase<Datab
     let path = reth_node_core::dirs::MaybePlatformPath::<DataDirPath>::from(
         reth_db::test_utils::tempdir_path(),
     );
-    let db_config = config.with_datadir_args(DatadirArgs {
-        datadir: path.clone(),
-        ..Default::default()
-    });
+    let db_config =
+        config.with_datadir_args(DatadirArgs { datadir: path.clone(), ..Default::default() });
     let data_dir = path.unwrap_or_chain_default(db_config.chain.chain(), db_config.datadir.clone());
     let path = data_dir.db();
     let db = init_db(

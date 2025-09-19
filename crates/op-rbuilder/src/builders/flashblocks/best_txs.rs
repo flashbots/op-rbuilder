@@ -13,8 +13,8 @@ where
 {
     inner: reth_payload_util::BestPayloadTransactions<T, I>,
     current_flashblock_number: u64,
-    // Transactions that were already commited to the state. Using them again would cause NonceTooLow
-    // so we skip them
+    // Transactions that were already commited to the state. Using them again would cause
+    // NonceTooLow so we skip them
     commited_transactions: HashSet<TxHash>,
 }
 
@@ -24,11 +24,7 @@ where
     I: Iterator<Item = Arc<ValidPoolTransaction<T>>>,
 {
     pub(super) fn new(inner: reth_payload_util::BestPayloadTransactions<T, I>) -> Self {
-        Self {
-            inner,
-            current_flashblock_number: 0,
-            commited_transactions: Default::default(),
-        }
+        Self { inner, current_flashblock_number: 0, commited_transactions: Default::default() }
     }
 
     /// Replaces current iterator with new one. We use it on new flashblock building, to refresh
@@ -67,27 +63,27 @@ where
             let flashblock_number_max = tx.flashblock_number_max();
 
             // Check min flashblock requirement
-            if let Some(min) = flashblock_number_min {
-                if self.current_flashblock_number < min {
-                    continue;
-                }
+            if let Some(min) = flashblock_number_min &&
+                self.current_flashblock_number < min
+            {
+                continue;
             }
 
             // Check max flashblock requirement
-            if let Some(max) = flashblock_number_max {
-                if self.current_flashblock_number > max {
-                    debug!(
-                        target: "payload_builder",
-                        tx_hash = ?tx.hash(),
-                        sender = ?tx.sender(),
-                        nonce = tx.nonce(),
-                        current_flashblock = self.current_flashblock_number,
-                        max_flashblock = max,
-                        "Bundle flashblock max exceeded"
-                    );
-                    self.inner.mark_invalid(tx.sender(), tx.nonce());
-                    continue;
-                }
+            if let Some(max) = flashblock_number_max &&
+                self.current_flashblock_number > max
+            {
+                debug!(
+                    target: "payload_builder",
+                    tx_hash = ?tx.hash(),
+                    sender = ?tx.sender(),
+                    nonce = tx.nonce(),
+                    current_flashblock = self.current_flashblock_number,
+                    max_flashblock = max,
+                    "Bundle flashblock max exceeded"
+                );
+                self.inner.mark_invalid(tx.sender(), tx.nonce());
+                continue;
             }
 
             return Some(tx);

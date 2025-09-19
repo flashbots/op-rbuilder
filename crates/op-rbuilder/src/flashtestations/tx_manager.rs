@@ -107,12 +107,8 @@ impl TxManager {
         funding_amount: U256,
     ) -> eyre::Result<()> {
         info!(target: "flashtestations", "funding TEE address at {}", self.tee_service_signer.address);
-        self.fund_address(
-            self.funding_signer,
-            self.tee_service_signer.address,
-            funding_amount,
-        )
-        .await?;
+        self.fund_address(self.funding_signer, self.tee_service_signer.address, funding_amount)
+            .await?;
 
         let quote_bytes = Bytes::from(attestation);
         let wallet =
@@ -129,10 +125,8 @@ impl TxManager {
         info!(target: "flashtestations", "submitting quote to registry at {}", self.registry_address);
 
         // TODO: add retries
-        let calldata = IFlashtestationRegistry::registerTEEServiceCall {
-            rawQuote: quote_bytes,
-        }
-        .abi_encode();
+        let calldata =
+            IFlashtestationRegistry::registerTEEServiceCall { rawQuote: quote_bytes }.abi_encode();
         let tx = TransactionRequest {
             from: Some(self.tee_service_signer.address),
             to: Some(TxKind::Call(self.registry_address)),
@@ -190,9 +184,7 @@ impl TxManager {
             .network::<Optimism>()
             .connect(self.rpc_url.as_str())
             .await?;
-        let balance = provider
-            .get_balance(self.tee_service_signer.address)
-            .await?;
+        let balance = provider.get_balance(self.tee_service_signer.address).await?;
         let gas_estimate = 21_000u128;
         let gas_price = provider.get_gas_price().await?;
         let gas_cost = U256::from(gas_estimate * gas_price);
@@ -207,7 +199,8 @@ impl TxManager {
         Ok(())
     }
 
-    /// Processes a pending transaction and logs whether the transaction succeeded or not
+    /// Processes a pending transaction and logs whether the transaction
+    /// succeeded or not
     async fn process_pending_tx(
         pending_tx_result: TransportResult<PendingTransactionBuilder<Optimism>>,
     ) -> eyre::Result<TxHash> {
@@ -217,11 +210,7 @@ impl TxManager {
                 debug!(target: "flashtestations", tx_hash = %tx_hash, "transaction submitted");
 
                 // Wait for funding transaction confirmation
-                match pending_tx
-                    .with_timeout(Some(Duration::from_secs(30)))
-                    .get_receipt()
-                    .await
-                {
+                match pending_tx.with_timeout(Some(Duration::from_secs(30))).get_receipt().await {
                     Ok(receipt) => {
                         if receipt.status() {
                             Ok(receipt.transaction_hash())
@@ -237,7 +226,8 @@ impl TxManager {
     }
 
     /// Computes the block content hash according to the formula:
-    /// keccak256(abi.encode(parentHash, blockNumber, timestamp, transactionHashes))
+    /// keccak256(abi.encode(parentHash, blockNumber, timestamp,
+    /// transactionHashes))
     fn compute_block_content_hash(payload: OpBuiltPayload) -> B256 {
         let block = payload.block();
         let body = block.clone().into_body();

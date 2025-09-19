@@ -92,9 +92,7 @@ impl EngineApi<Http> {
     pub fn with_localhost_port(port: u16) -> EngineApi<Http> {
         EngineApi::<Http> {
             address: Address::Http(
-                format!("http://localhost:{port}")
-                    .parse()
-                    .expect("Invalid URL"),
+                format!("http://localhost:{port}").parse().expect("Invalid URL"),
             ),
             jwt_secret: DEFAULT_JWT_TOKEN.parse().expect("Invalid JWT"),
             _tag: PhantomData,
@@ -146,15 +144,9 @@ impl<P: Protocol> EngineApi<P> {
         &self,
         payload_id: PayloadId,
     ) -> eyre::Result<<OpEngineTypes as EngineTypes>::ExecutionPayloadEnvelopeV4> {
-        debug!(
-            "Fetching payload with id: {} at {}",
-            payload_id,
-            chrono::Utc::now()
-        );
-        Ok(
-            OpEngineApiClient::<OpEngineTypes>::get_payload_v4(&self.client().await, payload_id)
-                .await?,
-        )
+        debug!("Fetching payload with id: {} at {}", payload_id, chrono::Utc::now());
+        Ok(OpEngineApiClient::<OpEngineTypes>::get_payload_v4(&self.client().await, payload_id)
+            .await?)
     }
 
     pub async fn new_payload(

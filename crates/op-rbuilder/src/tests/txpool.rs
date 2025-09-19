@@ -6,7 +6,8 @@ use reth::args::TxPoolArgs;
 use reth_node_builder::NodeConfig;
 use reth_optimism_chainspec::OpChainSpec;
 
-/// This test ensures that pending pool custom limit is respected and priority tx would be included even when pool if full.
+/// This test ensures that pending pool custom limit is respected and priority
+/// tx would be included even when pool if full.
 #[rb_test(
     config = NodeConfig::<OpChainSpec> {
         txpool: TxPoolArgs {
@@ -26,11 +27,7 @@ async fn pending_pool_limit(rbuilder: LocalInstance) -> eyre::Result<()> {
     let acc_with_priority = accounts.last().unwrap();
 
     for _ in 0..50 {
-        let _ = driver
-            .create_transaction()
-            .with_signer(*acc_no_priority)
-            .send()
-            .await?;
+        let _ = driver.create_transaction().with_signer(*acc_no_priority).send().await?;
     }
 
     assert_eq!(
@@ -59,7 +56,8 @@ async fn pending_pool_limit(rbuilder: LocalInstance) -> eyre::Result<()> {
         rbuilder.pool().pending_count()
     );
 
-    // After we try building block our reverting tx would be removed and other tx will move to queue pool
+    // After we try building block our reverting tx would be removed and other tx
+    // will move to queue pool
     let block = driver.build_new_block().await?;
 
     // Ensure that 10 extra txs got included

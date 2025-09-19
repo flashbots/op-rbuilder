@@ -85,9 +85,8 @@ pub trait BuilderTransactions<ExtraCtx: Debug + Default = ()>: Debug {
         db: &mut State<impl Database>,
     ) -> Result<Vec<BuilderTransactionCtx>, BuilderTransactionError> {
         {
-            let mut evm = builder_ctx
-                .evm_config
-                .evm_with_env(&mut *db, builder_ctx.evm_env.clone());
+            let mut evm =
+                builder_ctx.evm_config.evm_with_env(&mut *db, builder_ctx.evm_env.clone());
 
             let mut invalid: HashSet<Address> = HashSet::new();
 
@@ -109,7 +108,8 @@ pub trait BuilderTransactions<ExtraCtx: Debug + Default = ()>: Debug {
                     continue;
                 }
 
-                // Add gas used by the transaction to cumulative gas used, before creating the receipt
+                // Add gas used by the transaction to cumulative gas used, before creating the
+                // receipt
                 let gas_used = result.gas_used();
                 info.cumulative_gas_used += gas_used;
 
@@ -127,8 +127,7 @@ pub trait BuilderTransactions<ExtraCtx: Debug + Default = ()>: Debug {
 
                 // Append sender and transaction to the respective lists
                 info.executed_senders.push(builder_tx.signed_tx.signer());
-                info.executed_transactions
-                    .push(builder_tx.signed_tx.clone().into_inner());
+                info.executed_transactions.push(builder_tx.signed_tx.clone().into_inner());
             }
 
             // Release the db reference by dropping evm
@@ -151,9 +150,7 @@ pub trait BuilderTransactions<ExtraCtx: Debug + Default = ()>: Debug {
             .with_bundle_prestate(db.bundle_state.clone())
             .with_bundle_update()
             .build();
-        let mut evm = ctx
-            .evm_config
-            .evm_with_env(&mut simulation_state, ctx.evm_env.clone());
+        let mut evm = ctx.evm_config.evm_with_env(&mut simulation_state, ctx.evm_env.clone());
 
         for builder_tx in builder_txs {
             let ResultAndState { state, .. } = evm

@@ -28,11 +28,7 @@ async fn smoke_dynamic_base(rbuilder: LocalInstance) -> eyre::Result<()> {
     for _ in 0..10 {
         for _ in 0..5 {
             // send a valid transaction
-            let _ = driver
-                .create_transaction()
-                .random_valid_transfer()
-                .send()
-                .await?;
+            let _ = driver.create_transaction().random_valid_transfer().send().await?;
         }
         let block = driver.build_new_block_with_current_timestamp(None).await?;
         assert_eq!(block.transactions.len(), 8, "Got: {:?}", block.transactions); // 5 normal txn + deposit + 2 builder txn
@@ -66,11 +62,7 @@ async fn smoke_dynamic_unichain(rbuilder: LocalInstance) -> eyre::Result<()> {
     for _ in 0..10 {
         for _ in 0..5 {
             // send a valid transaction
-            let _ = driver
-                .create_transaction()
-                .random_valid_transfer()
-                .send()
-                .await?;
+            let _ = driver.create_transaction().random_valid_transfer().send().await?;
         }
         let block = driver.build_new_block_with_current_timestamp(None).await?;
         assert_eq!(block.transactions.len(), 8, "Got: {:?}", block.transactions); // 5 normal txn + deposit + 2 builder txn
@@ -104,11 +96,7 @@ async fn smoke_classic_unichain(rbuilder: LocalInstance) -> eyre::Result<()> {
     for _ in 0..10 {
         for _ in 0..5 {
             // send a valid transaction
-            let _ = driver
-                .create_transaction()
-                .random_valid_transfer()
-                .send()
-                .await?;
+            let _ = driver.create_transaction().random_valid_transfer().send().await?;
         }
         let block = driver.build_new_block().await?;
         assert_eq!(block.transactions.len(), 8, "Got: {:?}", block.transactions); // 5 normal txn + deposit + 2 builder txn
@@ -142,11 +130,7 @@ async fn smoke_classic_base(rbuilder: LocalInstance) -> eyre::Result<()> {
     for _ in 0..10 {
         for _ in 0..5 {
             // send a valid transaction
-            let _ = driver
-                .create_transaction()
-                .random_valid_transfer()
-                .send()
-                .await?;
+            let _ = driver.create_transaction().random_valid_transfer().send().await?;
         }
         let block = driver.build_new_block().await?;
         assert_eq!(block.transactions.len(), 8, "Got: {:?}", block.transactions); // 5 normal txn + deposit + 2 builder txn
@@ -180,21 +164,12 @@ async fn unichain_dynamic_with_lag(rbuilder: LocalInstance) -> eyre::Result<()> 
     for i in 0..9 {
         for _ in 0..5 {
             // send a valid transaction
-            let _ = driver
-                .create_transaction()
-                .random_valid_transfer()
-                .send()
-                .await?;
+            let _ = driver.create_transaction().random_valid_transfer().send().await?;
         }
         let block = driver
             .build_new_block_with_current_timestamp(Some(Duration::from_millis(i * 100)))
             .await?;
-        assert_eq!(
-            block.transactions.len(),
-            8,
-            "Got: {:#?}",
-            block.transactions
-        ); // 5 normal txn + deposit + 2 builder txn
+        assert_eq!(block.transactions.len(), 8, "Got: {:#?}", block.transactions); // 5 normal txn + deposit + 2 builder txn
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     }
 
@@ -223,15 +198,10 @@ async fn dynamic_with_full_block_lag(rbuilder: LocalInstance) -> eyre::Result<()
 
     for _ in 0..5 {
         // send a valid transaction
-        let _ = driver
-            .create_transaction()
-            .random_valid_transfer()
-            .send()
-            .await?;
+        let _ = driver.create_transaction().random_valid_transfer().send().await?;
     }
-    let block = driver
-        .build_new_block_with_current_timestamp(Some(Duration::from_millis(999)))
-        .await?;
+    let block =
+        driver.build_new_block_with_current_timestamp(Some(Duration::from_millis(999))).await?;
     // We could only produce block with deposits + builder tx because of short time frame
     assert_eq!(block.transactions.len(), 2);
 
@@ -283,17 +253,10 @@ async fn test_flashblock_min_filtering(rbuilder: LocalInstance) -> eyre::Result<
     // Check that tx1 comes before tx2
     let tx1_hash = *tx1.tx_hash();
     let tx2_hash = *tx2.tx_hash();
-    let tx1_pos = flashblocks_listener
-        .find_transaction_flashblock(&tx1_hash)
-        .unwrap();
-    let tx2_pos = flashblocks_listener
-        .find_transaction_flashblock(&tx2_hash)
-        .unwrap();
+    let tx1_pos = flashblocks_listener.find_transaction_flashblock(&tx1_hash).unwrap();
+    let tx2_pos = flashblocks_listener.find_transaction_flashblock(&tx2_hash).unwrap();
 
-    assert!(
-        tx1_pos < tx2_pos,
-        "tx {tx1_hash:?} does not come before {tx2_hash:?}"
-    );
+    assert!(tx1_pos < tx2_pos, "tx {tx1_hash:?} does not come before {tx2_hash:?}");
 
     let flashblocks = flashblocks_listener.get_flashblocks();
     assert_eq!(6, flashblocks.len());
@@ -330,11 +293,7 @@ async fn test_flashblock_max_filtering(rbuilder: LocalInstance) -> eyre::Result<
         .await?;
     assert!(call, "miner_setMaxDASize should be executed successfully");
 
-    let _fit_tx_1 = driver
-        .create_transaction()
-        .with_max_priority_fee_per_gas(50)
-        .send()
-        .await?;
+    let _fit_tx_1 = driver.create_transaction().with_max_priority_fee_per_gas(50).send().await?;
 
     let tx1 = driver
         .create_transaction()
@@ -345,11 +304,7 @@ async fn test_flashblock_max_filtering(rbuilder: LocalInstance) -> eyre::Result<
 
     let block = driver.build_new_block_with_current_timestamp(None).await?;
     assert!(!block.includes(tx1.tx_hash()));
-    assert!(
-        flashblocks_listener
-            .find_transaction_flashblock(tx1.tx_hash())
-            .is_none()
-    );
+    assert!(flashblocks_listener.find_transaction_flashblock(tx1.tx_hash()).is_none());
 
     let flashblocks = flashblocks_listener.get_flashblocks();
     assert_eq!(6, flashblocks.len());
@@ -379,9 +334,7 @@ async fn test_flashblock_min_max_filtering(rbuilder: LocalInstance) -> eyre::Res
         .create_transaction()
         .random_valid_transfer()
         .with_bundle(
-            BundleOpts::default()
-                .with_flashblock_number_max(2)
-                .with_flashblock_number_min(2),
+            BundleOpts::default().with_flashblock_number_max(2).with_flashblock_number_min(2),
         )
         .send()
         .await?;
@@ -391,9 +344,7 @@ async fn test_flashblock_min_max_filtering(rbuilder: LocalInstance) -> eyre::Res
     // It ends up in the 2nd flashblock
     assert_eq!(
         2,
-        flashblocks_listener
-            .find_transaction_flashblock(tx1.tx_hash())
-            .unwrap(),
+        flashblocks_listener.find_transaction_flashblock(tx1.tx_hash()).unwrap(),
         "Transaction should be in the 2nd flashblock"
     );
 
@@ -422,20 +373,13 @@ async fn test_flashblocks_no_state_root_calculation(rbuilder: LocalInstance) -> 
     let driver = rbuilder.driver().await?;
 
     // Send a transaction to ensure block has some activity
-    let _tx = driver
-        .create_transaction()
-        .random_valid_transfer()
-        .send()
-        .await?;
+    let _tx = driver.create_transaction().random_valid_transfer().send().await?;
 
     // Build a block with current timestamp (not historical) and calculate_state_root: false
     let block = driver.build_new_block_with_current_timestamp(None).await?;
 
     // Verify that flashblocks are still produced (block should have transactions)
-    assert!(
-        block.transactions.len() > 2,
-        "Block should contain transactions"
-    ); // deposit + builder tx + user tx
+    assert!(block.transactions.len() > 2, "Block should contain transactions"); // deposit + builder tx + user tx
 
     // Verify that state root is not calculated (should be zero)
     assert_eq!(

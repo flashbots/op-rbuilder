@@ -31,10 +31,7 @@ impl StandardBuilderTx {
         signer: Option<Signer>,
         flashtestations_builder_tx: Option<FlashtestationsBuilderTx>,
     ) -> Self {
-        Self {
-            signer,
-            flashtestations_builder_tx,
-        }
+        Self { signer, flashtestations_builder_tx }
     }
 
     pub(super) fn simulate_builder_tx<ExtraCtx: Debug + Default>(
@@ -50,11 +47,7 @@ impl StandardBuilderTx {
                 let da_size = op_alloy_flz::tx_estimated_size_fjord_bytes(
                     signed_tx.encoded_2718().as_slice(),
                 );
-                Ok(Some(BuilderTransactionCtx {
-                    gas_used,
-                    da_size,
-                    signed_tx,
-                }))
+                Ok(Some(BuilderTransactionCtx { gas_used, da_size, signed_tx }))
             }
             None => Ok(None),
         }
@@ -63,11 +56,7 @@ impl StandardBuilderTx {
     fn estimate_builder_tx_gas(&self, input: &[u8]) -> u64 {
         // Count zero and non-zero bytes
         let (zero_bytes, nonzero_bytes) = input.iter().fold((0, 0), |(zeros, nonzeros), &byte| {
-            if byte == 0 {
-                (zeros + 1, nonzeros)
-            } else {
-                (zeros, nonzeros + 1)
-            }
+            if byte == 0 { (zeros + 1, nonzeros) } else { (zeros, nonzeros + 1) }
         });
 
         // Calculate gas cost (4 gas per zero byte, 16 gas per non-zero byte)
@@ -107,9 +96,7 @@ impl StandardBuilderTx {
             ..Default::default()
         });
         // Sign the transaction
-        let builder_tx = signer
-            .sign_tx(tx)
-            .map_err(BuilderTransactionError::SigningError)?;
+        let builder_tx = signer.sign_tx(tx).map_err(BuilderTransactionError::SigningError)?;
 
         Ok(builder_tx)
     }
