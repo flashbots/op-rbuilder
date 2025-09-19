@@ -19,7 +19,7 @@ use crate::{flashtestations::IFlashtestationRegistry, tx_signer::Signer};
 #[derive(Debug, thiserror::Error)]
 pub enum TxManagerError {
     #[error("rpc error: {0}")]
-    RpcError(TransportError),
+    RpcError(#[from] TransportError),
     #[error("tx reverted: {0}")]
     TxReverted(TxHash),
     #[error("error checking tx confirmation: {0}")]
@@ -28,12 +28,6 @@ pub enum TxManagerError {
     TxRpcError(RpcError<TransportErrorKind>),
     #[error("signer error: {0}")]
     SignerError(ecdsa::Error),
-}
-
-impl From<TransportError> for TxManagerError {
-    fn from(e: TransportError) -> Self {
-        TxManagerError::RpcError(e)
-    }
 }
 
 #[derive(Debug, Clone)]
