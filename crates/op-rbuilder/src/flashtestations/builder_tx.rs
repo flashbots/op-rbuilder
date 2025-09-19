@@ -3,7 +3,7 @@ use alloy_eips::Encodable2718;
 use alloy_evm::Database;
 use alloy_op_evm::OpEvm;
 use alloy_primitives::{Address, B256, Bytes, TxKind, U256, keccak256, map::foldhash::HashMap};
-use alloy_sol_types::{SolCall, SolEvent, SolValue};
+use alloy_sol_types::{SolCall, SolEvent, SolInterface, SolValue};
 use core::fmt::Debug;
 use op_alloy_consensus::OpTypedTransaction;
 use reth_evm::{ConfigureEvm, Evm, EvmError, precompiles::PrecompilesMap};
@@ -28,9 +28,9 @@ use crate::{
         BuilderTransactionCtx, BuilderTransactionError, BuilderTransactions, OpPayloadBuilderCtx,
     },
     flashtestations::{
-        BlockBuilderPolicyError, BlockBuilderProofVerified, BlockData, FlashtestationRegistryError,
-        FlashtestationRevertReason, IBlockBuilderPolicy, IFlashtestationRegistry,
-        TEEServiceRegistered,
+        BlockData, FlashtestationRevertReason,
+        IBlockBuilderPolicy::{self, BlockBuilderProofVerified},
+        IFlashtestationRegistry::{self, TEEServiceRegistered},
     },
     primitives::reth::ExecutionInfo,
     tx_signer::Signer,
@@ -245,15 +245,18 @@ impl FlashtestationsBuilderTx {
                 revert_reason: None,
                 logs,
             }),
-            ExecutionResult::Revert { output, gas_used} => {
-                let revert_reason = FlashtestationRegistryError::from(output);
+            ExecutionResult::Revert { output, gas_used } => {
+                let revert_reason =
+                    IFlashtestationRegistry::IFlashtestationRegistryErrors::abi_decode(&output)
+                        .map(FlashtestationRevertReason::FlashtestationRegistry)
+                        .unwrap_or_else(|e| {
+                            FlashtestationRevertReason::Unknown(hex::encode(output), e)
+                        });
                 Ok(TxSimulateResult {
                     gas_used,
                     success: false,
                     state_changes: state,
-                    revert_reason: Some(FlashtestationRevertReason::FlashtestationRegistry(
-                        revert_reason,
-                    )),
+                    revert_reason: Some(revert_reason),
                     logs: vec![],
                 })
             }
@@ -317,15 +320,18 @@ impl FlashtestationsBuilderTx {
                 revert_reason: None,
                 logs,
             }),
-            ExecutionResult::Revert { output, gas_used} => {
-                let revert_reason = BlockBuilderPolicyError::from(output);
+            ExecutionResult::Revert { output, gas_used } => {
+                let revert_reason =
+                    IBlockBuilderPolicy::IBlockBuilderPolicyErrors::abi_decode(&output)
+                        .map(FlashtestationRevertReason::BlockBuilderPolicy)
+                        .unwrap_or_else(|e| {
+                            FlashtestationRevertReason::Unknown(hex::encode(output), e)
+                        });
                 Ok(TxSimulateResult {
                     gas_used,
                     success: false,
                     state_changes: state,
-                    revert_reason: Some(FlashtestationRevertReason::BlockBuilderPolicy(
-                        revert_reason,
-                    )),
+                    revert_reason: Some(revert_reason),
                     logs: vec![],
                 })
             }
@@ -387,6 +393,7 @@ impl FlashtestationsBuilderTx {
                 gas_used: 21000,
                 da_size,
                 signed_tx: funding_tx,
+                is_top_of_block: true,
             }))
         } else {
             Ok(None)
@@ -434,12 +441,13 @@ impl FlashtestationsBuilderTx {
                         gas_used,
                         da_size,
                         signed_tx: register_tx,
+                        is_top_of_block: true,
                     }),
                     false,
                 ))
             }
         } else if let Some(FlashtestationRevertReason::FlashtestationRegistry(
-            FlashtestationRegistryError::TEEServiceAlreadyRegistered(_),
+            IFlashtestationRegistry::IFlashtestationRegistryErrors::TEEServiceAlreadyRegistered(_),
         )) = revert_reason
         {
             Ok((None, true))
@@ -495,6 +503,7 @@ impl FlashtestationsBuilderTx {
                     gas_used,
                     da_size,
                     signed_tx: verify_block_proof_tx,
+                    is_top_of_block: false,
                 }))
             }
         } else {

@@ -1,16 +1,73 @@
-use alloy_primitives::{Address, B256, Bytes, FixedBytes, U256};
-use alloy_sol_types::{SolError, sol};
+use alloy_sol_types::{Error, sol};
 use op_revm::OpHaltReason;
 
 sol!(
     #[sol(rpc, abi)]
+    #[derive(Debug)]
     interface IFlashtestationRegistry {
         function registerTEEService(bytes calldata rawQuote, bytes calldata extendedRegistrationData) external;
+
+        /// @notice Emitted when a TEE service is registered
+        /// @param teeAddress The address of the TEE service
+        /// @param rawQuote The raw quote from the TEE device
+        /// @param alreadyExists Whether the TEE service is already registered
+        event TEEServiceRegistered(address indexed teeAddress, bytes rawQuote, bool alreadyExists);
+
+        /// @notice Emitted when the attestation contract is the 0x0 address
+        error InvalidAttestationContract();
+        /// @notice Emitted when the signature is expired because the deadline has passed
+        error ExpiredSignature(uint256 deadline);
+        /// @notice Emitted when the quote is invalid according to the Automata DCAP Attestation contract
+        error InvalidQuote(bytes output);
+        /// @notice Emitted when the report data length is too short
+        error InvalidReportDataLength(uint256 length);
+        /// @notice Emitted when the registration data hash does not match the expected hash
+        error InvalidRegistrationDataHash(bytes32 expected, bytes32 received);
+        /// @notice Emitted when the byte size is exceeded
+        error ByteSizeExceeded(uint256 size);
+        /// @notice Emitted when the TEE service is already registered when registering
+        error TEEServiceAlreadyRegistered(address teeAddress);
+        /// @notice Emitted when the signer doesn't match the TEE address
+        error SignerMustMatchTEEAddress(address signer, address teeAddress);
+        /// @notice Emitted when the TEE service is not registered
+        error TEEServiceNotRegistered(address teeAddress);
+        /// @notice Emitted when the TEE service is already invalid when trying to invalidate a TEE registration
+        error TEEServiceAlreadyInvalid(address teeAddress);
+        /// @notice Emitted when the TEE service is still valid when trying to invalidate a TEE registration
+        error TEEIsStillValid(address teeAddress);
+        /// @notice Emitted when the nonce is invalid when verifying a signature
+        error InvalidNonce(uint256 expected, uint256 provided);
     }
 
     #[sol(rpc, abi)]
+    #[derive(Debug)]
     interface IBlockBuilderPolicy {
         function verifyBlockBuilderProof(uint8 version, bytes32 blockContentHash) external;
+
+        /// @notice Emitted when a block builder proof is successfully verified
+        /// @param caller The address that called the verification function (TEE address)
+        /// @param workloadId The workload identifier of the TEE
+        /// @param version The flashtestation protocol version used
+        /// @param blockContentHash The hash of the block content
+        /// @param commitHash The git commit hash associated with the workload
+        event BlockBuilderProofVerified(
+            address caller, bytes32 workloadId, uint8 version, bytes32 blockContentHash, string commitHash
+        );
+
+        /// @notice Emitted when the registry is the 0x0 address
+        error InvalidRegistry();
+        /// @notice Emitted when a workload to be added is already in the policy
+        error WorkloadAlreadyInPolicy();
+        /// @notice Emitted when a workload to be removed is not in the policy
+        error WorkloadNotInPolicy();
+        /// @notice Emitted when the address is not in the approvedWorkloads mapping
+        error UnauthorizedBlockBuilder(address caller);
+        /// @notice Emitted when the nonce is invalid
+        error InvalidNonce(uint256 expected, uint256 provided);
+        /// @notice Emitted when the commit hash is empty
+        error EmptyCommitHash();
+        /// @notice Emitted when the source locators array is empty
+        error EmptySourceLocators();
     }
 
     struct BlockData {
@@ -21,187 +78,18 @@ sol!(
     }
 
     type WorkloadId is bytes32;
-
-    event TEEServiceRegistered(address teeAddress, bytes rawQuote, bool alreadyExists);
-
-    event BlockBuilderProofVerified(
-        address caller,
-        WorkloadId workloadId,
-        uint256 blockNumber,
-        uint8 version,
-        bytes32 blockContentHash,
-        string commit_hash
-    );
-
-    // FlashtestationRegistry errors
-    error InvalidQuote(bytes output);
-    error TEEServiceAlreadyRegistered(address teeAddress);
-    error InvalidRegistrationDataHash(bytes32 expected, bytes32 received);
-    error SenderMustMatchTEEAddress(address sender, address teeAddress);
-    error ByteSizeExceeded(uint256 size);
-
-    // QuoteParser errors
-    error InvalidTEEType(bytes4 teeType);
-    error InvalidTEEVersion(uint16 version);
-    error InvalidReportDataLength(uint256 length);
-    error InvalidQuoteLength(uint256 length);
-
-    // BlockBuilderPolicy errors
-    error UnauthorizedBlockBuilder(address caller);
-    error UnsupportedVersion(uint8 version);
-
-    // EIP-712 permit errors
-    error InvalidSignature();
-    error InvalidNonce(uint256 expected, uint256 provided);
 );
 
 #[derive(Debug, thiserror::Error)]
 pub enum FlashtestationRevertReason {
-    #[error("flashtestation registry error: {0}")]
-    FlashtestationRegistry(FlashtestationRegistryError),
-    #[error("block builder policy error: {0}")]
-    BlockBuilderPolicy(BlockBuilderPolicyError),
+    #[error("flashtestation registry error: {0:?}")]
+    FlashtestationRegistry(IFlashtestationRegistry::IFlashtestationRegistryErrors),
+    #[error("block builder policy error: {0:?}")]
+    BlockBuilderPolicy(IBlockBuilderPolicy::IBlockBuilderPolicyErrors),
+    #[error("unknown revert: {0} err: {1}")]
+    Unknown(String, Error),
     #[error("halt: {0:?}")]
     Halt(OpHaltReason),
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum FlashtestationRegistryError {
-    #[error("invalid quote: {0}")]
-    InvalidQuote(Bytes),
-    #[error("tee address {0} already registered")]
-    TEEServiceAlreadyRegistered(Address),
-    #[error("invalid registration data hash: expected {0}, received {1}")]
-    InvalidRegistrationDataHash(B256, B256),
-    #[error("byte size exceeded: {0}")]
-    ByteSizeExceeded(U256),
-    #[error("sender address {0} must match quote tee address {1}")]
-    SenderMustMatchTEEAddress(Address, Address),
-    #[error("invalid tee type: {0}")]
-    InvalidTEEType(FixedBytes<4>),
-    #[error("invalid tee version: {0}")]
-    InvalidTEEVersion(u16),
-    #[error("invalid report data length: {0}")]
-    InvalidReportDataLength(U256),
-    #[error("invalid quote length: {0}")]
-    InvalidQuoteLength(U256),
-    #[error("invalid signature")]
-    InvalidSignature(),
-    #[error("invalid nonce: expected {0}, provided {1}")]
-    InvalidNonce(U256, U256),
-    #[error("unknown revert: {0}")]
-    Unknown(String),
-}
-
-impl From<Bytes> for FlashtestationRegistryError {
-    fn from(value: Bytes) -> Self {
-        // Empty revert
-        if value.is_empty() {
-            return FlashtestationRegistryError::Unknown(
-                "Transaction reverted without reason".to_string(),
-            );
-        }
-
-        // Try to decode each custom error type
-        if let Ok(InvalidQuote { output }) = InvalidQuote::abi_decode(&value) {
-            return FlashtestationRegistryError::InvalidQuote(output);
-        }
-
-        if let Ok(TEEServiceAlreadyRegistered { teeAddress }) =
-            TEEServiceAlreadyRegistered::abi_decode(&value)
-        {
-            return FlashtestationRegistryError::TEEServiceAlreadyRegistered(teeAddress);
-        }
-
-        if let Ok(InvalidRegistrationDataHash { expected, received }) =
-            InvalidRegistrationDataHash::abi_decode(&value)
-        {
-            return FlashtestationRegistryError::InvalidRegistrationDataHash(expected, received);
-        }
-
-        if let Ok(ByteSizeExceeded { size }) = ByteSizeExceeded::abi_decode(&value) {
-            return FlashtestationRegistryError::ByteSizeExceeded(size);
-        }
-
-        if let Ok(SenderMustMatchTEEAddress { sender, teeAddress }) =
-            SenderMustMatchTEEAddress::abi_decode(&value)
-        {
-            return FlashtestationRegistryError::SenderMustMatchTEEAddress(sender, teeAddress);
-        }
-
-        if let Ok(InvalidTEEType { teeType }) = InvalidTEEType::abi_decode(&value) {
-            return FlashtestationRegistryError::InvalidTEEType(teeType);
-        }
-
-        if let Ok(InvalidTEEVersion { version }) = InvalidTEEVersion::abi_decode(&value) {
-            return FlashtestationRegistryError::InvalidTEEVersion(version);
-        }
-
-        if let Ok(InvalidReportDataLength { length }) = InvalidReportDataLength::abi_decode(&value)
-        {
-            return FlashtestationRegistryError::InvalidReportDataLength(length);
-        }
-
-        if let Ok(InvalidQuoteLength { length }) = InvalidQuoteLength::abi_decode(&value) {
-            return FlashtestationRegistryError::InvalidQuoteLength(length);
-        }
-
-        if let Ok(InvalidSignature {}) = InvalidSignature::abi_decode(&value) {
-            return FlashtestationRegistryError::InvalidSignature();
-        }
-
-        if let Ok(InvalidNonce { expected, provided }) = InvalidNonce::abi_decode(&value) {
-            return FlashtestationRegistryError::InvalidNonce(expected, provided);
-        }
-
-        FlashtestationRegistryError::Unknown(hex::encode(value))
-    }
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum BlockBuilderPolicyError {
-    #[error("unauthorized block builder: {0}")]
-    UnauthorizedBlockBuilder(Address),
-    #[error("unsupported version: {0}")]
-    UnsupportedVersion(u8),
-    #[error("invalid signature")]
-    InvalidSignature(),
-    #[error("invalid nonce: expected {0}, provided {1}")]
-    InvalidNonce(U256, U256),
-    #[error("unknown revert: {0}")]
-    Unknown(String),
-}
-
-impl From<Bytes> for BlockBuilderPolicyError {
-    fn from(value: Bytes) -> Self {
-        // Empty revert
-        if value.is_empty() {
-            return BlockBuilderPolicyError::Unknown(
-                "Transaction reverted without reason".to_string(),
-            );
-        }
-
-        // Try to decode each custom error type
-        if let Ok(UnauthorizedBlockBuilder { caller }) =
-            UnauthorizedBlockBuilder::abi_decode(&value)
-        {
-            return BlockBuilderPolicyError::UnauthorizedBlockBuilder(caller);
-        }
-
-        if let Ok(UnsupportedVersion { version }) = UnsupportedVersion::abi_decode(&value) {
-            return BlockBuilderPolicyError::UnsupportedVersion(version);
-        }
-
-        if let Ok(InvalidSignature {}) = InvalidSignature::abi_decode(&value) {
-            return BlockBuilderPolicyError::InvalidSignature();
-        }
-
-        if let Ok(InvalidNonce { expected, provided }) = InvalidNonce::abi_decode(&value) {
-            return BlockBuilderPolicyError::InvalidNonce(expected, provided);
-        }
-
-        BlockBuilderPolicyError::Unknown(hex::encode(value))
-    }
 }
 
 pub mod args;
