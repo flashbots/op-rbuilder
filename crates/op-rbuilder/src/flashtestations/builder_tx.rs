@@ -245,10 +245,10 @@ impl FlashtestationsBuilderTx {
                 revert_reason: None,
                 logs,
             }),
-            ExecutionResult::Revert { output, .. } => {
+            ExecutionResult::Revert { output, gas_used} => {
                 let revert_reason = FlashtestationRegistryError::from(output);
                 Ok(TxSimulateResult {
-                    gas_used: 0,
+                    gas_used,
                     success: false,
                     state_changes: state,
                     revert_reason: Some(FlashtestationRevertReason::FlashtestationRegistry(
@@ -317,10 +317,10 @@ impl FlashtestationsBuilderTx {
                 revert_reason: None,
                 logs,
             }),
-            ExecutionResult::Revert { output, .. } => {
+            ExecutionResult::Revert { output, gas_used} => {
                 let revert_reason = BlockBuilderPolicyError::from(output);
                 Ok(TxSimulateResult {
-                    gas_used: 0,
+                    gas_used,
                     success: false,
                     state_changes: state,
                     revert_reason: Some(FlashtestationRevertReason::BlockBuilderPolicy(
