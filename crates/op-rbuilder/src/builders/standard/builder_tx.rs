@@ -8,7 +8,7 @@ use crate::{
         BuilderTransactionCtx, BuilderTransactionError, BuilderTransactions,
         builder_tx::BuilderTxBase, context::OpPayloadBuilderCtx,
     },
-    flashtestations::service::FlashtestationsBuilderTx,
+    flashtestations::builder_tx::FlashtestationsBuilderTx,
     primitives::reth::ExecutionInfo,
     tx_signer::Signer,
 };
@@ -40,7 +40,6 @@ impl BuilderTransactions for StandardBuilderTx {
         info: &mut ExecutionInfo<Extra>,
         ctx: &OpPayloadBuilderCtx,
         db: &mut State<impl Database>,
-        top_of_block: bool,
     ) -> Result<Vec<BuilderTransactionCtx>, BuilderTransactionError> {
         let mut builder_txs = Vec::<BuilderTransactionCtx>::new();
         let standard_builder_tx = self.base_builder_tx.simulate_builder_tx(ctx, db)?;
@@ -57,7 +56,6 @@ impl BuilderTransactions for StandardBuilderTx {
                 info,
                 ctx,
                 &mut simulation_state,
-                top_of_block,
             )?;
             builder_txs.extend(flashtestations_builder_txs);
         }
