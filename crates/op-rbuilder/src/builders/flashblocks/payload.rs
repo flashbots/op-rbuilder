@@ -52,7 +52,7 @@ use std::{
 };
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, info, metadata::Level, span, warn};
+use tracing::{Span, debug, error, info, metadata::Level, span, warn};
 
 type NextBestFlashblocksTxs<Pool> = BestFlashblocksTxs<
     <Pool as TransactionPool>::Transaction,
@@ -89,6 +89,8 @@ pub struct FlashblocksExtraCtx {
     da_per_batch: Option<u64>,
     /// Whether to calculate the state root for each flashblock
     calculate_state_root: bool,
+    /// Cancel token for the flashblock
+    flashblock_cancel: CancellationToken,
 }
 
 impl OpPayloadBuilderCtx<FlashblocksExtraCtx> {
@@ -277,6 +279,7 @@ where
             .next_evm_env(&config.parent_header, &block_env_attributes)
             .map_err(PayloadBuilderError::other)?;
 
+        let mut fb_cancel = block_cancel.child_token();
         let mut ctx = OpPayloadBuilderCtx::<FlashblocksExtraCtx> {
             evm_config: self.evm_config.clone(),
             chain_spec: self.client.chain_spec(),
@@ -296,6 +299,7 @@ where
                 gas_per_batch: 0,
                 da_per_batch: None,
                 calculate_state_root,
+                flashblock_cancel: fb_cancel.clone(),
             },
             max_gas_per_txn: self.config.max_gas_per_txn,
             address_gas_limiter: self.address_gas_limiter.clone(),
@@ -327,7 +331,7 @@ where
                 &mut info,
                 &ctx,
                 &mut state,
-                true,
+                false,
             ) {
                 Ok(builder_txs) => builder_txs,
                 Err(e) => {
@@ -419,7 +423,7 @@ where
         if let Some(da_limit) = da_per_batch {
             // We error if we can't insert any tx aside from builder tx in flashblock
             if da_limit / 2 < builder_tx_da_size {
-                error!(
+                warn!(
                     "Builder tx da size subtraction caused max_da_block_size to be 0. No transaction would be included."
                 );
             }
@@ -442,11 +446,9 @@ where
         ));
         let interval = self.config.specific.interval;
         let (tx, mut rx) = mpsc::channel((self.config.flashblocks_per_block() + 1) as usize);
-        let mut fb_cancel = block_cancel.child_token();
-        ctx.cancel = fb_cancel.clone();
 
         tokio::spawn({
-            let block_cancel = block_cancel.clone();
+            let block_cancel = ctx.cancel.clone();
 
             async move {
                 let mut timer = tokio::time::interval_at(
@@ -483,7 +485,7 @@ where
         // Process flashblocks in a blocking loop
         loop {
             let fb_span = if span.is_none() {
-                tracing::Span::none()
+                Span::none()
             } else {
                 span!(
                     parent: &span,
@@ -500,9 +502,7 @@ where
                 &mut state,
                 &state_provider,
                 &mut best_txs,
-                &block_cancel,
                 &best_payload,
-                &fb_span,
             ) {
                 Ok(()) => {}
                 Err(err) => {
@@ -519,7 +519,7 @@ where
 
             tokio::select! {
                 Some(fb_cancel) = rx.recv() => {
-                    ctx.cancel = fb_cancel;
+                    ctx.extra_ctx.flashblock_cancel = fb_cancel;
                 },
                 _ = block_cancel.cancelled() => {
                     self.record_flashblocks_metrics(
@@ -535,7 +535,6 @@ where
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn build_next_flashblock<
         DB: Database<Error = ProviderError> + std::fmt::Debug + AsRef<P>,
         P: StateRootProvider + HashedPostStateProvider + StorageRootProvider,
@@ -546,9 +545,7 @@ where
         state: &mut State<DB>,
         state_provider: impl reth::providers::StateProvider + Clone,
         best_txs: &mut NextBestFlashblocksTxs<Pool>,
-        block_cancel: &CancellationToken,
         best_payload: &BlockCell<OpBuiltPayload>,
-        span: &tracing::Span,
     ) -> Result<(), PayloadBuilderError> {
         // fallback block is index 0, so we need to increment here
         ctx.increment_flashblock_index();
@@ -636,14 +633,7 @@ where
 
         // We got block cancelled, we won't need anything from the block at this point
         // Caution: this assume that block cancel token only cancelled when new FCU is received
-        if block_cancel.is_cancelled() {
-            self.record_flashblocks_metrics(
-                ctx,
-                info,
-                ctx.target_flashblock_count(),
-                span,
-                "Payload building complete, channel closed or job cancelled",
-            );
+        if ctx.cancel.is_cancelled() {
             return Ok(());
         }
 
@@ -696,14 +686,7 @@ where
 
                 // If main token got canceled in here that means we received get_payload and we should drop everything and now update best_payload
                 // To ensure that we will return same blocks as rollup-boost (to leverage caches)
-                if block_cancel.is_cancelled() {
-                    self.record_flashblocks_metrics(
-                        ctx,
-                        info,
-                        ctx.target_flashblock_count(),
-                        span,
-                        "Payload building complete, channel closed or job cancelled",
-                    );
+                if ctx.cancel.is_cancelled() {
                     return Ok(());
                 }
                 let flashblock_byte_size = self
