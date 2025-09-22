@@ -337,15 +337,6 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
             block_gas_limit = ?block_gas_limit,
         );
 
-        // Remove once we merge Reth 1.4.4
-        // Fixed in https://github.com/paradigmxyz/reth/pull/16514
-        self.metrics
-            .da_block_size_limit
-            .set(block_da_limit.map_or(-1.0, |v| v as f64));
-        self.metrics
-            .da_tx_size_limit
-            .set(tx_da_limit.map_or(-1.0, |v| v as f64));
-
         let block_attr = BlockConditionalAttributes {
             number: self.block_number(),
             timestamp: self.attributes().timestamp(),

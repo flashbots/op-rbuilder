@@ -127,10 +127,6 @@ pub struct OpRBuilderMetrics {
     pub tx_simulation_duration: Histogram,
     /// Byte size of transactions
     pub tx_byte_size: Histogram,
-    /// Da block size limit
-    pub da_block_size_limit: Gauge,
-    /// Da tx size limit
-    pub da_tx_size_limit: Gauge,
     /// How much less flashblocks we issue to be on time with block construction
     pub reduced_flashblocks_number: Histogram,
     /// How much less flashblocks we issued in reality, comparing to calculated number for block
