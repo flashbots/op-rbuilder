@@ -1,6 +1,6 @@
 # op-rbuilder
 
-[![CI status](https://github.com/flashbots/op-rbuilder/actions/workflows/checks.yaml/badge.svg)](https://github.com/flashbots/op-rbuilder/actions)
+[![CI status](https://github.com/flashbots/op-rbuilder/actions/workflows/op_rbuilder_checks.yaml/badge.svg)](https://github.com/flashbots/op-rbuilder/actions)
 
 `op-rbuilder` is a Rust-based block builder designed to build blocks for the Optimism stack.
 
