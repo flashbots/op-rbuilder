@@ -123,6 +123,12 @@ pub struct OpRBuilderMetrics {
     pub payload_num_tx_simulated_fail: Histogram,
     /// Latest number of transactions in the payload that failed simulation
     pub payload_num_tx_simulated_fail_gauge: Gauge,
+    /// Histogram of gas used by successful transactions
+    pub successful_tx_gas_used: Histogram,
+    /// Histogram of gas used by reverted transactions
+    pub reverted_tx_gas_used: Histogram,
+    /// Gas used by reverted transactions in the latest block
+    pub payload_reverted_tx_gas_used: Gauge,
     /// Histogram of tx simulation duration
     pub tx_simulation_duration: Histogram,
     /// Byte size of transactions
@@ -148,6 +154,7 @@ pub struct OpRBuilderMetrics {
 }
 
 impl OpRBuilderMetrics {
+    #[expect(clippy::too_many_arguments)]
     pub fn set_payload_builder_metrics(
         &self,
         payload_tx_simulation_time: impl IntoF64 + Copy,
@@ -156,6 +163,7 @@ impl OpRBuilderMetrics {
         num_txs_simulated_success: impl IntoF64 + Copy,
         num_txs_simulated_fail: impl IntoF64 + Copy,
         num_bundles_reverted: impl IntoF64,
+        reverted_gas_used: impl IntoF64,
     ) {
         self.payload_tx_simulation_duration
             .record(payload_tx_simulation_time);
@@ -174,6 +182,7 @@ impl OpRBuilderMetrics {
         self.payload_num_tx_simulated_fail_gauge
             .set(num_txs_simulated_fail);
         self.bundles_reverted.record(num_bundles_reverted);
+        self.payload_reverted_tx_gas_used.set(reverted_gas_used);
     }
 }
 
