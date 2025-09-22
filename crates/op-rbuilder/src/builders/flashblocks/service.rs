@@ -58,6 +58,7 @@ impl FlashblocksServiceBuilder {
             self.0.clone(),
             builder_tx,
             once_lock.clone(),
+            payload_tx,
         )?;
 
         let payload_job_config = BasicPayloadJobGeneratorConfig::default();

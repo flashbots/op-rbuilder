@@ -17,6 +17,8 @@ use crate::{
         flashblocks_leeway_time: 100,
         flashblocks_fixed: false,
         flashblocks_calculate_state_root: true,
+        flashblocks_p2p_port: 9002,
+        flashblocks_p2p_private_key_hex: String::new(),
     },
     ..Default::default()
 })]
@@ -55,6 +57,8 @@ async fn smoke_dynamic_base(rbuilder: LocalInstance) -> eyre::Result<()> {
         flashblocks_leeway_time: 100,
         flashblocks_fixed: false,
         flashblocks_calculate_state_root: true,
+        flashblocks_p2p_port: 9002,
+        flashblocks_p2p_private_key_hex: String::new(),
     },
     ..Default::default()
 })]
@@ -93,6 +97,8 @@ async fn smoke_dynamic_unichain(rbuilder: LocalInstance) -> eyre::Result<()> {
         flashblocks_leeway_time: 50,
         flashblocks_fixed: true,
         flashblocks_calculate_state_root: true,
+        flashblocks_p2p_port: 9002,
+        flashblocks_p2p_private_key_hex: String::new(),
     },
     ..Default::default()
 })]
@@ -131,6 +137,8 @@ async fn smoke_classic_unichain(rbuilder: LocalInstance) -> eyre::Result<()> {
         flashblocks_leeway_time: 50,
         flashblocks_fixed: true,
         flashblocks_calculate_state_root: true,
+        flashblocks_p2p_port: 9002,
+        flashblocks_p2p_private_key_hex: String::new(),
     },
     ..Default::default()
 })]
@@ -169,6 +177,8 @@ async fn smoke_classic_base(rbuilder: LocalInstance) -> eyre::Result<()> {
         flashblocks_leeway_time: 100,
         flashblocks_fixed: false,
         flashblocks_calculate_state_root: true,
+        flashblocks_p2p_port: 9002,
+        flashblocks_p2p_private_key_hex: String::new(),
     },
     ..Default::default()
 })]
@@ -214,6 +224,8 @@ async fn unichain_dynamic_with_lag(rbuilder: LocalInstance) -> eyre::Result<()> 
         flashblocks_leeway_time: 0,
         flashblocks_fixed: false,
         flashblocks_calculate_state_root: true,
+        flashblocks_p2p_port: 9002,
+        flashblocks_p2p_private_key_hex: String::new(),
     },
     ..Default::default()
 })]
@@ -252,6 +264,8 @@ async fn dynamic_with_full_block_lag(rbuilder: LocalInstance) -> eyre::Result<()
         flashblocks_leeway_time: 100,
         flashblocks_fixed: false,
         flashblocks_calculate_state_root: true,
+        flashblocks_p2p_port: 9002,
+        flashblocks_p2p_private_key_hex: String::new(),
     },
     ..Default::default()
 })]
@@ -312,6 +326,8 @@ async fn test_flashblock_min_filtering(rbuilder: LocalInstance) -> eyre::Result<
         flashblocks_leeway_time: 100,
         flashblocks_fixed: false,
         flashblocks_calculate_state_root: true,
+        flashblocks_p2p_port: 9002,
+        flashblocks_p2p_private_key_hex: String::new(),
     },
     ..Default::default()
 })]
@@ -368,6 +384,8 @@ async fn test_flashblock_max_filtering(rbuilder: LocalInstance) -> eyre::Result<
         flashblocks_leeway_time: 100,
         flashblocks_fixed: false,
         flashblocks_calculate_state_root: true,
+        flashblocks_p2p_port: 9002,
+        flashblocks_p2p_private_key_hex: String::new(),
     },
     ..Default::default()
 })]
@@ -413,6 +431,8 @@ async fn test_flashblock_min_max_filtering(rbuilder: LocalInstance) -> eyre::Res
         flashblocks_leeway_time: 100,
         flashblocks_fixed: false,
         flashblocks_calculate_state_root: false,
+        flashblocks_p2p_port: 9002,
+        flashblocks_p2p_private_key_hex: String::new(),
     },
     ..Default::default()
 })]

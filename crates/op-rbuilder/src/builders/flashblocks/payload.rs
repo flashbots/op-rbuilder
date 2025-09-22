@@ -134,6 +134,8 @@ pub(super) struct OpPayloadBuilder<Pool, Client, BuilderTx> {
     pub pool: Pool,
     /// Node client
     pub client: Client,
+    /// Sender for broadcasting outgoing payloads via p2p.
+    pub payload_tx: mpsc::Sender<String>,
     /// WebSocket publisher for broadcasting flashblocks
     /// to all connected subscribers.
     pub ws_pub: Arc<WebSocketPublisher>,
@@ -161,6 +163,7 @@ impl<Pool, Client, BuilderTx> OpPayloadBuilder<Pool, Client, BuilderTx> {
         payload_builder_handle: Arc<
             OnceLock<tokio::sync::broadcast::Sender<Events<OpEngineTypes>>>,
         >,
+        payload_tx: mpsc::Sender<String>,
     ) -> eyre::Result<Self> {
         let metrics = Arc::new(OpRBuilderMetrics::default());
         let ws_pub = WebSocketPublisher::new(config.specific.ws_addr, Arc::clone(&metrics))?.into();
@@ -169,6 +172,7 @@ impl<Pool, Client, BuilderTx> OpPayloadBuilder<Pool, Client, BuilderTx> {
             evm_config,
             pool,
             client,
+            payload_tx,
             ws_pub,
             config,
             metrics,
@@ -345,6 +349,12 @@ where
                 .ws_pub
                 .publish(&fb_payload)
                 .map_err(PayloadBuilderError::other)?;
+            // TODO: optimize serialization
+            let message = serde_json::to_string(&fb_payload).map_err(PayloadBuilderError::other)?;
+            self.payload_tx
+                .send(message)
+                .await
+                .map_err(PayloadBuilderError::other)?;
             ctx.metrics
                 .flashblock_byte_size_histogram
                 .record(flashblock_byte_size as f64);
@@ -483,16 +493,19 @@ where
             let _entered = fb_span.enter();
 
             // build first flashblock immediately
-            match self.build_next_flashblock(
-                &mut ctx,
-                &mut info,
-                &mut state,
-                &state_provider,
-                &mut best_txs,
-                &block_cancel,
-                &best_payload,
-                &fb_span,
-            ) {
+            match self
+                .build_next_flashblock(
+                    &mut ctx,
+                    &mut info,
+                    &mut state,
+                    &state_provider,
+                    &mut best_txs,
+                    &block_cancel,
+                    &best_payload,
+                    &fb_span,
+                )
+                .await
+            {
                 Ok(()) => {}
                 Err(err) => {
                     error!(
@@ -525,7 +538,7 @@ where
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn build_next_flashblock<
+    async fn build_next_flashblock<
         DB: Database<Error = ProviderError> + std::fmt::Debug + AsRef<P>,
         P: StateRootProvider + HashedPostStateProvider + StorageRootProvider,
     >(
@@ -682,6 +695,13 @@ where
                 let flashblock_byte_size = self
                     .ws_pub
                     .publish(&fb_payload)
+                    .map_err(PayloadBuilderError::other)?;
+                // TODO: optimize serialization
+                let message =
+                    serde_json::to_string(&fb_payload).map_err(PayloadBuilderError::other)?;
+                self.payload_tx
+                    .send(message)
+                    .await
                     .map_err(PayloadBuilderError::other)?;
 
                 // Record flashblock build duration
