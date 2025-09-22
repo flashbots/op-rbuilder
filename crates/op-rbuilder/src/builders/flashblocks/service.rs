@@ -3,7 +3,9 @@ use crate::{
     builders::{
         BuilderConfig,
         builder_tx::BuilderTransactions,
-        flashblocks::{builder_tx::FlashblocksBuilderTx, payload::FlashblocksExtraCtx},
+        flashblocks::{
+            builder_tx::FlashblocksBuilderTx, p2p::Message, payload::FlashblocksExtraCtx,
+        },
         generator::BlockPayloadJobGenerator,
     },
     flashtestations::service::bootstrap_flashtestations,
@@ -41,7 +43,7 @@ impl FlashblocksServiceBuilder {
         }
 
         let (node, payload_tx, _) = builder
-            .try_build()
+            .try_build::<Message>()
             .wrap_err("failed to build flashblocks p2p node")?;
         let multiaddrs = node.multiaddrs();
         ctx.task_executor().spawn(async move {

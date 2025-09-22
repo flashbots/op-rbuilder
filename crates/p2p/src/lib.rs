@@ -21,20 +21,23 @@ use tracing::{debug, info, warn};
 const FLASHBLOCKS_STREAM_PROTOCOL: StreamProtocol = StreamProtocol::new("/flashblocks/1.0.0");
 const DEFAULT_AGENT_VERSION: &str = "rollup-boost/1.0.0";
 
-// TODO: change this to an actual message type
-pub(crate) type Message = String;
+/// A message that can be sent between peers.
+pub trait Message:
+    serde::Serialize + for<'de> serde::Deserialize<'de> + Send + Sync + Clone
+{
+}
 
-pub struct Node {
+pub struct Node<M: Message> {
     peer_id: PeerId,
     listen_addrs: Vec<libp2p::Multiaddr>,
     swarm: Swarm<Behaviour>,
     known_peers: Vec<Multiaddr>,
-    payload_rx: mpsc::Receiver<Message>,
+    payload_rx: mpsc::Receiver<M>,
     peers: Peers,
     cancellation_token: tokio_util::sync::CancellationToken,
 }
 
-impl Node {
+impl<M: Message> Node<M> {
     /// Returns the multiaddresses that this node is listening on, with the peer ID included.
     pub fn multiaddrs(&self) -> Vec<libp2p::Multiaddr> {
         self.listen_addrs
@@ -197,7 +200,9 @@ impl NodeBuilder {
         self
     }
 
-    pub fn try_build(self) -> eyre::Result<(Node, tokio::sync::mpsc::Sender<Message>, Control)> {
+    pub fn try_build<M: Message>(
+        self,
+    ) -> eyre::Result<(Node<M>, tokio::sync::mpsc::Sender<M>, Control)> {
         let Self {
             port,
             mut listen_addrs,
@@ -280,16 +285,42 @@ mod test {
         compat::FuturesAsyncReadCompatExt as _,
     };
 
+    #[derive(Debug, PartialEq, Eq, Clone)]
+    struct TestMessage {
+        content: String,
+    }
+
+    impl Message for TestMessage {}
+
+    impl serde::Serialize for TestMessage {
+        fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: serde::Serializer,
+        {
+            serializer.serialize_str(&self.content)
+        }
+    }
+
+    impl<'de> serde::Deserialize<'de> for TestMessage {
+        fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+        where
+            D: serde::Deserializer<'de>,
+        {
+            let s = String::deserialize(deserializer)?;
+            Ok(TestMessage { content: s })
+        }
+    }
+
     #[tokio::test]
     async fn two_nodes_can_connect() {
         let (node1, _, mut control1) = NodeBuilder::new()
             .with_listen_addr("/ip4/127.0.0.1/tcp/9000".parse().unwrap())
-            .try_build()
+            .try_build::<TestMessage>()
             .unwrap();
         let (node2, tx2, _) = NodeBuilder::new()
             .with_known_peers(node1.multiaddrs())
             .with_listen_addr("/ip4/127.0.0.1/tcp/9001".parse().unwrap())
-            .try_build()
+            .try_build::<TestMessage>()
             .unwrap();
         let mut incoming1 = control1.accept(FLASHBLOCKS_STREAM_PROTOCOL).unwrap();
 
@@ -298,16 +329,21 @@ mod test {
         // sleep to allow nodes to connect
         tokio::time::sleep(Duration::from_secs(3)).await;
 
-        tokio::spawn(async move {
-            tx2.send("message".to_string()).await.unwrap();
+        let message = TestMessage {
+            content: "message".to_string(),
+        };
+        tokio::spawn({
+            let message = message.clone();
+            async move {
+                tx2.send(message).await.unwrap();
+            }
         });
 
         let (_, stream) = incoming1.next().await.unwrap();
         let codec = LinesCodec::new();
         let mut reader = FramedRead::new(stream.compat(), codec);
         let str = reader.next().await.unwrap().unwrap();
-        assert_eq!(str, "message".to_string());
-        // let payload: Message = serde_json::from_str(&str).unwrap();
-        // assert_eq!(payload, Message::default());
+        let payload: TestMessage = serde_json::from_str(&str).unwrap();
+        assert_eq!(payload, message);
     }
 }

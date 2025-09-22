@@ -4,7 +4,7 @@ use crate::{
         BuilderConfig,
         builder_tx::BuilderTransactions,
         context::OpPayloadBuilderCtx,
-        flashblocks::{best_txs::BestFlashblocksTxs, config::FlashBlocksConfigExt},
+        flashblocks::{best_txs::BestFlashblocksTxs, config::FlashBlocksConfigExt, p2p::Message},
         generator::{BlockCell, BuildArguments, PayloadBuilder},
     },
     gas_limiter::AddressGasLimiter,
@@ -135,7 +135,7 @@ pub(super) struct OpPayloadBuilder<Pool, Client, BuilderTx> {
     /// Node client
     pub client: Client,
     /// Sender for broadcasting outgoing payloads via p2p.
-    pub payload_tx: mpsc::Sender<String>,
+    pub payload_tx: mpsc::Sender<Message>,
     /// WebSocket publisher for broadcasting flashblocks
     /// to all connected subscribers.
     pub ws_pub: Arc<WebSocketPublisher>,
@@ -163,7 +163,7 @@ impl<Pool, Client, BuilderTx> OpPayloadBuilder<Pool, Client, BuilderTx> {
         payload_builder_handle: Arc<
             OnceLock<tokio::sync::broadcast::Sender<Events<OpEngineTypes>>>,
         >,
-        payload_tx: mpsc::Sender<String>,
+        payload_tx: mpsc::Sender<Message>,
     ) -> eyre::Result<Self> {
         let metrics = Arc::new(OpRBuilderMetrics::default());
         let ws_pub = WebSocketPublisher::new(config.specific.ws_addr, Arc::clone(&metrics))?.into();
@@ -343,28 +343,26 @@ where
 
         best_payload.set(payload.clone());
         self.send_payload_to_engine(payload);
+        info!(
+            target: "payload_builder",
+            message = "Fallback block built",
+            payload_id = fb_payload.payload_id.to_string(),
+        );
+        
         // not emitting flashblock if no_tx_pool in FCU, it's just syncing
         if !ctx.attributes().no_tx_pool {
             let flashblock_byte_size = self
                 .ws_pub
                 .publish(&fb_payload)
                 .map_err(PayloadBuilderError::other)?;
-            // TODO: optimize serialization
-            let message = serde_json::to_string(&fb_payload).map_err(PayloadBuilderError::other)?;
             self.payload_tx
-                .send(message)
+                .send(fb_payload.into())
                 .await
                 .map_err(PayloadBuilderError::other)?;
             ctx.metrics
                 .flashblock_byte_size_histogram
                 .record(flashblock_byte_size as f64);
         }
-
-        info!(
-            target: "payload_builder",
-            message = "Fallback block built",
-            payload_id = fb_payload.payload_id.to_string(),
-        );
 
         if ctx.attributes().no_tx_pool {
             info!(
@@ -696,11 +694,8 @@ where
                     .ws_pub
                     .publish(&fb_payload)
                     .map_err(PayloadBuilderError::other)?;
-                // TODO: optimize serialization
-                let message =
-                    serde_json::to_string(&fb_payload).map_err(PayloadBuilderError::other)?;
                 self.payload_tx
-                    .send(message)
+                    .send(fb_payload.into())
                     .await
                     .map_err(PayloadBuilderError::other)?;
 

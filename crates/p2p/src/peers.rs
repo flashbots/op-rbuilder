@@ -1,3 +1,4 @@
+use crate::Message;
 use futures::stream::FuturesUnordered;
 use libp2p::{PeerId, swarm::Stream};
 use std::collections::HashMap;
@@ -26,14 +27,14 @@ impl Peers {
         self.peers_to_stream.remove(peer);
     }
 
-    pub(crate) async fn broadcast_payload(&mut self, payload: crate::Message) {
+    pub(crate) async fn broadcast_payload<M: Message>(&mut self, payload: M) {
         use futures::{SinkExt as _, StreamExt as _};
         use tokio_util::{
             codec::{FramedWrite, LinesCodec},
             compat::FuturesAsyncReadCompatExt as _,
         };
 
-        // let payload = serde_json::to_string(&payload).expect("can serialize payload");
+        let payload = serde_json::to_string(&payload).expect("can serialize payload");
         let peers = self.peers_to_stream.keys().cloned().collect::<Vec<_>>();
         let mut futures = FuturesUnordered::new();
         for peer in peers {

@@ -7270,6 +7270,7 @@ dependencies = [
  "libp2p",
  "libp2p-stream",
  "multiaddr",
+ "serde",
  "serde_json",
  "tokio",
  "tokio-util",

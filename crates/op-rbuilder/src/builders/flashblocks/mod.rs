@@ -6,6 +6,7 @@ use service::FlashblocksServiceBuilder;
 mod best_txs;
 mod builder_tx;
 mod config;
+mod p2p;
 mod payload;
 mod service;
 mod wspub;
