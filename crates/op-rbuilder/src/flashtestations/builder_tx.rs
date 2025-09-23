@@ -483,7 +483,7 @@ impl FlashtestationsBuilderTx {
         } = self.simulate_verify_block_proof_tx(block_content_hash, ctx, evm)?;
         if success {
             let has_log = self.check_verify_block_proof_log(logs);
-            if !has_log {
+            if !self.check_verify_block_proof_log(logs) {
                 warn!(target: "flashtestations", "transaction did not emit BlockBuilderProofVerified log, BlockBuilderPolicy contract address may be incorrect");
                 Ok(None)
             } else {
