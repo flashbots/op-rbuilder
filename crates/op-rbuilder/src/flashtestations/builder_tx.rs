@@ -17,15 +17,13 @@ use revm::{
     inspector::NoOpInspector,
     state::Account,
 };
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering},
-};
+use std::sync::OnceLock;
 use tracing::{debug, info, warn};
 
 use crate::{
     builders::{
         BuilderTransactionCtx, BuilderTransactionError, BuilderTransactions, OpPayloadBuilderCtx,
+        get_balance, get_nonce,
     },
     flashtestations::{
         BlockData, FlashtestationRevertReason,
@@ -68,7 +66,7 @@ pub struct FlashtestationsBuilderTx {
     // Builder proof version
     builder_proof_version: u8,
     // Whether the workload and address has been registered
-    registered: Arc<AtomicBool>,
+    registered: OnceLock<bool>,
     // Whether block proofs are enabled
     enable_block_proofs: bool,
 }
@@ -93,7 +91,7 @@ impl FlashtestationsBuilderTx {
             registry_address: args.registry_address,
             builder_policy_address: args.builder_policy_address,
             builder_proof_version: args.builder_proof_version,
-            registered: Arc::new(AtomicBool::new(args.registered)),
+            registered: OnceLock::new(),
             enable_block_proofs: args.enable_block_proofs,
         }
     }
@@ -270,10 +268,10 @@ impl FlashtestationsBuilderTx {
         }
     }
 
-    fn check_tee_address_registered_log(&self, logs: Vec<Log>, address: Address) -> bool {
+    fn check_tee_address_registered_log(&self, logs: &[Log], address: Address) -> bool {
         for log in logs {
             if log.topics().first() == Some(&TEEServiceRegistered::SIGNATURE_HASH) {
-                if let Ok(decoded) = TEEServiceRegistered::decode_log(&log) {
+                if let Ok(decoded) = TEEServiceRegistered::decode_log(log) {
                     if decoded.teeAddress == address {
                         return true;
                     }
@@ -345,7 +343,7 @@ impl FlashtestationsBuilderTx {
         }
     }
 
-    fn check_verify_block_proof_log(&self, logs: Vec<Log>) -> bool {
+    fn check_verify_block_proof_log(&self, logs: &[Log]) -> bool {
         for log in logs {
             if log.topics().first() == Some(&BlockBuilderProofVerified::SIGNATURE_HASH) {
                 return true;
@@ -417,9 +415,7 @@ impl FlashtestationsBuilderTx {
             logs,
         } = self.simulate_register_tee_service_tx(ctx, evm)?;
         if success {
-            let has_log =
-                self.check_tee_address_registered_log(logs, self.tee_service_signer.address);
-            if !has_log {
+            if !self.check_tee_address_registered_log(&logs, self.tee_service_signer.address) {
                 warn!(target: "flashtestations", "transaction did not emit TEEServiceRegistered log, FlashtestationRegistry contract address may be incorrect");
                 Ok((None, false))
             } else {
@@ -482,8 +478,7 @@ impl FlashtestationsBuilderTx {
             ..
         } = self.simulate_verify_block_proof_tx(block_content_hash, ctx, evm)?;
         if success {
-            let has_log = self.check_verify_block_proof_log(logs);
-            if !self.check_verify_block_proof_log(logs) {
+            if !self.check_verify_block_proof_log(&logs) {
                 warn!(target: "flashtestations", "transaction did not emit BlockBuilderProofVerified log, BlockBuilderPolicy contract address may be incorrect");
                 Ok(None)
             } else {
@@ -530,10 +525,12 @@ impl FlashtestationsBuilderTx {
         });
         match self.register_tee_service_tx(ctx, &mut evm) {
             Ok((_, registered)) => {
-                self.registered.store(registered, Ordering::Relaxed);
+                if let Err(e) = self.registered.set(registered) {
+                    warn!(target: "flashtestations", error = ?e, "error setting builder registered");
+                }
             }
             Err(e) => {
-                debug!(target: "flashtestations", error = ?e, "simulation error when checking if registered");
+                warn!(target: "flashtestations", error = ?e, "simulation error when checking if registered");
             }
         }
     }
@@ -563,12 +560,12 @@ impl<ExtraCtx: Debug + Default> BuilderTransactions<ExtraCtx> for Flashtestation
 
         let mut builder_txs = Vec::<BuilderTransactionCtx>::new();
 
-        if !self.registered.load(Ordering::Relaxed) {
+        if !self.registered.get().unwrap_or(&false) {
             info!(target: "flashtestations", "tee service not registered yet, attempting to register");
-            self.set_registered(state_provider, ctx);
             builder_txs.extend(self.fund_tee_service_tx(ctx, &mut evm)?);
             let (register_tx, _) = self.register_tee_service_tx(ctx, &mut evm)?;
             builder_txs.extend(register_tx);
+            self.set_registered(state_provider, ctx);
         }
 
         if self.enable_block_proofs {
@@ -581,22 +578,4 @@ impl<ExtraCtx: Debug + Default> BuilderTransactions<ExtraCtx> for Flashtestation
         }
         Ok(builder_txs)
     }
-}
-
-fn get_nonce<DB>(db: &mut State<DB>, address: Address) -> Result<u64, BuilderTransactionError>
-where
-    DB: revm::Database<Error = reth_provider::ProviderError>,
-{
-    db.load_cache_account(address)
-        .map(|acc| acc.account_info().unwrap_or_default().nonce)
-        .map_err(|_| BuilderTransactionError::AccountLoadFailed(address))
-}
-
-fn get_balance<DB>(db: &mut State<DB>, address: Address) -> Result<U256, BuilderTransactionError>
-where
-    DB: revm::Database<Error = reth_provider::ProviderError>,
-{
-    db.load_cache_account(address)
-        .map(|acc| acc.account_info().unwrap_or_default().balance)
-        .map_err(|_| BuilderTransactionError::AccountLoadFailed(address))
 }

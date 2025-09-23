@@ -2,7 +2,7 @@ use alloy_consensus::TxEip1559;
 use alloy_eips::{Encodable2718, eip7623::TOTAL_COST_FLOOR_PER_TOKEN};
 use alloy_evm::Database;
 use alloy_primitives::{
-    Address, TxKind,
+    Address, TxKind, U256,
     map::foldhash::{HashSet, HashSetExt},
 };
 use core::fmt::Debug;
@@ -271,11 +271,20 @@ impl BuilderTxBase {
     }
 }
 
-pub(super) fn get_nonce(
+pub fn get_nonce(
     db: &mut State<impl Database>,
     address: Address,
 ) -> Result<u64, BuilderTransactionError> {
     db.load_cache_account(address)
         .map(|acc| acc.account_info().unwrap_or_default().nonce)
+        .map_err(|_| BuilderTransactionError::AccountLoadFailed(address))
+}
+
+pub fn get_balance(
+    db: &mut State<impl Database>,
+    address: Address,
+) -> Result<U256, BuilderTransactionError> {
+    db.load_cache_account(address)
+        .map(|acc| acc.account_info().unwrap_or_default().balance)
         .map_err(|_| BuilderTransactionError::AccountLoadFailed(address))
 }
