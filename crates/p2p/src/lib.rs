@@ -2,7 +2,7 @@ mod behaviour;
 mod peers;
 
 use behaviour::Behaviour;
-use libp2p_stream::Control;
+use libp2p_stream::IncomingStreams;
 use peers::Peers;
 
 use eyre::Context;
@@ -19,15 +19,15 @@ use tracing::{debug, info, warn};
 
 // TODO: put this on NodeBuilder
 const FLASHBLOCKS_STREAM_PROTOCOL: StreamProtocol = StreamProtocol::new("/flashblocks/1.0.0");
-const DEFAULT_AGENT_VERSION: &str = "rollup-boost/1.0.0";
+const DEFAULT_AGENT_VERSION: &str = "op-rbuilder/1.0.0";
 
 /// A message that can be sent between peers.
 pub trait Message:
-    serde::Serialize + for<'de> serde::Deserialize<'de> + Send + Sync + Clone
+    serde::Serialize + for<'de> serde::Deserialize<'de> + Send + Sync + Clone + std::fmt::Debug
 {
 }
 
-pub struct Node<M: Message> {
+pub struct Node<M> {
     peer_id: PeerId,
     listen_addrs: Vec<libp2p::Multiaddr>,
     swarm: Swarm<Behaviour>,
@@ -35,9 +35,10 @@ pub struct Node<M: Message> {
     payload_rx: mpsc::Receiver<M>,
     peers: Peers,
     cancellation_token: tokio_util::sync::CancellationToken,
+    incoming_streams_handler: IncomingStreamsHandler<M>,
 }
 
-impl<M: Message> Node<M> {
+impl<M: Message + 'static> Node<M> {
     /// Returns the multiaddresses that this node is listening on, with the peer ID included.
     pub fn multiaddrs(&self) -> Vec<libp2p::Multiaddr> {
         self.listen_addrs
@@ -61,6 +62,7 @@ impl<M: Message> Node<M> {
             mut payload_rx,
             mut peers,
             cancellation_token,
+            incoming_streams_handler,
         } = self;
 
         for addr in listen_addrs {
@@ -82,12 +84,21 @@ impl<M: Message> Node<M> {
                 .wrap_err("swarm failed to dial known peer")?;
         }
 
+        let handle = tokio::spawn(incoming_streams_handler.run());
+
         loop {
             tokio::select! {
                 biased;
                 _ = cancellation_token.cancelled() => {
                     debug!("cancellation token triggered, shutting down node");
+                    handle.abort();
                     break Ok(());
+                }
+                Some(payload) = payload_rx.recv() => {
+                    let peer_count = swarm.network_info().num_peers();
+                    info!(peer_count, "received new payload to broadcast to peers");
+                    println!("broadcasting payload to {peer_count} peers: {payload:?}");
+                    peers.broadcast_payload(payload).await;
                 }
                 event = swarm.select_next_some() => {
                     match event {
@@ -117,7 +128,7 @@ impl<M: Message> Node<M> {
                                     .await
                                 {
                                     Ok(stream) => { peers.insert_peer_and_stream(peer_id, stream);
-                                        info!("opened stream with peer {peer_id} on connection {connection_id}");
+                                        info!("opened outbound stream with peer {peer_id} on connection {connection_id}");
                                     }
                                     Err(e) => {
                                         warn!("failed to open stream with peer {peer_id} on connection {connection_id}: {e:?}");
@@ -137,11 +148,18 @@ impl<M: Message> Node<M> {
                         _ => continue,
                     }
                 },
-                Some(payload) = payload_rx.recv() => {
-                    let peer_count = swarm.network_info().num_peers();
-                    info!(peer_count, "received new payload to broadcast to peers");
-                    peers.broadcast_payload(payload).await;
-                }
+                // res = &mut handle => {
+                //     match res {
+                //         Ok(_) => {
+                //             warn!("incoming streams handler exited unexpectedly, shutting down node");
+                //             break Ok(());
+                //         }
+                //         Err(e) => {
+                //             warn!("incoming streams handler task failed: {e:?}, shutting down node");
+                //             break Err(eyre::eyre!("incoming streams handler task failed: {e:?}"));
+                //         }
+                //     }
+                // }
             }
         }
     }
@@ -200,9 +218,9 @@ impl NodeBuilder {
         self
     }
 
-    pub fn try_build<M: Message>(
+    pub fn try_build<M: Message + 'static>(
         self,
-    ) -> eyre::Result<(Node<M>, tokio::sync::mpsc::Sender<M>, Control)> {
+    ) -> eyre::Result<(Node<M>, mpsc::Sender<M>, mpsc::Receiver<M>)> {
         let Self {
             port,
             mut listen_addrs,
@@ -226,7 +244,11 @@ impl NodeBuilder {
         let transport = create_transport(&keypair)?;
         let mut behaviour = Behaviour::new(&keypair, DEFAULT_AGENT_VERSION.to_string())
             .context("failed to create behaviour")?;
-        let control = behaviour.new_control();
+        let mut control = behaviour.new_control();
+        let incoming_streams = control
+            .accept(FLASHBLOCKS_STREAM_PROTOCOL)
+            .wrap_err("failed to subscribe to incoming streams for flashblocks protocol")?;
+        let (incoming_streams_handler, message_rx) = IncomingStreamsHandler::new(incoming_streams);
 
         let swarm = libp2p::SwarmBuilder::with_existing_identity(keypair)
             .with_tokio()
@@ -255,10 +277,80 @@ impl NodeBuilder {
                 payload_rx: rx,
                 peers: Peers::new(),
                 cancellation_token: cancellation_token.unwrap_or_default(),
+                incoming_streams_handler,
             },
             tx,
-            control,
+            message_rx,
         ))
+    }
+}
+
+struct IncomingStreamsHandler<M> {
+    incoming: IncomingStreams,
+    tx: mpsc::Sender<M>,
+}
+
+impl<M: Message + 'static> IncomingStreamsHandler<M> {
+    fn new(incoming: IncomingStreams) -> (Self, mpsc::Receiver<M>) {
+        // TODO: make channel size configurable
+        let (tx, rx) = mpsc::channel(100);
+        (Self { incoming, tx }, rx)
+    }
+
+    async fn run(self) {
+        println!("incoming streams handler started");
+        use futures::StreamExt as _;
+
+        let Self { mut incoming, tx } = self;
+        let mut handle_stream_futures = futures::stream::FuturesUnordered::new();
+
+        tokio::select! {
+            Some((from, stream)) = incoming.next() => {
+                println!("new incoming stream from peer {from}");
+                handle_stream_futures.push(tokio::spawn(handle_incoming_stream(from, stream, tx.clone())));
+            }
+            Some(res) = handle_stream_futures.next() => {
+                match res {
+                    Ok(Ok(())) => {}
+                    Ok(Err(e)) => {
+                        println!("error handling incoming stream: {e:?}");
+                    }
+                    Err(e) => {
+                        println!("task handling incoming stream panicked: {e:?}");
+                    }
+                }
+            }
+        }
+    }
+}
+
+async fn handle_incoming_stream<M: Message>(
+    peer_id: PeerId,
+    stream: libp2p::Stream,
+    payload_tx: mpsc::Sender<M>,
+) -> eyre::Result<()> {
+    use futures::StreamExt as _;
+    use tokio_util::{
+        codec::{FramedRead, LinesCodec},
+        compat::FuturesAsyncReadCompatExt as _,
+    };
+
+    let codec = LinesCodec::new();
+    let mut reader = FramedRead::new(stream.compat(), codec);
+
+    loop {
+        match reader.next().await {
+            Some(Ok(str)) => {
+                let payload: M = serde_json::from_str(&str)
+                    .wrap_err("failed to decode stream message into FlashblocksPayloadV1")?;
+                println!("got message from peer {peer_id}: {payload:?}");
+                let _ = payload_tx.send(payload).await;
+            }
+            Some(Err(e)) => {
+                return Err(e).wrap_err(format!("failed to read from stream of peer {peer_id}"));
+            }
+            None => {}
+        }
     }
 }
 
@@ -278,12 +370,6 @@ fn create_transport(
 #[cfg(test)]
 mod test {
     use super::*;
-
-    use futures::StreamExt as _;
-    use tokio_util::{
-        codec::{FramedRead, LinesCodec},
-        compat::FuturesAsyncReadCompatExt as _,
-    };
 
     #[derive(Debug, PartialEq, Eq, Clone)]
     struct TestMessage {
@@ -312,8 +398,8 @@ mod test {
     }
 
     #[tokio::test]
-    async fn two_nodes_can_connect() {
-        let (node1, _, mut control1) = NodeBuilder::new()
+    async fn two_nodes_can_connect_and_message() {
+        let (node1, _, mut rx1) = NodeBuilder::new()
             .with_listen_addr("/ip4/127.0.0.1/tcp/9000".parse().unwrap())
             .try_build::<TestMessage>()
             .unwrap();
@@ -322,28 +408,23 @@ mod test {
             .with_listen_addr("/ip4/127.0.0.1/tcp/9001".parse().unwrap())
             .try_build::<TestMessage>()
             .unwrap();
-        let mut incoming1 = control1.accept(FLASHBLOCKS_STREAM_PROTOCOL).unwrap();
 
         tokio::spawn(async move { node1.run().await });
         tokio::spawn(async move { node2.run().await });
         // sleep to allow nodes to connect
-        tokio::time::sleep(Duration::from_secs(3)).await;
+        tokio::time::sleep(Duration::from_secs(2)).await;
 
         let message = TestMessage {
             content: "message".to_string(),
         };
-        tokio::spawn({
-            let message = message.clone();
-            async move {
-                tx2.send(message).await.unwrap();
-            }
-        });
+        // tokio::spawn({
+        //    let message = message.clone();
+        //    async move {
+        tx2.send(message.clone()).await.unwrap();
+        //     }
+        // });
 
-        let (_, stream) = incoming1.next().await.unwrap();
-        let codec = LinesCodec::new();
-        let mut reader = FramedRead::new(stream.compat(), codec);
-        let str = reader.next().await.unwrap().unwrap();
-        let payload: TestMessage = serde_json::from_str(&str).unwrap();
-        assert_eq!(payload, message);
+        let recv_message: TestMessage = rx1.recv().await.unwrap();
+        assert_eq!(recv_message, message);
     }
 }

@@ -348,7 +348,7 @@ where
             message = "Fallback block built",
             payload_id = fb_payload.payload_id.to_string(),
         );
-        
+
         // not emitting flashblock if no_tx_pool in FCU, it's just syncing
         if !ctx.attributes().no_tx_pool {
             let flashblock_byte_size = self
