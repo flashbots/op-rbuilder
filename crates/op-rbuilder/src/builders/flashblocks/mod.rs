@@ -8,6 +8,7 @@ mod builder_tx;
 mod config;
 mod p2p;
 mod payload;
+mod payload_handler;
 mod service;
 mod wspub;
 

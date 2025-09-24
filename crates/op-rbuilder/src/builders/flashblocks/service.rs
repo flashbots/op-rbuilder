@@ -5,6 +5,7 @@ use crate::{
         builder_tx::BuilderTransactions,
         flashblocks::{
             builder_tx::FlashblocksBuilderTx, p2p::Message, payload::FlashblocksExtraCtx,
+            payload_handler::PayloadHandler,
         },
         generator::BlockPayloadJobGenerator,
     },
@@ -18,7 +19,6 @@ use reth_node_builder::{BuilderContext, components::PayloadServiceBuilder};
 use reth_optimism_evm::OpEvmConfig;
 use reth_payload_builder::{PayloadBuilderHandle, PayloadBuilderService};
 use reth_provider::CanonStateSubscriptions;
-use std::sync::Arc;
 
 pub struct FlashblocksServiceBuilder(pub BuilderConfig<FlashblocksConfig>);
 
@@ -34,15 +34,13 @@ impl FlashblocksServiceBuilder {
         Pool: PoolBounds,
         BuilderTx: BuilderTransactions<FlashblocksExtraCtx> + Unpin + Clone + Send + Sync + 'static,
     {
-        let once_lock = Arc::new(std::sync::OnceLock::new());
-
         let mut builder = p2p::NodeBuilder::new().with_port(self.0.p2p_port);
 
         if let Some(ref private_key_hex) = self.0.p2p_private_key_hex {
             builder = builder.with_keypair_hex_string(private_key_hex.clone());
         }
 
-        let (node, payload_tx, _) = builder
+        let (node, p2p_payload_tx, p2p_payload_rx) = builder
             .try_build::<Message>()
             .wrap_err("failed to build flashblocks p2p node")?;
         let multiaddrs = node.multiaddrs();
@@ -53,15 +51,16 @@ impl FlashblocksServiceBuilder {
         });
         tracing::info!(multiaddrs = ?multiaddrs, "flashblocks p2p node started");
 
+        let (built_payload_tx, built_payload_rx) = tokio::sync::mpsc::channel(16);
         let payload_builder = OpPayloadBuilder::new(
             OpEvmConfig::optimism(ctx.chain_spec()),
             pool,
             ctx.provider().clone(),
             self.0.clone(),
             builder_tx,
-            once_lock.clone(),
-            payload_tx,
-        )?;
+            built_payload_tx,
+        )
+        .wrap_err("failed to create flashblocks payload builder")?;
 
         let payload_job_config = BasicPayloadJobGeneratorConfig::default();
 
@@ -74,19 +73,25 @@ impl FlashblocksServiceBuilder {
             self.0.block_time_leeway,
         );
 
-        let (payload_service, payload_builder) =
+        let (payload_service, payload_builder_handle) =
             PayloadBuilderService::new(payload_generator, ctx.provider().canonical_state_stream());
 
-        once_lock
-            .set(payload_service.payload_events_handle())
-            .map_err(|_| eyre::eyre!("Cannot initialize payload service handle"))?;
+        let payload_handler = PayloadHandler::new(
+            built_payload_rx,
+            p2p_payload_rx,
+            p2p_payload_tx,
+            payload_service.payload_events_handle(),
+        );
 
         ctx.task_executor()
             .spawn_critical("custom payload builder service", Box::pin(payload_service));
+        ctx.task_executor().spawn_critical(
+            "flashblocks payload handler",
+            Box::pin(payload_handler.run()),
+        );
 
         tracing::info!("Flashblocks payload builder service started");
-
-        Ok(payload_builder)
+        Ok(payload_builder_handle)
     }
 }
 
