@@ -4,8 +4,8 @@ use crate::{
         BuilderConfig,
         builder_tx::BuilderTransactions,
         flashblocks::{
-            builder_tx::FlashblocksBuilderTx,
-            p2p::{AGENT_VERSION, FLASHBLOCKS_STREAM_PROTOCOL, Message},
+builder_tx::{FlashblocksBuilderTx, FlashblocksNumberBuilderTx},
+p2p::{AGENT_VERSION, FLASHBLOCKS_STREAM_PROTOCOL, Message},
             payload::FlashblocksExtraCtx,
             payload_handler::PayloadHandler,
         },
@@ -126,10 +126,25 @@ where
         } else {
             None
         };
-        self.spawn_payload_builder_service(
-            ctx,
-            pool,
-            FlashblocksBuilderTx::new(signer, flashtestations_builder_tx),
-        )
+
+        if let Some(flashblocks_number_contract_address) =
+            self.0.specific.flashblocks_number_contract_address
+        {
+            self.spawn_payload_builder_service(
+                ctx,
+                pool,
+                FlashblocksNumberBuilderTx::new(
+                    signer,
+                    flashblocks_number_contract_address,
+                    flashtestations_builder_tx,
+                ),
+            )
+        } else {
+            self.spawn_payload_builder_service(
+                ctx,
+                pool,
+                FlashblocksBuilderTx::new(signer, flashtestations_builder_tx),
+            )
+        }
     }
 }

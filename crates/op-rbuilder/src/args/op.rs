@@ -8,6 +8,7 @@ use crate::{
     flashtestations::args::FlashtestationsArgs, gas_limiter::args::GasLimiterArgs,
     tx_signer::Signer,
 };
+use alloy_primitives::Address;
 use anyhow::{Result, anyhow};
 use clap::Parser;
 use reth_optimism_cli::commands::Commands;
@@ -170,6 +171,16 @@ pub struct FlashblocksArgs {
         default_value = "c71a3d30a484e67dcbd01c4c4ce0704989becc51b2e768d74cc0515276f542bc00dfb848648148c134fd75ea041b62391a6389a7fb1e0bf664aedf92668f68e5"
     )]
     pub flashblocks_p2p_private_key_hex: String,
+    
+    /// Flashblocks number contract address
+    ///
+    /// This is the address of the contract that will be used to increment the flashblock number.
+    /// If set a builder tx will be added to the start of every flashblock instead of the regular builder tx.
+    #[arg(
+        long = "flashblocks.number-contract-address",
+        env = "FLASHBLOCK_NUMBER_CONTRACT_ADDRESS"
+    )]
+    pub flashblocks_number_contract_address: Option<Address>,
 }
 
 impl Default for FlashblocksArgs {
