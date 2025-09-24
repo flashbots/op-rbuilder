@@ -1,14 +1,15 @@
 use crate::Message;
+use eyre::Context;
 use futures::stream::FuturesUnordered;
-use libp2p::{PeerId, swarm::Stream};
+use libp2p::{PeerId, StreamProtocol, swarm::Stream};
 use std::collections::HashMap;
-use tracing::warn;
+use tracing::{debug, warn};
 
-pub(crate) struct Peers {
-    peers_to_stream: HashMap<PeerId, Stream>,
+pub(crate) struct OutgoingStreamsHandler {
+    peers_to_stream: HashMap<PeerId, HashMap<StreamProtocol, Stream>>,
 }
 
-impl Peers {
+impl OutgoingStreamsHandler {
     pub(crate) fn new() -> Self {
         Self {
             peers_to_stream: HashMap::new(),
@@ -19,29 +20,43 @@ impl Peers {
         self.peers_to_stream.contains_key(peer)
     }
 
-    pub(crate) fn insert_peer_and_stream(&mut self, peer: PeerId, stream: Stream) {
-        self.peers_to_stream.insert(peer, stream);
+    pub(crate) fn insert_peer_and_stream(
+        &mut self,
+        peer: PeerId,
+        protocol: StreamProtocol,
+        stream: Stream,
+    ) {
+        self.peers_to_stream
+            .entry(peer)
+            .or_insert_with(HashMap::new)
+            .insert(protocol, stream);
     }
 
     pub(crate) fn remove_peer(&mut self, peer: &PeerId) {
         self.peers_to_stream.remove(peer);
     }
 
-    pub(crate) async fn broadcast_payload<M: Message>(&mut self, payload: M) {
+    pub(crate) async fn broadcast_message<M: Message>(&mut self, message: M) -> eyre::Result<()> {
         use futures::{SinkExt as _, StreamExt as _};
         use tokio_util::{
             codec::{FramedWrite, LinesCodec},
             compat::FuturesAsyncReadCompatExt as _,
         };
 
-        let payload = serde_json::to_string(&payload).expect("can serialize payload");
+        let protocol = message.protocol();
+        let payload = serde_json::to_string(&message).wrap_err("failed to serialize payload")?;
+
         let peers = self.peers_to_stream.keys().cloned().collect::<Vec<_>>();
         let mut futures = FuturesUnordered::new();
         for peer in peers {
-            let stream = self
+            let protocol_to_stream = self
                 .peers_to_stream
-                .remove(&peer)
-                .expect("stream must exist for peer");
+                .get_mut(&peer)
+                .expect("stream map must exist for peer");
+            let Some(stream) = protocol_to_stream.remove(&protocol) else {
+                warn!("no stream for protocol {protocol:?} to peer {peer}");
+                continue;
+            };
             let stream = stream.compat();
             let payload = payload.clone();
             let fut = async move {
@@ -57,12 +72,22 @@ impl Peers {
         while let Some(result) = futures.next().await {
             match result {
                 Ok((peer, stream)) => {
-                    self.peers_to_stream.insert(peer, stream);
+                    let protocol_to_stream = self
+                        .peers_to_stream
+                        .get_mut(&peer)
+                        .expect("stream map must exist for peer");
+                    protocol_to_stream.insert(protocol.clone(), stream);
                 }
                 Err(e) => {
                     warn!("failed to send payload to peer: {e:?}");
                 }
             }
         }
+        debug!(
+            "broadcasted message to {} peers",
+            self.peers_to_stream.len()
+        );
+
+        Ok(())
     }
 }

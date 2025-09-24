@@ -4,7 +4,9 @@ use crate::{
         BuilderConfig,
         builder_tx::BuilderTransactions,
         flashblocks::{
-            builder_tx::FlashblocksBuilderTx, p2p::Message, payload::FlashblocksExtraCtx,
+            builder_tx::FlashblocksBuilderTx,
+            p2p::{FLASHBLOCKS_STREAM_PROTOCOL, Message},
+            payload::FlashblocksExtraCtx,
             payload_handler::PayloadHandler,
         },
         generator::BlockPayloadJobGenerator,
@@ -40,7 +42,8 @@ impl FlashblocksServiceBuilder {
             builder = builder.with_keypair_hex_string(private_key_hex.clone());
         }
 
-        let (node, p2p_payload_tx, p2p_payload_rx) = builder
+        let (node, p2p_payload_tx, mut p2p_payload_rx_map) = builder
+            .with_protocol(FLASHBLOCKS_STREAM_PROTOCOL)
             .try_build::<Message>()
             .wrap_err("failed to build flashblocks p2p node")?;
         let multiaddrs = node.multiaddrs();
@@ -50,6 +53,10 @@ impl FlashblocksServiceBuilder {
             }
         });
         tracing::info!(multiaddrs = ?multiaddrs, "flashblocks p2p node started");
+
+        let p2p_payload_rx = p2p_payload_rx_map
+            .remove(&FLASHBLOCKS_STREAM_PROTOCOL)
+            .expect("flashblocks p2p protocol must be found in receiver map");
 
         let (built_payload_tx, built_payload_rx) = tokio::sync::mpsc::channel(16);
         let payload_builder = OpPayloadBuilder::new(
