@@ -19,8 +19,6 @@ use tracing::{debug, warn};
 
 pub use libp2p::StreamProtocol;
 
-const DEFAULT_AGENT_VERSION: &str = "op-rbuilder/1.0.0";
-
 /// A message that can be sent between peers.
 pub trait Message:
     serde::Serialize + for<'de> serde::Deserialize<'de> + Send + Sync + Clone + std::fmt::Debug
@@ -166,6 +164,7 @@ pub struct NodeBuilder {
     listen_addrs: Vec<libp2p::Multiaddr>,
     keypair_hex: Option<String>,
     known_peers: Vec<Multiaddr>,
+    agent_version: Option<String>,
     protocols: Vec<StreamProtocol>,
     cancellation_token: Option<tokio_util::sync::CancellationToken>,
 }
@@ -183,6 +182,7 @@ impl NodeBuilder {
             listen_addrs: Vec::new(),
             keypair_hex: None,
             known_peers: Vec::new(),
+            agent_version: None,
             protocols: Vec::new(),
             cancellation_token: None,
         }
@@ -201,6 +201,11 @@ impl NodeBuilder {
 
     pub fn with_keypair_hex_string(mut self, keypair_hex: String) -> Self {
         self.keypair_hex = Some(keypair_hex);
+        self
+    }
+
+    pub fn with_agent_version(mut self, agent_version: String) -> Self {
+        self.agent_version = Some(agent_version);
         self
     }
 
@@ -233,9 +238,14 @@ impl NodeBuilder {
             mut listen_addrs,
             keypair_hex,
             known_peers,
+            agent_version,
             protocols,
             cancellation_token,
         } = self;
+
+        let Some(agent_version) = agent_version else {
+            eyre::bail!("agent version must be set");
+        };
 
         let keypair = match keypair_hex {
             Some(hex) => {
@@ -250,8 +260,8 @@ impl NodeBuilder {
         let peer_id = keypair.public().to_peer_id();
 
         let transport = create_transport(&keypair)?;
-        let mut behaviour = Behaviour::new(&keypair, DEFAULT_AGENT_VERSION.to_string())
-            .context("failed to create behaviour")?;
+        let mut behaviour =
+            Behaviour::new(&keypair, agent_version).context("failed to create behaviour")?;
         let mut control = behaviour.new_control();
 
         let mut incoming_streams_handlers = Vec::new();
@@ -292,7 +302,7 @@ impl NodeBuilder {
                 known_peers,
                 outgoing_message_rx,
                 outgoing_streams_handler: OutgoingStreamsHandler::new(),
-                cancellation_token: cancellation_token.unwrap_or_default(),
+                cancellation_token: cancellation_token.unwrap_or_default(), // TODO: caller must provide this
                 incoming_streams_handlers,
                 protocols,
             },

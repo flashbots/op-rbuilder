@@ -4,6 +4,7 @@ use reth_optimism_payload_builder::OpBuiltPayload as RethOpBuiltPayload;
 use reth_optimism_primitives::OpBlock;
 use serde::{Deserialize, Serialize};
 
+pub(super) const AGENT_VERSION: &str = "op-rbuilder/1.0.0";
 pub(super) const FLASHBLOCKS_STREAM_PROTOCOL: p2p::StreamProtocol =
     p2p::StreamProtocol::new("/flashblocks/1.0.0");
 
@@ -21,7 +22,7 @@ impl p2p::Message for Message {
 /// Internal type analogous to [`reth_optimism_payload_builder::OpBuiltPayload`]
 /// which additionally implements `Serialize` and `Deserialize` for p2p transmission.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
-pub struct OpBuiltPayload {
+pub(crate) struct OpBuiltPayload {
     /// Identifier of the payload
     pub(crate) id: PayloadId,
     /// Sealed block

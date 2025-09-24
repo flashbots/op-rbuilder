@@ -5,7 +5,7 @@ use crate::{
         builder_tx::BuilderTransactions,
         flashblocks::{
             builder_tx::FlashblocksBuilderTx,
-            p2p::{FLASHBLOCKS_STREAM_PROTOCOL, Message},
+            p2p::{AGENT_VERSION, FLASHBLOCKS_STREAM_PROTOCOL, Message},
             payload::FlashblocksExtraCtx,
             payload_handler::PayloadHandler,
         },
@@ -43,6 +43,7 @@ impl FlashblocksServiceBuilder {
         }
 
         let (node, p2p_payload_tx, mut p2p_payload_rx_map) = builder
+            .with_agent_version(AGENT_VERSION.to_string())
             .with_protocol(FLASHBLOCKS_STREAM_PROTOCOL)
             .try_build::<Message>()
             .wrap_err("failed to build flashblocks p2p node")?;
