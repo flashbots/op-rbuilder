@@ -271,7 +271,7 @@ impl BuilderTxBase {
     }
 }
 
-pub fn get_nonce(
+pub(crate) fn get_nonce(
     db: &mut State<impl Database>,
     address: Address,
 ) -> Result<u64, BuilderTransactionError> {
