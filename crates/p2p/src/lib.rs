@@ -159,6 +159,12 @@ impl<M: Message + 'static> Node<M> {
     }
 }
 
+pub struct NodeBuildResult<M> {
+    pub node: Node<M>,
+    pub outgoing_message_tx: mpsc::Sender<M>,
+    pub incoming_message_rxs: HashMap<StreamProtocol, mpsc::Receiver<M>>,
+}
+
 pub struct NodeBuilder {
     port: Option<u16>,
     listen_addrs: Vec<libp2p::Multiaddr>,
@@ -226,13 +232,7 @@ impl NodeBuilder {
         self
     }
 
-    pub fn try_build<M: Message + 'static>(
-        self,
-    ) -> eyre::Result<(
-        Node<M>,
-        mpsc::Sender<M>,
-        HashMap<StreamProtocol, mpsc::Receiver<M>>,
-    )> {
+    pub fn try_build<M: Message + 'static>(self) -> eyre::Result<NodeBuildResult<M>> {
         let Self {
             port,
             mut listen_addrs,
@@ -294,8 +294,8 @@ impl NodeBuilder {
 
         let (outgoing_message_tx, outgoing_message_rx) = tokio::sync::mpsc::channel(100);
 
-        Ok((
-            Node {
+        Ok(NodeBuildResult {
+            node: Node {
                 peer_id,
                 swarm,
                 listen_addrs,
@@ -308,7 +308,7 @@ impl NodeBuilder {
             },
             outgoing_message_tx,
             incoming_message_rxs,
-        ))
+        })
     }
 }
 

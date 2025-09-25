@@ -42,7 +42,11 @@ impl FlashblocksServiceBuilder {
             builder = builder.with_keypair_hex_string(private_key_hex.clone());
         }
 
-        let (node, p2p_payload_tx, mut p2p_payload_rx_map) = builder
+        let p2p::NodeBuildResult {
+            node,
+            outgoing_message_tx,
+            mut incoming_message_rxs,
+        } = builder
             .with_agent_version(AGENT_VERSION.to_string())
             .with_protocol(FLASHBLOCKS_STREAM_PROTOCOL)
             .try_build::<Message>()
@@ -55,7 +59,7 @@ impl FlashblocksServiceBuilder {
         });
         tracing::info!(multiaddrs = ?multiaddrs, "flashblocks p2p node started");
 
-        let p2p_payload_rx = p2p_payload_rx_map
+        let incoming_message_rx = incoming_message_rxs
             .remove(&FLASHBLOCKS_STREAM_PROTOCOL)
             .expect("flashblocks p2p protocol must be found in receiver map");
 
@@ -86,8 +90,8 @@ impl FlashblocksServiceBuilder {
 
         let payload_handler = PayloadHandler::new(
             built_payload_rx,
-            p2p_payload_rx,
-            p2p_payload_tx,
+            incoming_message_rx,
+            outgoing_message_tx,
             payload_service.payload_events_handle(),
         );
 

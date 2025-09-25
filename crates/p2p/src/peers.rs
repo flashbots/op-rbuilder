@@ -28,7 +28,7 @@ impl OutgoingStreamsHandler {
     ) {
         self.peers_to_stream
             .entry(peer)
-            .or_insert_with(HashMap::new)
+            .or_default()
             .insert(protocol, stream);
     }
 
