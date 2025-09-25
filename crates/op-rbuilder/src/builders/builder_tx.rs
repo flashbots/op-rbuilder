@@ -280,7 +280,7 @@ pub(crate) fn get_nonce(
         .map_err(|_| BuilderTransactionError::AccountLoadFailed(address))
 }
 
-pub fn get_balance(
+pub(crate) fn get_balance(
     db: &mut State<impl Database>,
     address: Address,
 ) -> Result<U256, BuilderTransactionError> {
