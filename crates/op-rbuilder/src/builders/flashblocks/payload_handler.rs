@@ -38,19 +38,23 @@ impl PayloadHandler {
             payload_events_handle,
         } = self;
 
-        tokio::select! {
-            Some(payload) = built_rx.recv() => {
-                let _  = payload_events_handle.send(Events::BuiltPayload(payload.clone()));
-                // TODO: only broadcast if `!no_tx_pool`?
-                let _ = p2p_tx.send(payload.into()).await;
-            }
-            Some(message) = p2p_rx.recv() => {
-                match message {
-                    Message::OpBuiltPayload(payload) => {
-                        let payload: OpBuiltPayload = payload.into();
-                        let _ = payload_events_handle.send(Events::BuiltPayload(payload));
-                        // TODO: what other handling is needed here?
-                        // clearing mempool of included txs?
+        tracing::info!("flashblocks payload handler started");
+
+        loop {
+            tokio::select! {
+                Some(payload) = built_rx.recv() => {
+                    let _  = payload_events_handle.send(Events::BuiltPayload(payload.clone()));
+                    // TODO: only broadcast if `!no_tx_pool`?
+                    let _ = p2p_tx.send(payload.into()).await;
+                }
+                Some(message) = p2p_rx.recv() => {
+                    match message {
+                        Message::OpBuiltPayload(payload) => {
+                            let payload: OpBuiltPayload = payload.into();
+                            let _ = payload_events_handle.send(Events::BuiltPayload(payload));
+                            // TODO: what other handling is needed here?
+                            // clearing mempool of included txs?
+                        }
                     }
                 }
             }

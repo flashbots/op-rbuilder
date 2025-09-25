@@ -18,6 +18,7 @@ use alloy_consensus::{
 use alloy_eips::{Encodable2718, eip7685::EMPTY_REQUESTS_HASH, merge::BEACON_NONCE};
 use alloy_primitives::{Address, B256, U256, map::foldhash::HashMap};
 use core::time::Duration;
+use eyre::WrapErr as _;
 use reth::payload::PayloadBuilderAttributes;
 use reth_basic_payload_builder::BuildOutcome;
 use reth_chain_state::{ExecutedBlock, ExecutedBlockWithTrieUpdates, ExecutedTrieUpdates};
@@ -512,12 +513,12 @@ where
                 Err(err) => {
                     error!(
                         target: "payload_builder",
-                        "Failed to build flashblock {}, flashblock {}: {}",
-                        ctx.block_number(),
+                        "Failed to build flashblock {} for block number {}: {}",
                         ctx.flashblock_index(),
+                        ctx.block_number(),
                         err
                     );
-                    return Err(err);
+                    return Err(PayloadBuilderError::Other(err.into()));
                 }
             }
 
@@ -553,7 +554,7 @@ where
         block_cancel: &CancellationToken,
         best_payload: &BlockCell<OpBuiltPayload>,
         span: &tracing::Span,
-    ) -> Result<(), PayloadBuilderError> {
+    ) -> eyre::Result<()> {
         // fallback block is index 0, so we need to increment here
         ctx.increment_flashblock_index();
 
@@ -629,7 +630,8 @@ where
             best_txs,
             target_gas_for_batch.min(ctx.block_gas_limit()),
             total_da_per_batch,
-        )?;
+        )
+        .wrap_err("failed to execute best transactions")?;
         // Extract last transactions
         let new_transactions = info.executed_transactions[info.extra.last_flashblock_index..]
             .to_vec()
@@ -685,14 +687,10 @@ where
             .total_block_built_gauge
             .set(total_block_built_duration);
 
-        // Handle build errors with match pattern
         match build_result {
             Err(err) => {
-                // Track invalid/bad block
                 ctx.metrics.invalid_blocks_count.increment(1);
-                error!(target: "payload_builder", "Failed to build block {}, flashblock {}: {}", ctx.block_number(), ctx.flashblock_index(), err);
-                // Return the error
-                return Err(err);
+                return Err(err).wrap_err("failed to build payload");
             }
             Ok((new_payload, mut fb_payload)) => {
                 fb_payload.index = ctx.flashblock_index();
@@ -713,11 +711,11 @@ where
                 let flashblock_byte_size = self
                     .ws_pub
                     .publish(&fb_payload)
-                    .map_err(PayloadBuilderError::other)?;
+                    .wrap_err("failed to publish flashblock via websocket")?;
                 self.payload_tx
                     .send(new_payload.clone())
                     .await
-                    .map_err(PayloadBuilderError::other)?;
+                    .wrap_err("failed to send built payload to handler")?;
                 best_payload.set(new_payload);
 
                 // Record flashblock build duration
