@@ -7,7 +7,7 @@ use peers::OutgoingStreamsHandler;
 
 use eyre::Context;
 use libp2p::{
-    Multiaddr, PeerId, Swarm, Transport as _,
+    PeerId, Swarm, Transport as _,
     identity::{self, ed25519},
     noise,
     swarm::SwarmEvent,
@@ -15,9 +15,9 @@ use libp2p::{
 };
 use std::{collections::HashMap, time::Duration};
 use tokio::sync::mpsc;
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
-pub use libp2p::StreamProtocol;
+pub use libp2p::{Multiaddr, StreamProtocol};
 
 /// A message that can be sent between peers.
 pub trait Message:
@@ -199,8 +199,7 @@ impl NodeBuilder {
         self
     }
 
-    #[cfg(test)]
-    pub(crate) fn with_listen_addr(mut self, addr: libp2p::Multiaddr) -> Self {
+    pub fn with_listen_addr(mut self, addr: libp2p::Multiaddr) -> Self {
         self.listen_addrs.push(addr);
         self
     }
@@ -220,8 +219,7 @@ impl NodeBuilder {
         self
     }
 
-    #[cfg(test)]
-    pub(crate) fn with_known_peers<I, T>(mut self, addresses: I) -> Self
+    pub fn with_known_peers<I, T>(mut self, addresses: I) -> Self
     where
         I: IntoIterator<Item = T>,
         T: Into<Multiaddr>,
@@ -344,7 +342,7 @@ impl<M: Message + 'static> IncomingStreamsHandler<M> {
 
         tokio::select! {
             Some((from, stream)) = incoming.next() => {
-                debug!("new incoming stream on protocol {protocol} from peer {from}");
+                info!("new incoming stream on protocol {protocol} from peer {from}");
                 handle_stream_futures.push(tokio::spawn(handle_incoming_stream(from, stream, tx.clone())));
             }
             Some(res) = handle_stream_futures.next() => {
@@ -381,7 +379,7 @@ async fn handle_incoming_stream<M: Message>(
             Some(Ok(str)) => {
                 let payload: M = serde_json::from_str(&str)
                     .wrap_err("failed to decode stream message into FlashblocksPayloadV1")?;
-                debug!("got message from peer {peer_id}: {payload:?}");
+                info!("got message from peer {peer_id}: {payload:?}");
                 let _ = payload_tx.send(payload).await;
             }
             Some(Err(e)) => {
@@ -409,6 +407,7 @@ fn create_transport(
 mod test {
     use super::*;
 
+    const TEST_AGENT_VERSION: &str = "test/1.0.0";
     const TEST_PROTOCOL: StreamProtocol = StreamProtocol::new("/test/1.0.0");
 
     #[derive(Debug, PartialEq, Eq, Clone)]
@@ -443,15 +442,25 @@ mod test {
 
     #[tokio::test]
     async fn two_nodes_can_connect_and_message() {
-        let (node1, _, mut rx1) = NodeBuilder::new()
+        let NodeBuildResult {
+            node: node1,
+            outgoing_message_tx: _,
+            incoming_message_rxs: mut rx1,
+        } = NodeBuilder::new()
             .with_listen_addr("/ip4/127.0.0.1/tcp/9000".parse().unwrap())
+            .with_agent_version(TEST_AGENT_VERSION.to_string())
             .with_protocol(TEST_PROTOCOL)
             .try_build::<TestMessage>()
             .unwrap();
-        let (node2, tx2, _) = NodeBuilder::new()
+        let NodeBuildResult {
+            node: node2,
+            outgoing_message_tx: tx2,
+            incoming_message_rxs: _,
+        } = NodeBuilder::new()
             .with_known_peers(node1.multiaddrs())
             .with_protocol(TEST_PROTOCOL)
             .with_listen_addr("/ip4/127.0.0.1/tcp/9001".parse().unwrap())
+            .with_agent_version(TEST_AGENT_VERSION.to_string())
             .try_build::<TestMessage>()
             .unwrap();
 

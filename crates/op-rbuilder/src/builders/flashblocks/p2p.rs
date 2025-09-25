@@ -53,7 +53,7 @@ impl From<RethOpBuiltPayload> for OpBuiltPayload {
     fn from(value: RethOpBuiltPayload) -> Self {
         OpBuiltPayload {
             id: value.id(),
-            block: value.block().clone().into(),
+            block: value.block().clone(),
             fees: value.fees(),
         }
     }

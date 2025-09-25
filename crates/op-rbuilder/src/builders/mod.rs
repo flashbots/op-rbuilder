@@ -125,6 +125,9 @@ pub struct BuilderConfig<Specific: Clone> {
 
     /// Optional hex-encoded private key for the p2p node
     pub p2p_private_key_hex: Option<String>,
+
+    /// Comma-separated list of multiaddresses of known peers to connect to
+    pub p2p_known_peers: String,
 }
 
 impl<S: Debug + Clone> core::fmt::Debug for BuilderConfig<S> {
@@ -162,8 +165,9 @@ impl<S: Default + Clone> Default for BuilderConfig<S> {
             sampling_ratio: 100,
             max_gas_per_txn: None,
             gas_limiter_config: GasLimiterArgs::default(),
-            p2p_port: 9001,
+            p2p_port: 9009,
             p2p_private_key_hex: None,
+            p2p_known_peers: String::new(),
         }
     }
 }
@@ -187,6 +191,7 @@ where
             gas_limiter_config: args.gas_limiter.clone(),
             p2p_port: args.flashblocks.flashblocks_p2p_port,
             p2p_private_key_hex: Some(args.flashblocks.flashblocks_p2p_private_key_hex.clone()),
+            p2p_known_peers: args.flashblocks.flashblocks_known_peers.clone(),
             specific: S::try_from(args)?,
         })
     }
