@@ -158,7 +158,7 @@ jobs:
           echo "${{ steps.create-release-draft.outputs.url }}" >> $GITHUB_STEP_SUMMARY
 
   build-docker:
-    if: ${{ github.event.inputs.build-docker == 'true' }}
+    if: ${{ (github.ref_type == 'tag') || (github.event.inputs.build-docker == 'true') }}
     name: Build and publish Docker image
     needs: extract-version
     runs-on: ${{ matrix.configs.runner }}
