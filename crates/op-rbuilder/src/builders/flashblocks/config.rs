@@ -80,7 +80,7 @@ impl TryFrom<OpRbuilderArgs> for FlashblocksConfig {
         let flashblocks_number_contract_address =
             args.flashblocks.flashblocks_number_contract_address;
 
-        let max_flashblocks_per_block = args.flashblocks.flashblocks_max_per_block;
+        let max_flashblocks_per_block = args.flashblocks.max_flashblocks_per_block;
 
         Ok(Self {
             ws_addr,
@@ -103,6 +103,7 @@ impl FlashBlocksConfigExt for BuilderConfig<FlashblocksConfig> {
         if self.block_time.as_millis() == 0 {
             return 0;
         }
-        (self.block_time.as_millis() / self.specific.interval.as_millis()) as u64
+        let calculated = (self.block_time.as_millis() / self.specific.interval.as_millis()) as u64;
+        calculated.min(self.specific.max_flashblocks_per_block)
     }
 }

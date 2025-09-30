@@ -176,7 +176,7 @@ pub struct FlashblocksArgs {
         env = "FLASHBLOCKS_MAX_PER_BLOCK",
         default_value = "10"
     )]
-    pub flashblocks_max_per_block: u64,
+    pub max_flashblocks_per_block: u64,
 }
 
 impl Default for FlashblocksArgs {

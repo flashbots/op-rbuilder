@@ -807,66 +807,68 @@ where
     /// Calculate number of flashblocks.
     /// If dynamic is enabled this function will take time drift into the account.
     pub(super) fn calculate_flashblocks(&self, timestamp: u64) -> (u64, Duration) {
-        let (calculated_flashblocks, first_offset) = if self.config.specific.fixed {
-            (
+        if self.config.specific.fixed {
+            return (
                 self.config.flashblocks_per_block(),
                 // We adjust first FB to ensure that we have at least some time to make all FB in time
                 self.config.specific.interval - self.config.specific.leeway_time,
-            )
-        } else {
-            // We use this system time to determine remining time to build a block
-            // Things to consider:
-            // FCU(a) - FCU with attributes
-            // FCU(a) could arrive with `block_time - fb_time < delay`. In this case we could only produce 1 flashblock
-            // FCU(a) could arrive with `delay < fb_time` - in this case we will shrink first flashblock
-            // FCU(a) could arrive with `fb_time < delay < block_time - fb_time` - in this case we will issue less flashblocks
-            let target_time = std::time::SystemTime::UNIX_EPOCH + Duration::from_secs(timestamp)
-                - self.config.specific.leeway_time;
-            let now = std::time::SystemTime::now();
-            let Ok(time_drift) = target_time.duration_since(now) else {
-                error!(
-                    target: "payload_builder",
-                    message = "FCU arrived too late or system clock are unsynced",
-                    ?target_time,
-                    ?now,
-                );
-                let fallback_flashblocks = self.config.flashblocks_per_block().min(self.config.specific.max_flashblocks_per_block);
-                return (fallback_flashblocks, self.config.specific.interval);
-            };
-            self.metrics.flashblocks_time_drift.record(
-                self.config
-                    .block_time
-                    .as_millis()
-                    .saturating_sub(time_drift.as_millis()) as f64,
             );
-            debug!(
+        }
+        // We use this system time to determine remining time to build a block
+        // Things to consider:
+        // FCU(a) - FCU with attributes
+        // FCU(a) could arrive with `block_time - fb_time < delay`. In this case we could only produce 1 flashblock
+        // FCU(a) could arrive with `delay < fb_time` - in this case we will shrink first flashblock
+        // FCU(a) could arrive with `fb_time < delay < block_time - fb_time` - in this case we will issue less flashblocks
+        let target_time = std::time::SystemTime::UNIX_EPOCH + Duration::from_secs(timestamp)
+            - self.config.specific.leeway_time;
+        let now = std::time::SystemTime::now();
+        let Ok(time_drift) = target_time.duration_since(now) else {
+            error!(
                 target: "payload_builder",
-                message = "Time drift for building round",
+                message = "FCU arrived too late or system clock are unsynced",
                 ?target_time,
-                time_drift = self.config.block_time.as_millis().saturating_sub(time_drift.as_millis()),
-                ?timestamp
+                ?now,
             );
-            // This is extra check to ensure that we would account at least for block time in case we have any timer discrepancies.
-            let time_drift = time_drift.min(self.config.block_time);
-            let interval = self.config.specific.interval.as_millis() as u64;
-            let time_drift = time_drift.as_millis() as u64;
-            let first_flashblock_offset = time_drift.rem(interval);
-            if first_flashblock_offset == 0 {
-                // We have perfect division, so we use interval as first fb offset
-                (time_drift.div(interval), Duration::from_millis(interval))
-            } else {
-                // Non-perfect division, so we account for it.
-                (
-                    time_drift.div(interval) + 1,
-                    Duration::from_millis(first_flashblock_offset),
-                )
-            }
+            return (
+                self.config.flashblocks_per_block(),
+                self.config.specific.interval,
+            );
+        };
+        self.metrics.flashblocks_time_drift.record(
+            self.config
+                .block_time
+                .as_millis()
+                .saturating_sub(time_drift.as_millis()) as f64,
+        );
+        debug!(
+            target: "payload_builder",
+            message = "Time drift for building round",
+            ?target_time,
+            time_drift = self.config.block_time.as_millis().saturating_sub(time_drift.as_millis()),
+            ?timestamp
+        );
+        // This is extra check to ensure that we would account at least for block time in case we have any timer discrepancies.
+        let time_drift = time_drift.min(self.config.block_time);
+        let interval = self.config.specific.interval.as_millis() as u64;
+        let time_drift = time_drift.as_millis() as u64;
+        let first_flashblock_offset = time_drift.rem(interval);
+        let (calculated_flashblocks, first_offset) = if first_flashblock_offset == 0 {
+            // We have perfect division, so we use interval as first fb offset
+            (time_drift.div(interval), Duration::from_millis(interval))
+        } else {
+            // Non-perfect division, so we account for it.
+            (
+                time_drift.div(interval) + 1,
+                Duration::from_millis(first_flashblock_offset),
+            )
         };
 
         // Apply the maximum flashblocks per block cap
-        let final_flashblocks = calculated_flashblocks.min(self.config.specific.max_flashblocks_per_block);
-        
-        (final_flashblocks, first_offset)
+        (
+            calculated_flashblocks.min(self.config.specific.max_flashblocks_per_block),
+            first_offset,
+        )
     }
 }
 
