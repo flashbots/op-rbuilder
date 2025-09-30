@@ -166,6 +166,17 @@ pub struct FlashblocksArgs {
         env = "FLASHBLOCK_NUMBER_CONTRACT_ADDRESS"
     )]
     pub flashblocks_number_contract_address: Option<Address>,
+
+    /// Maximum number of flashblocks per block
+    ///
+    /// This caps the maximum number of flashblocks that can be produced per block,
+    /// regardless of the calculated number based on timing.
+    #[arg(
+        long = "flashblocks.max-per-block",
+        env = "FLASHBLOCKS_MAX_PER_BLOCK",
+        default_value = "10"
+    )]
+    pub flashblocks_max_per_block: u64,
 }
 
 impl Default for FlashblocksArgs {

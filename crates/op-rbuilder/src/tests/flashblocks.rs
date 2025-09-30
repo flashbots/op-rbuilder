@@ -18,6 +18,7 @@ use crate::{
         flashblocks_fixed: false,
         flashblocks_calculate_state_root: true,
         flashblocks_number_contract_address: None,
+        flashblocks_max_per_block: 10,
     },
     ..Default::default()
 })]
@@ -57,6 +58,7 @@ async fn smoke_dynamic_base(rbuilder: LocalInstance) -> eyre::Result<()> {
         flashblocks_fixed: false,
         flashblocks_calculate_state_root: true,
         flashblocks_number_contract_address: None,
+        flashblocks_max_per_block: 10,
     },
     ..Default::default()
 })]
@@ -96,6 +98,7 @@ async fn smoke_dynamic_unichain(rbuilder: LocalInstance) -> eyre::Result<()> {
         flashblocks_fixed: true,
         flashblocks_calculate_state_root: true,
         flashblocks_number_contract_address: None,
+        flashblocks_max_per_block: 10,
     },
     ..Default::default()
 })]
@@ -135,6 +138,7 @@ async fn smoke_classic_unichain(rbuilder: LocalInstance) -> eyre::Result<()> {
         flashblocks_fixed: true,
         flashblocks_calculate_state_root: true,
         flashblocks_number_contract_address: None,
+        flashblocks_max_per_block: 10,
     },
     ..Default::default()
 })]
@@ -174,6 +178,7 @@ async fn smoke_classic_base(rbuilder: LocalInstance) -> eyre::Result<()> {
         flashblocks_fixed: false,
         flashblocks_calculate_state_root: true,
         flashblocks_number_contract_address: None,
+        flashblocks_max_per_block: 10,
     },
     ..Default::default()
 })]
@@ -220,6 +225,7 @@ async fn unichain_dynamic_with_lag(rbuilder: LocalInstance) -> eyre::Result<()> 
         flashblocks_fixed: false,
         flashblocks_calculate_state_root: true,
         flashblocks_number_contract_address: None,
+        flashblocks_max_per_block: 10,
     },
     ..Default::default()
 })]
@@ -259,6 +265,7 @@ async fn dynamic_with_full_block_lag(rbuilder: LocalInstance) -> eyre::Result<()
         flashblocks_fixed: false,
         flashblocks_calculate_state_root: true,
         flashblocks_number_contract_address: None,
+        flashblocks_max_per_block: 10,
     },
     ..Default::default()
 })]
@@ -320,6 +327,7 @@ async fn test_flashblock_min_filtering(rbuilder: LocalInstance) -> eyre::Result<
         flashblocks_fixed: false,
         flashblocks_calculate_state_root: true,
         flashblocks_number_contract_address: None,
+        flashblocks_max_per_block: 10,
     },
     ..Default::default()
 })]
@@ -377,6 +385,7 @@ async fn test_flashblock_max_filtering(rbuilder: LocalInstance) -> eyre::Result<
         flashblocks_fixed: false,
         flashblocks_calculate_state_root: true,
         flashblocks_number_contract_address: None,
+        flashblocks_max_per_block: 10,
     },
     ..Default::default()
 })]
@@ -423,6 +432,7 @@ async fn test_flashblock_min_max_filtering(rbuilder: LocalInstance) -> eyre::Res
         flashblocks_fixed: false,
         flashblocks_calculate_state_root: false,
         flashblocks_number_contract_address: None,
+        flashblocks_max_per_block: 10,
     },
     ..Default::default()
 })]
@@ -455,4 +465,95 @@ async fn test_flashblocks_no_state_root_calculation(rbuilder: LocalInstance) -> 
     );
 
     Ok(())
+}
+
+#[rb_test(flashblocks, args = OpRbuilderArgs {
+    chain_block_time: 1000,
+    flashblocks: FlashblocksArgs {
+        enabled: true,
+        flashblocks_port: 1239,
+        flashblocks_addr: "127.0.0.1".into(),
+        flashblocks_block_time: 200,
+        flashblocks_leeway_time: 100,
+        flashblocks_fixed: true,
+        flashblocks_calculate_state_root: true,
+        flashblocks_number_contract_address: None,
+        flashblocks_max_per_block: 3, // Cap at 3 flashblocks instead of default 5
+    },
+    ..Default::default()
+})]
+async fn test_max_flashblocks_per_block_cap(rbuilder: LocalInstance) -> eyre::Result<()> {
+    let driver = rbuilder.driver().await?;
+    let flashblocks_listener = rbuilder.spawn_flashblocks_listener();
+
+    // Send transactions to ensure blocks have activity
+    for _ in 0..5 {
+        let _ = driver
+            .create_transaction()
+            .random_valid_transfer()
+            .send()
+            .await?;
+    }
+
+    // Build a block - normally would produce 5 flashblocks (1000ms / 200ms = 5)
+    // But with max_flashblocks_per_block: 3, it should cap at 3
+    let block = driver.build_new_block().await?;
+    assert_eq!(block.transactions.len(), 8, "Block should contain all transactions"); // 5 normal txn + deposit + 2 builder txn
+
+    let flashblocks = flashblocks_listener.get_flashblocks();
+    // Should produce only 3 flashblocks + 1 base flashblock = 4 total
+    assert_eq!(4, flashblocks.len(), "Should be capped at 3 flashblocks + 1 base = 4 total");
+
+    // Verify flashblock indices are within expected range
+    for fb in &flashblocks {
+        assert!(fb.index <= 3, "Flashblock index should not exceed 3, got index {}", fb.index);
+    }
+
+    flashblocks_listener.stop().await
+}
+
+#[rb_test(flashblocks, args = OpRbuilderArgs {
+    chain_block_time: 2000,
+    flashblocks: FlashblocksArgs {
+        enabled: true,
+        flashblocks_port: 1239,
+        flashblocks_addr: "127.0.0.1".into(),
+        flashblocks_block_time: 100, // Short interval would normally create 20 flashblocks
+        flashblocks_leeway_time: 50,
+        flashblocks_fixed: false,
+        flashblocks_calculate_state_root: true,
+        flashblocks_number_contract_address: None,
+        flashblocks_max_per_block: 5, // Cap at 5 flashblocks
+    },
+    ..Default::default()
+})]
+async fn test_max_flashblocks_dynamic_timing(rbuilder: LocalInstance) -> eyre::Result<()> {
+    let driver = rbuilder.driver().await?;
+    let flashblocks_listener = rbuilder.spawn_flashblocks_listener();
+
+    // Send transactions
+    for _ in 0..3 {
+        let _ = driver
+            .create_transaction()
+            .random_valid_transfer()
+            .send()
+            .await?;
+    }
+
+    // Build block with current timestamp (dynamic timing)
+    // Would normally create ~20 flashblocks (2000ms / 100ms = 20)
+    // But should be capped at 5
+    let block = driver.build_new_block_with_current_timestamp(None).await?;
+    assert!(block.transactions.len() >= 5, "Block should contain transactions");
+
+    let flashblocks = flashblocks_listener.get_flashblocks();
+    // Should be capped at 5 flashblocks + 1 base = 6 total
+    assert!(flashblocks.len() <= 6, "Should be capped at 5 flashblocks + 1 base = 6 total, got {}", flashblocks.len());
+
+    // Verify no flashblock index exceeds the cap
+    for fb in &flashblocks {
+        assert!(fb.index <= 5, "Flashblock index should not exceed 5, got index {}", fb.index);
+    }
+
+    flashblocks_listener.stop().await
 }
