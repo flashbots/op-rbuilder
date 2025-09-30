@@ -12,6 +12,7 @@ use crate::{
         generator::BlockPayloadJobGenerator,
     },
     flashtestations::service::bootstrap_flashtestations,
+    metrics::OpRBuilderMetrics,
     traits::{NodeBounds, PoolBounds},
 };
 use eyre::WrapErr as _;
@@ -21,6 +22,7 @@ use reth_node_builder::{BuilderContext, components::PayloadServiceBuilder};
 use reth_optimism_evm::OpEvmConfig;
 use reth_payload_builder::{PayloadBuilderHandle, PayloadBuilderService};
 use reth_provider::CanonStateSubscriptions;
+use std::sync::Arc;
 
 pub struct FlashblocksServiceBuilder(pub BuilderConfig<FlashblocksConfig>);
 
@@ -79,6 +81,8 @@ impl FlashblocksServiceBuilder {
             .remove(&FLASHBLOCKS_STREAM_PROTOCOL)
             .expect("flashblocks p2p protocol must be found in receiver map");
 
+        let metrics = Arc::new(OpRBuilderMetrics::default());
+        let gas_limiter_config = self.0.gas_limiter_config.clone();
         let (built_payload_tx, built_payload_rx) = tokio::sync::mpsc::channel(16);
         let payload_builder = OpPayloadBuilder::new(
             OpEvmConfig::optimism(ctx.chain_spec()),
@@ -87,6 +91,7 @@ impl FlashblocksServiceBuilder {
             self.0.clone(),
             builder_tx,
             built_payload_tx,
+            metrics.clone(),
         )
         .wrap_err("failed to create flashblocks payload builder")?;
 
@@ -104,11 +109,20 @@ impl FlashblocksServiceBuilder {
         let (payload_service, payload_builder_handle) =
             PayloadBuilderService::new(payload_generator, ctx.provider().canonical_state_stream());
 
+        let payload_builder_ctx = crate::builders::flashblocks::ctx::get_op_payload_syncer_ctx(
+            ctx.provider().clone(),
+            OpEvmConfig::optimism(ctx.chain_spec()),
+            self.0,
+            FlashblocksExtraCtx::default(), // TODO
+        );
         let payload_handler = PayloadHandler::new(
             built_payload_rx,
             incoming_message_rx,
             outgoing_message_tx,
             payload_service.payload_events_handle(),
+            payload_builder_ctx,
+            metrics,
+            gas_limiter_config,
         );
 
         ctx.task_executor()

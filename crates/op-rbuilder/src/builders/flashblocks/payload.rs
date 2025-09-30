@@ -68,7 +68,7 @@ type NextBestFlashblocksTxs<Pool> = BestFlashblocksTxs<
 >;
 
 #[derive(Debug, Default)]
-struct ExtraExecutionInfo {
+pub(super) struct ExtraExecutionInfo {
     /// Index of the last consumed flashblock
     last_flashblock_index: usize,
 }
@@ -152,8 +152,8 @@ impl<Pool, Client, BuilderTx> OpPayloadBuilder<Pool, Client, BuilderTx> {
         config: BuilderConfig<FlashblocksConfig>,
         builder_tx: BuilderTx,
         payload_tx: mpsc::Sender<OpBuiltPayload>,
+        metrics: Arc<OpRBuilderMetrics>,
     ) -> eyre::Result<Self> {
-        let metrics = Arc::new(OpRBuilderMetrics::default());
         let ws_pub = WebSocketPublisher::new(config.specific.ws_addr, Arc::clone(&metrics))?.into();
         let address_gas_limiter = AddressGasLimiter::new(config.gas_limiter_config.clone());
         Ok(Self {
@@ -404,7 +404,6 @@ where
         // We adjust our flashblocks timings based on time_drift if dynamic adjustment enable
         let (flashblocks_per_block, first_flashblock_offset) =
             self.calculate_flashblocks(timestamp);
-        //ctx.set_target_flashblock_count(flashblocks_per_block);
         info!(
             target: "payload_builder",
             message = "Performed flashblocks timing derivation",
@@ -925,13 +924,13 @@ where
         .map_err(PayloadBuilderError::other)?
         .apply_pre_execution_changes()?;
 
-    // 3. execute sequencer transactions
+    // 2. execute sequencer transactions
     let info = ctx.execute_sequencer_transactions(state)?;
 
     Ok(info)
 }
 
-fn build_block<DB, P, ExtraCtx>(
+pub(super) fn build_block<DB, P, ExtraCtx>(
     state: &mut State<DB>,
     ctx: &OpPayloadBuilderCtx<ExtraCtx>,
     info: &mut ExecutionInfo<ExtraExecutionInfo>,
@@ -978,7 +977,7 @@ where
         .expect("Number is in range");
 
     // TODO: maybe recreate state with bundle in here
-    // // calculate the state root
+    // calculate the state root
     let state_root_start_time = Instant::now();
     let mut state_root = B256::ZERO;
     let mut trie_output = TrieUpdates::default();
