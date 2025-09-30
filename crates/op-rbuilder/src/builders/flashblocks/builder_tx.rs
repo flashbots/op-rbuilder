@@ -53,8 +53,8 @@ sol!(
 pub(super) enum FlashblockNumberError {
     #[error("flashblocks number contract tx reverted: {0:?}")]
     Revert(IFlashblockNumber::IFlashblockNumberErrors),
-    #[error("contract may be invalid, mismatch in log emitted: expected {0:?} but got {1:?}")]
-    LogMismatch(B256, Option<B256>),
+    #[error("contract may be invalid, mismatch in log emitted: expected {0:?}")]
+    LogMismatch(B256),
     #[error("unknown revert: {0} err: {1}")]
     Unknown(String, Error),
     #[error("halt: {0:?}")]
@@ -175,7 +175,6 @@ impl FlashblocksNumberBuilderTx {
                     Err(BuilderTransactionError::Other(Box::new(
                         FlashblockNumberError::LogMismatch(
                             IFlashblockNumber::FlashblockIncremented::SIGNATURE_HASH,
-                            logs.first().and_then(|log| log.topics().first().copied()),
                         ),
                     )))
                 }

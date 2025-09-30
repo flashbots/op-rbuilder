@@ -293,10 +293,5 @@ pub(crate) fn get_nonce(
 }
 
 pub(crate) fn log_exists(logs: &[Log], topic: &B256) -> bool {
-    for log in logs {
-        if log.topics().first() == Some(topic) {
-            return true;
-        }
-    }
-    false
+    logs.iter().any(|log| log.topics().first() == Some(topic))
 }
