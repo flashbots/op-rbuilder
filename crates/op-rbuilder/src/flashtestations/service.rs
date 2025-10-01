@@ -1,16 +1,9 @@
 use alloy_primitives::{Bytes, keccak256};
 use reth_node_builder::BuilderContext;
-use reth_provider::StateProvider;
-use reth_revm::State;
-use revm::Database;
-use std::fmt::Debug;
 use tracing::{info, warn};
 
 use crate::{
-    builders::{
-        BuilderTransactionCtx, BuilderTransactionError, BuilderTransactions, OpPayloadBuilderCtx,
-    },
-    primitives::reth::ExecutionInfo,
+    flashtestations::builder_tx::{FlashtestationsBuilderTx, FlashtestationsBuilderTxArgs},
     traits::NodeBounds,
     tx_signer::{Signer, generate_ethereum_keypair, generate_key_from_seed},
 };
@@ -50,7 +43,7 @@ where
     let registry_address = args
         .registry_address
         .expect("registry address required when flashtestations enabled");
-    let _builder_policy_address = args
+    let builder_policy_address = args
         .builder_policy_address
         .expect("builder policy address required when flashtestations enabled");
 
@@ -84,8 +77,7 @@ where
     info!(target: "flashtestations", "requesting TDX attestation");
     let attestation = attestation_provider.get_attestation(report_data).await?;
 
-    #[allow(dead_code)]
-    let (tx_manager, _registered) = if let Some(rpc_url) = args.rpc_url {
+    let (tx_manager, registered) = if let Some(rpc_url) = args.rpc_url {
         let tx_manager = TxManager::new(
             tee_service_signer,
             funding_key,
@@ -111,7 +103,18 @@ where
         (None, false)
     };
 
-    let flashtestations_builder_tx = FlashtestationsBuilderTx {};
+    let flashtestations_builder_tx = FlashtestationsBuilderTx::new(FlashtestationsBuilderTxArgs {
+        attestation,
+        extra_registration_data: ext_data,
+        tee_service_signer,
+        funding_key,
+        funding_amount: args.funding_amount,
+        registry_address,
+        builder_policy_address,
+        builder_proof_version: args.builder_proof_version,
+        enable_block_proofs: args.enable_block_proofs,
+        registered,
+    });
 
     ctx.task_executor()
         .spawn_critical_with_graceful_shutdown_signal(
@@ -133,19 +136,4 @@ where
         );
 
     Ok(flashtestations_builder_tx)
-}
-
-#[derive(Debug, Clone)]
-pub struct FlashtestationsBuilderTx {}
-
-impl<ExtraCtx: Debug + Default> BuilderTransactions<ExtraCtx> for FlashtestationsBuilderTx {
-    fn simulate_builder_txs<Extra: Debug + Default>(
-        &self,
-        _state_provider: impl StateProvider + Clone,
-        _info: &mut ExecutionInfo<Extra>,
-        _ctx: &OpPayloadBuilderCtx<ExtraCtx>,
-        _db: &mut State<impl Database>,
-    ) -> Result<Vec<BuilderTransactionCtx>, BuilderTransactionError> {
-        Ok(vec![])
-    }
 }
