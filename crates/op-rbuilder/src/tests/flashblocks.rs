@@ -470,7 +470,7 @@ async fn test_flashblocks_number_contract_builder_tx(rbuilder: LocalInstance) ->
     let flashblocks_listener = rbuilder.spawn_flashblocks_listener();
     let provider = rbuilder.provider().await?;
 
-    // Deploy flashblocks number contract
+    // Deploy flashblocks number contract which will be in flashblocks 1
     let deploy_tx = driver
         .create_transaction()
         .deploy_flashblock_number_contract()
@@ -478,11 +478,11 @@ async fn test_flashblocks_number_contract_builder_tx(rbuilder: LocalInstance) ->
         .send()
         .await?;
 
-    // Create transactions for flashblocks 2-4
-    let transactions_phase1 = create_flashblock_transactions(&driver, 2..5).await?;
+    // Create valid transactions for flashblocks 2-4
+    let user_transactions = create_flashblock_transactions(&driver, 2..5).await?;
 
-    // Build first block
-    let block1 = driver.build_new_block_with_current_timestamp(None).await?;
+    // Build block with deploy tx in first flashblock, and a random valid transfer in every other flashblock
+    let block = driver.build_new_block_with_current_timestamp(None).await?;
 
     // Verify contract deployment
     let receipt = provider
@@ -499,15 +499,15 @@ async fn test_flashblocks_number_contract_builder_tx(rbuilder: LocalInstance) ->
     );
 
     // Verify first block structure
-    assert_eq!(block1.transactions.len(), 10);
-    let block1_txs = block1
+    assert_eq!(block.transactions.len(), 10);
+    let txs = block
         .transactions
         .as_transactions()
         .expect("transactions not in block");
 
-    // Verify builder txs (should be regular since not registered)
+    // Verify builder txs (should be regular since builder tx is not registered yet)
     verify_builder_txs(
-        &block1_txs,
+        &txs,
         &[1, 2, 4, 6, 8],
         Some(Address::ZERO),
         "Should have regular builder tx",
@@ -515,13 +515,13 @@ async fn test_flashblocks_number_contract_builder_tx(rbuilder: LocalInstance) ->
 
     // Verify deploy tx position
     assert_eq!(
-        block1_txs[3].inner.inner.tx_hash(),
+        txs[3].inner.inner.tx_hash(),
         *deploy_tx.tx_hash(),
         "Deploy tx not in correct position"
     );
 
     // Verify user transactions
-    verify_tx_matches(&block1_txs, &[5, 7, 9], &transactions_phase1);
+    verify_user_tx_hashes(&txs, &[5, 7, 9], &user_transactions);
 
     // Initialize contract
     let init_tx = driver
@@ -539,34 +539,35 @@ async fn test_flashblocks_number_contract_builder_tx(rbuilder: LocalInstance) ->
         .await?
         .expect("init tx not mined");
 
-    // Create transactions for testing contract calls
-    let transactions_phase2 = create_flashblock_transactions(&driver, 1..5).await?;
+    // Create user transactions for flashblocks 1 - 5
+    let user_transactions = create_flashblock_transactions(&driver, 1..5).await?;
 
-    // Build second block after initialization
-    let block2 = driver.build_new_block_with_current_timestamp(None).await?;
-    assert_eq!(block2.transactions.len(), 10);
-    let block2_txs = block2
+    // Build second block after initialization which will call the flashblock number contract
+    // with builder registered
+    let block = driver.build_new_block_with_current_timestamp(None).await?;
+    assert_eq!(block.transactions.len(), 10);
+    let txs = block
         .transactions
         .as_transactions()
         .expect("transactions not in block");
 
-    // Fallback block should have regular builder tx
+    // Fallback block should have regular builder tx after deposit tx
     assert_eq!(
-        block2_txs[1].to(),
+        txs[1].to(),
         Some(Address::ZERO),
         "Fallback block should have regular builder tx"
     );
 
     // Other builder txs should call the contract
     verify_builder_txs(
-        &block2_txs,
+        &txs,
         &[2, 4, 6, 8],
         Some(contract_address),
         "Should call flashblocks contract",
     );
 
     // Verify user transactions, 3 blocks in total built
-    verify_tx_matches(&block2_txs, &[3, 5, 7, 9], &transactions_phase2);
+    verify_user_tx_hashes(&txs, &[3, 5, 7, 9], &user_transactions);
 
     // Verify flashblock number incremented correctly
     let contract = FlashblocksNumber::new(contract_address, provider.clone());
@@ -646,7 +647,7 @@ fn verify_builder_txs(
 }
 
 // Helper to verify transaction matches
-fn verify_tx_matches(
+fn verify_user_tx_hashes(
     block_txs: &[impl AsRef<OpTxEnvelope>],
     indices: &[usize],
     expected_txs: &[TxHash],
