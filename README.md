@@ -63,7 +63,7 @@ This will increment the flashblock number before the start of every flashblock a
 To run op-rbuilder with flashtestations:
 
 ```bash
-cargo run -p op-rbuilder --bin op-rbuilder --features=flashtestations -- node \
+cargo run -p op-rbuilder --bin op-rbuilder -- node \
     --chain /path/to/chain-config.json \
     --http \
     --authrpc.port 9551 \
@@ -73,7 +73,7 @@ cargo run -p op-rbuilder --bin op-rbuilder --features=flashtestations -- node \
     --flashtestations.funding-amount 0.01 \ # amount in ETH to fund the TEE generated key
     --flashtestations.funding-key secret-key \ # funding key for the TEE key
     --flashtestations.registry-address 0xFlashtestationsRegistryAddress \
-    flashtestations.builder-policy-address 0xBuilderPolicyAddress
+    --flashtestations.builder-policy-address 0xBuilderPolicyAddress
 ```
 
 Note that `--rollup.builder-secret-key` must be set and funded in order for the flashtestations key to be funded and submit the attestation on-chain.
