@@ -853,7 +853,7 @@ where
         let interval = self.config.specific.interval.as_millis() as u64;
         let time_drift = time_drift.as_millis() as u64;
         let first_flashblock_offset = time_drift.rem(interval);
-        if first_flashblock_offset == 0 {
+        let (calculated_flashblocks, first_offset) = if first_flashblock_offset == 0 {
             // We have perfect division, so we use interval as first fb offset
             (time_drift.div(interval), Duration::from_millis(interval))
         } else {
@@ -862,7 +862,13 @@ where
                 time_drift.div(interval) + 1,
                 Duration::from_millis(first_flashblock_offset),
             )
-        }
+        };
+
+        // Apply the maximum flashblocks per block cap
+        (
+            calculated_flashblocks.min(self.config.specific.max_flashblocks_per_block),
+            first_offset,
+        )
     }
 }
 

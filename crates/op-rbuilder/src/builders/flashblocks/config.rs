@@ -38,6 +38,12 @@ pub struct FlashblocksConfig {
     ///
     /// If set a builder tx will be added to the start of every flashblock instead of the regular builder tx.
     pub flashblocks_number_contract_address: Option<Address>,
+
+    /// Maximum number of flashblocks per block.
+    ///
+    /// This caps the maximum number of flashblocks that can be produced per block,
+    /// regardless of the calculated number based on timing.
+    pub max_flashblocks_per_block: u64,
 }
 
 impl Default for FlashblocksConfig {
@@ -49,6 +55,7 @@ impl Default for FlashblocksConfig {
             fixed: false,
             calculate_state_root: true,
             flashblocks_number_contract_address: None,
+            max_flashblocks_per_block: 10,
         }
     }
 }
@@ -73,6 +80,8 @@ impl TryFrom<OpRbuilderArgs> for FlashblocksConfig {
         let flashblocks_number_contract_address =
             args.flashblocks.flashblocks_number_contract_address;
 
+        let max_flashblocks_per_block = args.flashblocks.max_flashblocks_per_block;
+
         Ok(Self {
             ws_addr,
             interval,
@@ -80,6 +89,7 @@ impl TryFrom<OpRbuilderArgs> for FlashblocksConfig {
             fixed,
             calculate_state_root,
             flashblocks_number_contract_address,
+            max_flashblocks_per_block,
         })
     }
 }
@@ -93,6 +103,7 @@ impl FlashBlocksConfigExt for BuilderConfig<FlashblocksConfig> {
         if self.block_time.as_millis() == 0 {
             return 0;
         }
-        (self.block_time.as_millis() / self.specific.interval.as_millis()) as u64
+        let calculated = (self.block_time.as_millis() / self.specific.interval.as_millis()) as u64;
+        calculated.min(self.specific.max_flashblocks_per_block)
     }
 }
