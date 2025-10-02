@@ -7,7 +7,7 @@ on:
 
 jobs:
   verify:
-    name: Verify reproducible builds
+    name: "[op-rbuilder] Verify reproducible builds"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
