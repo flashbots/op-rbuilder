@@ -1,6 +1,6 @@
 # op-rbuilder
 
-[![CI status](https://github.com/flashbots/op-rbuilder/actions/workflows/checks.yaml/badge.svg)](https://github.com/flashbots/op-rbuilder/actions)
+[![CI status](https://github.com/flashbots/op-rbuilder/actions/workflows/op_rbuilder_checks.yaml/badge.svg)](https://github.com/flashbots/op-rbuilder/actions)
 
 `op-rbuilder` is a Rust-based block builder designed to build blocks for the Optimism stack.
 
@@ -42,6 +42,22 @@ cargo run -p op-rbuilder --bin op-rbuilder -- node \
     --flashblocks.addr 127.0.0.1 # address to bind the ws that provides flashblocks
 ```
 
+#### Flashblocks Number Contract
+
+To enable builder tranctions to the [flashblocks number contract](https://github.com/Uniswap/flashblocks_number_contract) for contracts to integrate with flashblocks onchain, specify the address in the CLI args:
+
+```bash
+cargo run -p op-rbuilder --bin op-rbuilder -- node \
+    --chain /path/to/chain-config.json \
+    --http \
+    --authrpc.port 9551 \
+    --authrpc.jwtsecret /path/to/jwt.hex \
+    --flashblocks.enabled \
+    --flashblocks.number-contract-address 0xFlashblocksNumberAddress
+```
+
+This will increment the flashblock number before the start of every flashblock and replace the builder tx at the end of the block.
+
 ### Flashtestations 
 
 To run op-rbuilder with flashtestations:
@@ -76,6 +92,12 @@ To enable metrics, set the `--metrics` flag like in [reth](https://reth.rs/run/m
 -   Number of transactions included in the built block
 
 To see the full list of op-rbuilder metrics, see [`src/metrics.rs`](./crates/op-rbuilder/src/metrics.rs).
+
+Default `debug` level trace logs can be found at:
+
+- `~/.cache/op-rbuilder/logs` on Linux
+- `~/Library/Caches/op-rbuilder/logs` on macOS
+- `%localAppData%/op-rbuilder/logs` on Windows
 
 ## Integration Testing
 

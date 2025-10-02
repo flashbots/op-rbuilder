@@ -4,7 +4,11 @@
 
 //! clap [Args](clap::Args) for optimism rollup configuration
 
-use crate::{flashtestations::args::FlashtestationsArgs, tx_signer::Signer};
+use crate::{
+    flashtestations::args::FlashtestationsArgs, gas_limiter::args::GasLimiterArgs,
+    tx_signer::Signer,
+};
+use alloy_primitives::Address;
 use anyhow::{Result, anyhow};
 use clap::Parser;
 use reth_optimism_cli::commands::Commands;
@@ -60,6 +64,8 @@ pub struct OpRbuilderArgs {
     pub telemetry: TelemetryArgs,
     #[command(flatten)]
     pub flashtestations: FlashtestationsArgs,
+    #[command(flatten)]
+    pub gas_limiter: GasLimiterArgs,
 }
 
 impl Default for OpRbuilderArgs {
@@ -142,6 +148,24 @@ pub struct FlashblocksArgs {
         env = "FLASHBLOCK_LEEWAY_TIME"
     )]
     pub flashblocks_leeway_time: u64,
+
+    /// Should we calculate state root for each flashblock
+    #[arg(
+        long = "flashblocks.calculate-state-root",
+        default_value = "true",
+        env = "FLASHBLOCKS_CALCULATE_STATE_ROOT"
+    )]
+    pub flashblocks_calculate_state_root: bool,
+
+    /// Flashblocks number contract address
+    ///
+    /// This is the address of the contract that will be used to increment the flashblock number.
+    /// If set a builder tx will be added to the start of every flashblock instead of the regular builder tx.
+    #[arg(
+        long = "flashblocks.number-contract-address",
+        env = "FLASHBLOCK_NUMBER_CONTRACT_ADDRESS"
+    )]
+    pub flashblocks_number_contract_address: Option<Address>,
 }
 
 impl Default for FlashblocksArgs {

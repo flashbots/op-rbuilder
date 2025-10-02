@@ -128,16 +128,23 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Download artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
-          merge-multiple: true
+          merge-multiple: false
           path: artifacts
 
       - name: Record artifacts checksums
         working-directory: artifacts
         run: |
+          for dir in $( find . -type d -name "op-rbuilder-*" -printf "%f\n" ); do
+            mv    ./$dir                 ./$dir.bak
+            mv    ./$dir.bak/op-rbuilder ./$dir
+            rm -r ./$dir.bak
+          done
           find ./ || true
-          for file in *; do sha256sum "$file" >> sha256sums.txt; done;
+          for file in $( find ./ -type f ); do
+            sha256sum "$file" >> sha256sums.txt
+          done;
           cat sha256sums.txt
 
       - name: Create release draft
@@ -157,7 +164,7 @@ jobs:
           echo "${{ steps.create-release-draft.outputs.url }}" >> $GITHUB_STEP_SUMMARY
 
   build-docker:
-    if: ${{ github.event.inputs.build-docker == 'true' }}
+    if: ${{ (github.ref_type == 'tag') || (github.event.inputs.build-docker == 'true') }}
     name: Build and publish Docker image
     needs: extract-version
     runs-on: ${{ matrix.configs.runner }}

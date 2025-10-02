@@ -1,12 +1,11 @@
-use alloy_consensus::{
-    Eip658Value, Transaction, TxEip1559, conditional::BlockConditionalAttributes,
-};
-use alloy_eips::{Encodable2718, Typed2718, eip7623::TOTAL_COST_FLOOR_PER_TOKEN};
+use alloy_consensus::{Eip658Value, Transaction, conditional::BlockConditionalAttributes};
+use alloy_eips::Typed2718;
+use alloy_evm::Database;
 use alloy_op_evm::block::receipt_builder::OpReceiptBuilder;
-use alloy_primitives::{Address, Bytes, TxKind, U256};
+use alloy_primitives::{Bytes, U256};
 use alloy_rpc_types_eth::Withdrawals;
 use core::fmt::Debug;
-use op_alloy_consensus::{OpDepositReceipt, OpTypedTransaction};
+use op_alloy_consensus::OpDepositReceipt;
 use op_revm::OpSpecId;
 use reth::payload::PayloadBuilderAttributes;
 use reth_basic_payload_builder::PayloadConfig;
@@ -27,19 +26,17 @@ use reth_optimism_txpool::{
     interop::{MaybeInteropTransaction, is_valid_interop},
 };
 use reth_payload_builder::PayloadId;
-use reth_primitives::{Recovered, SealedHeader};
+use reth_primitives::SealedHeader;
 use reth_primitives_traits::{InMemorySize, SignedTransaction};
-use reth_provider::ProviderError;
 use reth_revm::{State, context::Block};
 use reth_transaction_pool::{BestTransactionsAttributes, PoolTransaction};
-use revm::{
-    Database, DatabaseCommit, context::result::ResultAndState, interpreter::as_u64_saturated,
-};
+use revm::{DatabaseCommit, context::result::ResultAndState, interpreter::as_u64_saturated};
 use std::{sync::Arc, time::Instant};
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, info, trace, warn};
+use tracing::{debug, info, trace};
 
 use crate::{
+    gas_limiter::AddressGasLimiter,
     metrics::OpRBuilderMetrics,
     primitives::reth::{ExecutionInfo, TxnExecutionResult},
     traits::PayloadTxsBounds,
@@ -72,45 +69,47 @@ pub struct OpPayloadBuilderCtx<ExtraCtx: Debug + Default = ()> {
     pub extra_ctx: ExtraCtx,
     /// Max gas that can be used by a transaction.
     pub max_gas_per_txn: Option<u64>,
+    /// Rate limiting based on gas. This is an optional feature.
+    pub address_gas_limiter: AddressGasLimiter,
 }
 
 impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
     /// Returns the parent block the payload will be build on.
-    pub fn parent(&self) -> &SealedHeader {
+    pub(super) fn parent(&self) -> &SealedHeader {
         &self.config.parent_header
     }
 
     /// Returns the builder attributes.
-    pub const fn attributes(&self) -> &OpPayloadBuilderAttributes<OpTransactionSigned> {
+    pub(super) const fn attributes(&self) -> &OpPayloadBuilderAttributes<OpTransactionSigned> {
         &self.config.attributes
     }
 
     /// Returns the withdrawals if shanghai is active.
-    pub fn withdrawals(&self) -> Option<&Withdrawals> {
+    pub(super) fn withdrawals(&self) -> Option<&Withdrawals> {
         self.chain_spec
             .is_shanghai_active_at_timestamp(self.attributes().timestamp())
             .then(|| &self.attributes().payload_attributes.withdrawals)
     }
 
     /// Returns the block gas limit to target.
-    pub fn block_gas_limit(&self) -> u64 {
+    pub(super) fn block_gas_limit(&self) -> u64 {
         self.attributes()
             .gas_limit
             .unwrap_or(self.evm_env.block_env.gas_limit)
     }
 
     /// Returns the block number for the block.
-    pub fn block_number(&self) -> u64 {
+    pub(super) fn block_number(&self) -> u64 {
         as_u64_saturated!(self.evm_env.block_env.number)
     }
 
     /// Returns the current base fee
-    pub fn base_fee(&self) -> u64 {
+    pub(super) fn base_fee(&self) -> u64 {
         self.evm_env.block_env.basefee
     }
 
     /// Returns the current blob gas price.
-    pub fn get_blob_gasprice(&self) -> Option<u64> {
+    pub(super) fn get_blob_gasprice(&self) -> Option<u64> {
         self.evm_env
             .block_env
             .blob_gasprice()
@@ -120,7 +119,7 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
     /// Returns the blob fields for the header.
     ///
     /// This will always return `Some(0)` after ecotone.
-    pub fn blob_fields(&self) -> (Option<u64>, Option<u64>) {
+    pub(super) fn blob_fields(&self) -> (Option<u64>, Option<u64>) {
         // OP doesn't support blobs/EIP-4844.
         // https://specs.optimism.io/protocol/exec-engine.html#ecotone-disable-blob-transactions
         // Need [Some] or [None] based on hardfork to match block hash.
@@ -134,7 +133,7 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
     /// Returns the extra data for the block.
     ///
     /// After holocene this extracts the extradata from the paylpad
-    pub fn extra_data(&self) -> Result<Bytes, PayloadBuilderError> {
+    pub(super) fn extra_data(&self) -> Result<Bytes, PayloadBuilderError> {
         if self.is_holocene_active() {
             self.attributes()
                 .get_holocene_extra_data(
@@ -149,59 +148,54 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
     }
 
     /// Returns the current fee settings for transactions from the mempool
-    pub fn best_transaction_attributes(&self) -> BestTransactionsAttributes {
+    pub(super) fn best_transaction_attributes(&self) -> BestTransactionsAttributes {
         BestTransactionsAttributes::new(self.base_fee(), self.get_blob_gasprice())
     }
 
     /// Returns the unique id for this payload job.
-    pub fn payload_id(&self) -> PayloadId {
+    pub(super) fn payload_id(&self) -> PayloadId {
         self.attributes().payload_id()
     }
 
     /// Returns true if regolith is active for the payload.
-    pub fn is_regolith_active(&self) -> bool {
+    pub(super) fn is_regolith_active(&self) -> bool {
         self.chain_spec
             .is_regolith_active_at_timestamp(self.attributes().timestamp())
     }
 
     /// Returns true if ecotone is active for the payload.
-    pub fn is_ecotone_active(&self) -> bool {
+    pub(super) fn is_ecotone_active(&self) -> bool {
         self.chain_spec
             .is_ecotone_active_at_timestamp(self.attributes().timestamp())
     }
 
     /// Returns true if canyon is active for the payload.
-    pub fn is_canyon_active(&self) -> bool {
+    pub(super) fn is_canyon_active(&self) -> bool {
         self.chain_spec
             .is_canyon_active_at_timestamp(self.attributes().timestamp())
     }
 
     /// Returns true if holocene is active for the payload.
-    pub fn is_holocene_active(&self) -> bool {
+    pub(super) fn is_holocene_active(&self) -> bool {
         self.chain_spec
             .is_holocene_active_at_timestamp(self.attributes().timestamp())
     }
 
     /// Returns true if isthmus is active for the payload.
-    pub fn is_isthmus_active(&self) -> bool {
+    pub(super) fn is_isthmus_active(&self) -> bool {
         self.chain_spec
             .is_isthmus_active_at_timestamp(self.attributes().timestamp())
     }
 
     /// Returns the chain id
-    pub fn chain_id(&self) -> u64 {
+    pub(super) fn chain_id(&self) -> u64 {
         self.chain_spec.chain_id()
-    }
-
-    /// Returns the builder signer
-    pub fn builder_signer(&self) -> Option<Signer> {
-        self.builder_signer
     }
 }
 
 impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
     /// Constructs a receipt for the given transaction.
-    fn build_receipt<E: Evm>(
+    pub fn build_receipt<E: Evm>(
         &self,
         ctx: ReceiptBuilderCtx<'_, OpTransactionSigned, E>,
         deposit_nonce: Option<u64>,
@@ -233,18 +227,13 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
     }
 
     /// Executes all sequencer transactions that are included in the payload attributes.
-    pub fn execute_sequencer_transactions<DB, E: Debug + Default>(
+    pub(super) fn execute_sequencer_transactions<E: Debug + Default>(
         &self,
-        state: &mut State<DB>,
-    ) -> Result<ExecutionInfo<E>, PayloadBuilderError>
-    where
-        DB: Database<Error = ProviderError> + std::fmt::Debug,
-    {
+        db: &mut State<impl Database>,
+    ) -> Result<ExecutionInfo<E>, PayloadBuilderError> {
         let mut info = ExecutionInfo::with_capacity(self.attributes().transactions.len());
 
-        let mut evm = self
-            .evm_config
-            .evm_with_env(&mut *state, self.evm_env.clone());
+        let mut evm = self.evm_config.evm_with_env(&mut *db, self.evm_env.clone());
 
         for sequencer_tx in &self.attributes().transactions {
             // A sequencer's block should never contain blob transactions.
@@ -322,28 +311,24 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
     /// Executes the given best transactions and updates the execution info.
     ///
     /// Returns `Ok(Some(())` if the job was cancelled.
-    pub fn execute_best_transactions<DB, E: Debug + Default>(
+    pub(super) fn execute_best_transactions<E: Debug + Default>(
         &self,
         info: &mut ExecutionInfo<E>,
-        state: &mut State<DB>,
+        db: &mut State<impl Database>,
         best_txs: &mut impl PayloadTxsBounds,
         block_gas_limit: u64,
         block_da_limit: Option<u64>,
-    ) -> Result<Option<()>, PayloadBuilderError>
-    where
-        DB: Database<Error = ProviderError> + std::fmt::Debug,
-    {
+    ) -> Result<Option<()>, PayloadBuilderError> {
         let execute_txs_start_time = Instant::now();
         let mut num_txs_considered = 0;
         let mut num_txs_simulated = 0;
         let mut num_txs_simulated_success = 0;
         let mut num_txs_simulated_fail = 0;
         let mut num_bundles_reverted = 0;
+        let mut reverted_gas_used = 0;
         let base_fee = self.base_fee();
         let tx_da_limit = self.da_config.max_da_tx_size();
-        let mut evm = self
-            .evm_config
-            .evm_with_env(&mut *state, self.evm_env.clone());
+        let mut evm = self.evm_config.evm_with_env(&mut *db, self.evm_env.clone());
 
         info!(
             target: "payload_builder",
@@ -352,15 +337,6 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
             tx_da_limit = ?tx_da_limit,
             block_gas_limit = ?block_gas_limit,
         );
-
-        // Remove once we merge Reth 1.4.4
-        // Fixed in https://github.com/paradigmxyz/reth/pull/16514
-        self.metrics
-            .da_block_size_limit
-            .set(block_da_limit.map_or(-1.0, |v| v as f64));
-        self.metrics
-            .da_tx_size_limit
-            .set(tx_da_limit.map_or(-1.0, |v| v as f64));
 
         let block_attr = BlockConditionalAttributes {
             number: self.block_number(),
@@ -467,7 +443,7 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
                     }
                     // this is an error that we should treat as fatal for this attempt
                     log_txn(TxnExecutionResult::EvmError);
-                    return Err(PayloadBuilderError::EvmExecutionError(Box::new(err)));
+                    return Err(PayloadBuilderError::evm(err));
                 }
             };
 
@@ -476,11 +452,29 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
                 .record(tx_simulation_start_time.elapsed());
             self.metrics.tx_byte_size.record(tx.inner().size() as f64);
             num_txs_simulated += 1;
+
+            // Run the per-address gas limiting before checking if the tx has
+            // reverted or not, as this is a check against maliciously searchers
+            // sending txs that are expensive to compute but always revert.
+            let gas_used = result.gas_used();
+            if self
+                .address_gas_limiter
+                .consume_gas(tx.signer(), gas_used)
+                .is_err()
+            {
+                log_txn(TxnExecutionResult::MaxGasUsageExceeded);
+                best_txs.mark_invalid(tx.signer(), tx.nonce());
+                continue;
+            }
+
             if result.is_success() {
                 log_txn(TxnExecutionResult::Success);
                 num_txs_simulated_success += 1;
+                self.metrics.successful_tx_gas_used.record(gas_used as f64);
             } else {
                 num_txs_simulated_fail += 1;
+                reverted_gas_used += gas_used as i32;
+                self.metrics.reverted_tx_gas_used.record(gas_used as f64);
                 if is_bundle_tx {
                     num_bundles_reverted += 1;
                 }
@@ -496,7 +490,6 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
 
             // add gas used by the transaction to cumulative gas used, before creating the
             // receipt
-            let gas_used = result.gas_used();
             if let Some(max_gas_per_txn) = self.max_gas_per_txn {
                 if gas_used > max_gas_per_txn {
                     log_txn(TxnExecutionResult::MaxGasUsageExceeded);
@@ -541,6 +534,7 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
             num_txs_simulated_success,
             num_txs_simulated_fail,
             num_bundles_reverted,
+            reverted_gas_used,
         );
 
         debug!(
@@ -553,151 +547,4 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
         );
         Ok(None)
     }
-
-    pub fn add_builder_tx<DB, Extra: Debug + Default>(
-        &self,
-        info: &mut ExecutionInfo<Extra>,
-        state: &mut State<DB>,
-        builder_tx_gas: u64,
-        message: Vec<u8>,
-    ) -> Option<()>
-    where
-        DB: Database<Error = ProviderError> + std::fmt::Debug,
-    {
-        self.builder_signer()
-            .map(|signer| {
-                let base_fee = self.base_fee();
-                let chain_id = self.chain_id();
-                // Create and sign the transaction
-                let builder_tx =
-                    signed_builder_tx(state, builder_tx_gas, message, signer, base_fee, chain_id)?;
-
-                let mut evm = self
-                    .evm_config
-                    .evm_with_env(&mut *state, self.evm_env.clone());
-
-                let ResultAndState {
-                    result,
-                    state: new_state,
-                } = evm
-                    .transact(&builder_tx)
-                    .map_err(|err| PayloadBuilderError::EvmExecutionError(Box::new(err)))?;
-
-                // Add gas used by the transaction to cumulative gas used, before creating the receipt
-                info.cumulative_gas_used += result.gas_used();
-
-                let ctx = ReceiptBuilderCtx {
-                    tx: builder_tx.inner(),
-                    evm: &evm,
-                    result,
-                    state: &new_state,
-                    cumulative_gas_used: info.cumulative_gas_used,
-                };
-                info.receipts.push(self.build_receipt(ctx, None));
-
-                // Release the db reference by dropping evm
-                drop(evm);
-                // Commit changes
-                state.commit(new_state);
-
-                // Append sender and transaction to the respective lists
-                info.executed_senders.push(builder_tx.signer());
-                info.executed_transactions.push(builder_tx.into_inner());
-                Ok(())
-            })
-            .transpose()
-            .unwrap_or_else(|err: PayloadBuilderError| {
-                warn!(target: "payload_builder", %err, "Failed to add builder transaction");
-                None
-            })
-    }
-
-    /// Calculates EIP 2718 builder transaction size
-    // TODO: this function could be improved, ideally we shouldn't take mut ref to db and maybe
-    // it's possible to do this without db at all
-    pub fn estimate_builder_tx_da_size<DB>(
-        &self,
-        state: &mut State<DB>,
-        builder_tx_gas: u64,
-        message: Vec<u8>,
-    ) -> Option<u64>
-    where
-        DB: Database<Error = ProviderError>,
-    {
-        self.builder_signer()
-            .map(|signer| {
-                let base_fee = self.base_fee();
-                let chain_id = self.chain_id();
-                // Create and sign the transaction
-                let builder_tx =
-                    signed_builder_tx(state, builder_tx_gas, message, signer, base_fee, chain_id)?;
-                Ok(op_alloy_flz::tx_estimated_size_fjord_bytes(
-                    builder_tx.encoded_2718().as_slice(),
-                ))
-            })
-            .transpose()
-            .unwrap_or_else(|err: PayloadBuilderError| {
-                warn!(target: "payload_builder", %err, "Failed to add builder transaction");
-                None
-            })
-    }
-}
-
-pub fn estimate_gas_for_builder_tx(input: Vec<u8>) -> u64 {
-    // Count zero and non-zero bytes
-    let (zero_bytes, nonzero_bytes) = input.iter().fold((0, 0), |(zeros, nonzeros), &byte| {
-        if byte == 0 {
-            (zeros + 1, nonzeros)
-        } else {
-            (zeros, nonzeros + 1)
-        }
-    });
-
-    // Calculate gas cost (4 gas per zero byte, 16 gas per non-zero byte)
-    let zero_cost = zero_bytes * 4;
-    let nonzero_cost = nonzero_bytes * 16;
-
-    // Tx gas should be not less than floor gas https://eips.ethereum.org/EIPS/eip-7623
-    let tokens_in_calldata = zero_bytes + nonzero_bytes * 4;
-    let floor_gas = 21_000 + tokens_in_calldata * TOTAL_COST_FLOOR_PER_TOKEN;
-
-    std::cmp::max(zero_cost + nonzero_cost + 21_000, floor_gas)
-}
-
-/// Creates signed builder tx to Address::ZERO and specified message as input
-pub fn signed_builder_tx<DB>(
-    state: &mut State<DB>,
-    builder_tx_gas: u64,
-    message: Vec<u8>,
-    signer: Signer,
-    base_fee: u64,
-    chain_id: u64,
-) -> Result<Recovered<OpTransactionSigned>, PayloadBuilderError>
-where
-    DB: Database<Error = ProviderError>,
-{
-    // Create message with block number for the builder to sign
-    let nonce = state
-        .load_cache_account(signer.address)
-        .map(|acc| acc.account_info().unwrap_or_default().nonce)
-        .map_err(|_| {
-            PayloadBuilderError::other(OpPayloadBuilderError::AccountLoadFailed(signer.address))
-        })?;
-
-    // Create the EIP-1559 transaction
-    let tx = OpTypedTransaction::Eip1559(TxEip1559 {
-        chain_id,
-        nonce,
-        gas_limit: builder_tx_gas,
-        max_fee_per_gas: base_fee.into(),
-        max_priority_fee_per_gas: 0,
-        to: TxKind::Call(Address::ZERO),
-        // Include the message as part of the transaction data
-        input: message.into(),
-        ..Default::default()
-    });
-    // Sign the transaction
-    let builder_tx = signer.sign_tx(tx).map_err(PayloadBuilderError::other)?;
-
-    Ok(builder_tx)
 }

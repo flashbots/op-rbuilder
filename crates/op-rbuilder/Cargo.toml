@@ -8,6 +8,9 @@ homepage.workspace = true
 repository.workspace = true
 default-run = "op-rbuilder"
 
+[lints]
+workspace = true
+
 [dependencies]
 reth.workspace = true
 reth-optimism-node.workspace = true
@@ -59,6 +62,7 @@ alloy-primitives.workspace = true
 alloy-consensus.workspace = true
 alloy-contract.workspace = true
 alloy-eips.workspace = true
+alloy-evm.workspace = true
 alloy-rpc-types-beacon.workspace = true
 alloy-rpc-types-engine.workspace = true
 alloy-transport-http.workspace = true
@@ -104,6 +108,7 @@ parking_lot.workspace = true
 url.workspace = true
 anyhow = "1"
 opentelemetry = { workspace = true, optional = true }
+dashmap.workspace = true
 
 tower = "0.5"
 futures = "0.3"
@@ -121,10 +126,10 @@ http = "1.0"
 sha3 = "0.10"
 hex = "0.4"
 ureq = "2.10"
+k256 = "0.13.4"
 
-rollup-boost = { git = "http://github.com/flashbots/rollup-boost", branch = "main" }
+rollup-boost = { git = "http://github.com/flashbots/rollup-boost", rev = "b86af43969557bee18f17ec1d6bcd3e984f910b2" }
 
-dashmap = { version = "6.1", optional = true }
 nanoid = { version = "0.4", optional = true }
 reth-ipc = { workspace = true, optional = true }
 tar = { version = "0.4", optional = true }
@@ -132,6 +137,7 @@ ctor = { version = "0.4.2", optional = true }
 rlimit = { version = "0.10", optional = true }
 macros = { path = "src/tests/framework/macros", optional = true }
 testcontainers = "0.24.0"
+dirs-next = "2.0.0"
 
 [target.'cfg(unix)'.dependencies]
 tikv-jemallocator = { version = "0.6", optional = true }
@@ -146,7 +152,6 @@ alloy-provider = { workspace = true, default-features = true, features = [
 ] }
 tempfile = "3.8"
 macros = { path = "src/tests/framework/macros" }
-dashmap = { version = "6.1" }
 nanoid = { version = "0.4" }
 reth-ipc = { workspace = true }
 reth-node-builder = { workspace = true, features = ["test-utils"] }
@@ -175,7 +180,6 @@ min-debug-logs = ["tracing/release_max_level_debug"]
 min-trace-logs = ["tracing/release_max_level_trace"]
 
 testing = [
-    "dashmap",
     "nanoid",
     "reth-ipc",
     "reth-node-builder/test-utils",
