@@ -5,13 +5,17 @@ use crate::{
         builder_tx::BuilderTransactions,
         flashblocks::{
             builder_tx::{FlashblocksBuilderTx, FlashblocksNumberBuilderTx},
+            p2p::{AGENT_VERSION, FLASHBLOCKS_STREAM_PROTOCOL, Message},
             payload::FlashblocksExtraCtx,
+            payload_handler::PayloadHandler,
         },
         generator::BlockPayloadJobGenerator,
     },
     flashtestations::service::bootstrap_flashtestations,
+    metrics::OpRBuilderMetrics,
     traits::{NodeBounds, PoolBounds},
 };
+use eyre::WrapErr as _;
 use reth_basic_payload_builder::BasicPayloadJobGeneratorConfig;
 use reth_node_api::NodeTypes;
 use reth_node_builder::{BuilderContext, components::PayloadServiceBuilder};
@@ -34,16 +38,65 @@ impl FlashblocksServiceBuilder {
         Pool: PoolBounds,
         BuilderTx: BuilderTransactions<FlashblocksExtraCtx> + Unpin + Clone + Send + Sync + 'static,
     {
-        let once_lock = Arc::new(std::sync::OnceLock::new());
+        // TODO: is there a different global token?
+        let cancel = tokio_util::sync::CancellationToken::new();
 
+        let mut builder = p2p::NodeBuilder::new().with_cancellation_token(cancel.clone());
+
+        if let Some(ref private_key_hex) = self.0.p2p_private_key_hex
+            && !private_key_hex.is_empty()
+        {
+            builder = builder.with_keypair_hex_string(private_key_hex.clone());
+        }
+
+        let known_peers: Vec<p2p::Multiaddr> = self
+            .0
+            .p2p_known_peers
+            .split(',')
+            .map(|s| s.to_string())
+            .filter_map(|s| s.parse().ok())
+            .collect();
+
+        let p2p::NodeBuildResult {
+            node,
+            outgoing_message_tx,
+            mut incoming_message_rxs,
+        } = builder
+            .with_agent_version(AGENT_VERSION.to_string())
+            .with_protocol(FLASHBLOCKS_STREAM_PROTOCOL)
+            .with_known_peers(known_peers)
+            .with_listen_addr(
+                format!("/ip4/127.0.0.1/tcp/{}", self.0.p2p_port)
+                    .parse()
+                    .unwrap(),
+            ) // TODO: make configurable
+            .try_build::<Message>()
+            .wrap_err("failed to build flashblocks p2p node")?;
+        let multiaddrs = node.multiaddrs();
+        ctx.task_executor().spawn(async move {
+            if let Err(e) = node.run().await {
+                tracing::error!(error = %e, "p2p node exited");
+            }
+        });
+        tracing::info!(multiaddrs = ?multiaddrs, "flashblocks p2p node started");
+
+        let incoming_message_rx = incoming_message_rxs
+            .remove(&FLASHBLOCKS_STREAM_PROTOCOL)
+            .expect("flashblocks p2p protocol must be found in receiver map");
+
+        let metrics = Arc::new(OpRBuilderMetrics::default());
+        let gas_limiter_config = self.0.gas_limiter_config.clone();
+        let (built_payload_tx, built_payload_rx) = tokio::sync::mpsc::channel(16);
         let payload_builder = OpPayloadBuilder::new(
             OpEvmConfig::optimism(ctx.chain_spec()),
             pool,
             ctx.provider().clone(),
             self.0.clone(),
             builder_tx,
-            once_lock.clone(),
-        )?;
+            built_payload_tx,
+            metrics.clone(),
+        )
+        .wrap_err("failed to create flashblocks payload builder")?;
 
         let payload_job_config = BasicPayloadJobGeneratorConfig::default();
 
@@ -56,19 +109,37 @@ impl FlashblocksServiceBuilder {
             self.0.block_time_leeway,
         );
 
-        let (payload_service, payload_builder) =
+        let (payload_service, payload_builder_handle) =
             PayloadBuilderService::new(payload_generator, ctx.provider().canonical_state_stream());
 
-        once_lock
-            .set(payload_service.payload_events_handle())
-            .map_err(|_| eyre::eyre!("Cannot initialize payload service handle"))?;
+        let syncer_ctx = crate::builders::flashblocks::ctx::OpPayloadSyncerCtx::new(
+            &ctx.provider().clone(),
+            self.0,
+            OpEvmConfig::optimism(ctx.chain_spec()),
+        )
+        .wrap_err("failed to create flashblocks payload builder context")?;
+
+        let payload_handler = PayloadHandler::new(
+            built_payload_rx,
+            incoming_message_rx,
+            outgoing_message_tx,
+            payload_service.payload_events_handle(),
+            syncer_ctx,
+            metrics,
+            gas_limiter_config,
+            ctx.provider().clone(),
+            cancel,
+        );
 
         ctx.task_executor()
             .spawn_critical("custom payload builder service", Box::pin(payload_service));
+        ctx.task_executor().spawn_critical(
+            "flashblocks payload handler",
+            Box::pin(payload_handler.run()),
+        );
 
         tracing::info!("Flashblocks payload builder service started");
-
-        Ok(payload_builder)
+        Ok(payload_builder_handle)
     }
 }
 

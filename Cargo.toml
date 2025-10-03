@@ -8,7 +8,7 @@ repository = "https://github.com/flashbots/op-rbuilder"
 exclude = [".github/"]
 
 [workspace]
-members = [ "crates/op-rbuilder", "crates/tdx-quote-provider"]
+members = [ "crates/op-rbuilder", "crates/p2p", "crates/tdx-quote-provider"]
 default-members = ["crates/op-rbuilder"]
 resolver = "2"
 
@@ -179,6 +179,9 @@ flate2 = "1.0.35"
 prometheus = "0.13.4"
 ctor = "0.2"
 dashmap = "6.1"
+hex = "0.4"
+futures = "0.3"
+futures-util = "0.3.31"
 
 lazy_static = "1.4.0"
 tikv-jemallocator = { version = "0.6" }
