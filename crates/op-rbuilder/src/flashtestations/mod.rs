@@ -9,6 +9,25 @@ sol!(
     interface IFlashtestationRegistry {
         function registerTEEService(bytes calldata rawQuote, bytes calldata extendedRegistrationData) external;
 
+        function permitRegisterTEEService(
+            bytes calldata rawQuote,
+            bytes calldata extendedRegistrationData,
+            uint256 nonce,
+            uint256 deadline,
+            bytes calldata signature
+        ) external payable;
+
+        function computeStructHash(
+            bytes calldata rawQuote,
+            bytes calldata extendedRegistrationData,
+            uint256 nonce,
+            uint256 deadline
+        ) external pure returns (bytes32);
+
+        function hashTypedDataV4(bytes32 structHash) external view returns (bytes32);
+
+        function getRegistrationStatus(address teeAddress) external view returns (bool isValid, bytes32 quoteHash);
+
         /// @notice Emitted when a TEE service is registered
         /// @param teeAddress The address of the TEE service
         /// @param rawQuote The raw quote from the TEE device
@@ -46,6 +65,20 @@ sol!(
     interface IBlockBuilderPolicy {
         function verifyBlockBuilderProof(uint8 version, bytes32 blockContentHash) external;
 
+        function permitVerifyBlockBuilderProof(
+            uint8 version,
+            bytes32 blockContentHash,
+            uint256 nonce,
+            bytes calldata eip712Sig
+        ) external;
+
+        function computeStructHash(uint8 version, bytes32 blockContentHash, uint256 nonce)
+            external
+            pure
+            returns (bytes32);
+
+        function getHashedTypeDataV4(bytes32 structHash) external view returns (bytes32);
+
         /// @notice Emitted when a block builder proof is successfully verified
         /// @param caller The address that called the verification function (TEE address)
         /// @param workloadId The workload identifier of the TEE
@@ -80,6 +113,11 @@ sol!(
     }
 
     type WorkloadId is bytes32;
+
+
+    interface IERC20Permit {
+        function nonces(address owner) external view returns (uint256);
+    }
 );
 
 #[derive(Debug, thiserror::Error)]

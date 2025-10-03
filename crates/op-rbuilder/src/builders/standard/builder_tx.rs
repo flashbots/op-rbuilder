@@ -2,6 +2,7 @@ use alloy_evm::Database;
 use core::fmt::Debug;
 use reth_provider::StateProvider;
 use reth_revm::State;
+use tracing::warn;
 
 use crate::{
     builders::{
@@ -34,30 +35,39 @@ impl StandardBuilderTx {
 }
 
 impl BuilderTransactions for StandardBuilderTx {
-    fn simulate_builder_txs<Extra: Debug + Default>(
+    fn simulate_builder_txs(
         &self,
         state_provider: impl StateProvider + Clone,
-        info: &mut ExecutionInfo<Extra>,
+        info: &mut ExecutionInfo,
         ctx: &OpPayloadBuilderCtx,
         db: &mut State<impl Database>,
+        top_of_block: bool,
     ) -> Result<Vec<BuilderTransactionCtx>, BuilderTransactionError> {
         let mut builder_txs = Vec::<BuilderTransactionCtx>::new();
         let standard_builder_tx = self.base_builder_tx.simulate_builder_tx(ctx, db)?;
         builder_txs.extend(standard_builder_tx.clone());
         if let Some(flashtestations_builder_tx) = &self.flashtestations_builder_tx {
-            let mut simulation_state = self.simulate_builder_txs_state::<()>(
+            let mut simulation_state = self.simulate_builder_txs_state(
                 state_provider.clone(),
-                standard_builder_tx.iter().collect(),
+                standard_builder_tx
+                    .iter()
+                    .filter(|tx| tx.is_top_of_block == top_of_block)
+                    .collect(),
                 ctx,
                 db,
             )?;
-            let flashtestations_builder_txs = flashtestations_builder_tx.simulate_builder_txs(
+            match flashtestations_builder_tx.simulate_builder_txs(
                 state_provider,
                 info,
                 ctx,
                 &mut simulation_state,
-            )?;
-            builder_txs.extend(flashtestations_builder_txs);
+                top_of_block,
+            ) {
+                Ok(flashtestations_builder_txs) => builder_txs.extend(flashtestations_builder_txs),
+                Err(e) => {
+                    warn!(target: "flashtestations", error = ?e, "failed to add flashtestations builder tx")
+                }
+            }
         }
         Ok(builder_txs)
     }
