@@ -55,6 +55,9 @@ pub enum BuilderTransactionError {
     /// Signature signing fails
     #[error("failed to sign transaction: {0}")]
     SigningError(secp256k1::Error),
+    /// Invalid contract data returned
+    #[error("invalid contract data returned {0}")]
+    InvalidContract(Address),
     /// Invalid tx errors during evm execution.
     #[error("invalid transaction error {0}")]
     InvalidTransactionError(Box<dyn core::error::Error + Send + Sync>),
@@ -98,16 +101,17 @@ impl BuilderTransactionError {
     }
 }
 
-pub trait BuilderTransactions<ExtraCtx: Debug + Default = ()>: Debug {
-    fn simulate_builder_txs<Extra: Debug + Default>(
+pub trait BuilderTransactions<ExtraCtx: Debug + Default = (), Extra: Debug + Default = ()> {
+    fn simulate_builder_txs(
         &self,
         state_provider: impl StateProvider + Clone,
         info: &mut ExecutionInfo<Extra>,
         ctx: &OpPayloadBuilderCtx<ExtraCtx>,
         db: &mut State<impl Database>,
+        top_of_block: bool,
     ) -> Result<Vec<BuilderTransactionCtx>, BuilderTransactionError>;
 
-    fn add_builder_txs<Extra: Debug + Default>(
+    fn add_builder_txs(
         &self,
         state_provider: impl StateProvider + Clone,
         info: &mut ExecutionInfo<Extra>,
@@ -122,8 +126,13 @@ pub trait BuilderTransactions<ExtraCtx: Debug + Default = ()>: Debug {
 
             let mut invalid: HashSet<Address> = HashSet::new();
 
-            let builder_txs =
-                self.simulate_builder_txs(state_provider, info, builder_ctx, evm.db_mut())?;
+            let builder_txs = self.simulate_builder_txs(
+                state_provider,
+                info,
+                builder_ctx,
+                evm.db_mut(),
+                top_of_block,
+            )?;
             for builder_tx in builder_txs.iter() {
                 if builder_tx.is_top_of_block != top_of_block {
                     // don't commit tx if the buidler tx is not being added in the intended
@@ -140,7 +149,7 @@ pub trait BuilderTransactions<ExtraCtx: Debug + Default = ()>: Debug {
                     .map_err(|err| BuilderTransactionError::EvmExecutionError(Box::new(err)))?;
 
                 if !result.is_success() {
-                    warn!(target: "payload_builder", tx_hash = ?builder_tx.signed_tx.tx_hash(), "builder tx reverted");
+                    warn!(target: "payload_builder", tx_hash = ?builder_tx.signed_tx.tx_hash(), result = ?result, "builder tx reverted");
                     invalid.insert(builder_tx.signed_tx.signer());
                     continue;
                 }
@@ -174,7 +183,7 @@ pub trait BuilderTransactions<ExtraCtx: Debug + Default = ()>: Debug {
         }
     }
 
-    fn simulate_builder_txs_state<Extra: Debug + Default>(
+    fn simulate_builder_txs_state(
         &self,
         state_provider: impl StateProvider + Clone,
         builder_txs: Vec<&BuilderTransactionCtx>,
@@ -204,16 +213,20 @@ pub trait BuilderTransactions<ExtraCtx: Debug + Default = ()>: Debug {
 }
 
 #[derive(Debug, Clone)]
-pub(super) struct BuilderTxBase {
+pub(super) struct BuilderTxBase<ExtraCtx = ()> {
     pub signer: Option<Signer>,
+    _marker: std::marker::PhantomData<ExtraCtx>,
 }
 
-impl BuilderTxBase {
+impl<ExtraCtx: Debug + Default> BuilderTxBase<ExtraCtx> {
     pub(super) fn new(signer: Option<Signer>) -> Self {
-        Self { signer }
+        Self {
+            signer,
+            _marker: std::marker::PhantomData,
+        }
     }
 
-    pub(super) fn simulate_builder_tx<ExtraCtx: Debug + Default>(
+    pub(super) fn simulate_builder_tx(
         &self,
         ctx: &OpPayloadBuilderCtx<ExtraCtx>,
         db: &mut State<impl Database>,
@@ -258,7 +271,7 @@ impl BuilderTxBase {
         std::cmp::max(zero_cost + nonzero_cost + 21_000, floor_gas)
     }
 
-    fn signed_builder_tx<ExtraCtx: Debug + Default>(
+    fn signed_builder_tx(
         &self,
         ctx: &OpPayloadBuilderCtx<ExtraCtx>,
         db: &mut State<impl Database>,
