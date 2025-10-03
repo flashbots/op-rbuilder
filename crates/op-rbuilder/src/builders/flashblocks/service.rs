@@ -38,7 +38,10 @@ impl FlashblocksServiceBuilder {
         Pool: PoolBounds,
         BuilderTx: BuilderTransactions<FlashblocksExtraCtx> + Unpin + Clone + Send + Sync + 'static,
     {
-        let mut builder = p2p::NodeBuilder::new();
+        // TODO: is there a different global token?
+        let cancel = tokio_util::sync::CancellationToken::new();
+
+        let mut builder = p2p::NodeBuilder::new().with_cancellation_token(cancel.clone());
 
         if let Some(ref private_key_hex) = self.0.p2p_private_key_hex
             && !private_key_hex.is_empty()
@@ -109,20 +112,23 @@ impl FlashblocksServiceBuilder {
         let (payload_service, payload_builder_handle) =
             PayloadBuilderService::new(payload_generator, ctx.provider().canonical_state_stream());
 
-        let payload_builder_ctx = crate::builders::flashblocks::ctx::get_op_payload_syncer_ctx(
-            ctx.provider().clone(),
-            OpEvmConfig::optimism(ctx.chain_spec()),
+        let syncer_ctx = crate::builders::flashblocks::ctx::OpPayloadSyncerCtx::new(
+            &ctx.provider().clone(),
             self.0,
-            FlashblocksExtraCtx::default(), // TODO
-        );
+            OpEvmConfig::optimism(ctx.chain_spec()),
+        )
+        .wrap_err("failed to create flashblocks payload builder context")?;
+
         let payload_handler = PayloadHandler::new(
             built_payload_rx,
             incoming_message_rx,
             outgoing_message_tx,
             payload_service.payload_events_handle(),
-            payload_builder_ctx,
+            syncer_ctx,
             metrics,
             gas_limiter_config,
+            ctx.provider().clone(),
+            cancel,
         );
 
         ctx.task_executor()

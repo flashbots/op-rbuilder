@@ -73,7 +73,7 @@ pub(super) struct ExtraExecutionInfo {
     last_flashblock_index: usize,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct FlashblocksExtraCtx {
     /// Current flashblock index
     flashblock_index: u64,
