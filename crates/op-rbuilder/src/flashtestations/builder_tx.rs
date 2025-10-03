@@ -136,6 +136,7 @@ where
             .evm_with_env(&mut simulation_state, ctx.evm_env.clone());
         evm.modify_cfg(|cfg| {
             cfg.disable_balance_check = true;
+            cfg.disable_nonce_check = true;
         });
         let calldata = IFlashtestationRegistry::getRegistrationStatusCall {
             teeAddress: self.tee_service_signer.address,
@@ -356,6 +357,207 @@ where
                 "invalid contract address for flashtestations",
             ))
         }
+    }
+
+    fn get_permit_nonce(
+        &self,
+        contract_address: Address,
+        ctx: &OpPayloadBuilderCtx<ExtraCtx>,
+        evm: &mut OpEvm<
+            &mut State<StateProviderDatabase<impl StateProvider>>,
+            NoOpInspector,
+            PrecompilesMap,
+        >,
+    ) -> Result<U256, BuilderTransactionError> {
+        let calldata = IERC20Permit::noncesCall {
+            owner: self.tee_service_signer.address,
+        }
+        .abi_encode();
+        let SimulationSuccessResult { output, .. } =
+            self.simulate_call(contract_address, calldata.into(), None, ctx, evm)?;
+        U256::abi_decode(&output)
+            .map_err(|_| BuilderTransactionError::InvalidContract(contract_address))
+    }
+
+    fn registration_permit_signature(
+        &self,
+        permit_nonce: U256,
+        ctx: &OpPayloadBuilderCtx<ExtraCtx>,
+        evm: &mut OpEvm<
+            &mut State<StateProviderDatabase<impl StateProvider>>,
+            NoOpInspector,
+            PrecompilesMap,
+        >,
+    ) -> Result<Signature, BuilderTransactionError> {
+        let struct_hash_calldata = IFlashtestationRegistry::computeStructHashCall {
+            rawQuote: self.attestation.clone().into(),
+            extendedRegistrationData: self.extra_registration_data.clone(),
+            nonce: permit_nonce,
+            deadline: U256::from(ctx.timestamp()),
+        }
+        .abi_encode();
+        let SimulationSuccessResult { output, .. } = self.simulate_call(
+            self.registry_address,
+            struct_hash_calldata.into(),
+            None,
+            ctx,
+            evm,
+        )?;
+        let struct_hash = B256::abi_decode(&output)
+            .map_err(|_| BuilderTransactionError::InvalidContract(self.registry_address))?;
+        let typed_data_hash_calldata = IFlashtestationRegistry::hashTypedDataV4Call {
+            structHash: struct_hash,
+        }
+        .abi_encode();
+        let SimulationSuccessResult { output, .. } = self.simulate_call(
+            self.registry_address,
+            typed_data_hash_calldata.into(),
+            None,
+            ctx,
+            evm,
+        )?;
+        let typed_data_hash = B256::abi_decode(&output)
+            .map_err(|_| BuilderTransactionError::InvalidContract(self.registry_address))?;
+        let signature = self.tee_service_signer.sign_message(typed_data_hash)?;
+        Ok(signature)
+    }
+
+    fn signed_registration_permit_tx(
+        &self,
+        ctx: &OpPayloadBuilderCtx<ExtraCtx>,
+        evm: &mut OpEvm<
+            &mut State<StateProviderDatabase<impl StateProvider>>,
+            NoOpInspector,
+            PrecompilesMap,
+        >,
+    ) -> Result<BuilderTransactionCtx, BuilderTransactionError> {
+        let permit_nonce = self.get_permit_nonce(self.registry_address, ctx, evm)?;
+        let signature = self.registration_permit_signature(permit_nonce, ctx, evm)?;
+        let calldata = IFlashtestationRegistry::permitRegisterTEEServiceCall {
+            rawQuote: self.attestation.clone().into(),
+            extendedRegistrationData: self.extra_registration_data.clone(),
+            nonce: permit_nonce,
+            deadline: U256::from(ctx.timestamp()),
+            signature: signature.as_bytes().into(),
+        }
+        .abi_encode();
+        let SimulationSuccessResult { gas_used, .. } = self.simulate_call(
+            self.registry_address,
+            calldata.clone().into(),
+            Some(TEEServiceRegistered::SIGNATURE_HASH),
+            ctx,
+            evm,
+        )?;
+        let signed_tx = self.sign_tx(
+            self.registry_address,
+            self.builder_key,
+            gas_used,
+            calldata.into(),
+            ctx,
+            evm.db_mut(),
+        )?;
+        let da_size =
+            op_alloy_flz::tx_estimated_size_fjord_bytes(signed_tx.encoded_2718().as_slice());
+        Ok(BuilderTransactionCtx {
+            gas_used,
+            da_size,
+            signed_tx,
+            is_top_of_block: false,
+        })
+    }
+
+    fn block_proof_permit_signature(
+        &self,
+        permit_nonce: U256,
+        block_content_hash: B256,
+        ctx: &OpPayloadBuilderCtx<ExtraCtx>,
+        evm: &mut OpEvm<
+            &mut State<StateProviderDatabase<impl StateProvider>>,
+            NoOpInspector,
+            PrecompilesMap,
+        >,
+    ) -> Result<Signature, BuilderTransactionError> {
+        let struct_hash_calldata = IBlockBuilderPolicy::computeStructHashCall {
+            version: self.builder_proof_version,
+            blockContentHash: block_content_hash,
+            nonce: permit_nonce,
+        }
+        .abi_encode();
+        let SimulationSuccessResult { output, .. } = self.simulate_call(
+            self.builder_policy_address,
+            struct_hash_calldata.into(),
+            None,
+            ctx,
+            evm,
+        )?;
+        let struct_hash = B256::abi_decode(&output)
+            .map_err(|_| BuilderTransactionError::InvalidContract(self.builder_policy_address))?;
+        let typed_data_hash_calldata = IBlockBuilderPolicy::getHashedTypeDataV4Call {
+            structHash: struct_hash,
+        }
+        .abi_encode();
+        let SimulationSuccessResult { output, .. } = self.simulate_call(
+            self.builder_policy_address,
+            typed_data_hash_calldata.into(),
+            None,
+            ctx,
+            evm,
+        )?;
+        let typed_data_hash = B256::abi_decode(&output)
+            .map_err(|_| BuilderTransactionError::InvalidContract(self.builder_policy_address))?;
+        let signature = self.tee_service_signer.sign_message(typed_data_hash)?;
+        Ok(signature)
+    }
+
+    fn signed_block_proof_permit_tx(
+        &self,
+        transactions: Vec<OpTransactionSigned>,
+        ctx: &OpPayloadBuilderCtx<ExtraCtx>,
+        evm: &mut OpEvm<
+            &mut State<StateProviderDatabase<impl StateProvider>>,
+            NoOpInspector,
+            PrecompilesMap,
+        >,
+    ) -> Result<BuilderTransactionCtx, BuilderTransactionError> {
+        let permit_nonce = self.get_permit_nonce(self.builder_policy_address, ctx, evm)?;
+        let block_content_hash = Self::compute_block_content_hash(
+            transactions.clone(),
+            ctx.parent_hash(),
+            ctx.block_number(),
+            ctx.timestamp(),
+        );
+        let signature =
+            self.block_proof_permit_signature(permit_nonce, block_content_hash, ctx, evm)?;
+        let calldata = IBlockBuilderPolicy::permitVerifyBlockBuilderProofCall {
+            blockContentHash: block_content_hash,
+            nonce: U256::from(permit_nonce),
+            version: self.builder_proof_version,
+            eip712Sig: signature.as_bytes().into(),
+        }
+        .abi_encode();
+        let SimulationSuccessResult { gas_used, .. } = self.simulate_call(
+            self.builder_policy_address,
+            calldata.clone().into(),
+            Some(BlockBuilderProofVerified::SIGNATURE_HASH),
+            ctx,
+            evm,
+        )?;
+        let signed_tx = self.sign_tx(
+            self.builder_policy_address,
+            self.builder_key,
+            gas_used,
+            calldata.into(),
+            ctx,
+            evm.db_mut(),
+        )?;
+        let da_size =
+            op_alloy_flz::tx_estimated_size_fjord_bytes(signed_tx.encoded_2718().as_slice());
+        Ok(BuilderTransactionCtx {
+            gas_used,
+            da_size,
+            signed_tx,
+            is_top_of_block: false,
+        })
     }
 }
 

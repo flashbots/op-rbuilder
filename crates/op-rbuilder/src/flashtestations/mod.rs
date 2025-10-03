@@ -115,6 +115,11 @@ sol!(
     }
 
     type WorkloadId is bytes32;
+
+
+    interface IERC20Permit {
+        function nonces(address owner) external view returns (uint256);
+    }
 );
 
 pub mod args;
