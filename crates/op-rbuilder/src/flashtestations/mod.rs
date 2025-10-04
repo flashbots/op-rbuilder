@@ -1,6 +1,4 @@
-use alloy_primitives::{Address, B256};
-use alloy_sol_types::{Error, sol};
-use op_revm::OpHaltReason;
+use alloy_sol_types::sol;
 
 // https://github.com/flashbots/flashtestations/commit/7cc7f68492fe672a823dd2dead649793aac1f216
 sol!(
@@ -105,6 +103,10 @@ sol!(
         error EmptySourceLocators();
     }
 
+    interface IERC20Permit {
+        function nonces(address owner) external view returns (uint256);
+    }
+
     struct BlockData {
         bytes32 parentHash;
         uint256 blockNumber;
@@ -113,11 +115,6 @@ sol!(
     }
 
     type WorkloadId is bytes32;
-
-
-    interface IERC20Permit {
-        function nonces(address owner) external view returns (uint256);
-    }
 );
 
 #[derive(Debug, thiserror::Error)]
@@ -126,12 +123,8 @@ pub enum FlashtestationRevertReason {
     FlashtestationRegistry(IFlashtestationRegistry::IFlashtestationRegistryErrors),
     #[error("block builder policy error: {0:?}")]
     BlockBuilderPolicy(IBlockBuilderPolicy::IBlockBuilderPolicyErrors),
-    #[error("contract {0:?} may be invalid, mismatch in log emitted: expected {1:?}")]
-    LogMismatch(Address, B256),
-    #[error("unknown revert: {0} err: {1}")]
-    Unknown(String, Error),
-    #[error("halt: {0:?}")]
-    Halt(OpHaltReason),
+    #[error("unknown revert {0}")]
+    Unknown(String),
 }
 
 pub mod args;
