@@ -1,4 +1,4 @@
-use alloy_consensus::TxEip1559;
+use alloy_consensus::{Transaction, TxEip1559};
 use alloy_eips::{Encodable2718, eip7623::TOTAL_COST_FLOOR_PER_TOKEN};
 use alloy_evm::Database;
 use alloy_op_evm::OpEvm;
@@ -385,6 +385,84 @@ pub trait BuilderTransactions<ExtraCtx: Debug + Default = (), Extra: Debug + Def
             ExecutionResult::Halt { reason, .. } => {
                 Err(BuilderTransactionError::TransactionHalted(to, reason))
             }
+        }
+    }
+
+    fn sign_tx(
+        &self,
+        to: Address,
+        from: Signer,
+        gas_used: Option<u64>,
+        calldata: Bytes,
+        ctx: &OpPayloadBuilderCtx<ExtraCtx>,
+        db: &mut State<impl Database>,
+    ) -> Result<Recovered<OpTransactionSigned>, BuilderTransactionError> {
+        let nonce = get_nonce(db, from.address)?;
+        // Create the EIP-1559 transaction
+        let tx = OpTypedTransaction::Eip1559(TxEip1559 {
+            chain_id: ctx.chain_id(),
+            nonce,
+            // Due to EIP-150, 63/64 of available gas is forwarded to external calls so need to add a buffer
+            gas_limit: gas_used
+                .map(|gas| gas * 64 / 63)
+                .unwrap_or(ctx.block_gas_limit()),
+            max_fee_per_gas: ctx.base_fee().into(),
+            to: TxKind::Call(to),
+            input: calldata,
+            ..Default::default()
+        });
+        Ok(from.sign_tx(tx)?)
+    }
+
+    fn simulate_call(
+        &self,
+        signed_tx: Recovered<OpTransactionSigned>,
+        expected_topic: Option<B256>,
+        revert_handler: impl FnOnce(Bytes) -> BuilderTransactionError,
+        evm: &mut OpEvm<
+            &mut State<StateProviderDatabase<impl StateProvider>>,
+            NoOpInspector,
+            PrecompilesMap,
+        >,
+    ) -> Result<SimulationSuccessResult, BuilderTransactionError> {
+        let ResultAndState { result, state } = match evm.transact(&signed_tx) {
+            Ok(res) => res,
+            Err(err) => {
+                if err.is_invalid_tx_err() {
+                    return Err(BuilderTransactionError::InvalidTransactionError(Box::new(
+                        err,
+                    )));
+                } else {
+                    return Err(BuilderTransactionError::EvmExecutionError(Box::new(err)));
+                }
+            }
+        };
+
+        match result {
+            ExecutionResult::Success {
+                logs,
+                gas_used,
+                output,
+                ..
+            } => {
+                if let Some(topic) = expected_topic
+                    && !logs.iter().any(|log| log.topics().first() == Some(&topic))
+                {
+                    return Err(BuilderTransactionError::InvalidContract(
+                        signed_tx.to().unwrap_or_default(),
+                        InvalidContractDataError::InvalidLogs(topic),
+                    ));
+                }
+                Ok(SimulationSuccessResult {
+                    gas_used,
+                    output: output.into_data(),
+                    state_changes: state,
+                })
+            }
+            ExecutionResult::Revert { output, .. } => Err(revert_handler(output)),
+            ExecutionResult::Halt { reason, .. } => Err(BuilderTransactionError::other(
+                BuilderTransactionError::TransactionHalted(reason),
+            )),
         }
     }
 }

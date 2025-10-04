@@ -374,9 +374,13 @@ where
         }
         .abi_encode();
         let SimulationSuccessResult { output, .. } =
-            self.simulate_call(contract_address, calldata.into(), None, ctx, evm)?;
-        U256::abi_decode(&output)
-            .map_err(|_| BuilderTransactionError::InvalidContract(contract_address))
+            self.simulate_flashtestation_call(contract_address, calldata, None, ctx, evm)?;
+        U256::abi_decode(&output).map_err(|_| {
+            BuilderTransactionError::InvalidContract(
+                contract_address,
+                InvalidContractDataError::OutputAbiDecodeError,
+            )
+        })
     }
 
     fn registration_permit_signature(
@@ -396,28 +400,36 @@ where
             deadline: U256::from(ctx.timestamp()),
         }
         .abi_encode();
-        let SimulationSuccessResult { output, .. } = self.simulate_call(
+        let SimulationSuccessResult { output, .. } = self.simulate_flashtestation_call(
             self.registry_address,
-            struct_hash_calldata.into(),
+            struct_hash_calldata,
             None,
             ctx,
             evm,
         )?;
-        let struct_hash = B256::abi_decode(&output)
-            .map_err(|_| BuilderTransactionError::InvalidContract(self.registry_address))?;
+        let struct_hash = B256::abi_decode(&output).map_err(|_| {
+            BuilderTransactionError::InvalidContract(
+                self.registry_address,
+                InvalidContractDataError::OutputAbiDecodeError,
+            )
+        })?;
         let typed_data_hash_calldata = IFlashtestationRegistry::hashTypedDataV4Call {
             structHash: struct_hash,
         }
         .abi_encode();
-        let SimulationSuccessResult { output, .. } = self.simulate_call(
+        let SimulationSuccessResult { output, .. } = self.simulate_flashtestation_call(
             self.registry_address,
-            typed_data_hash_calldata.into(),
+            typed_data_hash_calldata,
             None,
             ctx,
             evm,
         )?;
-        let typed_data_hash = B256::abi_decode(&output)
-            .map_err(|_| BuilderTransactionError::InvalidContract(self.registry_address))?;
+        let typed_data_hash = B256::abi_decode(&output).map_err(|_| {
+            BuilderTransactionError::InvalidContract(
+                self.registry_address,
+                InvalidContractDataError::OutputAbiDecodeError,
+            )
+        })?;
         let signature = self.tee_service_signer.sign_message(typed_data_hash)?;
         Ok(signature)
     }
@@ -441,17 +453,17 @@ where
             signature: signature.as_bytes().into(),
         }
         .abi_encode();
-        let SimulationSuccessResult { gas_used, .. } = self.simulate_call(
+        let SimulationSuccessResult { gas_used, .. } = self.simulate_flashtestation_call(
             self.registry_address,
-            calldata.clone().into(),
+            calldata.clone(),
             Some(TEEServiceRegistered::SIGNATURE_HASH),
             ctx,
             evm,
         )?;
         let signed_tx = self.sign_tx(
             self.registry_address,
-            self.builder_key,
-            gas_used,
+            self.builder_signer,
+            Some(gas_used),
             calldata.into(),
             ctx,
             evm.db_mut(),
@@ -483,28 +495,36 @@ where
             nonce: permit_nonce,
         }
         .abi_encode();
-        let SimulationSuccessResult { output, .. } = self.simulate_call(
+        let SimulationSuccessResult { output, .. } = self.simulate_flashtestation_call(
             self.builder_policy_address,
-            struct_hash_calldata.into(),
+            struct_hash_calldata,
             None,
             ctx,
             evm,
         )?;
-        let struct_hash = B256::abi_decode(&output)
-            .map_err(|_| BuilderTransactionError::InvalidContract(self.builder_policy_address))?;
+        let struct_hash = B256::abi_decode(&output).map_err(|_| {
+            BuilderTransactionError::InvalidContract(
+                self.builder_policy_address,
+                InvalidContractDataError::OutputAbiDecodeError,
+            )
+        })?;
         let typed_data_hash_calldata = IBlockBuilderPolicy::getHashedTypeDataV4Call {
             structHash: struct_hash,
         }
         .abi_encode();
-        let SimulationSuccessResult { output, .. } = self.simulate_call(
+        let SimulationSuccessResult { output, .. } = self.simulate_flashtestation_call(
             self.builder_policy_address,
-            typed_data_hash_calldata.into(),
+            typed_data_hash_calldata,
             None,
             ctx,
             evm,
         )?;
-        let typed_data_hash = B256::abi_decode(&output)
-            .map_err(|_| BuilderTransactionError::InvalidContract(self.builder_policy_address))?;
+        let typed_data_hash = B256::abi_decode(&output).map_err(|_| {
+            BuilderTransactionError::InvalidContract(
+                self.builder_policy_address,
+                InvalidContractDataError::OutputAbiDecodeError,
+            )
+        })?;
         let signature = self.tee_service_signer.sign_message(typed_data_hash)?;
         Ok(signature)
     }
@@ -535,17 +555,17 @@ where
             eip712Sig: signature.as_bytes().into(),
         }
         .abi_encode();
-        let SimulationSuccessResult { gas_used, .. } = self.simulate_call(
+        let SimulationSuccessResult { gas_used, .. } = self.simulate_flashtestation_call(
             self.builder_policy_address,
-            calldata.clone().into(),
+            calldata.clone(),
             Some(BlockBuilderProofVerified::SIGNATURE_HASH),
             ctx,
             evm,
         )?;
         let signed_tx = self.sign_tx(
             self.builder_policy_address,
-            self.builder_key,
-            gas_used,
+            self.builder_signer,
+            Some(gas_used),
             calldata.into(),
             ctx,
             evm.db_mut(),
@@ -558,6 +578,54 @@ where
             signed_tx,
             is_top_of_block: false,
         })
+    }
+
+    fn simulate_flashtestation_call(
+        &self,
+        contract_address: Address,
+        calldata: Vec<u8>,
+        expected_topic: Option<B256>,
+        ctx: &OpPayloadBuilderCtx<ExtraCtx>,
+        evm: &mut OpEvm<
+            &mut State<StateProviderDatabase<impl StateProvider>>,
+            NoOpInspector,
+            PrecompilesMap,
+        >,
+    ) -> Result<SimulationSuccessResult, BuilderTransactionError> {
+        let signed_tx = self.sign_tx(
+            contract_address,
+            self.builder_signer,
+            None,
+            calldata.into(),
+            ctx,
+            evm.db_mut(),
+        )?;
+        let revert_handler = if contract_address == self.registry_address {
+            Self::handle_registry_reverts
+        } else {
+            Self::handle_block_builder_policy_reverts
+        };
+        self.simulate_call(signed_tx, expected_topic, revert_handler, evm)
+    }
+
+    fn handle_registry_reverts(revert_output: Bytes) -> BuilderTransactionError {
+        let revert_reason =
+            IFlashtestationRegistry::IFlashtestationRegistryErrors::abi_decode(&revert_output)
+                .map(FlashtestationRevertReason::FlashtestationRegistry)
+                .unwrap_or_else(|_| {
+                    FlashtestationRevertReason::Unknown(hex::encode(revert_output))
+                });
+        BuilderTransactionError::TransactionReverted(Box::new(revert_reason))
+    }
+
+    fn handle_block_builder_policy_reverts(revert_output: Bytes) -> BuilderTransactionError {
+        let revert_reason =
+            IBlockBuilderPolicy::IBlockBuilderPolicyErrors::abi_decode(&revert_output)
+                .map(FlashtestationRevertReason::BlockBuilderPolicy)
+                .unwrap_or_else(|_| {
+                    FlashtestationRevertReason::Unknown(hex::encode(revert_output))
+                });
+        BuilderTransactionError::TransactionReverted(Box::new(revert_reason))
     }
 }
 
