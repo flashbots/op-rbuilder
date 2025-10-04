@@ -114,7 +114,7 @@ impl From<BuilderTransactionError> for PayloadBuilderError {
             BuilderTransactionError::EvmExecutionError(e) => {
                 PayloadBuilderError::EvmExecutionError(e)
             }
-            _ => PayloadBuilderError::Other(Box::new(error)),
+            _ => PayloadBuilderError::other(error),
         }
     }
 }
