@@ -2,7 +2,7 @@ use alloy_consensus::TxEip1559;
 use alloy_eips::Encodable2718;
 use alloy_evm::{Database, Evm};
 use alloy_op_evm::OpEvm;
-use alloy_primitives::{Address, B256, TxKind};
+use alloy_primitives::{Address, TxKind};
 use alloy_sol_types::{Error, SolCall, SolEvent, SolInterface, sol};
 use core::fmt::Debug;
 use op_alloy_consensus::OpTypedTransaction;
@@ -21,7 +21,7 @@ use tracing::warn;
 use crate::{
     builders::{
         BuilderTransactionCtx, BuilderTransactionError, BuilderTransactions,
-        builder_tx::{BuilderTxBase, get_nonce, log_exists},
+        builder_tx::{BuilderTxBase, get_nonce},
         context::OpPayloadBuilderCtx,
         flashblocks::payload::{FlashblocksExecutionInfo, FlashblocksExtraCtx},
     },
@@ -53,8 +53,6 @@ sol!(
 pub(super) enum FlashblockNumberError {
     #[error("flashblocks number contract tx reverted: {0:?}")]
     Revert(IFlashblockNumber::IFlashblockNumberErrors),
-    #[error("contract may be invalid, mismatch in log emitted: expected {0:?}")]
-    LogMismatch(B256),
     #[error("unknown revert: {0} err: {1}")]
     Unknown(String, Error),
     #[error("halt: {0:?}")]
@@ -184,14 +182,15 @@ impl FlashblocksNumberBuilderTx {
 
         match result {
             ExecutionResult::Success { gas_used, logs, .. } => {
-                if log_exists(
-                    &logs,
-                    &IFlashblockNumber::FlashblockIncremented::SIGNATURE_HASH,
-                ) {
+                if logs.iter().any(|log| {
+                    log.topics().first()
+                        == Some(&IFlashblockNumber::FlashblockIncremented::SIGNATURE_HASH)
+                }) {
                     Ok(gas_used)
                 } else {
-                    Err(BuilderTransactionError::other(
-                        FlashblockNumberError::LogMismatch(
+                    Err(BuilderTransactionError::InvalidContract(
+                        self.flashblock_number_address,
+                        crate::builders::InvalidContractDataError::InvalidLogs(
                             IFlashblockNumber::FlashblockIncremented::SIGNATURE_HASH,
                         ),
                     ))
@@ -261,6 +260,7 @@ impl BuilderTransactions<FlashblocksExtraCtx, FlashblocksExecutionInfo>
                     .evm_with_env(simulation_state, ctx.evm_env.clone());
                 evm.modify_cfg(|cfg| {
                     cfg.disable_balance_check = true;
+                    cfg.disable_block_gas_limit = true;
                 });
 
                 let nonce = get_nonce(evm.db_mut(), signer.address)?;

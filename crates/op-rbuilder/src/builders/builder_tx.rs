@@ -1,14 +1,18 @@
-use alloy_consensus::TxEip1559;
+use alloy_consensus::{Transaction, TxEip1559};
 use alloy_eips::{Encodable2718, eip7623::TOTAL_COST_FLOOR_PER_TOKEN};
 use alloy_evm::Database;
+use alloy_op_evm::OpEvm;
 use alloy_primitives::{
-    Address, B256, Log, TxKind, U256,
-    map::foldhash::{HashSet, HashSetExt},
+    Address, B256, Bytes, TxKind, U256,
+    map::foldhash::{HashMap, HashSet, HashSetExt},
 };
 use core::fmt::Debug;
 use op_alloy_consensus::OpTypedTransaction;
-use op_revm::OpTransactionError;
-use reth_evm::{ConfigureEvm, Evm, eth::receipt_builder::ReceiptBuilderCtx};
+use op_revm::{OpHaltReason, OpTransactionError};
+use reth_evm::{
+    ConfigureEvm, Evm, EvmError, eth::receipt_builder::ReceiptBuilderCtx,
+    precompiles::PrecompilesMap,
+};
 use reth_node_api::PayloadBuilderError;
 use reth_optimism_primitives::OpTransactionSigned;
 use reth_primitives::Recovered;
@@ -16,13 +20,22 @@ use reth_provider::{ProviderError, StateProvider};
 use reth_revm::{State, database::StateProviderDatabase};
 use revm::{
     DatabaseCommit,
-    context::result::{EVMError, ResultAndState},
+    context::result::{EVMError, ExecutionResult, ResultAndState},
+    inspector::NoOpInspector,
+    state::Account,
 };
 use tracing::warn;
 
 use crate::{
     builders::context::OpPayloadBuilderCtx, primitives::reth::ExecutionInfo, tx_signer::Signer,
 };
+
+#[derive(Debug, Default)]
+pub struct SimulationSuccessResult {
+    pub gas_used: u64,
+    pub output: Bytes,
+    pub state_changes: HashMap<Address, Account>,
+}
 
 #[derive(Debug, Clone)]
 pub struct BuilderTransactionCtx {
@@ -46,6 +59,14 @@ impl BuilderTransactionCtx {
     }
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum InvalidContractDataError {
+    #[error("did not find expected log {0:?} in emitted logs")]
+    InvalidLogs(B256),
+    #[error("could not decode output from contract call")]
+    OutputAbiDecodeError,
+}
+
 /// Possible error variants during construction of builder txs.
 #[derive(Debug, thiserror::Error)]
 pub enum BuilderTransactionError {
@@ -55,9 +76,15 @@ pub enum BuilderTransactionError {
     /// Signature signing fails
     #[error("failed to sign transaction: {0}")]
     SigningError(secp256k1::Error),
-    /// Invalid contract data returned
-    #[error("invalid contract data returned {0}")]
-    InvalidContract(Address),
+    /// Invalid contract errors indicating the contract is incorrect
+    #[error("contract {0} may be incorrect, invalid contract data: {1}")]
+    InvalidContract(Address, InvalidContractDataError),
+    /// Transaction halted execution
+    #[error("transaction halted {0:?}")]
+    TransactionHalted(OpHaltReason),
+    /// Transaction reverted
+    #[error("transaction reverted {0}")]
+    TransactionReverted(Box<dyn core::error::Error + Send + Sync>),
     /// Invalid tx errors during evm execution.
     #[error("invalid transaction error {0}")]
     InvalidTransactionError(Box<dyn core::error::Error + Send + Sync>),
@@ -93,11 +120,12 @@ impl From<BuilderTransactionError> for PayloadBuilderError {
 }
 
 impl BuilderTransactionError {
-    pub fn other<E>(error: E) -> Self
-    where
-        E: core::error::Error + Send + Sync + 'static,
-    {
+    pub fn other(error: impl core::error::Error + Send + Sync + 'static) -> Self {
         BuilderTransactionError::Other(Box::new(error))
+    }
+
+    pub fn msg(msg: impl core::fmt::Display) -> Self {
+        Self::Other(msg.to_string().into())
     }
 }
 
@@ -210,6 +238,84 @@ pub trait BuilderTransactions<ExtraCtx: Debug + Default = (), Extra: Debug + Def
 
         Ok(simulation_state)
     }
+
+    fn sign_tx(
+        &self,
+        to: Address,
+        from: Signer,
+        gas_used: Option<u64>,
+        calldata: Bytes,
+        ctx: &OpPayloadBuilderCtx<ExtraCtx>,
+        db: &mut State<impl Database>,
+    ) -> Result<Recovered<OpTransactionSigned>, BuilderTransactionError> {
+        let nonce = get_nonce(db, from.address)?;
+        // Create the EIP-1559 transaction
+        let tx = OpTypedTransaction::Eip1559(TxEip1559 {
+            chain_id: ctx.chain_id(),
+            nonce,
+            // Due to EIP-150, 63/64 of available gas is forwarded to external calls so need to add a buffer
+            gas_limit: gas_used
+                .map(|gas| gas * 64 / 63)
+                .unwrap_or(ctx.block_gas_limit()),
+            max_fee_per_gas: ctx.base_fee().into(),
+            to: TxKind::Call(to),
+            input: calldata,
+            ..Default::default()
+        });
+        Ok(from.sign_tx(tx)?)
+    }
+
+    fn simulate_call(
+        &self,
+        signed_tx: Recovered<OpTransactionSigned>,
+        expected_topic: Option<B256>,
+        revert_handler: impl FnOnce(Bytes) -> BuilderTransactionError,
+        evm: &mut OpEvm<
+            &mut State<StateProviderDatabase<impl StateProvider>>,
+            NoOpInspector,
+            PrecompilesMap,
+        >,
+    ) -> Result<SimulationSuccessResult, BuilderTransactionError> {
+        let ResultAndState { result, state } = match evm.transact(&signed_tx) {
+            Ok(res) => res,
+            Err(err) => {
+                if err.is_invalid_tx_err() {
+                    return Err(BuilderTransactionError::InvalidTransactionError(Box::new(
+                        err,
+                    )));
+                } else {
+                    return Err(BuilderTransactionError::EvmExecutionError(Box::new(err)));
+                }
+            }
+        };
+
+        match result {
+            ExecutionResult::Success {
+                logs,
+                gas_used,
+                output,
+                ..
+            } => {
+                if let Some(topic) = expected_topic
+                    && !logs.iter().any(|log| log.topics().first() == Some(&topic))
+                {
+                    return Err(BuilderTransactionError::InvalidContract(
+                        signed_tx.to().unwrap_or_default(),
+                        InvalidContractDataError::InvalidLogs(topic),
+                    ));
+                }
+                Ok(SimulationSuccessResult {
+                    gas_used,
+                    output: output.into_data(),
+                    state_changes: state,
+                })
+            }
+            ExecutionResult::Revert { output, .. } => Err(revert_handler(output)),
+            ExecutionResult::Halt { reason, .. } => Err(BuilderTransactionError::other(
+                BuilderTransactionError::TransactionHalted(reason),
+            )),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -321,8 +427,4 @@ pub fn get_balance(
     db.load_cache_account(address)
         .map(|acc| acc.account_info().unwrap_or_default().balance)
         .map_err(|_| BuilderTransactionError::AccountLoadFailed(address))
-}
-
-pub fn log_exists(logs: &[Log], topic: &B256) -> bool {
-    logs.iter().any(|log| log.topics().first() == Some(topic))
 }
