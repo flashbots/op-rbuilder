@@ -179,7 +179,7 @@ where
         _: OpEvmConfig,
     ) -> eyre::Result<PayloadBuilderHandle<<Node::Types as NodeTypes>::Payload>> {
         let signer = self.0.builder_signer;
-        let flashtestations_builder_tx = if let Some(builder_key) = signer
+        let flashtestations_builder_tx = if let Some(builder_signer) = signer
             && self.0.flashtestations_config.flashtestations_enabled
         {
             match bootstrap_flashtestations(self.0.flashtestations_config.clone(), builder_key)
@@ -195,15 +195,18 @@ where
             None
         };
 
-        if let Some(flashblocks_number_contract_address) =
-            self.0.specific.flashblocks_number_contract_address
+        if let Some(builder_signer) = signer
+            && let Some(flashblocks_number_contract_address) =
+                self.0.specific.flashblocks_number_contract_address
         {
+            let use_permit = self.0.specific.flashblocks_number_contract_use_permit;
             self.spawn_payload_builder_service(
                 ctx,
                 pool,
                 FlashblocksNumberBuilderTx::new(
-                    signer,
+                    builder_signer,
                     flashblocks_number_contract_address,
+                    use_permit,
                     flashtestations_builder_tx,
                 ),
             )
