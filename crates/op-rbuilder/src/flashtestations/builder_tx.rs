@@ -119,6 +119,10 @@ where
         }
     }
 
+    pub fn tee_signer(&self) -> &Signer {
+        &self.tee_service_signer
+    }
+
     fn signed_funding_tx(
         &self,
         to: Address,
