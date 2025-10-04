@@ -2,24 +2,27 @@ use alloy_primitives::{Bytes, keccak256};
 use reth_node_builder::BuilderContext;
 use tracing::{info, warn};
 
-use crate::{
-    flashtestations::builder_tx::{FlashtestationsBuilderTx, FlashtestationsBuilderTxArgs},
-    traits::NodeBounds,
-    tx_signer::{Signer, generate_ethereum_keypair, generate_key_from_seed},
-};
-
 use super::{
     args::FlashtestationsArgs,
     attestation::{AttestationConfig, get_attestation_provider},
     tx_manager::TxManager,
 };
+use crate::{
+    flashtestations::builder_tx::{FlashtestationsBuilderTx, FlashtestationsBuilderTxArgs},
+    traits::NodeBounds,
+    tx_signer::{Signer, generate_ethereum_keypair, generate_key_from_seed},
+};
+use std::fmt::Debug;
 
-pub async fn bootstrap_flashtestations<Node>(
+pub async fn bootstrap_flashtestations<Node, ExtraCtx, Extra>(
     args: FlashtestationsArgs,
+    builder_key: Signer,
     ctx: &BuilderContext<Node>,
-) -> eyre::Result<FlashtestationsBuilderTx>
+) -> eyre::Result<FlashtestationsBuilderTx<ExtraCtx, Extra>>
 where
     Node: NodeBounds,
+    ExtraCtx: Debug + Default,
+    Extra: Debug + Default,
 {
     let (private_key, public_key, address) = if args.debug {
         info!("Flashtestations debug mode enabled, generating debug key");
@@ -77,7 +80,11 @@ where
     info!(target: "flashtestations", "requesting TDX attestation");
     let attestation = attestation_provider.get_attestation(report_data).await?;
 
-    let (tx_manager, registered) = if let Some(rpc_url) = args.rpc_url {
+    // TODO: support permit with an external rpc, skip this step if using permit signatures
+    // since the permit txs are signed by the builder key and will result in nonce issues
+    let (tx_manager, registered) = if let Some(rpc_url) = args.rpc_url
+        && !args.flashtestations_use_permit
+    {
         let tx_manager = TxManager::new(
             tee_service_signer,
             funding_key,
@@ -114,6 +121,8 @@ where
         builder_proof_version: args.builder_proof_version,
         enable_block_proofs: args.enable_block_proofs,
         registered,
+        use_permit: args.flashtestations_use_permit,
+        builder_key,
     });
 
     ctx.task_executor()

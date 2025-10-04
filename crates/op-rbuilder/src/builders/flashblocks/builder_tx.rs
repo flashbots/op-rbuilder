@@ -2,7 +2,7 @@ use alloy_consensus::TxEip1559;
 use alloy_eips::Encodable2718;
 use alloy_evm::{Database, Evm};
 use alloy_op_evm::OpEvm;
-use alloy_primitives::{Address, B256, TxKind};
+use alloy_primitives::{Address, TxKind};
 use alloy_sol_types::{Error, SolCall, SolEvent, SolInterface, sol};
 use core::fmt::Debug;
 use op_alloy_consensus::OpTypedTransaction;
@@ -21,9 +21,9 @@ use tracing::warn;
 use crate::{
     builders::{
         BuilderTransactionCtx, BuilderTransactionError, BuilderTransactions,
-        builder_tx::{BuilderTxBase, get_nonce, log_exists},
+        builder_tx::{BuilderTxBase, get_nonce},
         context::OpPayloadBuilderCtx,
-        flashblocks::payload::FlashblocksExtraCtx,
+        flashblocks::payload::{FlashblocksExecutionInfo, FlashblocksExtraCtx},
     },
     flashtestations::builder_tx::FlashtestationsBuilderTx,
     primitives::reth::ExecutionInfo,
@@ -53,8 +53,6 @@ sol!(
 pub(super) enum FlashblockNumberError {
     #[error("flashblocks number contract tx reverted: {0:?}")]
     Revert(IFlashblockNumber::IFlashblockNumberErrors),
-    #[error("contract may be invalid, mismatch in log emitted: expected {0:?}")]
-    LogMismatch(B256),
     #[error("unknown revert: {0} err: {1}")]
     Unknown(String, Error),
     #[error("halt: {0:?}")]
@@ -64,14 +62,17 @@ pub(super) enum FlashblockNumberError {
 // This will be the end of block transaction of a regular block
 #[derive(Debug, Clone)]
 pub(super) struct FlashblocksBuilderTx {
-    pub base_builder_tx: BuilderTxBase,
-    pub flashtestations_builder_tx: Option<FlashtestationsBuilderTx>,
+    pub base_builder_tx: BuilderTxBase<FlashblocksExtraCtx>,
+    pub flashtestations_builder_tx:
+        Option<FlashtestationsBuilderTx<FlashblocksExtraCtx, FlashblocksExecutionInfo>>,
 }
 
 impl FlashblocksBuilderTx {
     pub(super) fn new(
         signer: Option<Signer>,
-        flashtestations_builder_tx: Option<FlashtestationsBuilderTx>,
+        flashtestations_builder_tx: Option<
+            FlashtestationsBuilderTx<FlashblocksExtraCtx, FlashblocksExecutionInfo>,
+        >,
     ) -> Self {
         let base_builder_tx = BuilderTxBase::new(signer);
         Self {
@@ -81,13 +82,14 @@ impl FlashblocksBuilderTx {
     }
 }
 
-impl BuilderTransactions<FlashblocksExtraCtx> for FlashblocksBuilderTx {
-    fn simulate_builder_txs<Extra: Debug + Default>(
+impl BuilderTransactions<FlashblocksExtraCtx, FlashblocksExecutionInfo> for FlashblocksBuilderTx {
+    fn simulate_builder_txs(
         &self,
         state_provider: impl StateProvider + Clone,
-        info: &mut ExecutionInfo<Extra>,
+        info: &mut ExecutionInfo<FlashblocksExecutionInfo>,
         ctx: &OpPayloadBuilderCtx<FlashblocksExtraCtx>,
         db: &mut State<impl Database>,
+        top_of_block: bool,
     ) -> Result<Vec<BuilderTransactionCtx>, BuilderTransactionError> {
         let mut builder_txs = Vec::<BuilderTransactionCtx>::new();
 
@@ -102,19 +104,30 @@ impl BuilderTransactions<FlashblocksExtraCtx> for FlashblocksBuilderTx {
 
             if let Some(flashtestations_builder_tx) = &self.flashtestations_builder_tx {
                 // We only include flashtestations txs in the last flashblock
-                let mut simulation_state = self.simulate_builder_txs_state::<FlashblocksExtraCtx>(
+                let mut simulation_state = self.simulate_builder_txs_state(
                     state_provider.clone(),
-                    base_tx.iter().collect(),
+                    base_tx
+                        .iter()
+                        .filter(|tx| tx.is_top_of_block == top_of_block)
+                        .collect(),
                     ctx,
                     db,
                 )?;
-                let flashtestations_builder_txs = flashtestations_builder_tx.simulate_builder_txs(
+                // We only include flashtestations txs in the last flashblock
+                match flashtestations_builder_tx.simulate_builder_txs(
                     state_provider,
                     info,
                     ctx,
                     &mut simulation_state,
-                )?;
-                builder_txs.extend(flashtestations_builder_txs);
+                    top_of_block,
+                ) {
+                    Ok(flashtestations_builder_txs) => {
+                        builder_txs.extend(flashtestations_builder_txs)
+                    }
+                    Err(e) => {
+                        warn!(target: "flashtestations", error = ?e, "failed to add flashtestations builder tx")
+                    }
+                }
             }
         }
         Ok(builder_txs)
@@ -126,15 +139,18 @@ impl BuilderTransactions<FlashblocksExtraCtx> for FlashblocksBuilderTx {
 pub(super) struct FlashblocksNumberBuilderTx {
     pub signer: Option<Signer>,
     pub flashblock_number_address: Address,
-    pub base_builder_tx: BuilderTxBase,
-    pub flashtestations_builder_tx: Option<FlashtestationsBuilderTx>,
+    pub base_builder_tx: BuilderTxBase<FlashblocksExtraCtx>,
+    pub flashtestations_builder_tx:
+        Option<FlashtestationsBuilderTx<FlashblocksExtraCtx, FlashblocksExecutionInfo>>,
 }
 
 impl FlashblocksNumberBuilderTx {
     pub(super) fn new(
         signer: Option<Signer>,
         flashblock_number_address: Address,
-        flashtestations_builder_tx: Option<FlashtestationsBuilderTx>,
+        flashtestations_builder_tx: Option<
+            FlashtestationsBuilderTx<FlashblocksExtraCtx, FlashblocksExecutionInfo>,
+        >,
     ) -> Self {
         let base_builder_tx = BuilderTxBase::new(signer);
         Self {
@@ -166,14 +182,15 @@ impl FlashblocksNumberBuilderTx {
 
         match result {
             ExecutionResult::Success { gas_used, logs, .. } => {
-                if log_exists(
-                    &logs,
-                    &IFlashblockNumber::FlashblockIncremented::SIGNATURE_HASH,
-                ) {
+                if logs.iter().any(|log| {
+                    log.topics().first()
+                        == Some(&IFlashblockNumber::FlashblockIncremented::SIGNATURE_HASH)
+                }) {
                     Ok(gas_used)
                 } else {
-                    Err(BuilderTransactionError::other(
-                        FlashblockNumberError::LogMismatch(
+                    Err(BuilderTransactionError::InvalidContract(
+                        self.flashblock_number_address,
+                        crate::builders::InvalidContractDataError::InvalidLogs(
                             IFlashblockNumber::FlashblockIncremented::SIGNATURE_HASH,
                         ),
                     ))
@@ -213,13 +230,16 @@ impl FlashblocksNumberBuilderTx {
     }
 }
 
-impl BuilderTransactions<FlashblocksExtraCtx> for FlashblocksNumberBuilderTx {
-    fn simulate_builder_txs<Extra: Debug + Default>(
+impl BuilderTransactions<FlashblocksExtraCtx, FlashblocksExecutionInfo>
+    for FlashblocksNumberBuilderTx
+{
+    fn simulate_builder_txs(
         &self,
         state_provider: impl StateProvider + Clone,
-        info: &mut ExecutionInfo<Extra>,
+        info: &mut ExecutionInfo<FlashblocksExecutionInfo>,
         ctx: &OpPayloadBuilderCtx<FlashblocksExtraCtx>,
         db: &mut State<impl Database>,
+        top_of_block: bool,
     ) -> Result<Vec<BuilderTransactionCtx>, BuilderTransactionError> {
         let mut builder_txs = Vec::<BuilderTransactionCtx>::new();
         let state = StateProviderDatabase::new(state_provider.clone());
@@ -240,6 +260,7 @@ impl BuilderTransactions<FlashblocksExtraCtx> for FlashblocksNumberBuilderTx {
                     .evm_with_env(simulation_state, ctx.evm_env.clone());
                 evm.modify_cfg(|cfg| {
                     cfg.disable_balance_check = true;
+                    cfg.disable_block_gas_limit = true;
                 });
 
                 let nonce = get_nonce(evm.db_mut(), signer.address)?;
@@ -280,20 +301,30 @@ impl BuilderTransactions<FlashblocksExtraCtx> for FlashblocksNumberBuilderTx {
         if ctx.is_last_flashblock() {
             if let Some(flashtestations_builder_tx) = &self.flashtestations_builder_tx {
                 let flashblocks_builder_txs = builder_txs.clone();
-                let mut simulation_state = self.simulate_builder_txs_state::<FlashblocksExtraCtx>(
+                let mut simulation_state = self.simulate_builder_txs_state(
                     state_provider.clone(),
-                    flashblocks_builder_txs.iter().collect(),
+                    flashblocks_builder_txs
+                        .iter()
+                        .filter(|tx| tx.is_top_of_block == top_of_block)
+                        .collect(),
                     ctx,
                     db,
                 )?;
                 // We only include flashtestations txs in the last flashblock
-                let flashtestations_builder_txs = flashtestations_builder_tx.simulate_builder_txs(
+                match flashtestations_builder_tx.simulate_builder_txs(
                     state_provider,
                     info,
                     ctx,
                     &mut simulation_state,
-                )?;
-                builder_txs.extend(flashtestations_builder_txs);
+                    top_of_block,
+                ) {
+                    Ok(flashtestations_builder_txs) => {
+                        builder_txs.extend(flashtestations_builder_txs)
+                    }
+                    Err(e) => {
+                        warn!(target: "flashtestations", error = ?e, "failed to add flashtestations builder tx")
+                    }
+                }
             }
         }
 
