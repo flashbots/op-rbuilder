@@ -1,6 +1,6 @@
 # op-rbuilder
 
-[![CI status](https://github.com/flashbots/op-rbuilder/actions/workflows/checks.yaml/badge.svg)](https://github.com/flashbots/op-rbuilder/actions)
+[![CI status](https://github.com/flashbots/op-rbuilder/actions/workflows/op_rbuilder_checks.yaml/badge.svg)](https://github.com/flashbots/op-rbuilder/actions)
 
 `op-rbuilder` is a Rust-based block builder designed to build blocks for the Optimism stack.
 
@@ -92,6 +92,12 @@ To enable metrics, set the `--metrics` flag like in [reth](https://reth.rs/run/m
 -   Number of transactions included in the built block
 
 To see the full list of op-rbuilder metrics, see [`src/metrics.rs`](./crates/op-rbuilder/src/metrics.rs).
+
+Default `debug` level trace logs can be found at:
+
+- `~/.cache/op-rbuilder/logs` on Linux
+- `~/Library/Caches/op-rbuilder/logs` on macOS
+- `%localAppData%/op-rbuilder/logs` on Windows
 
 ## Integration Testing
 

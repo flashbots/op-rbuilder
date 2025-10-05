@@ -73,6 +73,23 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=$SCCACHE_DIR,sharing=locked \
     cargo build --release --features="$FEATURES" --package=${RBUILDER_BIN}
 
+#
+# Reproducible builder container (deterministic source-date-epoch, no caching, no incremental builds)
+#
+FROM base AS rbuilder-reproducible
+ARG RBUILDER_BIN
+ARG FEATURES
+WORKDIR /app
+COPY . .
+RUN SOURCE_DATE_EPOCH=$(git log -1 --pretty=%ct) \
+    RUSTFLAGS="-C target-feature=+crt-static -C link-arg=-static-libgcc -C link-arg=-Wl,--build-id=none -C metadata='' --remap-path-prefix=/app=." \
+    CARGO_INCREMENTAL=0 \
+    LC_ALL=C \
+    TZ=UTC \
+    CFLAGS="-D__TIME__=\"\" -D__DATE__=\"\"" \
+    CXXFLAGS="-D__TIME__=\"\" -D__DATE__=\"\"" \
+    cargo build --release --locked --features="$FEATURES" --package=${RBUILDER_BIN} --target x86_64-unknown-linux-gnu
+
 # Runtime container for rbuilder
 FROM gcr.io/distroless/cc-debian12 AS rbuilder-runtime
 ARG RBUILDER_BIN
@@ -80,3 +97,9 @@ WORKDIR /app
 COPY --from=rbuilder /app/target/release/${RBUILDER_BIN} /app/rbuilder
 ENTRYPOINT ["/app/rbuilder"]
 
+# Reproducible runtime container for rbuilder
+FROM gcr.io/distroless/cc-debian12 AS rbuilder-reproducible-runtime
+ARG RBUILDER_BIN
+WORKDIR /app
+COPY --from=rbuilder-reproducible /app/target/x86_64-unknown-linux-gnu/release/${RBUILDER_BIN} /app/rbuilder
+ENTRYPOINT ["/app/rbuilder"]
