@@ -74,6 +74,14 @@ pub struct OpPayloadBuilderCtx<ExtraCtx: Debug + Default = ()> {
 }
 
 impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
+    pub(super) fn with_cancel(self, cancel: CancellationToken) -> Self {
+        Self { cancel, ..self }
+    }
+
+    pub(super) fn with_extra_ctx(self, extra_ctx: ExtraCtx) -> Self {
+        Self { extra_ctx, ..self }
+    }
+
     /// Returns the parent block the payload will be build on.
     pub(super) fn parent(&self) -> &SealedHeader {
         &self.config.parent_header

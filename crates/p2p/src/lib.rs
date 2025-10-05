@@ -219,6 +219,14 @@ impl NodeBuilder {
         self
     }
 
+    pub fn with_cancellation_token(
+        mut self,
+        cancellation_token: tokio_util::sync::CancellationToken,
+    ) -> Self {
+        self.cancellation_token = Some(cancellation_token);
+        self
+    }
+
     pub fn with_known_peers<I, T>(mut self, addresses: I) -> Self
     where
         I: IntoIterator<Item = T>,
