@@ -89,7 +89,6 @@ jobs:
           git config --global --add safe.directory "$(pwd)"
           . $HOME/.cargo/env
           cargo build --release --features=${{ matrix.features }} --target ${{ matrix.configs.target }} --package tdx-quote-provider
-          stat target/${{ matrix.configs.target }}/release/tdx-quote-provider
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
