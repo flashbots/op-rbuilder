@@ -21,7 +21,10 @@ mod flashblocks;
 mod generator;
 mod standard;
 
-pub use builder_tx::{BuilderTransactionCtx, BuilderTransactionError, BuilderTransactions};
+pub use builder_tx::{
+    BuilderTransactionCtx, BuilderTransactionError, BuilderTransactions, get_balance, get_nonce,
+    log_exists,
+};
 pub use context::OpPayloadBuilderCtx;
 pub use flashblocks::FlashblocksBuilder;
 pub use standard::StandardBuilder;
@@ -120,14 +123,17 @@ pub struct BuilderConfig<Specific: Clone> {
     /// Address gas limiter stuff
     pub gas_limiter_config: GasLimiterArgs,
 
+    /// Whether to enable the p2p node for flashblocks
+    pub p2p_enabled: bool,
+
     /// Port for the p2p node
     pub p2p_port: u16,
 
-    /// Optional hex-encoded private key for the p2p node
-    pub p2p_private_key_hex: Option<String>,
+    /// Optional hex-encoded private key file path for the p2p node
+    pub p2p_private_key_file: Option<String>,
 
     /// Comma-separated list of multiaddresses of known peers to connect to
-    pub p2p_known_peers: String,
+    pub p2p_known_peers: Option<String>,
 }
 
 impl<S: Debug + Clone> core::fmt::Debug for BuilderConfig<S> {
@@ -145,9 +151,17 @@ impl<S: Debug + Clone> core::fmt::Debug for BuilderConfig<S> {
             .field("block_time", &self.block_time)
             .field("block_time_leeway", &self.block_time_leeway)
             .field("da_config", &self.da_config)
+            .field("sampling_ratio", &self.sampling_ratio)
             .field("specific", &self.specific)
             .field("max_gas_per_txn", &self.max_gas_per_txn)
             .field("gas_limiter_config", &self.gas_limiter_config)
+            .field("p2p_enabled", &self.p2p_enabled)
+            .field("p2p_port", &self.p2p_port)
+            .field(
+                "p2p_private_key_file",
+                &self.p2p_private_key_file.as_ref().map(|_| "Some(...)"),
+            )
+            .field("p2p_known_peers", &self.p2p_known_peers)
             .finish()
     }
 }
@@ -165,9 +179,10 @@ impl<S: Default + Clone> Default for BuilderConfig<S> {
             sampling_ratio: 100,
             max_gas_per_txn: None,
             gas_limiter_config: GasLimiterArgs::default(),
+            p2p_enabled: false,
             p2p_port: 9009,
-            p2p_private_key_hex: None,
-            p2p_known_peers: String::new(),
+            p2p_private_key_file: None,
+            p2p_known_peers: None,
         }
     }
 }
@@ -189,8 +204,9 @@ where
             sampling_ratio: args.telemetry.sampling_ratio,
             max_gas_per_txn: args.max_gas_per_txn,
             gas_limiter_config: args.gas_limiter.clone(),
+            p2p_enabled: args.flashblocks.flashblocks_p2p_enabled,
             p2p_port: args.flashblocks.flashblocks_p2p_port,
-            p2p_private_key_hex: Some(args.flashblocks.flashblocks_p2p_private_key_hex.clone()),
+            p2p_private_key_file: args.flashblocks.flashblocks_p2p_private_key_file.clone(),
             p2p_known_peers: args.flashblocks.flashblocks_known_peers.clone(),
             specific: S::try_from(args)?,
         })

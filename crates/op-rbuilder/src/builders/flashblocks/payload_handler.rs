@@ -93,14 +93,13 @@ where
                 Some(payload) = built_rx.recv() => {
                     let _  = payload_events_handle.send(Events::BuiltPayload(payload.clone()));
                     // TODO: only broadcast if `!no_tx_pool`?
+                    // ignore error here; if p2p was disabled, the channel will be closed.
                     let _ = p2p_tx.send(payload.into()).await;
                 }
                 Some(message) = p2p_rx.recv() => {
                     match message {
                         Message::OpBuiltPayload(payload) => {
                             let payload: OpBuiltPayload = payload.into();
-                            // TODO: is this necessary? maybe only for built?
-                            // let _ = payload_events_handle.send(Events::BuiltPayload(payload.clone()));
                             let handle = tokio::spawn(
                                 execute_flashblock(
                                     payload,

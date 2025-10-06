@@ -100,8 +100,14 @@ jobs:
         run: |
           git config --global --add safe.directory "$(pwd)"
           . $HOME/.cargo/env
-          cargo build --release --features=${{ matrix.features }} --target ${{ matrix.configs.target }} --package op-rbuilder
-
+          SOURCE_DATE_EPOCH=$(git log -1 --pretty=%ct) \
+          RUSTFLAGS="--C target-feature=+crt-static -C link-arg=-static-libgcc -C link-arg=-Wl,--build-id=none -C metadata='' --remap-path-prefix=$(pwd)=." \
+          CARGO_INCREMENTAL=0 \
+          LC_ALL=C \
+          TZ=UTC \
+          CFLAGS="-D__TIME__=\"\" -D__DATE__=\"\"" \
+          CXXFLAGS="-D__TIME__=\"\" -D__DATE__=\"\"" \
+          cargo build --release --features=${{ matrix.features }} --locked --target ${{ matrix.configs.target }} --package op-rbuilder
       - name: Upload op-rbuilder artifact
         uses: actions/upload-artifact@v4
         with:
@@ -158,7 +164,7 @@ jobs:
           echo "${{ steps.create-release-draft.outputs.url }}" >> $GITHUB_STEP_SUMMARY
 
   build-docker:
-    if: ${{ github.event.inputs.build-docker == 'true' }}
+    if: ${{ (github.ref_type == 'tag') || (github.event.inputs.build-docker == 'true') }}
     name: Build and publish Docker image
     needs: extract-version
     runs-on: ${{ matrix.configs.runner }}
