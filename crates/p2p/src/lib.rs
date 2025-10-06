@@ -14,6 +14,7 @@ use libp2p::{
 };
 use std::{collections::HashMap, time::Duration};
 use tokio::sync::mpsc;
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, warn};
 
 pub use libp2p::{Multiaddr, StreamProtocol};
@@ -63,7 +64,7 @@ pub struct Node<M> {
     protocols: Vec<StreamProtocol>,
 
     /// Cancellation token to shut down the node.
-    cancellation_token: tokio_util::sync::CancellationToken,
+    cancellation_token: CancellationToken,
 }
 
 impl<M: Message + 'static> Node<M> {
@@ -209,7 +210,7 @@ pub struct NodeBuilder {
     known_peers: Vec<Multiaddr>,
     agent_version: Option<String>,
     protocols: Vec<StreamProtocol>,
-    cancellation_token: Option<tokio_util::sync::CancellationToken>,
+    cancellation_token: Option<CancellationToken>,
 }
 
 impl Default for NodeBuilder {
@@ -278,6 +279,9 @@ impl NodeBuilder {
             cancellation_token,
         } = self;
 
+        // TODO: caller should be forced to provide this
+        let cancellation_token = cancellation_token.unwrap_or_default();
+
         let Some(agent_version) = agent_version else {
             eyre::bail!("agent version must be set");
         };
@@ -305,8 +309,11 @@ impl NodeBuilder {
             let incoming_streams = control
                 .accept(protocol.clone())
                 .wrap_err("failed to subscribe to incoming streams for flashblocks protocol")?;
-            let (incoming_streams_handler, message_rx) =
-                IncomingStreamsHandler::new(protocol.clone(), incoming_streams);
+            let (incoming_streams_handler, message_rx) = IncomingStreamsHandler::new(
+                protocol.clone(),
+                incoming_streams,
+                cancellation_token.clone(),
+            );
             incoming_streams_handlers.push(incoming_streams_handler);
             incoming_message_rxs.insert(protocol.clone(), message_rx);
         }
@@ -337,7 +344,7 @@ impl NodeBuilder {
                 known_peers,
                 outgoing_message_rx,
                 outgoing_streams_handler: outgoing::StreamsHandler::new(),
-                cancellation_token: cancellation_token.unwrap_or_default(), // TODO: caller must provide this
+                cancellation_token,
                 incoming_streams_handlers,
                 protocols,
             },
@@ -351,10 +358,15 @@ struct IncomingStreamsHandler<M> {
     protocol: StreamProtocol,
     incoming: IncomingStreams,
     tx: mpsc::Sender<M>,
+    cancellation_token: CancellationToken,
 }
 
 impl<M: Message + 'static> IncomingStreamsHandler<M> {
-    fn new(protocol: StreamProtocol, incoming: IncomingStreams) -> (Self, mpsc::Receiver<M>) {
+    fn new(
+        protocol: StreamProtocol,
+        incoming: IncomingStreams,
+        cancellation_token: CancellationToken,
+    ) -> (Self, mpsc::Receiver<M>) {
         const CHANNEL_SIZE: usize = 100;
         let (tx, rx) = mpsc::channel(CHANNEL_SIZE);
         (
@@ -362,6 +374,7 @@ impl<M: Message + 'static> IncomingStreamsHandler<M> {
                 protocol,
                 incoming,
                 tx,
+                cancellation_token,
             },
             rx,
         )
@@ -374,10 +387,14 @@ impl<M: Message + 'static> IncomingStreamsHandler<M> {
             protocol,
             mut incoming,
             tx,
+            cancellation_token,
         } = self;
         let mut handle_stream_futures = futures::stream::FuturesUnordered::new();
 
         tokio::select! {
+            _ = cancellation_token.cancelled() => {
+                debug!("cancellation token triggered, shutting down incoming streams handler for protocol {protocol}");
+            }
             Some((from, stream)) = incoming.next() => {
                 debug!("new incoming stream on protocol {protocol} from peer {from}");
                 handle_stream_futures.push(tokio::spawn(handle_incoming_stream(from, stream, tx.clone())));

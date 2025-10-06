@@ -179,7 +179,7 @@ pub struct FlashblocksArgs {
         long = "flashblocks.p2p_private_key_file",
         env = "FLASHBLOCK_P2P_PRIVATE_KEY_FILE"
     )]
-    pub flashblocks_p2p_private_key_file: String,
+    pub flashblocks_p2p_private_key_file: Option<String>,
 
     /// Comma-separated list of multiaddrs of known Flashblocks peers
     /// Example: "/ip4/104.131.131.82/tcp/4001/p2p/QmaCpDMGvV2BGHeYERUEnRQAwe3N8SzbUtfsmvsqQLuvuJ,/ip4/104.131.131.82/udp/4001/quic-v1/p2p/QmaCpDMGvV2BGHeYERUEnRQAwe3N8SzbUtfsmvsqQLuvuJ"
@@ -187,7 +187,7 @@ pub struct FlashblocksArgs {
         long = "flashblocks.p2p_known_peers",
         env = "FLASHBLOCK_P2P_KNOWN_PEERS"
     )]
-    pub flashblocks_known_peers: String,
+    pub flashblocks_known_peers: Option<String>,
 
     /// Flashblocks number contract address
     ///

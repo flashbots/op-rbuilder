@@ -51,13 +51,16 @@ impl FlashblocksServiceBuilder {
                 builder = builder.with_keypair_hex_string(private_key_hex);
             }
 
-            let known_peers: Vec<p2p::Multiaddr> = self
-                .0
-                .p2p_known_peers
-                .split(',')
-                .map(|s| s.to_string())
-                .filter_map(|s| s.parse().ok())
-                .collect();
+            let known_peers: Vec<p2p::Multiaddr> =
+                if let Some(ref p2p_known_peers) = self.0.p2p_known_peers {
+                    p2p_known_peers
+                        .split(',')
+                        .map(|s| s.to_string())
+                        .filter_map(|s| s.parse().ok())
+                        .collect()
+                } else {
+                    vec![]
+                };
 
             let p2p::NodeBuildResult {
                 node,

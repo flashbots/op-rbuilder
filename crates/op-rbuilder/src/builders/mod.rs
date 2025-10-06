@@ -133,7 +133,7 @@ pub struct BuilderConfig<Specific: Clone> {
     pub p2p_private_key_file: Option<String>,
 
     /// Comma-separated list of multiaddresses of known peers to connect to
-    pub p2p_known_peers: String,
+    pub p2p_known_peers: Option<String>,
 }
 
 impl<S: Debug + Clone> core::fmt::Debug for BuilderConfig<S> {
@@ -182,7 +182,7 @@ impl<S: Default + Clone> Default for BuilderConfig<S> {
             p2p_enabled: false,
             p2p_port: 9009,
             p2p_private_key_file: None,
-            p2p_known_peers: String::new(),
+            p2p_known_peers: None,
         }
     }
 }
@@ -206,7 +206,7 @@ where
             gas_limiter_config: args.gas_limiter.clone(),
             p2p_enabled: args.flashblocks.flashblocks_p2p_enabled,
             p2p_port: args.flashblocks.flashblocks_p2p_port,
-            p2p_private_key_file: Some(args.flashblocks.flashblocks_p2p_private_key_file.clone()),
+            p2p_private_key_file: args.flashblocks.flashblocks_p2p_private_key_file.clone(),
             p2p_known_peers: args.flashblocks.flashblocks_known_peers.clone(),
             specific: S::try_from(args)?,
         })
