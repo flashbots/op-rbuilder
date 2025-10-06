@@ -3,13 +3,13 @@ use eyre::Context;
 use futures::stream::FuturesUnordered;
 use libp2p::{PeerId, StreamProtocol, swarm::Stream};
 use std::collections::HashMap;
-use tracing::{info, warn};
+use tracing::{debug, warn};
 
-pub(crate) struct OutgoingStreamsHandler {
+pub(crate) struct StreamsHandler {
     peers_to_stream: HashMap<PeerId, HashMap<StreamProtocol, Stream>>,
 }
 
-impl OutgoingStreamsHandler {
+impl StreamsHandler {
     pub(crate) fn new() -> Self {
         Self {
             peers_to_stream: HashMap::new(),
@@ -83,7 +83,7 @@ impl OutgoingStreamsHandler {
                 }
             }
         }
-        info!(
+        debug!(
             "broadcasted message to {} peers",
             self.peers_to_stream.len()
         );

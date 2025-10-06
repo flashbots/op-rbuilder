@@ -36,48 +36,57 @@ impl FlashblocksServiceBuilder {
         Pool: PoolBounds,
         BuilderTx: BuilderTransactions<FlashblocksExtraCtx> + Unpin + Clone + Send + Sync + 'static,
     {
-        let mut builder = p2p::NodeBuilder::new();
+        let (incoming_message_rx, outgoing_message_tx) = if self.0.p2p_enabled {
+            let mut builder = p2p::NodeBuilder::new();
 
-        if let Some(ref private_key_hex) = self.0.p2p_private_key_hex
-            && !private_key_hex.is_empty()
-        {
-            builder = builder.with_keypair_hex_string(private_key_hex.clone());
-        }
-
-        let known_peers: Vec<p2p::Multiaddr> = self
-            .0
-            .p2p_known_peers
-            .split(',')
-            .map(|s| s.to_string())
-            .filter_map(|s| s.parse().ok())
-            .collect();
-
-        let p2p::NodeBuildResult {
-            node,
-            outgoing_message_tx,
-            mut incoming_message_rxs,
-        } = builder
-            .with_agent_version(AGENT_VERSION.to_string())
-            .with_protocol(FLASHBLOCKS_STREAM_PROTOCOL)
-            .with_known_peers(known_peers)
-            .with_listen_addr(
-                format!("/ip4/127.0.0.1/tcp/{}", self.0.p2p_port)
-                    .parse()
-                    .unwrap(),
-            ) // TODO: make configurable
-            .try_build::<Message>()
-            .wrap_err("failed to build flashblocks p2p node")?;
-        let multiaddrs = node.multiaddrs();
-        ctx.task_executor().spawn(async move {
-            if let Err(e) = node.run().await {
-                tracing::error!(error = %e, "p2p node exited");
+            if let Some(ref private_key_file) = self.0.p2p_private_key_file
+                && !private_key_file.is_empty()
+            {
+                let private_key_hex = std::fs::read_to_string(private_key_file)
+                    .wrap_err_with(|| {
+                        format!("failed to read p2p private key file: {private_key_file}")
+                    })?
+                    .trim()
+                    .to_string();
+                builder = builder.with_keypair_hex_string(private_key_hex);
             }
-        });
-        tracing::info!(multiaddrs = ?multiaddrs, "flashblocks p2p node started");
 
-        let incoming_message_rx = incoming_message_rxs
-            .remove(&FLASHBLOCKS_STREAM_PROTOCOL)
-            .expect("flashblocks p2p protocol must be found in receiver map");
+            let known_peers: Vec<p2p::Multiaddr> = self
+                .0
+                .p2p_known_peers
+                .split(',')
+                .map(|s| s.to_string())
+                .filter_map(|s| s.parse().ok())
+                .collect();
+
+            let p2p::NodeBuildResult {
+                node,
+                outgoing_message_tx,
+                mut incoming_message_rxs,
+            } = builder
+                .with_agent_version(AGENT_VERSION.to_string())
+                .with_protocol(FLASHBLOCKS_STREAM_PROTOCOL)
+                .with_known_peers(known_peers)
+                .with_port(self.0.p2p_port)
+                .try_build::<Message>()
+                .wrap_err("failed to build flashblocks p2p node")?;
+            let multiaddrs = node.multiaddrs();
+            ctx.task_executor().spawn(async move {
+                if let Err(e) = node.run().await {
+                    tracing::error!(error = %e, "p2p node exited");
+                }
+            });
+            tracing::info!(multiaddrs = ?multiaddrs, "flashblocks p2p node started");
+
+            let incoming_message_rx = incoming_message_rxs
+                .remove(&FLASHBLOCKS_STREAM_PROTOCOL)
+                .expect("flashblocks p2p protocol must be found in receiver map");
+            (incoming_message_rx, outgoing_message_tx)
+        } else {
+            let (_incoming_message_tx, incoming_message_rx) = tokio::sync::mpsc::channel(16);
+            let (outgoing_message_tx, _outgoing_message_rx) = tokio::sync::mpsc::channel(16);
+            (incoming_message_rx, outgoing_message_tx)
+        };
 
         let (built_payload_tx, built_payload_rx) = tokio::sync::mpsc::channel(16);
         let payload_builder = OpPayloadBuilder::new(

@@ -7373,6 +7373,7 @@ dependencies = [
 name = "p2p"
 version = "0.2.4"
 dependencies = [
+ "derive_more",
  "eyre",
  "futures",
  "futures-util",

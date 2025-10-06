@@ -27,7 +27,7 @@ pub(crate) struct Behaviour {
 }
 
 #[allow(clippy::large_enum_variant)]
-#[derive(Debug)]
+#[derive(Debug, derive_more::From)]
 pub(crate) enum BehaviourEvent {
     Autonat(autonat::Event),
     Identify(identify::Event),
@@ -44,30 +44,6 @@ impl From<()> for BehaviourEvent {
 impl From<Infallible> for BehaviourEvent {
     fn from(_: Infallible) -> Self {
         unreachable!("Infallible cannot be converted to BehaviourEvent")
-    }
-}
-
-impl From<autonat::Event> for BehaviourEvent {
-    fn from(event: autonat::Event) -> Self {
-        BehaviourEvent::Autonat(event)
-    }
-}
-
-impl From<mdns::Event> for BehaviourEvent {
-    fn from(event: mdns::Event) -> Self {
-        BehaviourEvent::Mdns(event)
-    }
-}
-
-impl From<ping::Event> for BehaviourEvent {
-    fn from(event: ping::Event) -> Self {
-        BehaviourEvent::Ping(event)
-    }
-}
-
-impl From<identify::Event> for BehaviourEvent {
-    fn from(event: identify::Event) -> Self {
-        BehaviourEvent::Identify(event)
     }
 }
 
@@ -109,7 +85,18 @@ impl BehaviourEvent {
         match self {
             BehaviourEvent::Autonat(_event) => {}
             BehaviourEvent::Identify(_event) => {}
-            BehaviourEvent::Mdns(_event) => {}
+            BehaviourEvent::Mdns(event) => match event {
+                mdns::Event::Discovered(list) => {
+                    for (peer_id, multiaddr) in list {
+                        tracing::debug!("mDNS discovered peer {peer_id} at {multiaddr}");
+                    }
+                }
+                mdns::Event::Expired(list) => {
+                    for (peer_id, multiaddr) in list {
+                        tracing::debug!("mDNS expired peer {peer_id} at {multiaddr}");
+                    }
+                }
+            },
             BehaviourEvent::Ping(_event) => {}
         }
     }
