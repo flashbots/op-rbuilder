@@ -49,7 +49,7 @@ pub struct FlashtestationsBuilderTxArgs {
 
 #[derive(Debug, Clone)]
 pub struct FlashtestationsBuilderTx {
-    // Attestation for the builder
+    /// Attestation for the builder
     attestation: Vec<u8>,
     // Extra registration data for the builder
     extra_registration_data: Bytes,
