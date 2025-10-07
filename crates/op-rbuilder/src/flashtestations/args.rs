@@ -35,8 +35,8 @@ pub struct FlashtestationsArgs {
 
     /// Path to save ephemeral TEE key between restarts
     #[arg(
-        long = "flashtestations.key-path",
-        env = "FLASHTESTATIONS_KEY_PATH",
+        long = "flashtestations.tee-key-path",
+        env = "FLASHTESTATIONS_TEE_KEY_PATH",
         default_value = "/run/flashtestation.key"
     )]
     pub flashtestations_key_path: String,

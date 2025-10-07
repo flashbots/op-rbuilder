@@ -1,4 +1,5 @@
 use alloy_primitives::{B256, Bytes, keccak256};
+use eyre::Context;
 use reth_node_builder::BuilderContext;
 use reth_provider::StateProvider;
 use reth_revm::State;
@@ -139,56 +140,51 @@ fn load_or_generate_tee_key(key_path: &str, debug: bool, debug_seed: &str) -> ey
 
     let path = Path::new(key_path);
 
-    // Try to load existing key
-    if path.exists() {
-        info!("Loading TEE key from {}", key_path);
-        match fs::read_to_string(path) {
-            Ok(key_hex) => {
-                let key_hex = key_hex.trim();
-                match B256::try_from(
-                    hex::decode(key_hex)
-                        .map_err(|e| eyre::eyre!("Failed to decode tee key: {}", e))?
-                        .as_slice(),
-                ) {
-                    Ok(secret_bytes) => match Signer::try_from_secret(secret_bytes) {
-                        Ok(signer) => {
-                            return Ok(signer);
-                        }
-                        Err(e) => {
-                            warn!(
-                                "Failed to create signer from stored key: {:?}, generating new key",
-                                e
-                            );
-                        }
-                    },
-                    Err(e) => {
-                        warn!("Failed to parse stored key: {:?}, generating new key", e);
-                    }
-                }
-            }
-            Err(e) => {
-                warn!("Failed to read key file: {:?}, generating new key", e);
-            }
-        }
+    if let Some(signer) = load_tee_key(path) {
+        return Ok(signer);
     }
 
     // Generate new key
     info!("Generating new ephemeral TEE key");
     let signer = generate_signer();
 
-    // Save key to file with 0600 permissions
     let key_hex = hex::encode(signer.secret.secret_bytes());
 
-    if let Err(e) = fs::write(path, &key_hex) {
-        warn!("Failed to write key to {}: {:?}", key_path, e);
-    } else {
-        // Set file permissions to 0600 (owner read/write only)
-        if let Err(e) = fs::set_permissions(path, fs::Permissions::from_mode(0o600)) {
-            warn!("Failed to set permissions on {}: {:?}", key_path, e);
-        }
-    }
+    // Save key to file
+    fs::write(path, &key_hex)
+        .inspect_err(|e| warn!("Failed to write key to {}: {:?}", key_path, e))
+        .ok();
+    // Set file permissions to 0600 (owner read/write only)
+    fs::set_permissions(path, fs::Permissions::from_mode(0o600))
+        .inspect_err(|e| warn!("Failed to set permissions on {}: {:?}", key_path, e))
+        .ok();
 
     Ok(signer)
+}
+
+fn load_tee_key(path: &Path) -> Option<Signer> {
+    // Try to load existing key
+    if !path.exists() {
+        return None;
+    }
+
+    info!("Loading TEE key from {:?}", path);
+    let key_hex = fs::read_to_string(path)
+        .inspect_err(|e| warn!("failed to read key file: {:?}", e))
+        .ok()?;
+
+    let secret_bytes = B256::try_from(
+        hex::decode(key_hex.trim())
+            .inspect_err(|e| warn!("failed to decode hex from file {:?}", e))
+            .ok()?
+            .as_slice(),
+    )
+    .inspect_err(|e| warn!("failed to parse key from file: {:?}", e))
+    .ok()?;
+
+    Signer::try_from_secret(secret_bytes)
+        .inspect_err(|e| warn!("failed to create signer from key: {:?}", e))
+        .ok()
 }
 
 #[derive(Debug, Clone)]
