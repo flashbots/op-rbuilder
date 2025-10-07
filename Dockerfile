@@ -79,6 +79,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 FROM base AS rbuilder-reproducible
 ARG RBUILDER_BIN
 ARG FEATURES
+ARG TARGETPLATFORM
 WORKDIR /app
 COPY . .
 RUN set -eux; \
