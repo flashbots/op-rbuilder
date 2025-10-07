@@ -6274,7 +6274,7 @@ dependencies = [
 
 [[package]]
 name = "op-rbuilder"
-version = "0.2.4"
+version = "0.2.5"
 dependencies = [
  "alloy-consensus",
  "alloy-contract",
