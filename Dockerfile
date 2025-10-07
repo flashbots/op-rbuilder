@@ -79,7 +79,6 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 FROM base AS rbuilder-reproducible
 ARG RBUILDER_BIN
 ARG FEATURES
-ARG TARGETPLATFORM
 WORKDIR /app
 COPY . .
 RUN SOURCE_DATE_EPOCH=$(git log -1 --pretty=%ct) \
