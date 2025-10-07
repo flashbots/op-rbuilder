@@ -80,25 +80,8 @@ FROM base AS rbuilder-reproducible
 ARG RBUILDER_BIN
 ARG FEATURES
 
-ARG CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS="\
-        --cfg tracing_unstable \
-        --remap-path-prefix /app=. \
-        -C codegen-units=1 \
-        -C embed-bitcode=no \
-        -C link-arg=-static-libgcc \
-        -C link-arg=-Wl,--build-id=none \
-        -C metadata=target \
-        -C target-feature=+crt-static"
-
-ARG CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_RUSTFLAGS="\
-        --cfg tracing_unstable \
-        --remap-path-prefix /app=. \
-        -C codegen-units=1 \
-        -C embed-bitcode=no \
-        -C link-arg=-static-libgcc \
-        -C link-arg=-Wl,--build-id=none \
-        -C metadata=target \
-        -C target-feature=+crt-static"
+ARG CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS="-C target-feature=+crt-static -C link-arg=-static-libgcc -C link-arg=-Wl,--build-id=none -C metadata=target --remap-path-prefix=/app=." \
+ARG CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_RUSTFLAGS="-C target-feature=+crt-static -C link-arg=-static-libgcc -C link-arg=-Wl,--build-id=none -C metadata=target --remap-path-prefix=/app=." \
 
 WORKDIR /app
 COPY . .
