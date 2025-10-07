@@ -82,23 +82,14 @@ ARG FEATURES
 ARG TARGETPLATFORM
 WORKDIR /app
 COPY . .
-RUN set -eux; \
-    case "$TARGETPLATFORM" in \
-      "linux/amd64")  ARCH_TAG="x86_64-unknown-linux-gnu" ;; \
-      "linux/arm64")  ARCH_TAG="aarch64-unknown-linux-gnu" ;; \
-      *) \
-        echo "Unsupported platform: $TARGETPLATFORM"; \
-        exit 1 \
-        ;; \
-    esac; \
-    SOURCE_DATE_EPOCH=$(git log -1 --pretty=%ct) \
+RUN SOURCE_DATE_EPOCH=$(git log -1 --pretty=%ct) \
     RUSTFLAGS="-C target-feature=+crt-static -C link-arg=-static-libgcc -C link-arg=-Wl,--build-id=none -C metadata='' --remap-path-prefix=/app=." \
     CARGO_INCREMENTAL=0 \
     LC_ALL=C \
     TZ=UTC \
     CFLAGS="-D__TIME__=\"\" -D__DATE__=\"\"" \
     CXXFLAGS="-D__TIME__=\"\" -D__DATE__=\"\"" \
-    cargo build --release --locked --features="$FEATURES" --package=${RBUILDER_BIN} --target "${ARCH_TAG}"
+    cargo build --release --locked --features="$FEATURES" --package=${RBUILDER_BIN}
 
 # Runtime container for rbuilder
 FROM gcr.io/distroless/cc-debian12 AS rbuilder-runtime
