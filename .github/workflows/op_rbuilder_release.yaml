@@ -176,13 +176,18 @@ jobs:
     strategy:
       matrix:
         configs:
-          - target: linux/amd64
+          - platform: linux/amd64
             runner: warp-ubuntu-latest-x64-16x
-          - target: linux/arm64
+          - platform: linux/arm64
             runner: warp-ubuntu-latest-arm64-16x
     steps:
       - name: checkout sources
         uses: actions/checkout@v4
+
+      - name: set env
+        run: |
+          platform=${{ matrix.configs.platform }}
+          echo "PLATFORM=${platform//\//-}" >> $GITHUB_ENV
 
       - name: docker qemu
         uses: docker/setup-qemu-action@v3
@@ -214,15 +219,83 @@ jobs:
 
       - name: docker build and push op-rbuilder
         uses: docker/build-push-action@v5
+        id: build
         with:
           cache-from: type=gha
           cache-to: type=gha,mode=max
           file: Dockerfile
           context: .
           labels: ${{ steps.meta.outputs.labels }}
-          platforms: ${{ matrix.configs.target }}
+          platforms: ${{ matrix.configs.platform }}
           push: true
-          tags: ${{ steps.meta.outputs.tags }}
+          tags: ghcr.io/${{ github.repository }}:${{ env.VERSION }}-${{ env.PLATFORM }}
           build-args: |
             FEATURES=${{ github.event.inputs.features || '' }}
             RBUILDER_BIN=op-rbuilder
+
+      - name: export digest
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+
+      - name: upload digest
+        uses: actions/upload-artifact@v4
+        with:
+          name: digests-${{ env.PLATFORM }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  publish-container-index:
+    name: publish container index
+    runs-on: warp-ubuntu-latest-x64-16x
+    needs:
+      - build-docker
+      - extract-version
+    steps:
+      - name: download digests
+        uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digests-*
+          merge-multiple: true
+
+      - name: setup docker buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: login to ghcr
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: generate container metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          labels: org.opencontainers.image.source=${{ github.repositoryUrl }}
+          tags: |
+            type=sha
+            type=semver,pattern={{version}},value=${{ env.VERSION }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ env.VERSION }}
+            type=semver,pattern={{major}},value=${{ env.VERSION }}
+
+            # Push latest tag for full version only, not for prerelease versions (i.e. not for v1.2.3-rc1)
+            type=raw,value=latest,enable=${{ !contains(env.VERSION, '-') }}
+
+      - name: create manifest list and push
+        working-directory: /tmp/digests
+        run: |
+          jq -cr '.tags[]' <<< "$DOCKER_METADATA_OUTPUT_JSON" | while read -r tag; do
+            echo "Creating manifest for tag: $tag"
+            docker buildx imagetools create -t $tag $(
+              printf 'ghcr.io/${{ github.repository }}@sha256:%s ' *
+            )
+          done
+
+      - name: inspect image
+        run: |
+          docker buildx imagetools inspect ghcr.io/${{ github.repository }}:${{ env.VERSION }}
