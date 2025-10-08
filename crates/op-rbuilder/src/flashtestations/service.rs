@@ -1,5 +1,4 @@
 use alloy_primitives::{B256, Bytes, keccak256};
-use eyre::Context;
 use reth_node_builder::BuilderContext;
 use reth_provider::StateProvider;
 use reth_revm::State;
