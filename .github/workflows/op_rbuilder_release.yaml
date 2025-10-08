@@ -189,7 +189,7 @@ jobs:
       - name: set env
         run: |
           platform=${{ matrix.configs.platform }}
-          echo "PLATFORM=${platform//\//-}" >> $GITHUB_ENV
+          echo "PLATFORM=${platform#*/}" >> $GITHUB_ENV
 
       - name: docker qemu
         uses: docker/setup-qemu-action@v3
