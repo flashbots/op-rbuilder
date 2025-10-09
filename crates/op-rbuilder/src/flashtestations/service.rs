@@ -149,13 +149,14 @@ fn load_or_generate_tee_key(key_path: &str, debug: bool, debug_seed: &str) -> ey
 
     let key_hex = hex::encode(signer.secret.secret_bytes());
 
-    // Save key to file
-    fs::write(path, &key_hex)
-        .inspect_err(|e| warn!("Failed to write key to {}: {:?}", key_path, e))
-        .ok();
     // Set file permissions to 0600 (owner read/write only)
     fs::set_permissions(path, fs::Permissions::from_mode(0o600))
         .inspect_err(|e| warn!("Failed to set permissions on {}: {:?}", key_path, e))
+        .ok();
+
+    // Save key to file
+    fs::write(path, &key_hex)
+        .inspect_err(|e| warn!("Failed to write key to {}: {:?}", key_path, e))
         .ok();
 
     Ok(signer)
