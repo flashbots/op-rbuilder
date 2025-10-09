@@ -15,7 +15,7 @@ use libp2p::{
 use std::{collections::HashMap, time::Duration};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
 pub use libp2p::{Multiaddr, StreamProtocol};
 
@@ -133,6 +133,7 @@ impl<M: Message + 'static> Node<M> {
                 }
                 Some(message) = outgoing_message_rx.recv() => {
                     let protocol = message.protocol();
+                    info!("received message to broadcast on protocol {protocol}");
                     if let Err(e) = outgoing_streams_handler.broadcast_message(message).await {
                         warn!("failed to broadcast message on protocol {protocol}: {e:?}");
                     }
@@ -158,10 +159,10 @@ impl<M: Message + 'static> Node<M> {
                             //
                             // If we already have a connection with this peer, close the new connection,
                             // as we only want one connection per peer.
-                            debug!("connection established with peer {peer_id}");
+                            info!("connection established with peer {peer_id}");
                             if outgoing_streams_handler.has_peer(&peer_id) {
-                                swarm.close_connection(connection_id);
-                                debug!("already have connection with peer {peer_id}, closed connection {connection_id}");
+                                //swarm.close_connection(connection_id);
+                                //info!("already have connection with peer {peer_id}, closed connection {connection_id}");
                             } else {
                                 for protocol in &protocols {
                                     match swarm
@@ -171,7 +172,7 @@ impl<M: Message + 'static> Node<M> {
                                     .await
                                 {
                                     Ok(stream) => { outgoing_streams_handler.insert_peer_and_stream(peer_id, protocol.clone(), stream);
-                                        debug!("opened outbound stream with peer {peer_id} with protocol {protocol} on connection {connection_id}");
+                                        info!("opened outbound stream with peer {peer_id} with protocol {protocol} on connection {connection_id}");
                                     }
                                     Err(e) => {
                                         warn!("failed to open stream with peer {peer_id} on connection {connection_id}: {e:?}");
@@ -185,10 +186,10 @@ impl<M: Message + 'static> Node<M> {
                             cause,
                             ..
                         } => {
-                            debug!("connection closed with peer {peer_id}: {cause:?}");
+                            info!("connection closed with peer {peer_id}: {cause:?}");
                             outgoing_streams_handler.remove_peer(&peer_id);
                         }
-                        SwarmEvent::Behaviour(event) => event.handle().await,
+                        SwarmEvent::Behaviour(event) => event.handle(&mut swarm),
                         _ => continue,
                     }
                 },

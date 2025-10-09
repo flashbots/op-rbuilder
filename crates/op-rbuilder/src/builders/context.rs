@@ -338,7 +338,7 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
         let tx_da_limit = self.da_config.max_da_tx_size();
         let mut evm = self.evm_config.evm_with_env(&mut *db, self.evm_env.clone());
 
-        info!(
+        debug!(
             target: "payload_builder",
             message = "Executing best transactions",
             block_da_limit = ?block_da_limit,

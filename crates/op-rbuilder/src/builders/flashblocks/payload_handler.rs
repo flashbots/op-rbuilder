@@ -121,10 +121,10 @@ where
                             let _  = payload_events_handle.send(Events::BuiltPayload(payload)); // TODO is this only for built or also synced?
                         }
                         Ok(Err(e)) => {
-                            tracing::error!(error = %e, "failed to execute flashblock");
+                            tracing::error!(error = ?e, "failed to execute flashblock");
                         }
                         Err(e) => {
-                            tracing::error!(error = %e, "task panicked while executing flashblock");
+                            tracing::error!(error = ?e, "task panicked while executing flashblock");
                         }
                     }
                 }
@@ -145,17 +145,25 @@ async fn execute_flashblock<Client>(
 where
     Client: ClientBounds,
 {
+    use alloy_consensus::BlockHeader as _;
+    use reth::primitives::SealedHeader;
     use reth_evm::{ConfigureEvm as _, execute::BlockBuilder as _};
-    use reth_optimism_chainspec::OpHardforks as _;
-    use reth_payload_primitives::PayloadBuilderAttributes as _;
 
     let mut cached_reads = reth::revm::cached::CachedReads::default(); // TODO: pass this in from somewhere
+    let parent_hash = payload.block().sealed_header().parent_hash;
+    let parent_header = client
+        .header_by_id(parent_hash.into())
+        .wrap_err("failed to get parent header")?
+        .ok_or_else(|| eyre::eyre!("parent header not found"))?;
+    // TODO: can refactor  this out probably
     let payload_config = PayloadConfig::new(
-        Arc::new(payload.block().sealed_header().clone()),
+        Arc::new(SealedHeader::new(parent_header.clone(), parent_hash)),
         OpPayloadBuilderAttributes::default(),
     );
 
-    let state_provider = client.state_by_block_hash(payload_config.parent_header.hash())?;
+    let state_provider = client
+        .state_by_block_hash(parent_hash)
+        .wrap_err("failed to get state for parent hash")?;
     let db = StateProviderDatabase::new(&state_provider);
     let mut state = State::builder()
         .with_database(cached_reads.as_db_mut(db))
@@ -163,32 +171,19 @@ where
         .build();
 
     let chain_spec = client.chain_spec();
-    let timestamp = payload_config.attributes.timestamp();
+    let timestamp = payload.block().sealed_header().timestamp();
     let block_env_attributes = OpNextBlockEnvAttributes {
         timestamp,
-        suggested_fee_recipient: payload_config.attributes.suggested_fee_recipient(),
-        prev_randao: payload_config.attributes.prev_randao(),
-        gas_limit: payload_config
-            .attributes
-            .gas_limit
-            .unwrap_or(payload_config.parent_header.gas_limit),
-        parent_beacon_block_root: payload_config
-            .attributes
-            .payload_attributes
-            .parent_beacon_block_root,
-        extra_data: if chain_spec.is_holocene_active_at_timestamp(timestamp) {
-            payload_config
-                .attributes
-                .get_holocene_extra_data(chain_spec.base_fee_params_at_timestamp(timestamp))
-                .wrap_err("failed to get holocene extra data for flashblocks payload builder")?
-        } else {
-            Default::default()
-        },
+        suggested_fee_recipient: payload.block().sealed_header().beneficiary,
+        prev_randao: Default::default(), // TODO: is this needed?
+        gas_limit: payload.block().sealed_header().gas_limit,
+        parent_beacon_block_root: payload.block().sealed_header().parent_beacon_block_root,
+        extra_data: payload.block().sealed_header().extra_data.clone(),
     };
 
     let evm_env = ctx
         .evm_config()
-        .next_evm_env(&payload_config.parent_header, &block_env_attributes)
+        .next_evm_env(&parent_header, &block_env_attributes)
         .wrap_err("failed to create next evm env")?;
 
     let address_gas_limiter = AddressGasLimiter::new(gas_limiter_config);
@@ -213,6 +208,7 @@ where
         .wrap_err("failed to create evm builder for next block")?
         .apply_pre_execution_changes()
         .wrap_err("failed to apply pre execution changes")?;
+    // this is a no-op rn because attributes aren't set
     let mut info: ExecutionInfo<ExtraExecutionInfo> = builder_ctx
         .execute_sequencer_transactions(&mut state)
         .wrap_err("failed to execute sequencer transactions")?;

@@ -167,7 +167,7 @@ pub struct FlashblocksArgs {
 
     /// Port for the flashblocks p2p node
     #[arg(
-        long = "flasblocks.p2p_port",
+        long = "flashblocks.p2p_port",
         env = "FLASHBLOCK_P2P_PORT",
         default_value = "9009"
     )]

@@ -1085,7 +1085,7 @@ where
         },
         trie: ExecutedTrieUpdates::Present(Arc::new(trie_output)),
     };
-    info!(target: "payload_builder", message = "Executed block created");
+    debug!(target: "payload_builder", message = "Executed block created");
 
     let sealed_block = Arc::new(block.seal_slow());
     debug!(target: "payload_builder", ?sealed_block, "sealed built block");
