@@ -3,7 +3,13 @@ use reth_node_builder::BuilderContext;
 use reth_provider::StateProvider;
 use reth_revm::State;
 use revm::Database;
-use std::{fmt::Debug, fs, os::unix::fs::PermissionsExt, path::Path};
+use std::{
+    fmt::Debug,
+    fs::{self, OpenOptions},
+    io::Write,
+    os::unix::fs::OpenOptionsExt,
+    path::Path,
+};
 use tracing::{info, warn};
 
 use crate::{
@@ -149,13 +155,14 @@ fn load_or_generate_tee_key(key_path: &str, debug: bool, debug_seed: &str) -> ey
 
     let key_hex = hex::encode(signer.secret.secret_bytes());
 
-    // Set file permissions to 0600 (owner read/write only)
-    fs::set_permissions(path, fs::Permissions::from_mode(0o600))
-        .inspect_err(|e| warn!("Failed to set permissions on {}: {:?}", key_path, e))
-        .ok();
-
-    // Save key to file
-    fs::write(path, &key_hex)
+    // Create file with 0600 permissions atomically
+    OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(path)
+        .and_then(|mut file| file.write_all(key_hex.as_bytes()))
         .inspect_err(|e| warn!("Failed to write key to {}: {:?}", key_path, e))
         .ok();
 
