@@ -12,6 +12,7 @@ use crate::{
         generator::BlockPayloadJobGenerator,
     },
     flashtestations::service::bootstrap_flashtestations,
+    metrics::OpRBuilderMetrics,
     traits::{NodeBounds, PoolBounds},
 };
 use eyre::WrapErr as _;
@@ -21,6 +22,7 @@ use reth_node_builder::{BuilderContext, components::PayloadServiceBuilder};
 use reth_optimism_evm::OpEvmConfig;
 use reth_payload_builder::{PayloadBuilderHandle, PayloadBuilderService};
 use reth_provider::CanonStateSubscriptions;
+use std::sync::Arc;
 
 pub struct FlashblocksServiceBuilder(pub BuilderConfig<FlashblocksConfig>);
 
@@ -36,6 +38,9 @@ impl FlashblocksServiceBuilder {
         Pool: PoolBounds,
         BuilderTx: BuilderTransactions<FlashblocksExtraCtx> + Unpin + Clone + Send + Sync + 'static,
     {
+        // TODO: is there a different global token?
+        let cancel = tokio_util::sync::CancellationToken::new();
+
         let (incoming_message_rx, outgoing_message_tx) = if self.0.p2p_enabled {
             let mut builder = p2p::NodeBuilder::new();
 
@@ -71,6 +76,7 @@ impl FlashblocksServiceBuilder {
                 .with_protocol(FLASHBLOCKS_STREAM_PROTOCOL)
                 .with_known_peers(known_peers)
                 .with_port(self.0.p2p_port)
+                .with_cancellation_token(cancel.clone())
                 .try_build::<Message>()
                 .wrap_err("failed to build flashblocks p2p node")?;
             let multiaddrs = node.multiaddrs();
@@ -91,6 +97,8 @@ impl FlashblocksServiceBuilder {
             (incoming_message_rx, outgoing_message_tx)
         };
 
+        let metrics = Arc::new(OpRBuilderMetrics::default());
+        let gas_limiter_config = self.0.gas_limiter_config.clone();
         let (built_payload_tx, built_payload_rx) = tokio::sync::mpsc::channel(16);
         let payload_builder = OpPayloadBuilder::new(
             OpEvmConfig::optimism(ctx.chain_spec()),
@@ -99,6 +107,7 @@ impl FlashblocksServiceBuilder {
             self.0.clone(),
             builder_tx,
             built_payload_tx,
+            metrics.clone(),
         )
         .wrap_err("failed to create flashblocks payload builder")?;
 
@@ -116,11 +125,23 @@ impl FlashblocksServiceBuilder {
         let (payload_service, payload_builder_handle) =
             PayloadBuilderService::new(payload_generator, ctx.provider().canonical_state_stream());
 
+        let syncer_ctx = crate::builders::flashblocks::ctx::OpPayloadSyncerCtx::new(
+            &ctx.provider().clone(),
+            self.0,
+            OpEvmConfig::optimism(ctx.chain_spec()),
+        )
+        .wrap_err("failed to create flashblocks payload builder context")?;
+
         let payload_handler = PayloadHandler::new(
             built_payload_rx,
             incoming_message_rx,
             outgoing_message_tx,
             payload_service.payload_events_handle(),
+            syncer_ctx,
+            metrics,
+            gas_limiter_config,
+            ctx.provider().clone(),
+            cancel,
         );
 
         ctx.task_executor()

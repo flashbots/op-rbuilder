@@ -3,7 +3,7 @@ use eyre::Context;
 use futures::stream::FuturesUnordered;
 use libp2p::{PeerId, StreamProtocol, swarm::Stream};
 use std::collections::HashMap;
-use tracing::{debug, warn};
+use tracing::{info, warn};
 
 pub(crate) struct StreamsHandler {
     peers_to_stream: HashMap<PeerId, HashMap<StreamProtocol, Stream>>,
@@ -61,7 +61,10 @@ impl StreamsHandler {
             let payload = payload.clone();
             let fut = async move {
                 let mut writer = FramedWrite::new(stream, LinesCodec::new());
-                writer.send(payload).await?;
+                writer
+                    .send(payload)
+                    .await
+                    .wrap_err("failed to send message to peer")?;
                 Ok::<(PeerId, libp2p::swarm::Stream), eyre::ErrReport>((
                     peer,
                     writer.into_inner().into_inner(),
@@ -69,6 +72,7 @@ impl StreamsHandler {
             };
             futures.push(fut);
         }
+
         while let Some(result) = futures.next().await {
             match result {
                 Ok((peer, stream)) => {
@@ -83,7 +87,7 @@ impl StreamsHandler {
                 }
             }
         }
-        debug!(
+        info!(
             "broadcasted message to {} peers",
             self.peers_to_stream.len()
         );
