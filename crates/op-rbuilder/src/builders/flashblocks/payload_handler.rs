@@ -6,6 +6,7 @@ use crate::{
     traits::ClientBounds,
 };
 use alloy_evm::eth::receipt_builder::ReceiptBuilderCtx;
+use alloy_primitives::B64;
 use eyre::WrapErr as _;
 use futures::stream::FuturesUnordered;
 use futures_util::StreamExt as _;
@@ -155,7 +156,7 @@ where
         .header_by_id(parent_hash.into())
         .wrap_err("failed to get parent header")?
         .ok_or_else(|| eyre::eyre!("parent header not found"))?;
-    // TODO: can refactor  this out probably
+    // TODO: can refactor this out probably
     let payload_config = PayloadConfig::new(
         Arc::new(SealedHeader::new(parent_header.clone(), parent_hash)),
         OpPayloadBuilderAttributes::default(),
@@ -188,7 +189,7 @@ where
 
     let address_gas_limiter = AddressGasLimiter::new(gas_limiter_config);
     // TODO: can probably refactor this
-    let builder_ctx = ctx.into_op_payload_builder_ctx(
+    let mut builder_ctx = ctx.into_op_payload_builder_ctx(
         payload_config,
         evm_env.clone(),
         block_env_attributes,
@@ -213,6 +214,20 @@ where
         .execute_sequencer_transactions(&mut state)
         .wrap_err("failed to execute sequencer transactions")?;
 
+    let extra_data = payload.block().sealed_header().extra_data.clone();
+    if extra_data.len() != 9 {
+        tracing::error!(len = extra_data.len(), data = ?extra_data, "invalid extra data length in flashblock");
+        eyre::bail!("extra data length should be 9 bytes");
+    }
+
+    let eip_1559_parameters: B64 = extra_data[1..9].try_into().unwrap();
+    builder_ctx.config.attributes.eip_1559_params = Some(eip_1559_parameters);
+    builder_ctx
+        .config
+        .attributes
+        .payload_attributes
+        .parent_beacon_block_root = payload.block().sealed_header().parent_beacon_block_root;
+
     execute_transactions(
         &mut info,
         &mut state,
@@ -230,7 +245,8 @@ where
         &builder_ctx,
         &mut info,
         true, // TODO: do we need this always?
-    )?;
+    )
+    .wrap_err("failed to build flashblock")?;
 
     Ok((payload, fb_payload))
 }
@@ -320,10 +336,26 @@ fn execute_transactions(
                     deposit,
                 }
             }
-            OpTxEnvelope::Legacy(_) => OpTransaction::new(tx_env),
-            OpTxEnvelope::Eip2930(_) => OpTransaction::new(tx_env),
-            OpTxEnvelope::Eip1559(_) => OpTransaction::new(tx_env),
-            OpTxEnvelope::Eip7702(_) => OpTransaction::new(tx_env),
+            OpTxEnvelope::Legacy(_) => {
+                let mut tx = OpTransaction::new(tx_env);
+                tx.enveloped_tx = Some(vec![0x00].into());
+                tx
+            }
+            OpTxEnvelope::Eip2930(_) => {
+                let mut tx = OpTransaction::new(tx_env);
+                tx.enveloped_tx = Some(vec![0x00].into());
+                tx
+            }
+            OpTxEnvelope::Eip1559(_) => {
+                let mut tx = OpTransaction::new(tx_env);
+                tx.enveloped_tx = Some(vec![0x00].into());
+                tx
+            }
+            OpTxEnvelope::Eip7702(_) => {
+                let mut tx = OpTransaction::new(tx_env);
+                tx.enveloped_tx = Some(vec![0x00].into());
+                tx
+            }
         };
 
         let ResultAndState { result, state } = match evm.transact_raw(executable_tx) {

@@ -131,7 +131,7 @@ ureq = "2.10"
 reqwest = "0.12.23"
 k256 = "0.13.4"
 
-rollup-boost = { git = "http://github.com/flashbots/rollup-boost", rev = "8cabb2c2056fddb55b39369b404d21989eab8bb7" }
+rollup-boost = { git = "http://github.com/flashbots/rollup-boost", rev = "b5caff73878dbde5917a475201b8766affe22ce1" }
 
 nanoid = { version = "0.4", optional = true }
 reth-ipc = { workspace = true, optional = true }

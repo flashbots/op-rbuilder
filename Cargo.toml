@@ -43,63 +43,63 @@ incremental = false
 unreachable_pub = "warn"
 
 [workspace.dependencies]
-reth = { git = "https://github.com/noot/reth", rev = "69069f05addf64af04257a7414d83d74bd554de1" }
-reth-chain-state = { git = "https://github.com/noot/reth", rev = "69069f05addf64af04257a7414d83d74bd554de1" }
-reth-cli = { git = "https://github.com/noot/reth", rev = "69069f05addf64af04257a7414d83d74bd554de1" }
-reth-cli-commands = { git = "https://github.com/noot/reth", rev = "69069f05addf64af04257a7414d83d74bd554de1" }
-reth-cli-util = { git = "https://github.com/noot/reth", rev = "69069f05addf64af04257a7414d83d74bd554de1" }
-reth-db = { git = "https://github.com/noot/reth", rev = "69069f05addf64af04257a7414d83d74bd554de1" }
-reth-db-common = { git = "https://github.com/noot/reth", rev = "69069f05addf64af04257a7414d83d74bd554de1" }
-reth-errors = { git = "https://github.com/noot/reth", rev = "69069f05addf64af04257a7414d83d74bd554de1" }
-reth-payload-builder = { git = "https://github.com/noot/reth", rev = "69069f05addf64af04257a7414d83d74bd554de1" }
-reth-node-api = { git = "https://github.com/noot/reth", rev = "69069f05addf64af04257a7414d83d74bd554de1" }
-reth-rpc-engine-api = { git = "https://github.com/noot/reth", rev = "69069f05addf64af04257a7414d83d74bd554de1" }
-reth-node-ethereum = { git = "https://github.com/noot/reth", rev = "69069f05addf64af04257a7414d83d74bd554de1" }
-reth-trie = { git = "https://github.com/noot/reth", rev = "69069f05addf64af04257a7414d83d74bd554de1" }
-reth-trie-parallel = { git = "https://github.com/noot/reth", rev = "69069f05addf64af04257a7414d83d74bd554de1" }
-reth-basic-payload-builder = { git = "https://github.com/noot/reth", rev = "69069f05addf64af04257a7414d83d74bd554de1" }
-reth-node-core = { git = "https://github.com/noot/reth", rev = "69069f05addf64af04257a7414d83d74bd554de1" }
-reth-primitives = { git = "https://github.com/noot/reth", rev = "69069f05addf64af04257a7414d83d74bd554de1" }
-reth-primitives-traits = { git = "https://github.com/noot/reth", rev = "69069f05addf64af04257a7414d83d74bd554de1" }
-reth-provider = { git = "https://github.com/noot/reth", rev = "69069f05addf64af04257a7414d83d74bd554de1", features = [
+reth = { git = "https://github.com/noot/reth", rev = "00d352d37c3f3ba7c23f370964b92cd13ce08702" }
+reth-chain-state = { git = "https://github.com/noot/reth", rev = "00d352d37c3f3ba7c23f370964b92cd13ce08702" }
+reth-cli = { git = "https://github.com/noot/reth", rev = "00d352d37c3f3ba7c23f370964b92cd13ce08702" }
+reth-cli-commands = { git = "https://github.com/noot/reth", rev = "00d352d37c3f3ba7c23f370964b92cd13ce08702" }
+reth-cli-util = { git = "https://github.com/noot/reth", rev = "00d352d37c3f3ba7c23f370964b92cd13ce08702" }
+reth-db = { git = "https://github.com/noot/reth", rev = "00d352d37c3f3ba7c23f370964b92cd13ce08702" }
+reth-db-common = { git = "https://github.com/noot/reth", rev = "00d352d37c3f3ba7c23f370964b92cd13ce08702" }
+reth-errors = { git = "https://github.com/noot/reth", rev = "00d352d37c3f3ba7c23f370964b92cd13ce08702" }
+reth-payload-builder = { git = "https://github.com/noot/reth", rev = "00d352d37c3f3ba7c23f370964b92cd13ce08702" }
+reth-node-api = { git = "https://github.com/noot/reth", rev = "00d352d37c3f3ba7c23f370964b92cd13ce08702" }
+reth-rpc-engine-api = { git = "https://github.com/noot/reth", rev = "00d352d37c3f3ba7c23f370964b92cd13ce08702" }
+reth-node-ethereum = { git = "https://github.com/noot/reth", rev = "00d352d37c3f3ba7c23f370964b92cd13ce08702" }
+reth-trie = { git = "https://github.com/noot/reth", rev = "00d352d37c3f3ba7c23f370964b92cd13ce08702" }
+reth-trie-parallel = { git = "https://github.com/noot/reth", rev = "00d352d37c3f3ba7c23f370964b92cd13ce08702" }
+reth-basic-payload-builder = { git = "https://github.com/noot/reth", rev = "00d352d37c3f3ba7c23f370964b92cd13ce08702" }
+reth-node-core = { git = "https://github.com/noot/reth", rev = "00d352d37c3f3ba7c23f370964b92cd13ce08702" }
+reth-primitives = { git = "https://github.com/noot/reth", rev = "00d352d37c3f3ba7c23f370964b92cd13ce08702" }
+reth-primitives-traits = { git = "https://github.com/noot/reth", rev = "00d352d37c3f3ba7c23f370964b92cd13ce08702" }
+reth-provider = { git = "https://github.com/noot/reth", rev = "00d352d37c3f3ba7c23f370964b92cd13ce08702", features = [
     "test-utils",
 ] }
 
-reth-chainspec = { git = "https://github.com/noot/reth", rev = "69069f05addf64af04257a7414d83d74bd554de1" }
-reth-storage-api = { git = "https://github.com/noot/reth", rev = "69069f05addf64af04257a7414d83d74bd554de1" }
-reth-rpc-api = { git = "https://github.com/noot/reth", rev = "69069f05addf64af04257a7414d83d74bd554de1" }
-reth-evm = { git = "https://github.com/noot/reth", rev = "69069f05addf64af04257a7414d83d74bd554de1" }
-reth-evm-ethereum = { git = "https://github.com/noot/reth", rev = "69069f05addf64af04257a7414d83d74bd554de1" }
-reth-execution-errors = { git = "https://github.com/noot/reth", rev = "69069f05addf64af04257a7414d83d74bd554de1" }
-reth-exex = { git = "https://github.com/noot/reth", rev = "69069f05addf64af04257a7414d83d74bd554de1" }
-reth-tasks = { git = "https://github.com/noot/reth", rev = "69069f05addf64af04257a7414d83d74bd554de1" }
-reth-metrics = { git = "https://github.com/noot/reth", rev = "69069f05addf64af04257a7414d83d74bd554de1" }
-reth-trie-db = { git = "https://github.com/noot/reth", rev = "69069f05addf64af04257a7414d83d74bd554de1" }
-reth-payload-primitives = { git = "https://github.com/noot/reth", rev = "69069f05addf64af04257a7414d83d74bd554de1" }
-reth-transaction-pool = { git = "https://github.com/noot/reth", rev = "69069f05addf64af04257a7414d83d74bd554de1" }
-reth-execution-types = { git = "https://github.com/noot/reth", rev = "69069f05addf64af04257a7414d83d74bd554de1" }
-reth-revm = { git = "https://github.com/noot/reth", rev = "69069f05addf64af04257a7414d83d74bd554de1" }
-reth-payload-builder-primitives = { git = "https://github.com/noot/reth", rev = "69069f05addf64af04257a7414d83d74bd554de1" }
-reth-payload-util = { git = "https://github.com/noot/reth", rev = "69069f05addf64af04257a7414d83d74bd554de1" }
-reth-rpc-layer = { git = "https://github.com/noot/reth", rev = "69069f05addf64af04257a7414d83d74bd554de1" }
-reth-network-peers = { git = "https://github.com/noot/reth", rev = "69069f05addf64af04257a7414d83d74bd554de1" }
-reth-testing-utils = { git = "https://github.com/noot/reth", rev = "69069f05addf64af04257a7414d83d74bd554de1" }
-reth-node-builder = { git = "https://github.com/noot/reth", rev = "69069f05addf64af04257a7414d83d74bd554de1" }
-reth-rpc-eth-types = { git = "https://github.com/noot/reth", rev = "69069f05addf64af04257a7414d83d74bd554de1" }
-reth-tracing-otlp = { git = "https://github.com/noot/reth", rev = "69069f05addf64af04257a7414d83d74bd554de1" }
-reth-ipc = { git = "https://github.com/noot/reth", rev = "69069f05addf64af04257a7414d83d74bd554de1" }
+reth-chainspec = { git = "https://github.com/noot/reth", rev = "00d352d37c3f3ba7c23f370964b92cd13ce08702" }
+reth-storage-api = { git = "https://github.com/noot/reth", rev = "00d352d37c3f3ba7c23f370964b92cd13ce08702" }
+reth-rpc-api = { git = "https://github.com/noot/reth", rev = "00d352d37c3f3ba7c23f370964b92cd13ce08702" }
+reth-evm = { git = "https://github.com/noot/reth", rev = "00d352d37c3f3ba7c23f370964b92cd13ce08702" }
+reth-evm-ethereum = { git = "https://github.com/noot/reth", rev = "00d352d37c3f3ba7c23f370964b92cd13ce08702" }
+reth-execution-errors = { git = "https://github.com/noot/reth", rev = "00d352d37c3f3ba7c23f370964b92cd13ce08702" }
+reth-exex = { git = "https://github.com/noot/reth", rev = "00d352d37c3f3ba7c23f370964b92cd13ce08702" }
+reth-tasks = { git = "https://github.com/noot/reth", rev = "00d352d37c3f3ba7c23f370964b92cd13ce08702" }
+reth-metrics = { git = "https://github.com/noot/reth", rev = "00d352d37c3f3ba7c23f370964b92cd13ce08702" }
+reth-trie-db = { git = "https://github.com/noot/reth", rev = "00d352d37c3f3ba7c23f370964b92cd13ce08702" }
+reth-payload-primitives = { git = "https://github.com/noot/reth", rev = "00d352d37c3f3ba7c23f370964b92cd13ce08702" }
+reth-transaction-pool = { git = "https://github.com/noot/reth", rev = "00d352d37c3f3ba7c23f370964b92cd13ce08702" }
+reth-execution-types = { git = "https://github.com/noot/reth", rev = "00d352d37c3f3ba7c23f370964b92cd13ce08702" }
+reth-revm = { git = "https://github.com/noot/reth", rev = "00d352d37c3f3ba7c23f370964b92cd13ce08702" }
+reth-payload-builder-primitives = { git = "https://github.com/noot/reth", rev = "00d352d37c3f3ba7c23f370964b92cd13ce08702" }
+reth-payload-util = { git = "https://github.com/noot/reth", rev = "00d352d37c3f3ba7c23f370964b92cd13ce08702" }
+reth-rpc-layer = { git = "https://github.com/noot/reth", rev = "00d352d37c3f3ba7c23f370964b92cd13ce08702" }
+reth-network-peers = { git = "https://github.com/noot/reth", rev = "00d352d37c3f3ba7c23f370964b92cd13ce08702" }
+reth-testing-utils = { git = "https://github.com/noot/reth", rev = "00d352d37c3f3ba7c23f370964b92cd13ce08702" }
+reth-node-builder = { git = "https://github.com/noot/reth", rev = "00d352d37c3f3ba7c23f370964b92cd13ce08702" }
+reth-rpc-eth-types = { git = "https://github.com/noot/reth", rev = "00d352d37c3f3ba7c23f370964b92cd13ce08702" }
+reth-tracing-otlp = { git = "https://github.com/noot/reth", rev = "00d352d37c3f3ba7c23f370964b92cd13ce08702" }
+reth-ipc = { git = "https://github.com/noot/reth", rev = "00d352d37c3f3ba7c23f370964b92cd13ce08702" }
 
 # reth optimism
-reth-optimism-primitives = { git = "https://github.com/noot/reth", rev = "69069f05addf64af04257a7414d83d74bd554de1" }
-reth-optimism-consensus = { git = "https://github.com/noot/reth", rev = "69069f05addf64af04257a7414d83d74bd554de1" }
-reth-optimism-cli = { git = "https://github.com/noot/reth", rev = "69069f05addf64af04257a7414d83d74bd554de1" }
-reth-optimism-forks = { git = "https://github.com/noot/reth", rev = "69069f05addf64af04257a7414d83d74bd554de1" }
-reth-optimism-evm = { git = "https://github.com/noot/reth", rev = "69069f05addf64af04257a7414d83d74bd554de1" }
-reth-optimism-node = { git = "https://github.com/noot/reth", rev = "69069f05addf64af04257a7414d83d74bd554de1" }
-reth-optimism-payload-builder = { git = "https://github.com/noot/reth", rev = "69069f05addf64af04257a7414d83d74bd554de1" }
-reth-optimism-chainspec = { git = "https://github.com/noot/reth", rev = "69069f05addf64af04257a7414d83d74bd554de1" }
-reth-optimism-txpool = { git = "https://github.com/noot/reth", rev = "69069f05addf64af04257a7414d83d74bd554de1" }
-reth-optimism-rpc = { git = "https://github.com/noot/reth", rev = "69069f05addf64af04257a7414d83d74bd554de1", features = [
+reth-optimism-primitives = { git = "https://github.com/noot/reth", rev = "00d352d37c3f3ba7c23f370964b92cd13ce08702" }
+reth-optimism-consensus = { git = "https://github.com/noot/reth", rev = "00d352d37c3f3ba7c23f370964b92cd13ce08702" }
+reth-optimism-cli = { git = "https://github.com/noot/reth", rev = "00d352d37c3f3ba7c23f370964b92cd13ce08702" }
+reth-optimism-forks = { git = "https://github.com/noot/reth", rev = "00d352d37c3f3ba7c23f370964b92cd13ce08702" }
+reth-optimism-evm = { git = "https://github.com/noot/reth", rev = "00d352d37c3f3ba7c23f370964b92cd13ce08702" }
+reth-optimism-node = { git = "https://github.com/noot/reth", rev = "00d352d37c3f3ba7c23f370964b92cd13ce08702" }
+reth-optimism-payload-builder = { git = "https://github.com/noot/reth", rev = "00d352d37c3f3ba7c23f370964b92cd13ce08702" }
+reth-optimism-chainspec = { git = "https://github.com/noot/reth", rev = "00d352d37c3f3ba7c23f370964b92cd13ce08702" }
+reth-optimism-txpool = { git = "https://github.com/noot/reth", rev = "00d352d37c3f3ba7c23f370964b92cd13ce08702" }
+reth-optimism-rpc = { git = "https://github.com/noot/reth", rev = "00d352d37c3f3ba7c23f370964b92cd13ce08702", features = [
     "client",
 ] }
 
@@ -194,6 +194,18 @@ vergen-git2 = "1.0.5"
 opentelemetry = { version = "0.29.1", features = ["trace"] }
 
 [patch.crates-io]
-alloy-evm = { git = "https://github.com/noot/evm", rev = "c7ea94eaa1bfc0971624ccd3e6973059335cb862" }
-alloy-op-evm = { git = "https://github.com/noot/evm", rev = "c7ea94eaa1bfc0971624ccd3e6973059335cb862" }
-revm-inspectors = { git = "https://github.com/noot/revm-inspectors", rev = "1af65e18317c33a37492689c5b11c6ddbfe3bc51" }
+alloy-evm = { git = "https://github.com/noot/evm", rev = "f58c9c2e6397744939f8da9f0d5c4f0e5cd69d2e" }
+alloy-op-evm = { git = "https://github.com/noot/evm", rev = "f58c9c2e6397744939f8da9f0d5c4f0e5cd69d2e" }
+revm-inspectors = { git = "https://github.com/noot/revm-inspectors", rev = "84bcd1cb78c3c9dd84ad7a50a6a9e13333704598" }
+revm = { git = "https://github.com/bluealloy/revm", rev = "a9b4ea798aba62bfc4ff869147d764f4467aecd4" }
+op-revm = { git = "https://github.com/bluealloy/revm", rev = "a9b4ea798aba62bfc4ff869147d764f4467aecd4" }
+
+revm-bytecode = { git = "https://github.com/bluealloy/revm", rev = "a9b4ea798aba62bfc4ff869147d764f4467aecd4" }
+revm-database = { git = "https://github.com/bluealloy/revm", rev = "a9b4ea798aba62bfc4ff869147d764f4467aecd4" }
+revm-state = { git = "https://github.com/bluealloy/revm", rev = "a9b4ea798aba62bfc4ff869147d764f4467aecd4" }
+revm-primitives = { git = "https://github.com/bluealloy/revm", rev = "a9b4ea798aba62bfc4ff869147d764f4467aecd4" }
+revm-interpreter = { git = "https://github.com/bluealloy/revm", rev = "a9b4ea798aba62bfc4ff869147d764f4467aecd4" }
+revm-inspector = { git = "https://github.com/bluealloy/revm", rev = "a9b4ea798aba62bfc4ff869147d764f4467aecd4" }
+revm-context = { git = "https://github.com/bluealloy/revm", rev = "a9b4ea798aba62bfc4ff869147d764f4467aecd4" }
+revm-context-interface = { git = "https://github.com/bluealloy/revm", rev = "a9b4ea798aba62bfc4ff869147d764f4467aecd4" }
+revm-database-interface = { git = "https://github.com/bluealloy/revm", rev = "a9b4ea798aba62bfc4ff869147d764f4467aecd4" }
