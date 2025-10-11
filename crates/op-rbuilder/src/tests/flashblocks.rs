@@ -1,8 +1,7 @@
 use alloy_consensus::Transaction;
 use alloy_eips::Decodable2718;
-use alloy_primitives::{Address, TxHash, U256, address, b128, b256};
+use alloy_primitives::{Address, TxHash, U256, address};
 use alloy_provider::Provider;
-use alloy_sol_types::SolCall;
 use macros::rb_test;
 use op_alloy_consensus::OpTxEnvelope;
 use std::time::Duration;
@@ -10,11 +9,9 @@ use std::time::Duration;
 use crate::{
     args::{FlashblocksArgs, OpRbuilderArgs},
     tests::{
-        BUILDER_PRIVATE_KEY, BlockTransactionsExt, BundleOpts, ChainDriver, ChainDriverExt,
-        FUNDED_PRIVATE_KEY, LocalInstance, ONE_ETH, TransactionBuilderExt,
+        BlockTransactionsExt, BundleOpts, ChainDriver, LocalInstance, TransactionBuilderExt,
         flashblocks_number_contract::FlashblocksNumber,
     },
-    tx_signer::Signer,
 };
 
 // If the order of deployment from the signer changes the address will change
@@ -29,6 +26,8 @@ const FLASHBLOCKS_NUMBER_ADDRESS: Address = address!("5fbdb2315678afecb367f032d9
         flashblocks_block_time: 200,
         flashblocks_leeway_time: 100,
         flashblocks_fixed: false,
+        flashblocks_calculate_state_root: true,
+        flashblocks_p2p_port: 9002,
         ..Default::default()
     },
     ..Default::default()
@@ -67,6 +66,8 @@ async fn smoke_dynamic_base(rbuilder: LocalInstance) -> eyre::Result<()> {
         flashblocks_block_time: 200,
         flashblocks_leeway_time: 100,
         flashblocks_fixed: false,
+        flashblocks_calculate_state_root: true,
+        flashblocks_p2p_port: 9002,
         ..Default::default()
     },
     ..Default::default()
@@ -105,6 +106,8 @@ async fn smoke_dynamic_unichain(rbuilder: LocalInstance) -> eyre::Result<()> {
         flashblocks_block_time: 200,
         flashblocks_leeway_time: 50,
         flashblocks_fixed: true,
+        flashblocks_calculate_state_root: true,
+        flashblocks_p2p_port: 9002,
         ..Default::default()
     },
     ..Default::default()
@@ -143,6 +146,8 @@ async fn smoke_classic_unichain(rbuilder: LocalInstance) -> eyre::Result<()> {
         flashblocks_block_time: 200,
         flashblocks_leeway_time: 50,
         flashblocks_fixed: true,
+        flashblocks_calculate_state_root: true,
+        flashblocks_p2p_port: 9002,
         ..Default::default()
     },
     ..Default::default()
@@ -181,6 +186,8 @@ async fn smoke_classic_base(rbuilder: LocalInstance) -> eyre::Result<()> {
         flashblocks_block_time: 200,
         flashblocks_leeway_time: 100,
         flashblocks_fixed: false,
+        flashblocks_calculate_state_root: true,
+        flashblocks_p2p_port: 9002,
         ..Default::default()
     },
     ..Default::default()
@@ -225,6 +232,9 @@ async fn unichain_dynamic_with_lag(rbuilder: LocalInstance) -> eyre::Result<()> 
         flashblocks_addr: "127.0.0.1".into(),
         flashblocks_block_time: 200,
         flashblocks_leeway_time: 0,
+        flashblocks_fixed: false,
+        flashblocks_calculate_state_root: true,
+        flashblocks_p2p_port: 9002,
         ..Default::default()
     },
     ..Default::default()
@@ -261,6 +271,10 @@ async fn dynamic_with_full_block_lag(rbuilder: LocalInstance) -> eyre::Result<()
         flashblocks_port: 1239,
         flashblocks_addr: "127.0.0.1".into(),
         flashblocks_block_time: 200,
+        flashblocks_leeway_time: 100,
+        flashblocks_fixed: false,
+        flashblocks_calculate_state_root: true,
+        flashblocks_p2p_port: 9002,
         ..Default::default()
     },
     ..Default::default()
@@ -319,6 +333,10 @@ async fn test_flashblock_min_filtering(rbuilder: LocalInstance) -> eyre::Result<
         flashblocks_port: 1239,
         flashblocks_addr: "127.0.0.1".into(),
         flashblocks_block_time: 200,
+        flashblocks_leeway_time: 100,
+        flashblocks_fixed: false,
+        flashblocks_calculate_state_root: true,
+        flashblocks_p2p_port: 9002,
         ..Default::default()
     },
     ..Default::default()
@@ -375,6 +393,8 @@ async fn test_flashblock_max_filtering(rbuilder: LocalInstance) -> eyre::Result<
         flashblocks_block_time: 200,
         flashblocks_leeway_time: 100,
         flashblocks_fixed: false,
+        flashblocks_calculate_state_root: true,
+        flashblocks_p2p_port: 9002,
         ..Default::default()
     },
     ..Default::default()
@@ -421,6 +441,7 @@ async fn test_flashblock_min_max_filtering(rbuilder: LocalInstance) -> eyre::Res
         flashblocks_leeway_time: 100,
         flashblocks_fixed: false,
         flashblocks_calculate_state_root: false,
+        flashblocks_p2p_port: 9002,
         ..Default::default()
     },
     ..Default::default()

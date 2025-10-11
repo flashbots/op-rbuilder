@@ -157,6 +157,38 @@ pub struct FlashblocksArgs {
     )]
     pub flashblocks_calculate_state_root: bool,
 
+    /// Enable libp2p networking for flashblock propagation
+    #[arg(
+        long = "flashblocks.p2p_enabled",
+        env = "FLASHBLOCK_P2P_ENABLED",
+        default_value = "false"
+    )]
+    pub flashblocks_p2p_enabled: bool,
+
+    /// Port for the flashblocks p2p node
+    #[arg(
+        long = "flasblocks.p2p_port",
+        env = "FLASHBLOCK_P2P_PORT",
+        default_value = "9009"
+    )]
+    pub flashblocks_p2p_port: u16,
+
+    /// Path to the file containing a hex-encoded libp2p private key.
+    /// If the file does not exist, a new key will be generated.
+    #[arg(
+        long = "flashblocks.p2p_private_key_file",
+        env = "FLASHBLOCK_P2P_PRIVATE_KEY_FILE"
+    )]
+    pub flashblocks_p2p_private_key_file: Option<String>,
+
+    /// Comma-separated list of multiaddrs of known Flashblocks peers
+    /// Example: "/ip4/104.131.131.82/tcp/4001/p2p/QmaCpDMGvV2BGHeYERUEnRQAwe3N8SzbUtfsmvsqQLuvuJ,/ip4/104.131.131.82/udp/4001/quic-v1/p2p/QmaCpDMGvV2BGHeYERUEnRQAwe3N8SzbUtfsmvsqQLuvuJ"
+    #[arg(
+        long = "flashblocks.p2p_known_peers",
+        env = "FLASHBLOCK_P2P_KNOWN_PEERS"
+    )]
+    pub flashblocks_known_peers: Option<String>,
+
     /// Flashblocks number contract address
     ///
     /// This is the address of the contract that will be used to increment the flashblock number.
