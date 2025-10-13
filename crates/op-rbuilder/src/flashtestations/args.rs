@@ -1,10 +1,12 @@
 use alloy_primitives::{Address, U256, utils::parse_ether};
+use clap::Parser;
+use reth_optimism_cli::commands::Commands;
 
-use crate::tx_signer::Signer;
+use crate::{args::Cli, tx_signer::Signer};
 
 /// Parameters for Flashtestations configuration
 /// The names in the struct are prefixed with `flashtestations`
-#[derive(Debug, Clone, Default, PartialEq, Eq, clap::Args)]
+#[derive(Debug, Clone, PartialEq, Eq, clap::Args)]
 pub struct FlashtestationsArgs {
     /// When set to true, the builder will initiate the flashtestations
     /// workflow within the bootstrapping and block building process.
@@ -23,17 +25,32 @@ pub struct FlashtestationsArgs {
     )]
     pub debug: bool,
 
-    // Debug url for attestations
-    #[arg(long = "flashtestations.debug-url", env = "FLASHTESTATIONS_DEBUG_URL")]
-    pub debug_url: Option<String>,
+    // Debug static key for the tee key. DO NOT USE IN PRODUCTION
+    #[arg(
+        long = "flashtestations.debug-tee-key-seed",
+        env = "FLASHTESTATIONS_DEBUG_TEE_KEY_SEED",
+        default_value = "debug"
+    )]
+    pub debug_tee_key_seed: String,
+
+    /// Path to save ephemeral TEE key between restarts
+    #[arg(
+        long = "flashtestations.tee-key-path",
+        env = "FLASHTESTATIONS_TEE_KEY_PATH",
+        default_value = "/run/flashtestation.key"
+    )]
+    pub flashtestations_key_path: String,
+
+    // Remote url for attestations
+    #[arg(
+        long = "flashtestations.quote-provider",
+        env = "FLASHTESTATIONS_QUOTE_PROVIDER"
+    )]
+    pub quote_provider: Option<String>,
 
     /// The rpc url to post the onchain attestation requests to
-    #[arg(
-        long = "flashtestations.rpc-url",
-        env = "FLASHTESTATIONS_RPC_URL",
-        default_value = "http://localhost:8545"
-    )]
-    pub rpc_url: String,
+    #[arg(long = "flashtestations.rpc-url", env = "FLASHTESTATIONS_RPC_URL")]
+    pub rpc_url: Option<String>,
 
     /// Funding key for the TEE key
     #[arg(
@@ -83,4 +100,14 @@ pub struct FlashtestationsArgs {
         default_value = "1"
     )]
     pub builder_proof_version: u8,
+}
+
+impl Default for FlashtestationsArgs {
+    fn default() -> Self {
+        let args = Cli::parse_from(["dummy", "node"]);
+        let Commands::Node(node_command) = args.command else {
+            unreachable!()
+        };
+        node_command.ext.flashtestations
+    }
 }
