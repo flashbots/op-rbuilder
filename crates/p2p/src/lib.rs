@@ -24,6 +24,17 @@ pub trait Message:
     serde::Serialize + for<'de> serde::Deserialize<'de> + Send + Sync + Clone + std::fmt::Debug
 {
     fn protocol(&self) -> StreamProtocol;
+
+    fn to_string(&self) -> eyre::Result<String> {
+        serde_json::to_string(self).wrap_err("failed to serialize message to string")
+    }
+    
+    fn from_str(s: &str) -> eyre::Result<Self>
+    where
+        Self: Sized,
+    {
+        serde_json::from_str(s).wrap_err("failed to deserialize message from string")
+    }
 }
 
 /// The libp2p node.
@@ -431,7 +442,7 @@ async fn handle_incoming_stream<M: Message>(
     loop {
         match reader.next().await {
             Some(Ok(str)) => {
-                let payload: M = serde_json::from_str(&str)
+                let payload = M::from_str(&str)
                     .wrap_err("failed to decode stream message into FlashblocksPayloadV1")?;
                 debug!("got message from peer {peer_id}: {payload:?}");
                 let _ = payload_tx.send(payload).await;

@@ -44,7 +44,9 @@ impl StreamsHandler {
         };
 
         let protocol = message.protocol();
-        let payload = serde_json::to_string(&message).wrap_err("failed to serialize payload")?;
+        let payload = message
+            .to_string()
+            .wrap_err("failed to serialize payload")?;
 
         let peers = self.peers_to_stream.keys().cloned().collect::<Vec<_>>();
         let mut futures = FuturesUnordered::new();
