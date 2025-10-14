@@ -7,7 +7,7 @@ use crate::{
 };
 use alloy_evm::eth::receipt_builder::ReceiptBuilderCtx;
 use alloy_primitives::B64;
-use eyre::WrapErr as _;
+use eyre::{WrapErr as _, bail};
 use futures::stream::FuturesUnordered;
 use futures_util::StreamExt as _;
 use op_alloy_consensus::OpTxEnvelope;
@@ -85,7 +85,7 @@ where
             cancel,
         } = self;
 
-        tracing::info!("flashblocks payload handler started");
+        tracing::debug!("flashblocks payload handler started");
 
         let mut execute_flashblock_futures = FuturesUnordered::new();
 
@@ -118,7 +118,7 @@ where
                 Some(res) = execute_flashblock_futures.next() => {
                     match res {
                         Ok(Ok((payload, _))) => {
-                            tracing::info!("successfully executed flashblock");
+                            tracing::debug!("successfully executed flashblock");
                             let _  = payload_events_handle.send(Events::BuiltPayload(payload)); // TODO is this only for built or also synced?
                         }
                         Ok(Err(e)) => {
@@ -150,6 +150,8 @@ where
     use reth::primitives::SealedHeader;
     use reth_evm::{ConfigureEvm as _, execute::BlockBuilder as _};
 
+    tracing::info!(header = ?payload.block().header(), "executing flashblock");
+
     let mut cached_reads = reth::revm::cached::CachedReads::default(); // TODO: pass this in from somewhere
     let parent_hash = payload.block().sealed_header().parent_hash;
     let parent_header = client
@@ -172,11 +174,11 @@ where
         .build();
 
     let chain_spec = client.chain_spec();
-    let timestamp = payload.block().sealed_header().timestamp();
+    let timestamp = payload.block().header().timestamp();
     let block_env_attributes = OpNextBlockEnvAttributes {
         timestamp,
         suggested_fee_recipient: payload.block().sealed_header().beneficiary,
-        prev_randao: Default::default(), // TODO: is this needed?
+        prev_randao: payload.block().sealed_header().mix_hash,
         gas_limit: payload.block().sealed_header().gas_limit,
         parent_beacon_block_root: payload.block().sealed_header().parent_beacon_block_root,
         extra_data: payload.block().sealed_header().extra_data.clone(),
@@ -209,10 +211,11 @@ where
         .wrap_err("failed to create evm builder for next block")?
         .apply_pre_execution_changes()
         .wrap_err("failed to apply pre execution changes")?;
-    // this is a no-op rn because attributes aren't set
-    let mut info: ExecutionInfo<ExtraExecutionInfo> = builder_ctx
-        .execute_sequencer_transactions(&mut state)
-        .wrap_err("failed to execute sequencer transactions")?;
+    // this is a no-op rn because `payload_config` attributes aren't set
+    // let mut info: ExecutionInfo<ExtraExecutionInfo> = builder_ctx
+    //     .execute_sequencer_transactions(&mut state)
+    //     .wrap_err("failed to execute sequencer transactions")?;
+    let mut info = ExecutionInfo::with_capacity(payload.block().body().transactions.len());
 
     let extra_data = payload.block().sealed_header().extra_data.clone();
     if extra_data.len() != 9 {
@@ -227,6 +230,9 @@ where
         .attributes
         .payload_attributes
         .parent_beacon_block_root = payload.block().sealed_header().parent_beacon_block_root;
+    builder_ctx.config.attributes.payload_attributes.timestamp = timestamp;
+    builder_ctx.config.attributes.payload_attributes.prev_randao =
+        payload.block().sealed_header().mix_hash;
 
     execute_transactions(
         &mut info,
@@ -237,6 +243,7 @@ where
         evm_env,
         builder_ctx.max_gas_per_txn,
         is_canyon_active(&chain_spec, timestamp),
+        is_regolith_active(&chain_spec, timestamp),
     )
     .wrap_err("failed to execute best transactions")?;
 
@@ -247,6 +254,8 @@ where
         true, // TODO: do we need this always?
     )
     .wrap_err("failed to build flashblock")?;
+
+    tracing::info!(header = ?payload.block().header(), "successfully executed flashblock");
 
     Ok((payload, fb_payload))
 }
@@ -305,6 +314,7 @@ fn execute_transactions(
     evm_env: alloy_evm::EvmEnv<op_revm::OpSpecId>,
     max_gas_per_txn: Option<u64>,
     is_canyon_active: bool,
+    is_regolith_active: bool,
 ) -> eyre::Result<()> {
     use alloy_evm::{Evm as _, EvmError as _};
     use op_revm::{OpTransaction, transaction::deposit::DepositTransactionParts};
@@ -315,7 +325,6 @@ fn execute_transactions(
         context::{TxEnv, result::ResultAndState},
     };
 
-    let mut gas_used: u64 = 0;
     let mut evm = evm_config.evm_with_env(&mut *state, evm_env);
 
     while let Some(ref tx) = txs.next(()) {
@@ -380,17 +389,24 @@ fn execute_transactions(
         }
 
         let tx_gas_used = result.gas_used();
-        gas_used = gas_used.checked_add(tx_gas_used).ok_or_else(|| {
-            eyre::eyre!("total gas used overflowed when executing flashblock transactions")
-        })?;
-        if gas_used > gas_limit {
-            return Err(eyre::eyre!(
-                "flashblock exceeded gas limit when executing transactions"
-            ));
+        info.cumulative_gas_used = info
+            .cumulative_gas_used
+            .checked_add(tx_gas_used)
+            .ok_or_else(|| {
+                eyre::eyre!("total gas used overflowed when executing flashblock transactions")
+            })?;
+        if info.cumulative_gas_used > gas_limit {
+            bail!("flashblock exceeded gas limit when executing transactions");
         }
 
-        info.cumulative_gas_used += gas_used;
-        // info.cumulative_da_bytes_used += tx_da_size;
+        let depositor_nonce = (is_regolith_active && tx.is_deposit())
+            .then(|| {
+                evm.db_mut()
+                    .load_cache_account(sender)
+                    .map(|acc| acc.account_info().unwrap_or_default().nonce)
+            })
+            .transpose()
+            .wrap_err("failed to get depositor nonce")?;
 
         let ctx = ReceiptBuilderCtx {
             tx,
@@ -399,17 +415,15 @@ fn execute_transactions(
             state: &state,
             cumulative_gas_used: info.cumulative_gas_used,
         };
-        // TODO: deposit_nonce may be Some in the case of a sequencer tx
-        info.receipts
-            .push(build_receipt(evm_config, ctx, None, is_canyon_active));
+
+        info.receipts.push(build_receipt(
+            evm_config,
+            ctx,
+            depositor_nonce,
+            is_canyon_active,
+        ));
 
         evm.db_mut().commit(state);
-
-        // // update add to total fees
-        // let miner_fee = tx
-        //     .effective_tip_per_gas(base_fee)
-        //     .expect("fee is always valid; execution succeeded");
-        // info.total_fees += U256::from(miner_fee) * U256::from(gas_used);
 
         // append sender and transaction to the respective lists
         info.executed_senders.push(sender);
@@ -459,4 +473,9 @@ fn build_receipt<E: alloy_evm::Evm>(
 fn is_canyon_active(chain_spec: &OpChainSpec, timestamp: u64) -> bool {
     use reth_optimism_chainspec::OpHardforks as _;
     chain_spec.is_canyon_active_at_timestamp(timestamp)
+}
+
+fn is_regolith_active(chain_spec: &OpChainSpec, timestamp: u64) -> bool {
+    use reth_optimism_chainspec::OpHardforks as _;
+    chain_spec.is_regolith_active_at_timestamp(timestamp)
 }
