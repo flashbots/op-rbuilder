@@ -301,7 +301,7 @@ impl NodeBuilder {
             Some(hex) => {
                 let mut bytes = hex::decode(hex).wrap_err("failed to decode hex string")?;
                 let keypair = ed25519::Keypair::try_from_bytes(&mut bytes)
-                    .wrap_err("failed to create keypair from bytes: {e}")?;
+                    .wrap_err("failed to create keypair from bytes")?;
                 Some(keypair.into())
             }
             None => None,
@@ -441,21 +441,20 @@ async fn handle_incoming_stream<M: Message>(
     let codec = LinesCodec::new();
     let mut reader = FramedRead::new(stream.compat(), codec);
 
-    loop {
-        while let Some(res) = reader.next().await {
-            match res {
-                Ok(str) => {
-                    let payload = M::from_str(&str).wrap_err("failed to decode stream message")?;
-                    debug!("got message from peer {peer_id}: {payload:?}");
-                    let _ = payload_tx.send(payload).await;
-                }
-                Err(e) => {
-                    return Err(e)
-                        .wrap_err(format!("failed to read from stream of peer {peer_id}"));
-                }
+    while let Some(res) = reader.next().await {
+        match res {
+            Ok(str) => {
+                let payload = M::from_str(&str).wrap_err("failed to decode stream message")?;
+                debug!("got message from peer {peer_id}: {payload:?}");
+                let _ = payload_tx.send(payload).await;
+            }
+            Err(e) => {
+                return Err(e).wrap_err(format!("failed to read from stream of peer {peer_id}"));
             }
         }
     }
+
+    Ok(())
 }
 
 fn create_transport(
