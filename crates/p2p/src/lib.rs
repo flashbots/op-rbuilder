@@ -406,6 +406,7 @@ impl<M: Message + 'static> IncomingStreamsHandler<M> {
             tokio::select! {
                 _ = cancellation_token.cancelled() => {
                     debug!("cancellation token triggered, shutting down incoming streams handler for protocol {protocol}");
+                    return;
                 }
                 Some((from, stream)) = incoming.next() => {
                     debug!("new incoming stream on protocol {protocol} from peer {from}");
