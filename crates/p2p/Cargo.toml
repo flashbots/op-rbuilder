@@ -13,7 +13,7 @@ libp2p = { version = "0.56", features = ["identify", "ping", "noise", "tcp", "au
 libp2p-stream = "0.4.0-alpha"
 multiaddr = "0.18"
 
-derive_more = { workspace = true }
+derive_more = { workspace = true, features = ["from"] }
 eyre = { workspace = true }
 futures = { workspace = true}
 futures-util = { workspace = true }
