@@ -191,9 +191,10 @@ where
     let extra_data = payload.block().sealed_header().extra_data.clone();
     if extra_data.len() != 9 {
         tracing::error!(len = extra_data.len(), data = ?extra_data, "invalid extra data length in flashblock");
-        eyre::bail!("extra data length should be 9 bytes");
+        bail!("extra data length should be 9 bytes");
     }
 
+    // see https://specs.optimism.io/protocol/holocene/exec-engine.html#eip-1559-parameters-in-block-header
     let eip_1559_parameters: B64 = extra_data[1..9].try_into().unwrap();
     let payload_config = PayloadConfig::new(
         Arc::new(SealedHeader::new(parent_header.clone(), parent_hash)),
@@ -241,7 +242,7 @@ where
         &mut state,
         &builder_ctx,
         &mut info,
-        true, //
+        true,
     )
     .wrap_err("failed to build flashblock")?;
 

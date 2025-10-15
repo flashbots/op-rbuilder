@@ -39,6 +39,7 @@ impl FlashblocksServiceBuilder {
         BuilderTx: BuilderTransactions<FlashblocksExtraCtx> + Unpin + Clone + Send + Sync + 'static,
     {
         // TODO: is there a different global token?
+        // this is effectively unused right now due to the usage of reth's `task_executor`.
         let cancel = tokio_util::sync::CancellationToken::new();
 
         let (incoming_message_rx, outgoing_message_tx) = if self.0.p2p_enabled {

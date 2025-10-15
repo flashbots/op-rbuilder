@@ -144,7 +144,7 @@ impl<M: Message + 'static> Node<M> {
                 }
                 Some(message) = outgoing_message_rx.recv() => {
                     let protocol = message.protocol();
-                    info!("received message to broadcast on protocol {protocol}");
+                    debug!("received message to broadcast on protocol {protocol}");
                     if let Err(e) = outgoing_streams_handler.broadcast_message(message).await {
                         warn!("failed to broadcast message on protocol {protocol}: {e:?}");
                     }
@@ -167,28 +167,22 @@ impl<M: Message + 'static> Node<M> {
                         } => {
                             // when a new connection is established, open outbound streams for each protocol
                             // and add them to the outgoing streams handler.
-                            //
-                            // If we already have a connection with this peer, close the new connection,
-                            // as we only want one connection per peer.
                             info!("connection established with peer {peer_id}");
-                            if outgoing_streams_handler.has_peer(&peer_id) {
-                                //swarm.close_connection(connection_id);
-                                //info!("already have connection with peer {peer_id}, closed connection {connection_id}");
-                            } else {
+                            if !outgoing_streams_handler.has_peer(&peer_id) {
                                 for protocol in &protocols {
-                                    match swarm
-                                    .behaviour_mut()
-                                    .new_control()
-                                    .open_stream(peer_id, protocol.clone())
-                                    .await
-                                {
-                                    Ok(stream) => { outgoing_streams_handler.insert_peer_and_stream(peer_id, protocol.clone(), stream);
-                                        info!("opened outbound stream with peer {peer_id} with protocol {protocol} on connection {connection_id}");
+                                        match swarm
+                                        .behaviour_mut()
+                                        .new_control()
+                                        .open_stream(peer_id, protocol.clone())
+                                        .await
+                                    {
+                                        Ok(stream) => { outgoing_streams_handler.insert_peer_and_stream(peer_id, protocol.clone(), stream);
+                                            debug!("opened outbound stream with peer {peer_id} with protocol {protocol} on connection {connection_id}");
+                                        }
+                                        Err(e) => {
+                                            warn!("failed to open stream with peer {peer_id} on connection {connection_id}: {e:?}");
+                                        }
                                     }
-                                    Err(e) => {
-                                        warn!("failed to open stream with peer {peer_id} on connection {connection_id}: {e:?}");
-                                    }
-                                }
                                 }
                             }
                         }
