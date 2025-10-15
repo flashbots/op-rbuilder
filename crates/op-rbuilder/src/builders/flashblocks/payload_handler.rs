@@ -21,14 +21,15 @@ use reth_optimism_node::{OpEngineTypes, OpPayloadBuilderAttributes};
 use reth_optimism_payload_builder::OpBuiltPayload;
 use reth_optimism_primitives::{OpReceipt, OpTransactionSigned};
 use rollup_boost::FlashblocksPayloadV1;
-use std::{
-    collections::{HashSet, VecDeque},
-    sync::Arc,
-};
+use std::sync::Arc;
 use tokio::sync::mpsc;
 
+/// Handles newly built or received flashblock payloads.
+///
+/// In the case of a payload built by this node, it is broadcast to peers and an event is sent to the payload builder.
+/// In the case of a payload received from a peer, it is executed and if successful, an event is sent to the payload builder.
 pub(crate) struct PayloadHandler<Client> {
-    // receives new payloads built by us.
+    // receives new payloads built by this builder.
     built_rx: mpsc::Receiver<OpBuiltPayload>,
     // receives incoming p2p messages from peers.
     p2p_rx: mpsc::Receiver<Message>,
@@ -120,7 +121,7 @@ where
                     match res {
                         Ok(Ok((payload, _))) => {
                             tracing::info!(hash = payload.block().hash().to_string(), block_number = payload.block().header().number, "successfully executed flashblock");
-                            let _  = payload_events_handle.send(Events::BuiltPayload(payload)); // TODO is this only for built or also synced?
+                            let _  = payload_events_handle.send(Events::BuiltPayload(payload));
                         }
                         Ok(Err(e)) => {
                             tracing::error!(error = ?e, "failed to execute flashblock");
@@ -153,7 +154,7 @@ where
 
     tracing::info!(header = ?payload.block().header(), "executing flashblock");
 
-    let mut cached_reads = reth::revm::cached::CachedReads::default(); // TODO: pass this in from somewhere
+    let mut cached_reads = reth::revm::cached::CachedReads::default();
     let parent_hash = payload.block().sealed_header().parent_hash;
     let parent_header = client
         .header_by_id(parent_hash.into())
@@ -234,7 +235,7 @@ where
     execute_transactions(
         &mut info,
         &mut state,
-        &mut FlashblockTransactions::new(payload.block().body().transactions.clone()), // TODO: unnecessary
+        payload.block().body().transactions.clone(),
         payload.block().header().gas_used,
         &builder_ctx.evm_config,
         evm_env,
@@ -244,7 +245,7 @@ where
     )
     .wrap_err("failed to execute best transactions")?;
 
-    let (payload, fb_payload) = crate::builders::flashblocks::payload::build_block(
+    let (built_payload, fb_payload) = crate::builders::flashblocks::payload::build_block(
         &mut state,
         &builder_ctx,
         &mut info,
@@ -252,61 +253,24 @@ where
     )
     .wrap_err("failed to build flashblock")?;
 
-    tracing::info!(header = ?payload.block().header(), "successfully executed flashblock");
-
-    Ok((payload, fb_payload))
-}
-
-struct FlashblockTransactions {
-    txs: VecDeque<OpTransactionSigned>,
-    invalid_txs: HashSet<alloy_primitives::B256>,
-}
-
-impl FlashblockTransactions {
-    fn new(txs: Vec<OpTransactionSigned>) -> Self {
-        Self {
-            txs: txs.into(),
-            invalid_txs: HashSet::new(),
-        }
-    }
-}
-
-impl reth_payload_util::PayloadTransactions for FlashblockTransactions {
-    type Transaction = OpTransactionSigned;
-
-    /// Exclude descendants of the transaction with given sender and nonce from the iterator,
-    /// because this transaction won't be included in the block.
-    fn mark_invalid(&mut self, sender: alloy_primitives::Address, nonce: u64) {
-        use alloy_consensus::Transaction as _;
-        use reth_primitives_traits::SignerRecoverable as _;
-
-        for tx in &self.txs {
-            let Ok(signer) = tx.recover_signer() else {
-                self.invalid_txs.insert(*tx.hash());
-                continue;
-            };
-
-            if signer == sender && tx.nonce() >= nonce {
-                self.invalid_txs.insert(*tx.hash());
-            }
-        }
+    if built_payload.block().hash() != payload.block().hash() {
+        tracing::error!(
+            expected = %payload.block().hash(),
+            got = %built_payload.block().hash(),
+            "flashblock hash mismatch after execution"
+        );
+        bail!("flashblock hash mismatch after execution");
     }
 
-    fn next(&mut self, _ctx: ()) -> Option<Self::Transaction> {
-        while let Some(tx) = self.txs.pop_front() {
-            if !self.invalid_txs.contains(tx.hash()) {
-                return Some(tx);
-            }
-        }
-        None
-    }
+    tracing::info!(header = ?built_payload.block().header(), "successfully executed flashblock");
+    Ok((built_payload, fb_payload))
 }
 
 #[allow(clippy::too_many_arguments)]
 fn execute_transactions(
     info: &mut ExecutionInfo<ExtraExecutionInfo>,
     state: &mut State<impl alloy_evm::Database>,
-    txs: &mut impl reth_payload_util::PayloadTransactions<Transaction = OpTransactionSigned>,
+    txs: Vec<op_alloy_consensus::OpTxEnvelope>,
     gas_limit: u64,
     evm_config: &reth_optimism_evm::OpEvmConfig,
     evm_env: alloy_evm::EvmEnv<op_revm::OpSpecId>,
@@ -325,13 +289,13 @@ fn execute_transactions(
 
     let mut evm = evm_config.evm_with_env(&mut *state, evm_env);
 
-    while let Some(ref tx) = txs.next(()) {
+    for tx in txs {
         let sender = tx
             .recover_signer()
             .wrap_err("failed to recover tx signer")?;
         let tx_env = TxEnv::from_recovered_tx(&tx, sender);
         let executable_tx = match tx {
-            OpTxEnvelope::Deposit(tx) => {
+            OpTxEnvelope::Deposit(ref tx) => {
                 let deposit = DepositTransactionParts {
                     mint: Some(tx.mint),
                     source_hash: tx.source_hash,
@@ -407,7 +371,7 @@ fn execute_transactions(
             .wrap_err("failed to get depositor nonce")?;
 
         let ctx = ReceiptBuilderCtx {
-            tx,
+            tx: &tx,
             evm: &evm,
             result,
             state: &state,
