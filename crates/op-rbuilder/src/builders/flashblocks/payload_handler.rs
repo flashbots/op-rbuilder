@@ -1,6 +1,5 @@
 use crate::{
     builders::flashblocks::{ctx::OpPayloadSyncerCtx, p2p::Message, payload::ExtraExecutionInfo},
-    metrics::OpRBuilderMetrics,
     primitives::reth::ExecutionInfo,
     traits::ClientBounds,
 };
@@ -39,7 +38,7 @@ pub(crate) struct PayloadHandler<Client> {
     payload_events_handle: tokio::sync::broadcast::Sender<Events<OpEngineTypes>>,
     // context required for execution of blocks during syncing
     ctx: OpPayloadSyncerCtx,
-    metrics: Arc<OpRBuilderMetrics>,
+    // chain client
     client: Client,
     cancel: tokio_util::sync::CancellationToken,
 }
@@ -55,7 +54,6 @@ where
         p2p_tx: mpsc::Sender<Message>,
         payload_events_handle: tokio::sync::broadcast::Sender<Events<OpEngineTypes>>,
         ctx: OpPayloadSyncerCtx,
-        metrics: Arc<OpRBuilderMetrics>,
         client: Client,
         cancel: tokio_util::sync::CancellationToken,
     ) -> Self {
@@ -65,7 +63,6 @@ where
             p2p_tx,
             payload_events_handle,
             ctx,
-            metrics,
             client,
             cancel,
         }
@@ -78,7 +75,6 @@ where
             p2p_tx,
             payload_events_handle,
             ctx,
-            metrics,
             client,
             cancel,
         } = self;
@@ -143,6 +139,8 @@ where
     use alloy_consensus::BlockHeader as _;
     use reth::primitives::SealedHeader;
     use reth_evm::{ConfigureEvm as _, execute::BlockBuilder as _};
+
+    let start = tokio::time::Instant::now();
 
     tracing::info!(header = ?payload.block().header(), "executing flashblock");
 
@@ -247,14 +245,22 @@ where
     )
     .wrap_err("failed to build flashblock")?;
 
+    builder_ctx
+        .metrics
+        .flashblock_sync_duration
+        .record(start.elapsed());
+
     if built_payload.block().hash() != payload.block().hash() {
         tracing::error!(
             expected = %payload.block().hash(),
             got = %built_payload.block().hash(),
             "flashblock hash mismatch after execution"
         );
+        builder_ctx.metrics.invalid_synced_blocks_count.increment(1);
         bail!("flashblock hash mismatch after execution");
     }
+
+    builder_ctx.metrics.block_synced_success.increment(1);
 
     tracing::info!(header = ?built_payload.block().header(), "successfully executed flashblock");
     Ok((built_payload, fb_payload))

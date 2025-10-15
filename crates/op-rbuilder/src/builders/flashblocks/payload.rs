@@ -711,7 +711,7 @@ where
 
         match build_result {
             Err(err) => {
-                ctx.metrics.invalid_blocks_count.increment(1);
+                ctx.metrics.invalid_built_blocks_count.increment(1);
                 Err(err).wrap_err("failed to build payload")
             }
             Ok((new_payload, mut fb_payload)) => {

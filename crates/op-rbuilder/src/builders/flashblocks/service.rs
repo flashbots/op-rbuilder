@@ -138,7 +138,6 @@ impl FlashblocksServiceBuilder {
             outgoing_message_tx,
             payload_service.payload_events_handle(),
             syncer_ctx,
-            metrics,
             ctx.provider().clone(),
             cancel,
         );
