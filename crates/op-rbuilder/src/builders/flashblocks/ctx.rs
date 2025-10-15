@@ -1,6 +1,6 @@
 use crate::{
     builders::{BuilderConfig, OpPayloadBuilderCtx, flashblocks::FlashblocksConfig},
-    gas_limiter::AddressGasLimiter,
+    gas_limiter::{AddressGasLimiter, args::GasLimiterArgs},
     metrics::OpRBuilderMetrics,
     traits::ClientBounds,
 };
@@ -24,6 +24,8 @@ pub(super) struct OpPayloadSyncerCtx {
     chain_spec: Arc<OpChainSpec>,
     /// Max gas that can be used by a transaction.
     max_gas_per_txn: Option<u64>,
+    /// The metrics for the builder
+    metrics: Arc<OpRBuilderMetrics>,
 }
 
 impl OpPayloadSyncerCtx {
@@ -31,6 +33,7 @@ impl OpPayloadSyncerCtx {
         client: &Client,
         builder_config: BuilderConfig<FlashblocksConfig>,
         evm_config: OpEvmConfig,
+        metrics: Arc<OpRBuilderMetrics>,
     ) -> eyre::Result<Self>
     where
         Client: ClientBounds,
@@ -41,11 +44,16 @@ impl OpPayloadSyncerCtx {
             da_config: builder_config.da_config.clone(),
             chain_spec,
             max_gas_per_txn: builder_config.max_gas_per_txn,
+            metrics,
         })
     }
 
     pub(super) fn evm_config(&self) -> &OpEvmConfig {
         &self.evm_config
+    }
+
+    pub(super) fn max_gas_per_txn(&self) -> Option<u64> {
+        self.max_gas_per_txn
     }
 
     pub(super) fn into_op_payload_builder_ctx(
@@ -54,8 +62,6 @@ impl OpPayloadSyncerCtx {
         evm_env: EvmEnv<OpSpecId>,
         block_env_attributes: OpNextBlockEnvAttributes,
         cancel: CancellationToken,
-        metrics: Arc<OpRBuilderMetrics>,
-        address_gas_limiter: AddressGasLimiter,
     ) -> OpPayloadBuilderCtx {
         OpPayloadBuilderCtx {
             evm_config: self.evm_config,
@@ -66,10 +72,10 @@ impl OpPayloadSyncerCtx {
             block_env_attributes,
             cancel,
             builder_signer: None,
-            metrics,
+            metrics: self.metrics,
             extra_ctx: (),
             max_gas_per_txn: self.max_gas_per_txn,
-            address_gas_limiter,
+            address_gas_limiter: AddressGasLimiter::new(GasLimiterArgs::default()),
         }
     }
 }

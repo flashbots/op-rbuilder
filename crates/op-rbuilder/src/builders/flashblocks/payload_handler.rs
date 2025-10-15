@@ -1,6 +1,5 @@
 use crate::{
     builders::flashblocks::{ctx::OpPayloadSyncerCtx, p2p::Message, payload::ExtraExecutionInfo},
-    gas_limiter::{AddressGasLimiter, args::GasLimiterArgs},
     metrics::OpRBuilderMetrics,
     primitives::reth::ExecutionInfo,
     traits::ClientBounds,
@@ -20,6 +19,7 @@ use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
 use reth_optimism_node::{OpEngineTypes, OpPayloadBuilderAttributes};
 use reth_optimism_payload_builder::OpBuiltPayload;
 use reth_optimism_primitives::{OpReceipt, OpTransactionSigned};
+use reth_payload_builder::EthPayloadBuilderAttributes;
 use rollup_boost::FlashblocksPayloadV1;
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -40,7 +40,6 @@ pub(crate) struct PayloadHandler<Client> {
     // context required for execution of blocks during syncing
     ctx: OpPayloadSyncerCtx,
     metrics: Arc<OpRBuilderMetrics>,
-    gas_limiter_config: GasLimiterArgs,
     client: Client,
     cancel: tokio_util::sync::CancellationToken,
 }
@@ -57,7 +56,6 @@ where
         payload_events_handle: tokio::sync::broadcast::Sender<Events<OpEngineTypes>>,
         ctx: OpPayloadSyncerCtx,
         metrics: Arc<OpRBuilderMetrics>,
-        gas_limiter_config: GasLimiterArgs,
         client: Client,
         cancel: tokio_util::sync::CancellationToken,
     ) -> Self {
@@ -68,7 +66,6 @@ where
             payload_events_handle,
             ctx,
             metrics,
-            gas_limiter_config,
             client,
             cancel,
         }
@@ -82,7 +79,6 @@ where
             payload_events_handle,
             ctx,
             metrics,
-            gas_limiter_config,
             client,
             cancel,
         } = self;
@@ -96,7 +92,7 @@ where
                 Some(payload) = built_rx.recv() => {
                     let _  = payload_events_handle.send(Events::BuiltPayload(payload.clone()));
                     // TODO: only broadcast if `!no_tx_pool`?
-                    // ignore error here; if p2p was disabled, the channel will be closed.
+                    // ignore error here; if p2p is disabled, the channel will be closed.
                     let _ = p2p_tx.send(payload.into()).await;
                 }
                 Some(message) = p2p_rx.recv() => {
@@ -108,9 +104,7 @@ where
                                     payload,
                                     ctx.clone(),
                                     client.clone(),
-                                    metrics.clone(),
                                     cancel.clone(),
-                                    gas_limiter_config.clone(),
                                 )
                             );
                             execute_flashblock_futures.push(handle);
@@ -141,9 +135,7 @@ async fn execute_flashblock<Client>(
     payload: OpBuiltPayload,
     ctx: OpPayloadSyncerCtx,
     client: Client,
-    metrics: Arc<OpRBuilderMetrics>,
     cancel: tokio_util::sync::CancellationToken,
-    gas_limiter_config: GasLimiterArgs,
 ) -> eyre::Result<(OpBuiltPayload, FlashblocksPayloadV1)>
 where
     Client: ClientBounds,
@@ -160,11 +152,6 @@ where
         .header_by_id(parent_hash.into())
         .wrap_err("failed to get parent header")?
         .ok_or_else(|| eyre::eyre!("parent header not found"))?;
-    // TODO: can refactor this out probably
-    let payload_config = PayloadConfig::new(
-        Arc::new(SealedHeader::new(parent_header.clone(), parent_hash)),
-        OpPayloadBuilderAttributes::default(),
-    );
 
     let state_provider = client
         .state_by_block_hash(parent_hash)
@@ -191,23 +178,11 @@ where
         .next_evm_env(&parent_header, &block_env_attributes)
         .wrap_err("failed to create next evm env")?;
 
-    let address_gas_limiter = AddressGasLimiter::new(gas_limiter_config);
-    // TODO: can probably refactor this
-    let mut builder_ctx = ctx.into_op_payload_builder_ctx(
-        payload_config,
-        evm_env.clone(),
-        block_env_attributes,
-        cancel,
-        metrics,
-        address_gas_limiter,
-    );
-
-    builder_ctx
-        .evm_config
+    ctx.evm_config()
         .builder_for_next_block(
             &mut state,
-            &builder_ctx.config.parent_header,
-            builder_ctx.block_env_attributes.clone(),
+            &Arc::new(SealedHeader::new(parent_header.clone(), parent_hash)),
+            block_env_attributes.clone(),
         )
         .wrap_err("failed to create evm builder for next block")?
         .apply_pre_execution_changes()
@@ -222,34 +197,53 @@ where
     }
 
     let eip_1559_parameters: B64 = extra_data[1..9].try_into().unwrap();
-    builder_ctx.config.attributes.eip_1559_params = Some(eip_1559_parameters);
-    builder_ctx
-        .config
-        .attributes
-        .payload_attributes
-        .parent_beacon_block_root = payload.block().sealed_header().parent_beacon_block_root;
-    builder_ctx.config.attributes.payload_attributes.timestamp = timestamp;
-    builder_ctx.config.attributes.payload_attributes.prev_randao =
-        payload.block().sealed_header().mix_hash;
+    let payload_config = PayloadConfig::new(
+        Arc::new(SealedHeader::new(parent_header.clone(), parent_hash)),
+        OpPayloadBuilderAttributes {
+            eip_1559_params: Some(eip_1559_parameters),
+            payload_attributes: EthPayloadBuilderAttributes {
+                id: payload.id(),    // unused
+                parent: parent_hash, // unused
+                suggested_fee_recipient: payload.block().sealed_header().beneficiary,
+                withdrawals: payload
+                    .block()
+                    .body()
+                    .withdrawals
+                    .clone()
+                    .unwrap_or_default(),
+                parent_beacon_block_root: payload.block().sealed_header().parent_beacon_block_root,
+                timestamp,
+                prev_randao: payload.block().sealed_header().mix_hash,
+            },
+            ..Default::default()
+        },
+    );
 
     execute_transactions(
         &mut info,
         &mut state,
         payload.block().body().transactions.clone(),
         payload.block().header().gas_used,
-        &builder_ctx.evm_config,
-        evm_env,
-        builder_ctx.max_gas_per_txn,
+        ctx.evm_config(),
+        evm_env.clone(),
+        ctx.max_gas_per_txn(),
         is_canyon_active(&chain_spec, timestamp),
         is_regolith_active(&chain_spec, timestamp),
     )
     .wrap_err("failed to execute best transactions")?;
 
+    let builder_ctx = ctx.into_op_payload_builder_ctx(
+        payload_config,
+        evm_env.clone(),
+        block_env_attributes,
+        cancel,
+    );
+
     let (built_payload, fb_payload) = crate::builders::flashblocks::payload::build_block(
         &mut state,
         &builder_ctx,
         &mut info,
-        true, // TODO: do we need this always?
+        true, //
     )
     .wrap_err("failed to build flashblock")?;
 

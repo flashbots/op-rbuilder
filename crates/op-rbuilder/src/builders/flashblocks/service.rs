@@ -98,7 +98,6 @@ impl FlashblocksServiceBuilder {
         };
 
         let metrics = Arc::new(OpRBuilderMetrics::default());
-        let gas_limiter_config = self.0.gas_limiter_config.clone();
         let (built_payload_tx, built_payload_rx) = tokio::sync::mpsc::channel(16);
         let payload_builder = OpPayloadBuilder::new(
             OpEvmConfig::optimism(ctx.chain_spec()),
@@ -129,6 +128,7 @@ impl FlashblocksServiceBuilder {
             &ctx.provider().clone(),
             self.0,
             OpEvmConfig::optimism(ctx.chain_spec()),
+            metrics.clone(),
         )
         .wrap_err("failed to create flashblocks payload builder context")?;
 
@@ -139,7 +139,6 @@ impl FlashblocksServiceBuilder {
             payload_service.payload_events_handle(),
             syncer_ctx,
             metrics,
-            gas_limiter_config,
             ctx.provider().clone(),
             cancel,
         );
