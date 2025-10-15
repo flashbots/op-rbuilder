@@ -24,6 +24,17 @@ pub trait Message:
     serde::Serialize + for<'de> serde::Deserialize<'de> + Send + Sync + Clone + std::fmt::Debug
 {
     fn protocol(&self) -> StreamProtocol;
+
+    fn to_string(&self) -> eyre::Result<String> {
+        serde_json::to_string(self).wrap_err("failed to serialize message to string")
+    }
+
+    fn from_str(s: &str) -> eyre::Result<Self>
+    where
+        Self: Sized,
+    {
+        serde_json::from_str(s).wrap_err("failed to deserialize message from string")
+    }
 }
 
 /// The libp2p node.
@@ -299,7 +310,7 @@ impl NodeBuilder {
             Some(hex) => {
                 let mut bytes = hex::decode(hex).wrap_err("failed to decode hex string")?;
                 let keypair = ed25519::Keypair::try_from_bytes(&mut bytes)
-                    .wrap_err("failed to create keypair from bytes: {e}")?;
+                    .wrap_err("failed to create keypair from bytes")?;
                 Some(keypair.into())
             }
             None => None,
@@ -400,22 +411,25 @@ impl<M: Message + 'static> IncomingStreamsHandler<M> {
         } = self;
         let mut handle_stream_futures = futures::stream::FuturesUnordered::new();
 
-        tokio::select! {
-            _ = cancellation_token.cancelled() => {
-                debug!("cancellation token triggered, shutting down incoming streams handler for protocol {protocol}");
-            }
-            Some((from, stream)) = incoming.next() => {
-                debug!("new incoming stream on protocol {protocol} from peer {from}");
-                handle_stream_futures.push(tokio::spawn(handle_incoming_stream(from, stream, tx.clone())));
-            }
-            Some(res) = handle_stream_futures.next() => {
-                match res {
-                    Ok(Ok(())) => {}
-                    Ok(Err(e)) => {
-                        warn!("error handling incoming stream: {e:?}");
-                    }
-                    Err(e) => {
-                        warn!("task handling incoming stream panicked: {e:?}");
+        loop {
+            tokio::select! {
+                _ = cancellation_token.cancelled() => {
+                    debug!("cancellation token triggered, shutting down incoming streams handler for protocol {protocol}");
+                    return;
+                }
+                Some((from, stream)) = incoming.next() => {
+                    debug!("new incoming stream on protocol {protocol} from peer {from}");
+                    handle_stream_futures.push(tokio::spawn(handle_incoming_stream(from, stream, tx.clone())));
+                }
+                Some(res) = handle_stream_futures.next() => {
+                    match res {
+                        Ok(Ok(())) => {}
+                        Ok(Err(e)) => {
+                            warn!("error handling incoming stream: {e:?}");
+                        }
+                        Err(e) => {
+                            warn!("task handling incoming stream panicked: {e:?}");
+                        }
                     }
                 }
             }
@@ -437,20 +451,20 @@ async fn handle_incoming_stream<M: Message>(
     let codec = LinesCodec::new();
     let mut reader = FramedRead::new(stream.compat(), codec);
 
-    loop {
-        match reader.next().await {
-            Some(Ok(str)) => {
-                let payload: M = serde_json::from_str(&str)
-                    .wrap_err("failed to decode stream message into FlashblocksPayloadV1")?;
+    while let Some(res) = reader.next().await {
+        match res {
+            Ok(str) => {
+                let payload = M::from_str(&str).wrap_err("failed to decode stream message")?;
                 debug!("got message from peer {peer_id}: {payload:?}");
                 let _ = payload_tx.send(payload).await;
             }
-            Some(Err(e)) => {
+            Err(e) => {
                 return Err(e).wrap_err(format!("failed to read from stream of peer {peer_id}"));
             }
-            None => {}
         }
     }
+
+    Ok(())
 }
 
 fn create_transport(
