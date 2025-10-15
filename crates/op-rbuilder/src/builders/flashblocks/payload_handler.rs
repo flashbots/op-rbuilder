@@ -118,7 +118,7 @@ where
                 Some(res) = execute_flashblock_futures.next() => {
                     match res {
                         Ok(Ok((payload, _))) => {
-                            tracing::debug!("successfully executed flashblock");
+                            tracing::info!(hash = payload.block().hash().to_string(), block_number = payload.block().header().number, "successfully executed flashblock");
                             let _  = payload_events_handle.send(Events::BuiltPayload(payload)); // TODO is this only for built or also synced?
                         }
                         Ok(Err(e)) => {
@@ -200,7 +200,6 @@ where
         address_gas_limiter,
     );
 
-    // copy of `execute_pre_steps()`
     builder_ctx
         .evm_config
         .builder_for_next_block(
@@ -211,10 +210,7 @@ where
         .wrap_err("failed to create evm builder for next block")?
         .apply_pre_execution_changes()
         .wrap_err("failed to apply pre execution changes")?;
-    // this is a no-op rn because `payload_config` attributes aren't set
-    // let mut info: ExecutionInfo<ExtraExecutionInfo> = builder_ctx
-    //     .execute_sequencer_transactions(&mut state)
-    //     .wrap_err("failed to execute sequencer transactions")?;
+
     let mut info = ExecutionInfo::with_capacity(payload.block().body().transactions.len());
 
     let extra_data = payload.block().sealed_header().extra_data.clone();
