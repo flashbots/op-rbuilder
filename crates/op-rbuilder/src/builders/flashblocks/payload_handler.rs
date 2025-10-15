@@ -48,6 +48,7 @@ impl<Client> PayloadHandler<Client>
 where
     Client: ClientBounds + 'static,
 {
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         built_rx: mpsc::Receiver<OpBuiltPayload>,
         p2p_rx: mpsc::Receiver<Message>,
@@ -301,6 +302,7 @@ impl reth_payload_util::PayloadTransactions for FlashblockTransactions {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn execute_transactions(
     info: &mut ExecutionInfo<ExtraExecutionInfo>,
     state: &mut State<impl alloy_evm::Database>,

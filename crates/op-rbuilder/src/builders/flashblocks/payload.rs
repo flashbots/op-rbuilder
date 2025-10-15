@@ -712,7 +712,7 @@ where
         match build_result {
             Err(err) => {
                 ctx.metrics.invalid_blocks_count.increment(1);
-                return Err(err).wrap_err("failed to build payload");
+                Err(err).wrap_err("failed to build payload")
             }
             Ok((new_payload, mut fb_payload)) => {
                 fb_payload.index = ctx.flashblock_index();
