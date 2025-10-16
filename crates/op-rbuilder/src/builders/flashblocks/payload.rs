@@ -92,6 +92,17 @@ pub struct FlashblocksExtraCtx {
     calculate_state_root: bool,
 }
 
+impl FlashblocksExtraCtx {
+    fn next(self, target_gas_for_batch: u64, target_da_for_batch: Option<u64>) -> Self {
+        Self {
+            flashblock_index: self.flashblock_index + 1,
+            target_gas_for_batch,
+            target_da_for_batch,
+            ..self
+        }
+    }
+}
+
 impl OpPayloadBuilderCtx<FlashblocksExtraCtx> {
     /// Returns the current flashblock index
     pub(crate) fn flashblock_index(&self) -> u64 {
@@ -101,11 +112,6 @@ impl OpPayloadBuilderCtx<FlashblocksExtraCtx> {
     /// Returns the target flashblock count
     pub(crate) fn target_flashblock_count(&self) -> u64 {
         self.extra_ctx.target_flashblock_count
-    }
-
-    /// Returns the next flashblock index
-    pub(crate) fn next_flashblock_index(&self) -> u64 {
-        self.extra_ctx.flashblock_index + 1
     }
 
     /// Returns if the flashblock is the first fallback block
@@ -301,13 +307,9 @@ where
                 config.clone(),
                 block_cancel.clone(),
                 FlashblocksExtraCtx {
-                    flashblock_index: 0,
                     target_flashblock_count: self.config.flashblocks_per_block(),
-                    target_gas_for_batch: 0,
-                    target_da_for_batch: None,
-                    gas_per_batch: 0,
-                    da_per_batch: None,
                     calculate_state_root,
+                    ..Default::default()
                 },
             )
             .map_err(|e| PayloadBuilderError::Other(e.into()))?;
@@ -755,15 +757,10 @@ where
 
                 let target_gas_for_batch =
                     ctx.extra_ctx.target_gas_for_batch + ctx.extra_ctx.gas_per_batch;
-                let next_extra_ctx = FlashblocksExtraCtx {
-                    flashblock_index: ctx.next_flashblock_index(),
-                    target_flashblock_count: ctx.target_flashblock_count(),
-                    target_gas_for_batch,
-                    target_da_for_batch,
-                    gas_per_batch: ctx.extra_ctx.gas_per_batch,
-                    da_per_batch: ctx.extra_ctx.da_per_batch,
-                    calculate_state_root: ctx.extra_ctx.calculate_state_root,
-                };
+                let next_extra_ctx = ctx
+                    .extra_ctx
+                    .clone()
+                    .next(target_gas_for_batch, target_da_for_batch);
 
                 info!(
                     target: "payload_builder",
