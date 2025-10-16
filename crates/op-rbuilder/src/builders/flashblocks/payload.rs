@@ -523,19 +523,16 @@ where
             }
 
             // build first flashblock immediately
-            let next_flashblocks_ctx = match self
-                .build_next_flashblock(
-                    &ctx,
-                    &mut info,
-                    &mut state,
-                    &state_provider,
-                    &mut best_txs,
-                    &block_cancel,
-                    &best_payload,
-                    &fb_span,
-                )
-                .await
-            {
+            let next_flashblocks_ctx = match self.build_next_flashblock(
+                &ctx,
+                &mut info,
+                &mut state,
+                &state_provider,
+                &mut best_txs,
+                &block_cancel,
+                &best_payload,
+                &fb_span,
+            ) {
                 Ok(Some(next_flashblocks_ctx)) => next_flashblocks_ctx,
                 Ok(None) => {
                     self.record_flashblocks_metrics(
@@ -578,7 +575,7 @@ where
     }
 
     #[allow(clippy::too_many_arguments)]
-    async fn build_next_flashblock<
+    fn build_next_flashblock<
         DB: Database<Error = ProviderError> + std::fmt::Debug + AsRef<P>,
         P: StateRootProvider + HashedPostStateProvider + StorageRootProvider,
     >(
