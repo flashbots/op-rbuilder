@@ -218,7 +218,7 @@ async fn test_flashtestations_with_number_contract(rbuilder: LocalInstance) -> e
         "block proof tx should call block policy address"
     );
 
-    // add a user transaciton to ensure the flashblock number builder tx is top of block
+    // add a user transaction to ensure the flashblock number builder tx is top of block
     let tx = driver
         .create_transaction()
         .random_valid_transfer()
