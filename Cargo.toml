@@ -40,7 +40,10 @@ codegen-units = 1
 incremental = false
 
 [workspace.lints.rust]
-unreachable_pub = "warn"
+unreachable_pub = "deny"
+
+[workspace.lints.clippy]
+unused_async = "warn"
 
 [workspace.dependencies]
 reth = { git = "https://github.com/paradigmxyz/reth", tag = "v1.8.2" }
