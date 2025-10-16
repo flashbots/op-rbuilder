@@ -441,7 +441,7 @@ where
             *da_limit = da_limit.saturating_sub(builder_tx_da_size);
         }
         let extra_ctx = FlashblocksExtraCtx {
-            flashblock_index: 0,
+            flashblock_index: 1,
             target_flashblock_count: flashblocks_per_block,
             target_gas_for_batch: target_gas_for_batch.saturating_sub(builder_tx_gas),
             target_da_for_batch,
@@ -580,9 +580,6 @@ where
         best_payload: &BlockCell<OpBuiltPayload>,
         span: &tracing::Span,
     ) -> eyre::Result<Option<FlashblocksExtraCtx>> {
-        // fallback block is index 0, so we need to increment here
-        let flashblock_index = ctx.next_flashblock_index();
-
         // TODO: remove this
         if ctx.flashblock_index() > ctx.target_flashblock_count() {
             info!(
@@ -765,7 +762,7 @@ where
                 let target_gas_for_batch =
                     ctx.extra_ctx.target_gas_for_batch + ctx.extra_ctx.gas_per_batch;
                 let next_extra_ctx = FlashblocksExtraCtx {
-                    flashblock_index,
+                    flashblock_index: ctx.next_flashblock_index(),
                     target_flashblock_count: ctx.target_flashblock_count(),
                     target_gas_for_batch,
                     target_da_for_batch,
@@ -777,7 +774,7 @@ where
                 info!(
                     target: "payload_builder",
                     message = "Flashblock built",
-                    flashblock_index = flashblock_index,
+                    flashblock_index = ctx.flashblock_index(),
                     current_gas = info.cumulative_gas_used,
                     current_da = info.cumulative_da_bytes_used,
                     target_flashblocks = ctx.target_flashblock_count(),
