@@ -142,7 +142,7 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
 
     /// Returns the extra data for the block.
     ///
-    /// After holocene this extracts the extradata from the paylpad
+    /// After holocene this extracts the extradata from the payload
     pub fn extra_data(&self) -> Result<Bytes, PayloadBuilderError> {
         if self.is_holocene_active() {
             self.attributes()
