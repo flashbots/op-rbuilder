@@ -1,7 +1,9 @@
 use eyre::WrapErr as _;
 use libp2p::{
-    autonat, connection_limits, connection_limits::ConnectionLimits, identify, identity, mdns,
-    ping, swarm::NetworkBehaviour,
+    Swarm, autonat,
+    connection_limits::{self, ConnectionLimits},
+    identify, identity, mdns, ping,
+    swarm::NetworkBehaviour,
 };
 use std::{convert::Infallible, time::Duration};
 
@@ -81,14 +83,22 @@ impl Behaviour {
 }
 
 impl BehaviourEvent {
-    pub(crate) async fn handle(self) {
+    pub(crate) fn handle(self, swarm: &mut Swarm<Behaviour>) {
         match self {
             BehaviourEvent::Autonat(_event) => {}
             BehaviourEvent::Identify(_event) => {}
             BehaviourEvent::Mdns(event) => match event {
                 mdns::Event::Discovered(list) => {
                     for (peer_id, multiaddr) in list {
-                        tracing::debug!("mDNS discovered peer {peer_id} at {multiaddr}");
+                        if swarm.is_connected(&peer_id) {
+                            continue;
+                        }
+
+                        tracing::info!("mDNS discovered peer {peer_id} at {multiaddr}");
+                        swarm.add_peer_address(peer_id, multiaddr);
+                        swarm.dial(peer_id).unwrap_or_else(|e| {
+                            tracing::error!("failed to dial mDNS discovered peer {peer_id}: {e}")
+                        });
                     }
                 }
                 mdns::Event::Expired(list) => {
