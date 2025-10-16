@@ -407,7 +407,7 @@ where
         info!(
             target: "payload_builder",
             message = "Performed flashblocks timing derivation",
-            flashblocks_per_block = ctx.target_flashblock_count(),
+            flashblocks_per_block,
             first_flashblock_offset = first_flashblock_offset.as_millis(),
             flashblocks_interval = self.config.specific.interval.as_millis(),
         );
@@ -419,12 +419,12 @@ where
         ctx.metrics
             .first_flashblock_time_offset
             .record(first_flashblock_offset.as_millis() as f64);
-        let gas_per_batch = ctx.block_gas_limit() / ctx.target_flashblock_count();
+        let gas_per_batch = ctx.block_gas_limit() / flashblocks_per_block;
         let target_gas_for_batch = gas_per_batch;
         let da_per_batch = ctx
             .da_config
             .max_da_block_size()
-            .map(|da_limit| da_limit / ctx.target_flashblock_count());
+            .map(|da_limit| da_limit / flashblocks_per_block);
         // Check that builder tx won't affect fb limit too much
         if let Some(da_limit) = da_per_batch {
             // We error if we can't insert any tx aside from builder tx in flashblock
