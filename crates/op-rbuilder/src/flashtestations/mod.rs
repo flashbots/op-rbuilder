@@ -117,16 +117,6 @@ sol!(
     type WorkloadId is bytes32;
 );
 
-#[derive(Debug, thiserror::Error)]
-pub enum FlashtestationRevertReason {
-    #[error("flashtestation registry error: {0:?}")]
-    FlashtestationRegistry(IFlashtestationRegistry::IFlashtestationRegistryErrors),
-    #[error("block builder policy error: {0:?}")]
-    BlockBuilderPolicy(IBlockBuilderPolicy::IBlockBuilderPolicyErrors),
-    #[error("unknown revert {0}")]
-    Unknown(String),
-}
-
 pub mod args;
 pub mod attestation;
 pub mod builder_tx;

@@ -6,7 +6,7 @@ use alloy_primitives::{
     Address, B256, Bytes, TxKind, U256,
     map::foldhash::{HashMap, HashSet, HashSetExt},
 };
-use alloy_sol_types::{ContractError, Error, Revert, SolCall, SolError, SolInterface};
+use alloy_sol_types::{ContractError, Revert, SolCall, SolError, SolInterface};
 use core::fmt::Debug;
 use op_alloy_consensus::OpTypedTransaction;
 use op_alloy_rpc_types::OpTransactionRequest;
@@ -30,7 +30,6 @@ use revm::{
     inspector::NoOpInspector,
     state::Account,
 };
-use std::borrow::Cow;
 use tracing::warn;
 
 use crate::{
@@ -154,7 +153,7 @@ pub trait BuilderTransactions<ExtraCtx: Debug + Default = (), Extra: Debug + Def
         top_of_block: bool,
     ) -> Result<Vec<BuilderTransactionCtx>, BuilderTransactionError>;
 
-    fn simulate_builder_txs_with_new_state(
+    fn simulate_builder_txs_with_state_copy(
         &self,
         state_provider: impl StateProvider + Clone,
         info: &mut ExecutionInfo<Extra>,
@@ -181,7 +180,7 @@ pub trait BuilderTransactions<ExtraCtx: Debug + Default = (), Extra: Debug + Def
         top_of_block: bool,
     ) -> Result<Vec<BuilderTransactionCtx>, BuilderTransactionError> {
         {
-            let builder_txs = self.simulate_builder_txs_with_new_state(
+            let builder_txs = self.simulate_builder_txs_with_state_copy(
                 state_provider,
                 info,
                 builder_ctx,
@@ -300,7 +299,7 @@ pub trait BuilderTransactions<ExtraCtx: Debug + Default = (), Extra: Debug + Def
         Ok(())
     }
 
-    fn simulate_call<T: SolCall, E: SolInterface>(
+    fn simulate_call<T: SolCall, E: SolInterface + Debug>(
         &self,
         tx: OpTransactionRequest,
         expected_logs: Vec<B256>,
@@ -359,20 +358,16 @@ pub trait BuilderTransactions<ExtraCtx: Debug + Default = (), Extra: Debug + Def
             }
             ExecutionResult::Revert { output, .. } => {
                 let revert = ContractError::<E>::abi_decode(&output)
-                    .and_then(|reason| {
-                        reason
-                            .try_into()
-                            .map_err(|_| Error::Other(Cow::Borrowed("failed to convert to revert")))
-                    })
+                    .map(|reason| Revert::from(format!("{reason:?}")))
                     .or_else(|_| Revert::abi_decode(&output))
                     .unwrap_or_else(|_| {
                         Revert::from(format!("unknown revert: {}", hex::encode(&output)))
                     });
                 Err(BuilderTransactionError::TransactionReverted(to, revert))
             }
-            ExecutionResult::Halt { reason, .. } => Err(BuilderTransactionError::other(
-                BuilderTransactionError::TransactionHalted(to, reason),
-            )),
+            ExecutionResult::Halt { reason, .. } => {
+                Err(BuilderTransactionError::TransactionHalted(to, reason))
+            }
         }
     }
 }
