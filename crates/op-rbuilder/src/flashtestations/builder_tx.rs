@@ -2,36 +2,29 @@ use alloy_consensus::TxEip1559;
 use alloy_eips::Encodable2718;
 use alloy_evm::Database;
 use alloy_op_evm::OpEvm;
-use alloy_primitives::{
-    Address, B256, Bytes, Signature, TxKind, U256, keccak256, map::foldhash::HashMap,
-};
+use alloy_primitives::{Address, B256, Bytes, Signature, TxKind, U256, keccak256};
 use alloy_rpc_types_eth::TransactionInput;
-use alloy_sol_types::{SolCall, SolEvent, SolInterface, SolValue};
+use alloy_sol_types::{SolCall, SolEvent, SolValue};
 use core::fmt::Debug;
 use op_alloy_consensus::OpTypedTransaction;
 use op_alloy_rpc_types::OpTransactionRequest;
 use reth_evm::{ConfigureEvm, Evm, EvmError, precompiles::PrecompilesMap};
 use reth_optimism_primitives::OpTransactionSigned;
-use reth_primitives::{Log, Recovered};
 use reth_provider::StateProvider;
 use reth_revm::{State, database::StateProviderDatabase};
 use revm::{
-    DatabaseCommit, DatabaseRef,
-    context::result::{ExecutionResult, ResultAndState},
-    inspector::NoOpInspector,
-    state::Account,
+    DatabaseCommit, DatabaseRef, context::result::ResultAndState, inspector::NoOpInspector,
 };
 use std::sync::{Arc, atomic::AtomicBool};
 use tracing::{debug, info, warn};
 
 use crate::{
     builders::{
-        BuilderTransactionCtx, BuilderTransactionError, BuilderTransactions,
-        InvalidContractDataError, OpPayloadBuilderCtx, SimulationSuccessResult, get_balance,
-        get_nonce,
+        BuilderTransactionCtx, BuilderTransactionError, BuilderTransactions, OpPayloadBuilderCtx,
+        SimulationSuccessResult, get_balance, get_nonce,
     },
     flashtestations::{
-        BlockData, FlashtestationRevertReason,
+        BlockData,
         IBlockBuilderPolicy::{self, BlockBuilderProofVerified},
         IERC20Permit,
         IFlashtestationRegistry::{self, TEEServiceRegistered},
@@ -89,15 +82,6 @@ where
     _marker: std::marker::PhantomData<(ExtraCtx, Extra)>,
 }
 
-#[derive(Debug, Default)]
-pub struct TxSimulateResult {
-    pub gas_used: u64,
-    pub success: bool,
-    pub state_changes: HashMap<Address, Account>,
-    pub revert_reason: Option<FlashtestationRevertReason>,
-    pub logs: Vec<Log>,
-}
-
 impl<ExtraCtx, Extra> FlashtestationsBuilderTx<ExtraCtx, Extra>
 where
     ExtraCtx: Debug + Default,
@@ -119,84 +103,6 @@ where
             builder_signer: args.builder_key,
             _marker: std::marker::PhantomData,
         }
-    }
-
-    fn signed_funding_tx(
-        &self,
-        to: Address,
-        from: Signer,
-        amount: U256,
-        base_fee: u64,
-        chain_id: u64,
-        nonce: u64,
-    ) -> Result<Recovered<OpTransactionSigned>, secp256k1::Error> {
-        // Create the EIP-1559 transaction
-        let tx = OpTypedTransaction::Eip1559(TxEip1559 {
-            chain_id,
-            nonce,
-            gas_limit: 21000,
-            max_fee_per_gas: base_fee.into(),
-            max_priority_fee_per_gas: 0,
-            to: TxKind::Call(to),
-            value: amount,
-            ..Default::default()
-        });
-        from.sign_tx(tx)
-    }
-
-    fn signed_register_tee_service_tx(
-        &self,
-        attestation: Vec<u8>,
-        gas_limit: u64,
-        base_fee: u64,
-        chain_id: u64,
-        nonce: u64,
-    ) -> Result<Recovered<OpTransactionSigned>, secp256k1::Error> {
-        let quote_bytes = Bytes::from(attestation);
-        let calldata = IFlashtestationRegistry::registerTEEServiceCall {
-            rawQuote: quote_bytes,
-            extendedRegistrationData: self.extra_registration_data.clone(),
-        }
-        .abi_encode();
-
-        // Create the EIP-1559 transaction
-        let tx = OpTypedTransaction::Eip1559(TxEip1559 {
-            chain_id,
-            nonce,
-            gas_limit,
-            max_fee_per_gas: base_fee.into(),
-            max_priority_fee_per_gas: 0,
-            to: TxKind::Call(self.registry_address),
-            input: calldata.into(),
-            ..Default::default()
-        });
-        self.tee_service_signer.sign_tx(tx)
-    }
-
-    fn signed_block_builder_proof_tx(
-        &self,
-        block_content_hash: B256,
-        ctx: &OpPayloadBuilderCtx<ExtraCtx>,
-        gas_limit: u64,
-        nonce: u64,
-    ) -> Result<Recovered<OpTransactionSigned>, secp256k1::Error> {
-        let calldata = IBlockBuilderPolicy::verifyBlockBuilderProofCall {
-            version: self.builder_proof_version,
-            blockContentHash: block_content_hash,
-        }
-        .abi_encode();
-        // Create the EIP-1559 transaction
-        let tx = OpTypedTransaction::Eip1559(TxEip1559 {
-            chain_id: ctx.chain_id(),
-            nonce,
-            gas_limit,
-            max_fee_per_gas: ctx.base_fee().into(),
-            max_priority_fee_per_gas: 0,
-            to: TxKind::Call(self.builder_policy_address),
-            input: calldata.into(),
-            ..Default::default()
-        });
-        self.tee_service_signer.sign_tx(tx)
     }
 
     /// Computes the block content hash according to the formula:
@@ -231,128 +137,7 @@ where
         keccak256(&encoded)
     }
 
-    fn simulate_register_tee_service_tx(
-        &self,
-        ctx: &OpPayloadBuilderCtx<ExtraCtx>,
-        evm: &mut OpEvm<impl Database + DatabaseRef, NoOpInspector, PrecompilesMap>,
-    ) -> Result<TxSimulateResult, BuilderTransactionError> {
-        let nonce = get_nonce(evm.db(), self.tee_service_signer.address)?;
-
-        let register_tx = self.signed_register_tee_service_tx(
-            self.attestation.clone(),
-            ctx.block_gas_limit(),
-            ctx.base_fee(),
-            ctx.chain_id(),
-            nonce,
-        )?;
-        let ResultAndState { result, state } = match evm.transact(&register_tx) {
-            Ok(res) => res,
-            Err(err) => {
-                if err.is_invalid_tx_err() {
-                    return Err(BuilderTransactionError::InvalidTransactionError(Box::new(
-                        err,
-                    )));
-                } else {
-                    return Err(BuilderTransactionError::EvmExecutionError(Box::new(err)));
-                }
-            }
-        };
-        match result {
-            ExecutionResult::Success { gas_used, logs, .. } => Ok(TxSimulateResult {
-                gas_used,
-                success: true,
-                state_changes: state,
-                revert_reason: None,
-                logs,
-            }),
-            ExecutionResult::Revert { output, gas_used } => {
-                let revert_reason =
-                    IFlashtestationRegistry::IFlashtestationRegistryErrors::abi_decode(&output)
-                        .map(FlashtestationRevertReason::FlashtestationRegistry)
-                        .unwrap_or_else(|_| {
-                            FlashtestationRevertReason::Unknown(hex::encode(output))
-                        });
-                Ok(TxSimulateResult {
-                    gas_used,
-                    success: false,
-                    state_changes: state,
-                    revert_reason: Some(revert_reason),
-                    logs: vec![],
-                })
-            }
-            ExecutionResult::Halt { reason, .. } => Ok(TxSimulateResult {
-                gas_used: 0,
-                success: false,
-                state_changes: state,
-                revert_reason: Some(FlashtestationRevertReason::Unknown(format!(
-                    "block proof transaction halted {reason:?}"
-                ))),
-                logs: vec![],
-            }),
-        }
-    }
-
-    fn simulate_verify_block_proof_tx(
-        &self,
-        block_content_hash: B256,
-        ctx: &OpPayloadBuilderCtx<ExtraCtx>,
-        evm: &mut OpEvm<impl Database + DatabaseRef, NoOpInspector, PrecompilesMap>,
-    ) -> Result<TxSimulateResult, BuilderTransactionError> {
-        let nonce = get_nonce(evm.db(), self.tee_service_signer.address)?;
-
-        let verify_block_proof_tx = self.signed_block_builder_proof_tx(
-            block_content_hash,
-            ctx,
-            ctx.block_gas_limit(),
-            nonce,
-        )?;
-        let ResultAndState { result, state } = match evm.transact(&verify_block_proof_tx) {
-            Ok(res) => res,
-            Err(err) => {
-                if err.is_invalid_tx_err() {
-                    return Err(BuilderTransactionError::InvalidTransactionError(Box::new(
-                        err,
-                    )));
-                } else {
-                    return Err(BuilderTransactionError::EvmExecutionError(Box::new(err)));
-                }
-            }
-        };
-        match result {
-            ExecutionResult::Success { gas_used, logs, .. } => Ok(TxSimulateResult {
-                gas_used,
-                success: true,
-                state_changes: state,
-                revert_reason: None,
-                logs,
-            }),
-            ExecutionResult::Revert { output, gas_used } => {
-                let revert_reason =
-                    IBlockBuilderPolicy::IBlockBuilderPolicyErrors::abi_decode(&output)
-                        .map(FlashtestationRevertReason::BlockBuilderPolicy)
-                        .unwrap_or_else(|_| {
-                            FlashtestationRevertReason::Unknown(hex::encode(output))
-                        });
-                Ok(TxSimulateResult {
-                    gas_used,
-                    success: false,
-                    state_changes: state,
-                    revert_reason: Some(revert_reason),
-                    logs: vec![],
-                })
-            }
-            ExecutionResult::Halt { reason, .. } => Ok(TxSimulateResult {
-                gas_used: 0,
-                success: false,
-                state_changes: state,
-                revert_reason: Some(FlashtestationRevertReason::Unknown(format!(
-                    "register tee transaction halted {reason:?}"
-                ))),
-                logs: vec![],
-            }),
-        }
-    }
-
+    // TODO: deprecate in favour of permit calls
     fn fund_tee_service_tx(
         &self,
         ctx: &OpPayloadBuilderCtx<ExtraCtx>,
@@ -361,14 +146,16 @@ where
         let balance = get_balance(evm.db(), self.tee_service_signer.address)?;
         if balance.is_zero() {
             let funding_nonce = get_nonce(evm.db(), self.funding_key.address)?;
-            let funding_tx = self.signed_funding_tx(
-                self.tee_service_signer.address,
-                self.funding_key,
-                self.funding_amount,
-                ctx.base_fee(),
-                ctx.chain_id(),
-                funding_nonce,
-            )?;
+            let tx = OpTypedTransaction::Eip1559(TxEip1559 {
+                chain_id: ctx.chain_id(),
+                nonce: funding_nonce,
+                gas_limit: 21000,
+                max_fee_per_gas: ctx.base_fee().into(),
+                to: TxKind::Call(self.tee_service_signer.address),
+                value: self.funding_amount,
+                ..Default::default()
+            });
+            let funding_tx = self.funding_key.sign_tx(tx)?;
             let da_size =
                 op_alloy_flz::tx_estimated_size_fjord_bytes(funding_tx.encoded_2718().as_slice());
             let ResultAndState { state, .. } = match evm.transact(&funding_tx) {
@@ -401,57 +188,40 @@ where
         &self,
         ctx: &OpPayloadBuilderCtx<ExtraCtx>,
         evm: &mut OpEvm<&mut State<impl Database + DatabaseRef>, NoOpInspector, PrecompilesMap>,
-    ) -> Result<Option<BuilderTransactionCtx>, BuilderTransactionError> {
-        let TxSimulateResult {
+    ) -> Result<BuilderTransactionCtx, BuilderTransactionError> {
+        let calldata = IFlashtestationRegistry::registerTEEServiceCall {
+            rawQuote: self.attestation.clone().into(),
+            extendedRegistrationData: self.extra_registration_data.clone(),
+        };
+        let SimulationSuccessResult {
             gas_used,
-            success,
             state_changes,
-            revert_reason,
-            logs,
-        } = self.simulate_register_tee_service_tx(ctx, evm)?;
-        if success {
-            if !logs
-                .iter()
-                .any(|log| log.topics().first() == Some(&TEEServiceRegistered::SIGNATURE_HASH))
-            {
-                Err(BuilderTransactionError::InvalidContract(
-                    self.registry_address,
-                    InvalidContractDataError::InvalidLogs(
-                        vec![TEEServiceRegistered::SIGNATURE_HASH],
-                        vec![],
-                    ),
-                ))
-            } else {
-                let nonce = get_nonce(evm.db_mut(), self.tee_service_signer.address)?;
-                let register_tx = self.signed_register_tee_service_tx(
-                    self.attestation.clone(),
-                    gas_used * 64 / 63, // Due to EIP-150, 63/64 of available gas is forwarded to external calls so need to add a buffer
-                    ctx.base_fee(),
-                    ctx.chain_id(),
-                    nonce,
-                )?;
-                let da_size = op_alloy_flz::tx_estimated_size_fjord_bytes(
-                    register_tx.encoded_2718().as_slice(),
-                );
-                info!(target: "flashtestations", block_number = ctx.block_number(), tx_hash = ?register_tx.tx_hash(), "adding register tee tx to builder txs");
-                evm.db_mut().commit(state_changes);
-                Ok(Some(BuilderTransactionCtx {
-                    gas_used,
-                    da_size,
-                    signed_tx: register_tx,
-                    is_top_of_block: false,
-                }))
-            }
-        } else if let Some(FlashtestationRevertReason::FlashtestationRegistry(
-            IFlashtestationRegistry::IFlashtestationRegistryErrors::TEEServiceAlreadyRegistered(_),
-        )) = revert_reason
-        {
-            Ok(None)
-        } else {
-            Err(BuilderTransactionError::other(revert_reason.unwrap_or(
-                FlashtestationRevertReason::Unknown("unknown revert".to_string()),
-            )))
-        }
+            ..
+        } = self.flashtestation_call(
+            self.registry_address,
+            calldata.clone(),
+            vec![TEEServiceRegistered::SIGNATURE_HASH],
+            ctx,
+            evm,
+        )?;
+        let signed_tx = self.sign_tx(
+            self.registry_address,
+            self.tee_service_signer,
+            gas_used,
+            calldata.abi_encode().into(),
+            ctx,
+            evm.db(),
+        )?;
+        let da_size =
+            op_alloy_flz::tx_estimated_size_fjord_bytes(signed_tx.encoded_2718().as_slice());
+        // commit the register transaction state so the block proof transaction can succeed
+        evm.db_mut().commit(state_changes);
+        Ok(BuilderTransactionCtx {
+            gas_used,
+            da_size,
+            signed_tx,
+            is_top_of_block: false,
+        })
     }
 
     // TODO: remove in favour of permit calls
@@ -460,7 +230,7 @@ where
         transactions: Vec<OpTransactionSigned>,
         ctx: &OpPayloadBuilderCtx<ExtraCtx>,
         evm: &mut OpEvm<impl Database + DatabaseRef, NoOpInspector, PrecompilesMap>,
-    ) -> Result<Option<BuilderTransactionCtx>, BuilderTransactionError> {
+    ) -> Result<BuilderTransactionCtx, BuilderTransactionError> {
         let block_content_hash = Self::compute_block_content_hash(
             &transactions,
             ctx.parent_hash(),
@@ -468,50 +238,33 @@ where
             ctx.timestamp(),
         );
 
-        let TxSimulateResult {
+        let calldata = IBlockBuilderPolicy::verifyBlockBuilderProofCall {
+            blockContentHash: block_content_hash,
+            version: self.builder_proof_version,
+        };
+        let SimulationSuccessResult { gas_used, .. } = self.flashtestation_call(
+            self.builder_policy_address,
+            calldata.clone(),
+            vec![BlockBuilderProofVerified::SIGNATURE_HASH],
+            ctx,
+            evm,
+        )?;
+        let signed_tx = self.sign_tx(
+            self.builder_policy_address,
+            self.tee_service_signer,
             gas_used,
-            success,
-            revert_reason,
-            logs,
-            ..
-        } = self.simulate_verify_block_proof_tx(block_content_hash, ctx, evm)?;
-        if success {
-            if !logs
-                .iter()
-                .any(|log| log.topics().first() == Some(&BlockBuilderProofVerified::SIGNATURE_HASH))
-            {
-                Err(BuilderTransactionError::InvalidContract(
-                    self.builder_policy_address,
-                    InvalidContractDataError::InvalidLogs(
-                        vec![BlockBuilderProofVerified::SIGNATURE_HASH],
-                        vec![],
-                    ),
-                ))
-            } else {
-                let nonce = get_nonce(evm.db_mut(), self.tee_service_signer.address)?;
-                // Due to EIP-150, only 63/64 of available gas is forwarded to external calls so need to add a buffer
-                let verify_block_proof_tx = self.signed_block_builder_proof_tx(
-                    block_content_hash,
-                    ctx,
-                    gas_used * 64 / 63,
-                    nonce,
-                )?;
-                let da_size = op_alloy_flz::tx_estimated_size_fjord_bytes(
-                    verify_block_proof_tx.encoded_2718().as_slice(),
-                );
-                debug!(target: "flashtestations", block_number = ctx.block_number(), tx_hash = ?verify_block_proof_tx.tx_hash(), "adding verify block proof tx to builder txs");
-                Ok(Some(BuilderTransactionCtx {
-                    gas_used,
-                    da_size,
-                    signed_tx: verify_block_proof_tx,
-                    is_top_of_block: false,
-                }))
-            }
-        } else {
-            Err(BuilderTransactionError::other(revert_reason.unwrap_or(
-                FlashtestationRevertReason::Unknown("unknown revert".to_string()),
-            )))
-        }
+            calldata.abi_encode().into(),
+            ctx,
+            evm.db(),
+        )?;
+        let da_size =
+            op_alloy_flz::tx_estimated_size_fjord_bytes(signed_tx.encoded_2718().as_slice());
+        Ok(BuilderTransactionCtx {
+            gas_used,
+            da_size,
+            signed_tx,
+            is_top_of_block: false,
+        })
     }
 
     fn set_registered(
@@ -529,17 +282,12 @@ where
             .evm_with_env(&mut simulation_state, ctx.evm_env.clone());
         evm.modify_cfg(|cfg| {
             cfg.disable_balance_check = true;
-            cfg.disable_nonce_check = true;
         });
         let calldata = IFlashtestationRegistry::getRegistrationStatusCall {
             teeAddress: self.tee_service_signer.address,
         };
-        let SimulationSuccessResult { output, .. } = self.simulate_flashtestation_readonly_call(
-            self.registry_address,
-            calldata,
-            ctx,
-            &mut evm,
-        )?;
+        let SimulationSuccessResult { output, .. } =
+            self.flashtestation_contract_read(self.registry_address, calldata, ctx, &mut evm)?;
         if output.isValid {
             self.registered
                 .store(true, std::sync::atomic::Ordering::SeqCst);
@@ -551,13 +299,13 @@ where
         &self,
         contract_address: Address,
         ctx: &OpPayloadBuilderCtx<ExtraCtx>,
-        evm: &mut OpEvm<impl Database, NoOpInspector, PrecompilesMap>,
+        evm: &mut OpEvm<impl Database + DatabaseRef, NoOpInspector, PrecompilesMap>,
     ) -> Result<U256, BuilderTransactionError> {
         let calldata = IERC20Permit::noncesCall {
             owner: self.tee_service_signer.address,
         };
         let SimulationSuccessResult { output, .. } =
-            self.simulate_flashtestation_readonly_call(contract_address, calldata, ctx, evm)?;
+            self.flashtestation_contract_read(contract_address, calldata, ctx, evm)?;
         Ok(output)
     }
 
@@ -565,7 +313,7 @@ where
         &self,
         permit_nonce: U256,
         ctx: &OpPayloadBuilderCtx<ExtraCtx>,
-        evm: &mut OpEvm<impl Database, NoOpInspector, PrecompilesMap>,
+        evm: &mut OpEvm<impl Database + DatabaseRef, NoOpInspector, PrecompilesMap>,
     ) -> Result<Signature, BuilderTransactionError> {
         let struct_hash_calldata = IFlashtestationRegistry::computeStructHashCall {
             rawQuote: self.attestation.clone().into(),
@@ -573,7 +321,7 @@ where
             nonce: permit_nonce,
             deadline: U256::from(ctx.timestamp()),
         };
-        let SimulationSuccessResult { output, .. } = self.simulate_flashtestation_readonly_call(
+        let SimulationSuccessResult { output, .. } = self.flashtestation_contract_read(
             self.registry_address,
             struct_hash_calldata,
             ctx,
@@ -581,7 +329,7 @@ where
         )?;
         let typed_data_hash_calldata =
             IFlashtestationRegistry::hashTypedDataV4Call { structHash: output };
-        let SimulationSuccessResult { output, .. } = self.simulate_flashtestation_readonly_call(
+        let SimulationSuccessResult { output, .. } = self.flashtestation_contract_read(
             self.registry_address,
             typed_data_hash_calldata,
             ctx,
@@ -594,7 +342,7 @@ where
     fn signed_registration_permit_tx(
         &self,
         ctx: &OpPayloadBuilderCtx<ExtraCtx>,
-        evm: &mut OpEvm<impl Database + DatabaseRef, NoOpInspector, PrecompilesMap>,
+        evm: &mut OpEvm<&mut State<impl Database + DatabaseRef>, NoOpInspector, PrecompilesMap>,
     ) -> Result<BuilderTransactionCtx, BuilderTransactionError> {
         let permit_nonce = self.get_permit_nonce(self.registry_address, ctx, evm)?;
         let signature = self.registration_permit_signature(permit_nonce, ctx, evm)?;
@@ -605,7 +353,11 @@ where
             deadline: U256::from(ctx.timestamp()),
             signature: signature.as_bytes().into(),
         };
-        let SimulationSuccessResult { gas_used, .. } = self.simulate_flashtestation_call(
+        let SimulationSuccessResult {
+            gas_used,
+            state_changes,
+            ..
+        } = self.flashtestation_call(
             self.registry_address,
             calldata.clone(),
             vec![TEEServiceRegistered::SIGNATURE_HASH],
@@ -618,10 +370,12 @@ where
             gas_used,
             calldata.abi_encode().into(),
             ctx,
-            evm.db_mut(),
+            evm.db(),
         )?;
         let da_size =
             op_alloy_flz::tx_estimated_size_fjord_bytes(signed_tx.encoded_2718().as_slice());
+        // commit the register transaction state so the block proof transaction can succeed
+        evm.db_mut().commit(state_changes);
         Ok(BuilderTransactionCtx {
             gas_used,
             da_size,
@@ -635,14 +389,14 @@ where
         permit_nonce: U256,
         block_content_hash: B256,
         ctx: &OpPayloadBuilderCtx<ExtraCtx>,
-        evm: &mut OpEvm<impl Database, NoOpInspector, PrecompilesMap>,
+        evm: &mut OpEvm<impl Database + DatabaseRef, NoOpInspector, PrecompilesMap>,
     ) -> Result<Signature, BuilderTransactionError> {
         let struct_hash_calldata = IBlockBuilderPolicy::computeStructHashCall {
             version: self.builder_proof_version,
             blockContentHash: block_content_hash,
             nonce: permit_nonce,
         };
-        let SimulationSuccessResult { output, .. } = self.simulate_flashtestation_readonly_call(
+        let SimulationSuccessResult { output, .. } = self.flashtestation_contract_read(
             self.builder_policy_address,
             struct_hash_calldata,
             ctx,
@@ -650,7 +404,7 @@ where
         )?;
         let typed_data_hash_calldata =
             IBlockBuilderPolicy::getHashedTypeDataV4Call { structHash: output };
-        let SimulationSuccessResult { output, .. } = self.simulate_flashtestation_readonly_call(
+        let SimulationSuccessResult { output, .. } = self.flashtestation_contract_read(
             self.builder_policy_address,
             typed_data_hash_calldata,
             ctx,
@@ -677,11 +431,11 @@ where
             self.block_proof_permit_signature(permit_nonce, block_content_hash, ctx, evm)?;
         let calldata = IBlockBuilderPolicy::permitVerifyBlockBuilderProofCall {
             blockContentHash: block_content_hash,
-            nonce: U256::from(permit_nonce),
+            nonce: permit_nonce,
             version: self.builder_proof_version,
             eip712Sig: signature.as_bytes().into(),
         };
-        let SimulationSuccessResult { gas_used, .. } = self.simulate_flashtestation_call(
+        let SimulationSuccessResult { gas_used, .. } = self.flashtestation_call(
             self.builder_policy_address,
             calldata.clone(),
             vec![BlockBuilderProofVerified::SIGNATURE_HASH],
@@ -706,30 +460,31 @@ where
         })
     }
 
-    fn simulate_flashtestation_readonly_call<T: SolCall>(
+    fn flashtestation_contract_read<T: SolCall>(
         &self,
         contract_address: Address,
         calldata: T,
         ctx: &OpPayloadBuilderCtx<ExtraCtx>,
-        evm: &mut OpEvm<impl Database, NoOpInspector, PrecompilesMap>,
+        evm: &mut OpEvm<impl Database + DatabaseRef, NoOpInspector, PrecompilesMap>,
     ) -> Result<SimulationSuccessResult<T>, BuilderTransactionError> {
-        self.simulate_flashtestation_call(contract_address, calldata, vec![], ctx, evm)
+        self.flashtestation_call(contract_address, calldata, vec![], ctx, evm)
     }
 
-    fn simulate_flashtestation_call<T: SolCall>(
+    fn flashtestation_call<T: SolCall>(
         &self,
         contract_address: Address,
         calldata: T,
         expected_topics: Vec<B256>,
         ctx: &OpPayloadBuilderCtx<ExtraCtx>,
-        evm: &mut OpEvm<impl Database, NoOpInspector, PrecompilesMap>,
+        evm: &mut OpEvm<impl Database + DatabaseRef, NoOpInspector, PrecompilesMap>,
     ) -> Result<SimulationSuccessResult<T>, BuilderTransactionError> {
         let tx_req = OpTransactionRequest::default()
             .gas_limit(ctx.block_gas_limit())
             .max_fee_per_gas(ctx.base_fee().into())
             .to(contract_address)
+            .from(self.tee_service_signer.address) // use tee key as signer for simulations
+            .nonce(get_nonce(evm.db(), self.tee_service_signer.address)?)
             .input(TransactionInput::new(calldata.abi_encode().into()));
-
         if contract_address == self.registry_address {
             self.simulate_call::<T, IFlashtestationRegistry::IFlashtestationRegistryErrors>(
                 tx_req,
@@ -779,14 +534,13 @@ where
 
         if !self.registered.load(std::sync::atomic::Ordering::SeqCst) {
             info!(target: "flashtestations", "tee service not registered yet, attempting to register");
-            if self.use_permit {
-                let register_tx = self.signed_registration_permit_tx(ctx, &mut evm)?;
-                builder_txs.push(register_tx);
+            let register_tx = if self.use_permit {
+                self.signed_registration_permit_tx(ctx, &mut evm)?
             } else {
                 builder_txs.extend(self.fund_tee_service_tx(ctx, &mut evm)?);
-                let register_tx = self.register_tee_service_tx(ctx, &mut evm)?;
-                builder_txs.extend(register_tx);
-            }
+                self.register_tee_service_tx(ctx, &mut evm)?
+            };
+            builder_txs.push(register_tx);
         }
 
         // don't return on error for block proof as previous txs in builder_txs will not be returned
@@ -804,7 +558,7 @@ where
                 // add verify block proof tx
                 match self.verify_block_proof_tx(info.executed_transactions.clone(), ctx, &mut evm)
                 {
-                    Ok(block_proof_tx) => builder_txs.extend(block_proof_tx),
+                    Ok(block_proof_tx) => builder_txs.push(block_proof_tx),
                     Err(e) => {
                         warn!(target: "flashtestations", error = ?e, "failed to add block proof transaction")
                     }
