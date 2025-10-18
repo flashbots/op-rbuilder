@@ -11,8 +11,9 @@ use reth_evm::{ConfigureEvm, precompiles::PrecompilesMap};
 use reth_optimism_primitives::OpTransactionSigned;
 use reth_primitives::Recovered;
 use reth_provider::StateProvider;
-use reth_revm::{State, database::StateProviderDatabase};
+use reth_revm::State;
 use revm::{
+    DatabaseRef,
     context::result::{ExecutionResult, ResultAndState},
     inspector::NoOpInspector,
 };
@@ -21,6 +22,7 @@ use tracing::warn;
 use crate::{
     builders::{
         BuilderTransactionCtx, BuilderTransactionError, BuilderTransactions,
+        InvalidContractDataError,
         builder_tx::{BuilderTxBase, get_nonce},
         context::OpPayloadBuilderCtx,
         flashblocks::payload::{FlashblocksExecutionInfo, FlashblocksExtraCtx},
@@ -88,37 +90,31 @@ impl BuilderTransactions<FlashblocksExtraCtx, FlashblocksExecutionInfo> for Flas
         state_provider: impl StateProvider + Clone,
         info: &mut ExecutionInfo<FlashblocksExecutionInfo>,
         ctx: &OpPayloadBuilderCtx<FlashblocksExtraCtx>,
-        db: &mut State<impl Database>,
+        db: &mut State<impl Database + DatabaseRef>,
         top_of_block: bool,
     ) -> Result<Vec<BuilderTransactionCtx>, BuilderTransactionError> {
         let mut builder_txs = Vec::<BuilderTransactionCtx>::new();
 
         if ctx.is_first_flashblock() {
-            let flashblocks_builder_tx = self.base_builder_tx.simulate_builder_tx(ctx, db)?;
+            let flashblocks_builder_tx = self.base_builder_tx.simulate_builder_tx(ctx, &mut *db)?;
             builder_txs.extend(flashblocks_builder_tx.clone());
         }
 
         if ctx.is_last_flashblock() {
-            let base_tx = self.base_builder_tx.simulate_builder_tx(ctx, db)?;
+            let base_tx = self.base_builder_tx.simulate_builder_tx(ctx, &mut *db)?;
             builder_txs.extend(base_tx.clone());
 
             if let Some(flashtestations_builder_tx) = &self.flashtestations_builder_tx {
-                // We only include flashtestations txs in the last flashblock
-                let mut simulation_state = self.simulate_builder_txs_state(
-                    state_provider.clone(),
-                    base_tx
-                        .iter()
-                        .filter(|tx| tx.is_top_of_block == top_of_block)
-                        .collect(),
-                    ctx,
-                    db,
-                )?;
+                // Commit state that is included to get the correct nonce
+                if let Some(builder_tx) = base_tx {
+                    self.commit_txs(vec![builder_tx.signed_tx], ctx, db)?;
+                }
                 // We only include flashtestations txs in the last flashblock
                 match flashtestations_builder_tx.simulate_builder_txs(
                     state_provider,
                     info,
                     ctx,
-                    &mut simulation_state,
+                    db,
                     top_of_block,
                 ) {
                     Ok(flashtestations_builder_txs) => {
@@ -161,14 +157,11 @@ impl FlashblocksNumberBuilderTx {
         }
     }
 
+    // TODO: remove and clean up in favour of simulate_call()
     fn estimate_flashblock_number_tx_gas(
         &self,
         ctx: &OpPayloadBuilderCtx<FlashblocksExtraCtx>,
-        evm: &mut OpEvm<
-            State<StateProviderDatabase<impl StateProvider + Clone>>,
-            NoOpInspector,
-            PrecompilesMap,
-        >,
+        evm: &mut OpEvm<impl Database, NoOpInspector, PrecompilesMap>,
         signer: &Signer,
         nonce: u64,
     ) -> Result<u64, BuilderTransactionError> {
@@ -190,8 +183,9 @@ impl FlashblocksNumberBuilderTx {
                 } else {
                     Err(BuilderTransactionError::InvalidContract(
                         self.flashblock_number_address,
-                        crate::builders::InvalidContractDataError::InvalidLogs(
-                            IFlashblockNumber::FlashblockIncremented::SIGNATURE_HASH,
+                        InvalidContractDataError::InvalidLogs(
+                            vec![IFlashblockNumber::FlashblockIncremented::SIGNATURE_HASH],
+                            vec![],
                         ),
                     ))
                 }
@@ -238,26 +232,18 @@ impl BuilderTransactions<FlashblocksExtraCtx, FlashblocksExecutionInfo>
         state_provider: impl StateProvider + Clone,
         info: &mut ExecutionInfo<FlashblocksExecutionInfo>,
         ctx: &OpPayloadBuilderCtx<FlashblocksExtraCtx>,
-        db: &mut State<impl Database>,
+        db: &mut State<impl Database + DatabaseRef>,
         top_of_block: bool,
     ) -> Result<Vec<BuilderTransactionCtx>, BuilderTransactionError> {
         let mut builder_txs = Vec::<BuilderTransactionCtx>::new();
-        let state = StateProviderDatabase::new(state_provider.clone());
-        let simulation_state = State::builder()
-            .with_database(state)
-            .with_cached_prestate(db.cache.clone())
-            .with_bundle_update()
-            .build();
 
         if ctx.is_first_flashblock() {
             // fallback block builder tx
-            builder_txs.extend(self.base_builder_tx.simulate_builder_tx(ctx, db)?);
+            builder_txs.extend(self.base_builder_tx.simulate_builder_tx(ctx, &mut *db)?);
         } else {
             // we increment the flashblock number for the next flashblock so we don't increment in the last flashblock
             if let Some(signer) = &self.signer {
-                let mut evm = ctx
-                    .evm_config
-                    .evm_with_env(simulation_state, ctx.evm_env.clone());
+                let mut evm = ctx.evm_config.evm_with_env(&mut *db, ctx.evm_env.clone());
                 evm.modify_cfg(|cfg| {
                     cfg.disable_balance_check = true;
                     cfg.disable_block_gas_limit = true;
@@ -289,7 +275,7 @@ impl BuilderTransactions<FlashblocksExtraCtx, FlashblocksExecutionInfo>
                     Err(e) => {
                         warn!(target: "builder_tx", error = ?e, "Flashblocks number contract tx simulation failed, defaulting to fallback builder tx");
                         self.base_builder_tx
-                            .simulate_builder_tx(ctx, db)?
+                            .simulate_builder_tx(ctx, &mut *db)?
                             .map(|tx| tx.set_top_of_block())
                     }
                 };
@@ -300,22 +286,20 @@ impl BuilderTransactions<FlashblocksExtraCtx, FlashblocksExecutionInfo>
 
         if ctx.is_last_flashblock() {
             if let Some(flashtestations_builder_tx) = &self.flashtestations_builder_tx {
-                let flashblocks_builder_txs = builder_txs.clone();
-                let mut simulation_state = self.simulate_builder_txs_state(
-                    state_provider.clone(),
-                    flashblocks_builder_txs
-                        .iter()
-                        .filter(|tx| tx.is_top_of_block == top_of_block)
-                        .collect(),
-                    ctx,
-                    db,
-                )?;
+                // Commit state that should be included to compute the correct nonce
+                let flashblocks_builder_txs = builder_txs
+                    .iter()
+                    .filter(|tx| tx.is_top_of_block == top_of_block)
+                    .map(|tx| tx.signed_tx.clone())
+                    .collect();
+                self.commit_txs(flashblocks_builder_txs, ctx, &mut *db)?;
+
                 // We only include flashtestations txs in the last flashblock
                 match flashtestations_builder_tx.simulate_builder_txs(
                     state_provider,
                     info,
                     ctx,
-                    &mut simulation_state,
+                    db,
                     top_of_block,
                 ) {
                     Ok(flashtestations_builder_txs) => {
