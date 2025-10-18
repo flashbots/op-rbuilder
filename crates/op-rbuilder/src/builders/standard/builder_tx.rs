@@ -2,6 +2,7 @@ use alloy_evm::Database;
 use core::fmt::Debug;
 use reth_provider::StateProvider;
 use reth_revm::State;
+use revm::DatabaseRef;
 use tracing::warn;
 
 use crate::{
@@ -40,27 +41,21 @@ impl BuilderTransactions for StandardBuilderTx {
         state_provider: impl StateProvider + Clone,
         info: &mut ExecutionInfo,
         ctx: &OpPayloadBuilderCtx,
-        db: &mut State<impl Database>,
+        db: &mut State<impl Database + DatabaseRef>,
         top_of_block: bool,
     ) -> Result<Vec<BuilderTransactionCtx>, BuilderTransactionError> {
         let mut builder_txs = Vec::<BuilderTransactionCtx>::new();
-        let standard_builder_tx = self.base_builder_tx.simulate_builder_tx(ctx, db)?;
+        let standard_builder_tx = self.base_builder_tx.simulate_builder_tx(ctx, &mut *db)?;
         builder_txs.extend(standard_builder_tx.clone());
         if let Some(flashtestations_builder_tx) = &self.flashtestations_builder_tx {
-            let mut simulation_state = self.simulate_builder_txs_state(
-                state_provider.clone(),
-                standard_builder_tx
-                    .iter()
-                    .filter(|tx| tx.is_top_of_block == top_of_block)
-                    .collect(),
-                ctx,
-                db,
-            )?;
+            if let Some(builder_tx) = standard_builder_tx {
+                self.commit_txs(vec![builder_tx.signed_tx], ctx, db)?;
+            }
             match flashtestations_builder_tx.simulate_builder_txs(
                 state_provider,
                 info,
                 ctx,
-                &mut simulation_state,
+                db,
                 top_of_block,
             ) {
                 Ok(flashtestations_builder_txs) => builder_txs.extend(flashtestations_builder_txs),

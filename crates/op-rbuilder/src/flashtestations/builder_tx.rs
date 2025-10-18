@@ -5,16 +5,18 @@ use alloy_op_evm::OpEvm;
 use alloy_primitives::{
     Address, B256, Bytes, Signature, TxKind, U256, keccak256, map::foldhash::HashMap,
 };
+use alloy_rpc_types_eth::TransactionInput;
 use alloy_sol_types::{SolCall, SolEvent, SolInterface, SolValue};
 use core::fmt::Debug;
 use op_alloy_consensus::OpTypedTransaction;
+use op_alloy_rpc_types::OpTransactionRequest;
 use reth_evm::{ConfigureEvm, Evm, EvmError, precompiles::PrecompilesMap};
 use reth_optimism_primitives::OpTransactionSigned;
 use reth_primitives::{Log, Recovered};
 use reth_provider::StateProvider;
 use reth_revm::{State, database::StateProviderDatabase};
 use revm::{
-    DatabaseCommit,
+    DatabaseCommit, DatabaseRef,
     context::result::{ExecutionResult, ResultAndState},
     inspector::NoOpInspector,
     state::Account,
@@ -232,13 +234,9 @@ where
     fn simulate_register_tee_service_tx(
         &self,
         ctx: &OpPayloadBuilderCtx<ExtraCtx>,
-        evm: &mut OpEvm<
-            &mut State<StateProviderDatabase<impl StateProvider>>,
-            NoOpInspector,
-            PrecompilesMap,
-        >,
+        evm: &mut OpEvm<impl Database + DatabaseRef, NoOpInspector, PrecompilesMap>,
     ) -> Result<TxSimulateResult, BuilderTransactionError> {
-        let nonce = get_nonce(evm.db_mut(), self.tee_service_signer.address)?;
+        let nonce = get_nonce(evm.db(), self.tee_service_signer.address)?;
 
         let register_tx = self.signed_register_tee_service_tx(
             self.attestation.clone(),
@@ -298,13 +296,9 @@ where
         &self,
         block_content_hash: B256,
         ctx: &OpPayloadBuilderCtx<ExtraCtx>,
-        evm: &mut OpEvm<
-            &mut State<StateProviderDatabase<impl StateProvider>>,
-            NoOpInspector,
-            PrecompilesMap,
-        >,
+        evm: &mut OpEvm<impl Database + DatabaseRef, NoOpInspector, PrecompilesMap>,
     ) -> Result<TxSimulateResult, BuilderTransactionError> {
-        let nonce = get_nonce(evm.db_mut(), self.tee_service_signer.address)?;
+        let nonce = get_nonce(evm.db(), self.tee_service_signer.address)?;
 
         let verify_block_proof_tx = self.signed_block_builder_proof_tx(
             block_content_hash,
@@ -362,15 +356,11 @@ where
     fn fund_tee_service_tx(
         &self,
         ctx: &OpPayloadBuilderCtx<ExtraCtx>,
-        evm: &mut OpEvm<
-            &mut State<StateProviderDatabase<impl StateProvider>>,
-            NoOpInspector,
-            PrecompilesMap,
-        >,
+        evm: &mut OpEvm<&mut State<impl Database + DatabaseRef>, NoOpInspector, PrecompilesMap>,
     ) -> Result<Option<BuilderTransactionCtx>, BuilderTransactionError> {
-        let balance = get_balance(evm.db_mut(), self.tee_service_signer.address)?;
+        let balance = get_balance(evm.db(), self.tee_service_signer.address)?;
         if balance.is_zero() {
-            let funding_nonce = get_nonce(evm.db_mut(), self.funding_key.address)?;
+            let funding_nonce = get_nonce(evm.db(), self.funding_key.address)?;
             let funding_tx = self.signed_funding_tx(
                 self.tee_service_signer.address,
                 self.funding_key,
@@ -406,14 +396,11 @@ where
         }
     }
 
+    // TODO: deprecate in favour of permit calls
     fn register_tee_service_tx(
         &self,
         ctx: &OpPayloadBuilderCtx<ExtraCtx>,
-        evm: &mut OpEvm<
-            &mut State<StateProviderDatabase<impl StateProvider>>,
-            NoOpInspector,
-            PrecompilesMap,
-        >,
+        evm: &mut OpEvm<&mut State<impl Database + DatabaseRef>, NoOpInspector, PrecompilesMap>,
     ) -> Result<Option<BuilderTransactionCtx>, BuilderTransactionError> {
         let TxSimulateResult {
             gas_used,
@@ -429,7 +416,10 @@ where
             {
                 Err(BuilderTransactionError::InvalidContract(
                     self.registry_address,
-                    InvalidContractDataError::InvalidLogs(TEEServiceRegistered::SIGNATURE_HASH),
+                    InvalidContractDataError::InvalidLogs(
+                        vec![TEEServiceRegistered::SIGNATURE_HASH],
+                        vec![],
+                    ),
                 ))
             } else {
                 let nonce = get_nonce(evm.db_mut(), self.tee_service_signer.address)?;
@@ -464,15 +454,12 @@ where
         }
     }
 
+    // TODO: remove in favour of permit calls
     fn verify_block_proof_tx(
         &self,
         transactions: Vec<OpTransactionSigned>,
         ctx: &OpPayloadBuilderCtx<ExtraCtx>,
-        evm: &mut OpEvm<
-            &mut State<StateProviderDatabase<impl StateProvider>>,
-            NoOpInspector,
-            PrecompilesMap,
-        >,
+        evm: &mut OpEvm<impl Database + DatabaseRef, NoOpInspector, PrecompilesMap>,
     ) -> Result<Option<BuilderTransactionCtx>, BuilderTransactionError> {
         let block_content_hash = Self::compute_block_content_hash(
             &transactions,
@@ -496,7 +483,8 @@ where
                 Err(BuilderTransactionError::InvalidContract(
                     self.builder_policy_address,
                     InvalidContractDataError::InvalidLogs(
-                        BlockBuilderProofVerified::SIGNATURE_HASH,
+                        vec![BlockBuilderProofVerified::SIGNATURE_HASH],
+                        vec![],
                     ),
                 ))
             } else {
@@ -545,117 +533,68 @@ where
         });
         let calldata = IFlashtestationRegistry::getRegistrationStatusCall {
             teeAddress: self.tee_service_signer.address,
-        }
-        .abi_encode();
-        match self.simulate_flashtestation_call(
+        };
+        let SimulationSuccessResult { output, .. } = self.simulate_flashtestation_readonly_call(
             self.registry_address,
             calldata,
-            None,
             ctx,
             &mut evm,
-        ) {
-            Ok(SimulationSuccessResult { output, .. }) => {
-                let result =
-                    IFlashtestationRegistry::getRegistrationStatusCall::abi_decode_returns(&output)
-                        .map_err(|_| {
-                            BuilderTransactionError::InvalidContract(
-                                self.registry_address,
-                                InvalidContractDataError::OutputAbiDecodeError,
-                            )
-                        })?;
-                if result.isValid {
-                    self.registered
-                        .store(true, std::sync::atomic::Ordering::SeqCst);
-                }
-                Ok(())
-            }
-            Err(e) => Err(e),
+        )?;
+        if output.isValid {
+            self.registered
+                .store(true, std::sync::atomic::Ordering::SeqCst);
         }
+        Ok(())
     }
 
     fn get_permit_nonce(
         &self,
         contract_address: Address,
         ctx: &OpPayloadBuilderCtx<ExtraCtx>,
-        evm: &mut OpEvm<
-            &mut State<StateProviderDatabase<impl StateProvider>>,
-            NoOpInspector,
-            PrecompilesMap,
-        >,
+        evm: &mut OpEvm<impl Database, NoOpInspector, PrecompilesMap>,
     ) -> Result<U256, BuilderTransactionError> {
         let calldata = IERC20Permit::noncesCall {
             owner: self.tee_service_signer.address,
-        }
-        .abi_encode();
+        };
         let SimulationSuccessResult { output, .. } =
-            self.simulate_flashtestation_call(contract_address, calldata, None, ctx, evm)?;
-        U256::abi_decode(&output).map_err(|_| {
-            BuilderTransactionError::InvalidContract(
-                contract_address,
-                InvalidContractDataError::OutputAbiDecodeError,
-            )
-        })
+            self.simulate_flashtestation_readonly_call(contract_address, calldata, ctx, evm)?;
+        Ok(output)
     }
 
     fn registration_permit_signature(
         &self,
         permit_nonce: U256,
         ctx: &OpPayloadBuilderCtx<ExtraCtx>,
-        evm: &mut OpEvm<
-            &mut State<StateProviderDatabase<impl StateProvider>>,
-            NoOpInspector,
-            PrecompilesMap,
-        >,
+        evm: &mut OpEvm<impl Database, NoOpInspector, PrecompilesMap>,
     ) -> Result<Signature, BuilderTransactionError> {
         let struct_hash_calldata = IFlashtestationRegistry::computeStructHashCall {
             rawQuote: self.attestation.clone().into(),
             extendedRegistrationData: self.extra_registration_data.clone(),
             nonce: permit_nonce,
             deadline: U256::from(ctx.timestamp()),
-        }
-        .abi_encode();
-        let SimulationSuccessResult { output, .. } = self.simulate_flashtestation_call(
+        };
+        let SimulationSuccessResult { output, .. } = self.simulate_flashtestation_readonly_call(
             self.registry_address,
             struct_hash_calldata,
-            None,
             ctx,
             evm,
         )?;
-        let struct_hash = B256::abi_decode(&output).map_err(|_| {
-            BuilderTransactionError::InvalidContract(
-                self.registry_address,
-                InvalidContractDataError::OutputAbiDecodeError,
-            )
-        })?;
-        let typed_data_hash_calldata = IFlashtestationRegistry::hashTypedDataV4Call {
-            structHash: struct_hash,
-        }
-        .abi_encode();
-        let SimulationSuccessResult { output, .. } = self.simulate_flashtestation_call(
+        let typed_data_hash_calldata =
+            IFlashtestationRegistry::hashTypedDataV4Call { structHash: output };
+        let SimulationSuccessResult { output, .. } = self.simulate_flashtestation_readonly_call(
             self.registry_address,
             typed_data_hash_calldata,
-            None,
             ctx,
             evm,
         )?;
-        let typed_data_hash = B256::abi_decode(&output).map_err(|_| {
-            BuilderTransactionError::InvalidContract(
-                self.registry_address,
-                InvalidContractDataError::OutputAbiDecodeError,
-            )
-        })?;
-        let signature = self.tee_service_signer.sign_message(typed_data_hash)?;
+        let signature = self.tee_service_signer.sign_message(output)?;
         Ok(signature)
     }
 
     fn signed_registration_permit_tx(
         &self,
         ctx: &OpPayloadBuilderCtx<ExtraCtx>,
-        evm: &mut OpEvm<
-            &mut State<StateProviderDatabase<impl StateProvider>>,
-            NoOpInspector,
-            PrecompilesMap,
-        >,
+        evm: &mut OpEvm<impl Database + DatabaseRef, NoOpInspector, PrecompilesMap>,
     ) -> Result<BuilderTransactionCtx, BuilderTransactionError> {
         let permit_nonce = self.get_permit_nonce(self.registry_address, ctx, evm)?;
         let signature = self.registration_permit_signature(permit_nonce, ctx, evm)?;
@@ -665,20 +604,19 @@ where
             nonce: permit_nonce,
             deadline: U256::from(ctx.timestamp()),
             signature: signature.as_bytes().into(),
-        }
-        .abi_encode();
+        };
         let SimulationSuccessResult { gas_used, .. } = self.simulate_flashtestation_call(
             self.registry_address,
             calldata.clone(),
-            Some(TEEServiceRegistered::SIGNATURE_HASH),
+            vec![TEEServiceRegistered::SIGNATURE_HASH],
             ctx,
             evm,
         )?;
         let signed_tx = self.sign_tx(
             self.registry_address,
             self.builder_signer,
-            Some(gas_used),
-            calldata.into(),
+            gas_used,
+            calldata.abi_encode().into(),
             ctx,
             evm.db_mut(),
         )?;
@@ -697,49 +635,28 @@ where
         permit_nonce: U256,
         block_content_hash: B256,
         ctx: &OpPayloadBuilderCtx<ExtraCtx>,
-        evm: &mut OpEvm<
-            &mut State<StateProviderDatabase<impl StateProvider>>,
-            NoOpInspector,
-            PrecompilesMap,
-        >,
+        evm: &mut OpEvm<impl Database, NoOpInspector, PrecompilesMap>,
     ) -> Result<Signature, BuilderTransactionError> {
         let struct_hash_calldata = IBlockBuilderPolicy::computeStructHashCall {
             version: self.builder_proof_version,
             blockContentHash: block_content_hash,
             nonce: permit_nonce,
-        }
-        .abi_encode();
-        let SimulationSuccessResult { output, .. } = self.simulate_flashtestation_call(
+        };
+        let SimulationSuccessResult { output, .. } = self.simulate_flashtestation_readonly_call(
             self.builder_policy_address,
             struct_hash_calldata,
-            None,
             ctx,
             evm,
         )?;
-        let struct_hash = B256::abi_decode(&output).map_err(|_| {
-            BuilderTransactionError::InvalidContract(
-                self.builder_policy_address,
-                InvalidContractDataError::OutputAbiDecodeError,
-            )
-        })?;
-        let typed_data_hash_calldata = IBlockBuilderPolicy::getHashedTypeDataV4Call {
-            structHash: struct_hash,
-        }
-        .abi_encode();
-        let SimulationSuccessResult { output, .. } = self.simulate_flashtestation_call(
+        let typed_data_hash_calldata =
+            IBlockBuilderPolicy::getHashedTypeDataV4Call { structHash: output };
+        let SimulationSuccessResult { output, .. } = self.simulate_flashtestation_readonly_call(
             self.builder_policy_address,
             typed_data_hash_calldata,
-            None,
             ctx,
             evm,
         )?;
-        let typed_data_hash = B256::abi_decode(&output).map_err(|_| {
-            BuilderTransactionError::InvalidContract(
-                self.builder_policy_address,
-                InvalidContractDataError::OutputAbiDecodeError,
-            )
-        })?;
-        let signature = self.tee_service_signer.sign_message(typed_data_hash)?;
+        let signature = self.tee_service_signer.sign_message(output)?;
         Ok(signature)
     }
 
@@ -747,11 +664,7 @@ where
         &self,
         transactions: &[OpTransactionSigned],
         ctx: &OpPayloadBuilderCtx<ExtraCtx>,
-        evm: &mut OpEvm<
-            &mut State<StateProviderDatabase<impl StateProvider>>,
-            NoOpInspector,
-            PrecompilesMap,
-        >,
+        evm: &mut OpEvm<impl Database + DatabaseRef, NoOpInspector, PrecompilesMap>,
     ) -> Result<BuilderTransactionCtx, BuilderTransactionError> {
         let permit_nonce = self.get_permit_nonce(self.builder_policy_address, ctx, evm)?;
         let block_content_hash = Self::compute_block_content_hash(
@@ -767,22 +680,21 @@ where
             nonce: U256::from(permit_nonce),
             version: self.builder_proof_version,
             eip712Sig: signature.as_bytes().into(),
-        }
-        .abi_encode();
+        };
         let SimulationSuccessResult { gas_used, .. } = self.simulate_flashtestation_call(
             self.builder_policy_address,
             calldata.clone(),
-            Some(BlockBuilderProofVerified::SIGNATURE_HASH),
+            vec![BlockBuilderProofVerified::SIGNATURE_HASH],
             ctx,
             evm,
         )?;
         let signed_tx = self.sign_tx(
             self.builder_policy_address,
             self.builder_signer,
-            Some(gas_used),
-            calldata.into(),
+            gas_used,
+            calldata.abi_encode().into(),
             ctx,
-            evm.db_mut(),
+            evm.db(),
         )?;
         let da_size =
             op_alloy_flz::tx_estimated_size_fjord_bytes(signed_tx.encoded_2718().as_slice());
@@ -794,52 +706,47 @@ where
         })
     }
 
-    fn simulate_flashtestation_call(
+    fn simulate_flashtestation_readonly_call<T: SolCall>(
         &self,
         contract_address: Address,
-        calldata: Vec<u8>,
-        expected_topic: Option<B256>,
+        calldata: T,
         ctx: &OpPayloadBuilderCtx<ExtraCtx>,
-        evm: &mut OpEvm<
-            &mut State<StateProviderDatabase<impl StateProvider>>,
-            NoOpInspector,
-            PrecompilesMap,
-        >,
-    ) -> Result<SimulationSuccessResult, BuilderTransactionError> {
-        let signed_tx = self.sign_tx(
-            contract_address,
-            self.builder_signer,
-            None,
-            calldata.into(),
-            ctx,
-            evm.db_mut(),
-        )?;
-        let revert_handler = if contract_address == self.registry_address {
-            Self::handle_registry_reverts
+        evm: &mut OpEvm<impl Database, NoOpInspector, PrecompilesMap>,
+    ) -> Result<SimulationSuccessResult<T>, BuilderTransactionError> {
+        self.simulate_flashtestation_call(contract_address, calldata, vec![], ctx, evm)
+    }
+
+    fn simulate_flashtestation_call<T: SolCall>(
+        &self,
+        contract_address: Address,
+        calldata: T,
+        expected_topics: Vec<B256>,
+        ctx: &OpPayloadBuilderCtx<ExtraCtx>,
+        evm: &mut OpEvm<impl Database, NoOpInspector, PrecompilesMap>,
+    ) -> Result<SimulationSuccessResult<T>, BuilderTransactionError> {
+        let tx_req = OpTransactionRequest::default()
+            .gas_limit(ctx.block_gas_limit())
+            .max_fee_per_gas(ctx.base_fee().into())
+            .to(contract_address)
+            .input(TransactionInput::new(calldata.abi_encode().into()));
+
+        if contract_address == self.registry_address {
+            self.simulate_call::<T, IFlashtestationRegistry::IFlashtestationRegistryErrors>(
+                tx_req,
+                expected_topics,
+                evm,
+            )
+        } else if contract_address == self.builder_policy_address {
+            self.simulate_call::<T, IBlockBuilderPolicy::IBlockBuilderPolicyErrors>(
+                tx_req,
+                expected_topics,
+                evm,
+            )
         } else {
-            Self::handle_block_builder_policy_reverts
-        };
-        self.simulate_call(signed_tx, expected_topic, revert_handler, evm)
-    }
-
-    fn handle_registry_reverts(revert_output: Bytes) -> BuilderTransactionError {
-        let revert_reason =
-            IFlashtestationRegistry::IFlashtestationRegistryErrors::abi_decode(&revert_output)
-                .map(FlashtestationRevertReason::FlashtestationRegistry)
-                .unwrap_or_else(|_| {
-                    FlashtestationRevertReason::Unknown(hex::encode(revert_output))
-                });
-        BuilderTransactionError::TransactionReverted(Box::new(revert_reason))
-    }
-
-    fn handle_block_builder_policy_reverts(revert_output: Bytes) -> BuilderTransactionError {
-        let revert_reason =
-            IBlockBuilderPolicy::IBlockBuilderPolicyErrors::abi_decode(&revert_output)
-                .map(FlashtestationRevertReason::BlockBuilderPolicy)
-                .unwrap_or_else(|_| {
-                    FlashtestationRevertReason::Unknown(hex::encode(revert_output))
-                });
-        BuilderTransactionError::TransactionReverted(Box::new(revert_reason))
+            Err(BuilderTransactionError::msg(
+                "invalid contract address for flashtestations",
+            ))
+        }
     }
 }
 
@@ -854,24 +761,15 @@ where
         state_provider: impl StateProvider + Clone,
         info: &mut ExecutionInfo<Extra>,
         ctx: &OpPayloadBuilderCtx<ExtraCtx>,
-        db: &mut State<impl Database>,
+        db: &mut State<impl Database + DatabaseRef>,
         _top_of_block: bool,
     ) -> Result<Vec<BuilderTransactionCtx>, BuilderTransactionError> {
-        // set registered simulating against the committed state
+        // set registered by simulating against the committed state
         if !self.registered.load(std::sync::atomic::Ordering::SeqCst) {
-            self.set_registered(state_provider.clone(), ctx)?;
+            self.set_registered(state_provider, ctx)?;
         }
 
-        let state = StateProviderDatabase::new(state_provider.clone());
-        let mut simulation_state = State::builder()
-            .with_database(state)
-            .with_cached_prestate(db.cache.clone())
-            .with_bundle_update()
-            .build();
-
-        let mut evm = ctx
-            .evm_config
-            .evm_with_env(&mut simulation_state, ctx.evm_env.clone());
+        let mut evm = ctx.evm_config.evm_with_env(&mut *db, ctx.evm_env.clone());
         evm.modify_cfg(|cfg| {
             cfg.disable_balance_check = true;
             cfg.disable_block_gas_limit = true;
