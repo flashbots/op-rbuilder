@@ -73,7 +73,7 @@ jobs:
       matrix:
         configs:
           - target: x86_64-unknown-linux-gnu
-            runner: warp-ubuntu-latest-x64-32x
+            runner: warp-ubuntu-latest-x64-16x
           - target: aarch64-unknown-linux-gnu
             runner: warp-ubuntu-latest-arm64-32x
           # Paused until docker is pre-installed https://github.com/actions/runner-images/blob/main/images/macos/macos-14-arm64-Readme.md
@@ -228,7 +228,7 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           platforms: ${{ matrix.configs.platform }}
           push: true
-          tags: ghcr.io/${{ github.repository }}:${{ env.VERSION }}-${{ env.PLATFORM }}
+          tags: ${{ steps.meta.outputs.tags }}
           build-args: |
             FEATURES=${{ github.event.inputs.features || '' }}
             RBUILDER_BIN=op-rbuilder
