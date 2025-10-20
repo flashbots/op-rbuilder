@@ -299,23 +299,3 @@ jobs:
       - name: inspect image
         run: |
           docker buildx imagetools inspect ghcr.io/${{ github.repository }}:${{ env.VERSION }}
-
-  compare-builds:
-    name: Compare raw vs. container binary
-    needs:
-      - extract-version
-      - publish-container-image
-    runs-on: ${{ matrix.configs.runner }}
-    env:
-      VERSION: ${{ needs.extract-version.outputs.VERSION }}
-    permissions:
-      contents: read
-      packages: write
-    strategy:
-      matrix:
-        configs:
-          - platform: linux/amd64
-            runner: warp-ubuntu-latest-x64-16x
-          - platform: linux/arm64
-            runner: warp-ubuntu-latest-arm64-16x
-    steps:
