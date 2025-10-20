@@ -44,7 +44,6 @@ impl PayloadHandler {
             tokio::select! {
                 Some(payload) = built_rx.recv() => {
                     let _  = payload_events_handle.send(Events::BuiltPayload(payload.clone()));
-                    // TODO: only broadcast if `!no_tx_pool`?
                     // ignore error here; if p2p was disabled, the channel will be closed.
                     let _ = p2p_tx.send(payload.into()).await;
                 }

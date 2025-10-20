@@ -127,7 +127,6 @@ serde_yaml = { version = "0.9" }
 moka = "0.12"
 http = "1.0"
 sha3 = "0.10"
-ureq = "2.10"
 reqwest = "0.12.23"
 k256 = "0.13.4"
 

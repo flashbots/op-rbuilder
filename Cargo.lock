@@ -7128,7 +7128,6 @@ dependencies = [
  "tower 0.5.2",
  "tracing",
  "tracing-subscriber 0.3.20",
- "ureq",
  "url",
  "uuid",
  "vergen",
@@ -7393,7 +7392,7 @@ dependencies = [
 
 [[package]]
 name = "p2p"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "derive_more",
  "eyre",

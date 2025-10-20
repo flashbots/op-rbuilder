@@ -2,7 +2,7 @@ use alloy_consensus::TxEip1559;
 use alloy_eips::Encodable2718;
 use alloy_evm::Database;
 use alloy_op_evm::OpEvm;
-use alloy_primitives::{Address, B256, Bytes, TxKind, U256, keccak256, map::foldhash::HashMap};
+use alloy_primitives::{Address, B256, Bytes, TxKind, U256, keccak256, map::DefaultHashBuilder};
 use alloy_sol_types::{Error, SolCall, SolEvent, SolInterface, SolValue};
 use core::fmt::Debug;
 use op_alloy_consensus::OpTypedTransaction;
@@ -17,7 +17,10 @@ use revm::{
     inspector::NoOpInspector,
     state::Account,
 };
-use std::sync::{Arc, atomic::AtomicBool};
+use std::{
+    collections::HashMap,
+    sync::{Arc, atomic::AtomicBool},
+};
 use tracing::{debug, info};
 
 use crate::{
@@ -75,7 +78,7 @@ pub struct FlashtestationsBuilderTx {
 pub struct TxSimulateResult {
     pub gas_used: u64,
     pub success: bool,
-    pub state_changes: HashMap<Address, Account>,
+    pub state_changes: HashMap<Address, Account, DefaultHashBuilder>,
     pub revert_reason: Option<FlashtestationRevertReason>,
     pub logs: Vec<Log>,
 }
