@@ -36,10 +36,10 @@ impl FlashblocksServiceBuilder {
         Pool: PoolBounds,
         BuilderTx: BuilderTransactions<FlashblocksExtraCtx> + Unpin + Clone + Send + Sync + 'static,
     {
-        let (incoming_message_rx, outgoing_message_tx) = if self.0.p2p_enabled {
+        let (incoming_message_rx, outgoing_message_tx) = if self.0.specific.p2p_enabled {
             let mut builder = p2p::NodeBuilder::new();
 
-            if let Some(ref private_key_file) = self.0.p2p_private_key_file
+            if let Some(ref private_key_file) = self.0.specific.p2p_private_key_file
                 && !private_key_file.is_empty()
             {
                 let private_key_hex = std::fs::read_to_string(private_key_file)
@@ -52,7 +52,7 @@ impl FlashblocksServiceBuilder {
             }
 
             let known_peers: Vec<p2p::Multiaddr> =
-                if let Some(ref p2p_known_peers) = self.0.p2p_known_peers {
+                if let Some(ref p2p_known_peers) = self.0.specific.p2p_known_peers {
                     p2p_known_peers
                         .split(',')
                         .map(|s| s.to_string())
@@ -70,7 +70,7 @@ impl FlashblocksServiceBuilder {
                 .with_agent_version(AGENT_VERSION.to_string())
                 .with_protocol(FLASHBLOCKS_STREAM_PROTOCOL)
                 .with_known_peers(known_peers)
-                .with_port(self.0.p2p_port)
+                .with_port(self.0.specific.p2p_port)
                 .try_build::<Message>()
                 .wrap_err("failed to build flashblocks p2p node")?;
             let multiaddrs = node.multiaddrs();
