@@ -71,6 +71,7 @@ impl FlashblocksServiceBuilder {
                 .with_protocol(FLASHBLOCKS_STREAM_PROTOCOL)
                 .with_known_peers(known_peers)
                 .with_port(self.0.specific.p2p_port)
+                .with_max_peer_count(self.0.specific.p2p_max_peer_count)
                 .try_build::<Message>()
                 .wrap_err("failed to build flashblocks p2p node")?;
             let multiaddrs = node.multiaddrs();

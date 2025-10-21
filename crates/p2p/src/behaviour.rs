@@ -5,7 +5,6 @@ use libp2p::{
 };
 use std::{convert::Infallible, time::Duration};
 
-const DEFAULT_MAX_PEER_COUNT: u32 = 200;
 const PROTOCOL_VERSION: &str = "1.0.0";
 
 #[derive(NetworkBehaviour)]
@@ -48,14 +47,18 @@ impl From<Infallible> for BehaviourEvent {
 }
 
 impl Behaviour {
-    pub(crate) fn new(keypair: &identity::Keypair, agent_version: String) -> eyre::Result<Self> {
+    pub(crate) fn new(
+        keypair: &identity::Keypair,
+        agent_version: String,
+        max_peer_count: u32,
+    ) -> eyre::Result<Self> {
         let peer_id = keypair.public().to_peer_id();
 
         let autonat = autonat::Behaviour::new(peer_id, autonat::Config::default());
         let mdns = mdns::tokio::Behaviour::new(mdns::Config::default(), peer_id)
             .wrap_err("failed to create mDNS behaviour")?;
         let connection_limits = connection_limits::Behaviour::new(
-            ConnectionLimits::default().with_max_established(Some(DEFAULT_MAX_PEER_COUNT)),
+            ConnectionLimits::default().with_max_established(Some(max_peer_count)),
         );
 
         let identify = identify::Behaviour::new(

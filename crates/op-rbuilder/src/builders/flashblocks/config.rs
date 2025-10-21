@@ -50,6 +50,9 @@ pub struct FlashblocksConfig {
 
     /// Comma-separated list of multiaddresses of known peers to connect to
     pub p2p_known_peers: Option<String>,
+
+    /// Maximum number of peers for the p2p node
+    pub p2p_max_peer_count: u32,
 }
 
 impl Default for FlashblocksConfig {
@@ -65,6 +68,7 @@ impl Default for FlashblocksConfig {
             p2p_port: 9009,
             p2p_private_key_file: None,
             p2p_known_peers: None,
+            p2p_max_peer_count: 50,
         }
     }
 }
@@ -100,6 +104,7 @@ impl TryFrom<OpRbuilderArgs> for FlashblocksConfig {
             p2p_port: args.flashblocks.p2p.p2p_port,
             p2p_private_key_file: args.flashblocks.p2p.p2p_private_key_file,
             p2p_known_peers: args.flashblocks.p2p.p2p_known_peers,
+            p2p_max_peer_count: args.flashblocks.p2p.p2p_max_peer_count,
         })
     }
 }

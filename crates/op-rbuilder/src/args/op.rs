@@ -215,6 +215,14 @@ pub struct FlashblocksP2pArgs {
         env = "FLASHBLOCK_P2P_KNOWN_PEERS"
     )]
     pub p2p_known_peers: Option<String>,
+
+    /// Maximum number of peers for the flashblocks p2p node
+    #[arg(
+        long = "flashblocks.p2p_max_peer_count",
+        env = "FLASHBLOCK_P2P_MAX_PEER_COUNT",
+        default_value = "50"
+    )]
+    pub p2p_max_peer_count: u32,
 }
 
 /// Parameters for telemetry configuration
