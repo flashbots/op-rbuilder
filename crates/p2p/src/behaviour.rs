@@ -84,7 +84,7 @@ impl Behaviour {
 }
 
 impl BehaviourEvent {
-    pub(crate) async fn handle(self) {
+    pub(crate) fn handle(self) {
         match self {
             BehaviourEvent::Autonat(_event) => {}
             BehaviourEvent::Identify(_event) => {}

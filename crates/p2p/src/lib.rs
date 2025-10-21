@@ -202,7 +202,7 @@ impl<M: Message + 'static> Node<M> {
                             debug!("connection closed with peer {peer_id}: {cause:?}");
                             outgoing_streams_handler.remove_peer(&peer_id);
                         }
-                        SwarmEvent::Behaviour(event) => event.handle().await,
+                        SwarmEvent::Behaviour(event) => event.handle(),
                         _ => continue,
                     }
                 },
