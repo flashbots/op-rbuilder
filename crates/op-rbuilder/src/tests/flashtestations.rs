@@ -147,7 +147,7 @@ async fn test_flashtestations_invalid_quote(rbuilder: LocalInstance) -> eyre::Re
         );
     );
     if_standard!(
-        assert_eq!(txs.len(), 3, "Expected 3 transactions in block"); // deposit + valid tx + builder tx + end of block proof
+        assert_eq!(txs.len(), 3, "Expected 3 transactions in block"); // deposit + valid tx + builder tx
     );
     let last_txs = &txs[txs.len() - 2..];
     // Check user transaction
@@ -197,7 +197,7 @@ async fn test_flashtestations_unauthorized_workload(rbuilder: LocalInstance) -> 
         );
     );
     if_standard!(
-        assert_eq!(txs.len(), 3, "Expected 3 transactions in block"); // deposit + valid tx + builder tx + end of block proof
+        assert_eq!(txs.len(), 3, "Expected 3 transactions in block"); // deposit + valid tx + builder tx
     );
     let last_txs = &txs[txs.len() - 2..];
     // Check user transaction
@@ -346,7 +346,7 @@ async fn test_flashtestations_permit_block_proof(rbuilder: LocalInstance) -> eyr
         assert!(num_txs == 4, "Expected 4 transactions in block"); // deposit + 2 builder tx + 1 block proof
     );
     if_standard!(
-        assert!(num_txs == 3, "Expected 3 transactions in block"); // deposit + builder tx
+        assert!(num_txs == 3, "Expected 3 transactions in block"); // deposit + 2 builder tx
     );
     let last_2_txs = &block.transactions.into_transactions_vec()[num_txs - 2..];
     // Check builder tx
