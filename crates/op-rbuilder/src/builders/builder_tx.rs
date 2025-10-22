@@ -12,7 +12,7 @@ use op_alloy_consensus::OpTypedTransaction;
 use op_alloy_rpc_types::OpTransactionRequest;
 use op_revm::{OpHaltReason, OpTransactionError};
 use reth_evm::{
-    ConfigureEvm, Evm, EvmError, eth::receipt_builder::ReceiptBuilderCtx,
+    ConfigureEvm, Evm, EvmError, InvalidTxError, eth::receipt_builder::ReceiptBuilderCtx,
     precompiles::PrecompilesMap,
 };
 use reth_node_api::PayloadBuilderError;
@@ -30,7 +30,7 @@ use revm::{
     inspector::NoOpInspector,
     state::Account,
 };
-use tracing::warn;
+use tracing::{trace, warn};
 
 use crate::{
     builders::context::OpPayloadBuilderCtx, primitives::reth::ExecutionInfo, tx_signer::Signer,
@@ -205,9 +205,26 @@ pub trait BuilderTransactions<ExtraCtx: Debug + Default = (), Extra: Debug + Def
                     continue;
                 }
 
-                let ResultAndState { result, state } = evm
-                    .transact(&builder_tx.signed_tx)
-                    .map_err(|err| BuilderTransactionError::EvmExecutionError(Box::new(err)))?;
+                let ResultAndState { result, state } = match evm.transact(&builder_tx.signed_tx) {
+                    Ok(res) => res,
+                    Err(err) => {
+                        if let Some(err) = err.as_invalid_tx_err() {
+                            if err.is_nonce_too_low() {
+                                // if the nonce is too low, we can skip this transaction
+                                trace!(target: "payload_builder", %err, ?builder_tx.signed_tx, "skipping nonce too low builder transaction");
+                            } else {
+                                // if the transaction is invalid, we can skip it and all of its
+                                // descendants
+                                trace!(target: "payload_builder", %err, ?builder_tx.signed_tx, "skipping invalid builder transaction and its descendants");
+                                invalid.insert(builder_tx.signed_tx.signer());
+                            }
+
+                            continue;
+                        }
+                        // this is an error that we should treat as fatal for this attempt
+                        return Err(BuilderTransactionError::EvmExecutionError(Box::new(err)));
+                    }
+                };
 
                 if !result.is_success() {
                     warn!(target: "payload_builder", tx_hash = ?builder_tx.signed_tx.tx_hash(), result = ?result, "builder tx reverted");

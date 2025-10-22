@@ -107,7 +107,7 @@ impl BuilderTransactions<FlashblocksExtraCtx, FlashblocksExecutionInfo> for Flas
             if let Some(flashtestations_builder_tx) = &self.flashtestations_builder_tx {
                 // Commit state that is included to get the correct nonce
                 if let Some(builder_tx) = base_tx {
-                    self.commit_txs(vec![builder_tx.signed_tx], ctx, db)?;
+                    self.commit_txs(vec![builder_tx.signed_tx], ctx, &mut *db)?;
                 }
                 // We only include flashtestations txs in the last flashblock
                 match flashtestations_builder_tx.simulate_builder_txs(
