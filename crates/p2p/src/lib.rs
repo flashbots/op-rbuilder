@@ -12,12 +12,15 @@ use libp2p::{
     swarm::SwarmEvent,
     tcp, yamux,
 };
+use multiaddr::Protocol;
 use std::{collections::HashMap, time::Duration};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
 pub use libp2p::{Multiaddr, StreamProtocol};
+
+const DEFAULT_MAX_PEER_COUNT: u32 = 50;
 
 /// A message that can be sent between peers.
 pub trait Message:
@@ -216,6 +219,7 @@ pub struct NodeBuilder {
     known_peers: Vec<Multiaddr>,
     agent_version: Option<String>,
     protocols: Vec<StreamProtocol>,
+    max_peer_count: Option<u32>,
     cancellation_token: Option<CancellationToken>,
 }
 
@@ -234,6 +238,7 @@ impl NodeBuilder {
             known_peers: Vec::new(),
             agent_version: None,
             protocols: Vec::new(),
+            max_peer_count: None,
             cancellation_token: None,
         }
     }
@@ -271,6 +276,11 @@ impl NodeBuilder {
         self
     }
 
+    pub fn with_max_peer_count(mut self, max_peer_count: u32) -> Self {
+        self.max_peer_count = Some(max_peer_count);
+        self
+    }
+
     pub fn with_known_peers<I, T>(mut self, addresses: I) -> Self
     where
         I: IntoIterator<Item = T>,
@@ -285,11 +295,12 @@ impl NodeBuilder {
     pub fn try_build<M: Message + 'static>(self) -> eyre::Result<NodeBuildResult<M>> {
         let Self {
             port,
-            mut listen_addrs,
+            listen_addrs,
             keypair_hex,
             known_peers,
             agent_version,
             protocols,
+            max_peer_count,
             cancellation_token,
         } = self;
 
@@ -312,9 +323,10 @@ impl NodeBuilder {
         let keypair = keypair.unwrap_or(identity::Keypair::generate_ed25519());
         let peer_id = keypair.public().to_peer_id();
 
-        let transport = create_transport(&keypair)?;
-        let mut behaviour =
-            Behaviour::new(&keypair, agent_version).context("failed to create behaviour")?;
+        let transport = create_transport(&keypair).wrap_err("failed to create transport")?;
+        let max_peer_count = max_peer_count.unwrap_or(DEFAULT_MAX_PEER_COUNT);
+        let mut behaviour = Behaviour::new(&keypair, agent_version, max_peer_count)
+            .context("failed to create behaviour")?;
         let mut control = behaviour.new_control();
 
         let mut incoming_streams_handlers = Vec::new();
@@ -340,6 +352,20 @@ impl NodeBuilder {
                 cfg.with_idle_connection_timeout(Duration::from_secs(u64::MAX)) // don't disconnect from idle peers
             })
             .build();
+
+        // disallow providing listen addresses that have a peer ID in them,
+        // as we've specified the peer ID for this node above.
+        let mut listen_addrs: Vec<Multiaddr> = listen_addrs
+            .into_iter()
+            .filter(|addr| {
+                for protocol in addr.iter() {
+                    if protocol == Protocol::P2p(peer_id) {
+                        return false;
+                    }
+                }
+                true
+            })
+            .collect();
         if listen_addrs.is_empty() {
             let port = port.unwrap_or(0);
             let listen_addr = format!("/ip4/0.0.0.0/tcp/{port}")

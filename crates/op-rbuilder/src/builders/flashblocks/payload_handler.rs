@@ -86,8 +86,8 @@ where
         loop {
             tokio::select! {
                 Some(payload) = built_rx.recv() => {
-                    let _  = payload_events_handle.send(Events::BuiltPayload(payload.clone()));
-                    // ignore error here; if p2p is disabled, the channel will be closed.
+                    let _ = payload_events_handle.send(Events::BuiltPayload(payload.clone()));
+                    // ignore error here; if p2p was disabled, the channel will be closed.
                     let _ = p2p_tx.send(payload.into()).await;
                 }
                 Some(message) = p2p_rx.recv() => {

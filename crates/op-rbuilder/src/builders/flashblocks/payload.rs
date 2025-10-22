@@ -91,6 +91,17 @@ pub struct FlashblocksExtraCtx {
     calculate_state_root: bool,
 }
 
+impl FlashblocksExtraCtx {
+    fn next(self, target_gas_for_batch: u64, target_da_for_batch: Option<u64>) -> Self {
+        Self {
+            flashblock_index: self.flashblock_index + 1,
+            target_gas_for_batch,
+            target_da_for_batch,
+            ..self
+        }
+    }
+}
+
 impl OpPayloadBuilderCtx<FlashblocksExtraCtx> {
     /// Returns the current flashblock index
     pub(crate) fn flashblock_index(&self) -> u64 {
@@ -100,11 +111,6 @@ impl OpPayloadBuilderCtx<FlashblocksExtraCtx> {
     /// Returns the target flashblock count
     pub(crate) fn target_flashblock_count(&self) -> u64 {
         self.extra_ctx.target_flashblock_count
-    }
-
-    /// Returns the next flashblock index
-    pub(crate) fn next_flashblock_index(&self) -> u64 {
-        self.extra_ctx.flashblock_index + 1
     }
 
     /// Returns if the flashblock is the first fallback block
@@ -298,13 +304,9 @@ where
                 config.clone(),
                 block_cancel.clone(),
                 FlashblocksExtraCtx {
-                    flashblock_index: 0,
                     target_flashblock_count: self.config.flashblocks_per_block(),
-                    target_gas_for_batch: 0,
-                    target_da_for_batch: None,
-                    gas_per_batch: 0,
-                    da_per_batch: None,
                     calculate_state_root,
+                    ..Default::default()
                 },
             )
             .map_err(|e| PayloadBuilderError::Other(e.into()))?;
@@ -510,6 +512,17 @@ where
             };
             let _entered = fb_span.enter();
 
+            if ctx.flashblock_index() > ctx.target_flashblock_count() {
+                self.record_flashblocks_metrics(
+                    &ctx,
+                    &info,
+                    flashblocks_per_block,
+                    &span,
+                    "Payload building complete, target flashblock count reached",
+                );
+                return Ok(());
+            }
+
             // build first flashblock immediately
             let next_flashblocks_ctx = match self
                 .build_next_flashblock(
@@ -580,26 +593,14 @@ where
         best_payload: &BlockCell<OpBuiltPayload>,
         span: &tracing::Span,
     ) -> eyre::Result<Option<FlashblocksExtraCtx>> {
-        // TODO: remove this
-        if ctx.flashblock_index() > ctx.target_flashblock_count() {
-            info!(
-                target: "payload_builder",
-                target = ctx.target_flashblock_count(),
-                flashblock_index = ctx.flashblock_index(),
-                block_number = ctx.block_number(),
-                "Skipping flashblock reached target",
-            );
-            return Ok(None);
-        };
-
-        // Continue with flashblock building
+        let flashblock_index = ctx.flashblock_index();
         let mut target_gas_for_batch = ctx.extra_ctx.target_gas_for_batch;
         let mut target_da_for_batch = ctx.extra_ctx.target_da_for_batch;
 
         info!(
             target: "payload_builder",
             block_number = ctx.block_number(),
-            flashblock_index = ctx.flashblock_index(),
+            flashblock_index,
             target_gas = target_gas_for_batch,
             gas_used = info.cumulative_gas_used,
             target_da = target_da_for_batch,
@@ -636,7 +637,7 @@ where
                 self.pool
                     .best_transactions_with_attributes(ctx.best_transaction_attributes()),
             ),
-            ctx.flashblock_index(),
+            flashblock_index,
         );
         let transaction_pool_fetch_time = best_txs_start_time.elapsed();
         ctx.metrics
@@ -712,7 +713,7 @@ where
                 Err(err).wrap_err("failed to build payload")
             }
             Ok((new_payload, mut fb_payload)) => {
-                fb_payload.index = ctx.flashblock_index();
+                fb_payload.index = flashblock_index;
                 fb_payload.base = None;
 
                 // If main token got canceled in here that means we received get_payload and we should drop everything and now update best_payload
@@ -761,20 +762,15 @@ where
 
                 let target_gas_for_batch =
                     ctx.extra_ctx.target_gas_for_batch + ctx.extra_ctx.gas_per_batch;
-                let next_extra_ctx = FlashblocksExtraCtx {
-                    flashblock_index: ctx.next_flashblock_index(),
-                    target_flashblock_count: ctx.target_flashblock_count(),
-                    target_gas_for_batch,
-                    target_da_for_batch,
-                    gas_per_batch: ctx.extra_ctx.gas_per_batch,
-                    da_per_batch: ctx.extra_ctx.da_per_batch,
-                    calculate_state_root: ctx.extra_ctx.calculate_state_root,
-                };
+                let next_extra_ctx = ctx
+                    .extra_ctx
+                    .clone()
+                    .next(target_gas_for_batch, target_da_for_batch);
 
                 info!(
                     target: "payload_builder",
                     message = "Flashblock built",
-                    flashblock_index = ctx.flashblock_index(),
+                    flashblock_index = flashblock_index,
                     current_gas = info.cumulative_gas_used,
                     current_da = info.cumulative_da_bytes_used,
                     target_flashblocks = ctx.target_flashblock_count(),
