@@ -6,8 +6,6 @@ use crate::{
 use alloy_evm::eth::receipt_builder::ReceiptBuilderCtx;
 use alloy_primitives::B64;
 use eyre::{WrapErr as _, bail};
-use futures::stream::FuturesUnordered;
-use futures_util::StreamExt as _;
 use op_alloy_consensus::OpTxEnvelope;
 use reth::revm::{State, database::StateProviderDatabase};
 use reth_basic_payload_builder::PayloadConfig;
@@ -81,8 +79,6 @@ where
 
         tracing::debug!("flashblocks payload handler started");
 
-        let mut execute_flashblock_futures = FuturesUnordered::new();
-
         loop {
             tokio::select! {
                 Some(payload) = built_rx.recv() => {
@@ -94,29 +90,21 @@ where
                     match message {
                         Message::OpBuiltPayload(payload) => {
                             let payload: OpBuiltPayload = payload.into();
-                            let handle = tokio::spawn(
-                                execute_flashblock(
-                                    payload,
-                                    ctx.clone(),
-                                    client.clone(),
-                                    cancel.clone(),
-                                )
+                            let res = execute_flashblock(
+                                payload,
+                                ctx.clone(),
+                                client.clone(),
+                                cancel.clone(),
                             );
-                            execute_flashblock_futures.push(handle);
-                        }
-                    }
-                }
-                Some(res) = execute_flashblock_futures.next() => {
-                    match res {
-                        Ok(Ok((payload, _))) => {
-                            tracing::info!(hash = payload.block().hash().to_string(), block_number = payload.block().header().number, "successfully executed flashblock");
-                            let _  = payload_events_handle.send(Events::BuiltPayload(payload));
-                        }
-                        Ok(Err(e)) => {
-                            tracing::error!(error = ?e, "failed to execute flashblock");
-                        }
-                        Err(e) => {
-                            tracing::error!(error = ?e, "task panicked while executing flashblock");
+                            match res {
+                                Ok((payload, _)) => {
+                                    tracing::info!(hash = payload.block().hash().to_string(), block_number = payload.block().header().number, "successfully executed received flashblock");
+                                    let _  = payload_events_handle.send(Events::BuiltPayload(payload));
+                                }
+                                Err(e) => {
+                                    tracing::error!(error = ?e, "failed to execute received flashblock");
+                                }
+                            }
                         }
                     }
                 }
@@ -126,7 +114,7 @@ where
     }
 }
 
-async fn execute_flashblock<Client>(
+fn execute_flashblock<Client>(
     payload: OpBuiltPayload,
     ctx: OpPayloadSyncerCtx,
     client: Client,
