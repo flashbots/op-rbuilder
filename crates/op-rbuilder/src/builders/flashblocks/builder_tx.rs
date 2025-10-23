@@ -1,22 +1,25 @@
 use alloy_eips::Encodable2718;
 use alloy_evm::{Database, Evm};
 use alloy_op_evm::OpEvm;
-use alloy_primitives::{Address, B256, Bytes, Signature, U256};
-use alloy_sol_types::{SolCall, SolEvent, SolInterface, SolValue, sol};
+use alloy_primitives::{Address, B256, Signature, U256};
+use alloy_rpc_types_eth::TransactionInput;
+use alloy_sol_types::{SolCall, SolEvent, sol};
 use core::fmt::Debug;
+use op_alloy_rpc_types::OpTransactionRequest;
 use reth_evm::{ConfigureEvm, precompiles::PrecompilesMap};
 use reth_provider::StateProvider;
-use reth_revm::{State, database::StateProviderDatabase};
-use revm::inspector::NoOpInspector;
+use reth_revm::State;
+use revm::{DatabaseRef, inspector::NoOpInspector};
 use tracing::warn;
 
 use crate::{
     builders::{
         BuilderTransactionCtx, BuilderTransactionError, BuilderTransactions,
-        InvalidContractDataError, SimulationSuccessResult,
+        SimulationSuccessResult,
         builder_tx::BuilderTxBase,
         context::OpPayloadBuilderCtx,
         flashblocks::payload::{FlashblocksExecutionInfo, FlashblocksExtraCtx},
+        get_nonce,
     },
     flashtestations::builder_tx::FlashtestationsBuilderTx,
     primitives::reth::ExecutionInfo,
@@ -50,14 +53,6 @@ sol!(
         error MismatchedFlashblockNumber(uint256 expectedFlashblockNumber, uint256 actualFlashblockNumber);
     }
 );
-
-#[derive(Debug, thiserror::Error)]
-pub(super) enum FlashblockNumberError {
-    #[error("flashblocks number contract tx reverted: {0:?}")]
-    Revert(IFlashblockNumber::IFlashblockNumberErrors),
-    #[error("unknown revert: {0}")]
-    Unknown(String),
-}
 
 // This will be the end of block transaction of a regular block
 #[derive(Debug, Clone)]
@@ -158,102 +153,13 @@ impl FlashblocksNumberBuilderTx {
         }
     }
 
-    // TODO: remove and clean up in favour of simulate_call()
-    fn estimate_flashblock_number_tx_gas(
-        &self,
-        ctx: &OpPayloadBuilderCtx<FlashblocksExtraCtx>,
-        evm: &mut OpEvm<impl Database, NoOpInspector, PrecompilesMap>,
-        signer: &Signer,
-        nonce: u64,
-    ) -> Result<u64, BuilderTransactionError> {
-        let tx = self.signed_flashblock_number_tx(ctx, ctx.block_gas_limit(), nonce, signer)?;
-        let ResultAndState { result, .. } = match evm.transact(&tx) {
-            Ok(res) => res,
-            Err(err) => {
-                return Err(BuilderTransactionError::EvmExecutionError(Box::new(err)));
-            }
-        };
-
-        match result {
-            ExecutionResult::Success { gas_used, logs, .. } => {
-                if logs.iter().any(|log| {
-                    log.topics().first()
-                        == Some(&IFlashblockNumber::FlashblockIncremented::SIGNATURE_HASH)
-                }) {
-                    Ok(gas_used)
-                } else {
-                    Err(BuilderTransactionError::InvalidContract(
-                        self.flashblock_number_address,
-                        InvalidContractDataError::InvalidLogs(
-                            vec![IFlashblockNumber::FlashblockIncremented::SIGNATURE_HASH],
-                            vec![],
-                        ),
-                    ))
-                }
-            }
-            ExecutionResult::Revert { output, .. } => Err(BuilderTransactionError::other(
-                IFlashblockNumber::IFlashblockNumberErrors::abi_decode(&output)
-                    .map(FlashblockNumberError::Revert)
-                    .unwrap_or_else(|e| FlashblockNumberError::Unknown(hex::encode(output), e)),
-            )),
-            ExecutionResult::Halt { reason, .. } => Err(BuilderTransactionError::other(
-                FlashblockNumberError::Halt(reason),
-            )),
-        }
-    }
-    
-    fn current_flashblock_number(
-        &self,
-        ctx: &OpPayloadBuilderCtx<FlashblocksExtraCtx>,
-        evm: &mut OpEvm<
-            &mut State<StateProviderDatabase<impl StateProvider>>,
-            NoOpInspector,
-            PrecompilesMap,
-        >,
-    ) -> Result<U256, BuilderTransactionError> {
-        let current_flashblock_calldata = IFlashblockNumber::flashblockNumberCall {}.abi_encode();
-        let SimulationSuccessResult { output, .. } =
-            self.simulate_flashblocks_call(current_flashblock_calldata, None, ctx, evm)?;
-        IFlashblockNumber::flashblockNumberCall::abi_decode_returns(&output).map_err(|_| {
-            BuilderTransactionError::InvalidContract(
-                self.flashblock_number_address,
-                InvalidContractDataError::OutputAbiDecodeError,
-            )
-        })
-    }
-
     fn signed_increment_flashblocks_tx(
         &self,
         ctx: &OpPayloadBuilderCtx<FlashblocksExtraCtx>,
-        evm: &mut OpEvm<
-            &mut State<StateProviderDatabase<impl StateProvider>>,
-            NoOpInspector,
-            PrecompilesMap,
-        >,
+        evm: &mut OpEvm<impl Database + DatabaseRef, NoOpInspector, PrecompilesMap>,
     ) -> Result<BuilderTransactionCtx, BuilderTransactionError> {
-        let calldata = IFlashblockNumber::incrementFlashblockNumberCall {}.abi_encode();
-        let SimulationSuccessResult { gas_used, .. } = self.simulate_flashblocks_call(
-            calldata.clone(),
-            Some(IFlashblockNumber::FlashblockIncremented::SIGNATURE_HASH),
-            ctx,
-            evm,
-        )?;
-        let signed_tx = self.sign_tx(
-            self.flashblock_number_address,
-            self.signer,
-            Some(gas_used),
-            calldata.into(),
-            ctx,
-            evm.db_mut(),
-        )?;
-        let da_size =
-            op_alloy_flz::tx_estimated_size_fjord_bytes(signed_tx.encoded_2718().as_slice());
-        Ok(BuilderTransactionCtx {
-            signed_tx,
-            gas_used,
-            da_size,
-            is_top_of_block: true,
-        })
+        let calldata = IFlashblockNumber::incrementFlashblockNumberCall {};
+        self.increment_flashblocks_tx(calldata, &self.signer, ctx, evm)
     }
 
     fn increment_flashblocks_permit_signature(
@@ -261,37 +167,18 @@ impl FlashblocksNumberBuilderTx {
         flashtestations_signer: &Signer,
         current_flashblock_number: U256,
         ctx: &OpPayloadBuilderCtx<FlashblocksExtraCtx>,
-        evm: &mut OpEvm<
-            &mut State<StateProviderDatabase<impl StateProvider>>,
-            NoOpInspector,
-            PrecompilesMap,
-        >,
+        evm: &mut OpEvm<impl Database + DatabaseRef, NoOpInspector, PrecompilesMap>,
     ) -> Result<Signature, BuilderTransactionError> {
         let struct_hash_calldata = IFlashblockNumber::computeStructHashCall {
             currentFlashblockNumber: current_flashblock_number,
-        }
-        .abi_encode();
+        };
         let SimulationSuccessResult { output, .. } =
-            self.simulate_flashblocks_call(struct_hash_calldata, None, ctx, evm)?;
-        let struct_hash = B256::abi_decode(&output).map_err(|_| {
-            BuilderTransactionError::InvalidContract(
-                self.flashblock_number_address,
-                InvalidContractDataError::OutputAbiDecodeError,
-            )
-        })?;
-        let typed_data_hash_calldata = IFlashblockNumber::hashTypedDataV4Call {
-            structHash: struct_hash,
-        }
-        .abi_encode();
+            self.simulate_flashblocks_readonly_call(struct_hash_calldata, ctx, evm)?;
+        let typed_data_hash_calldata =
+            IFlashblockNumber::hashTypedDataV4Call { structHash: output };
         let SimulationSuccessResult { output, .. } =
-            self.simulate_flashblocks_call(typed_data_hash_calldata, None, ctx, evm)?;
-        let typed_data_hash = B256::abi_decode(&output).map_err(|_| {
-            BuilderTransactionError::InvalidContract(
-                self.flashblock_number_address,
-                InvalidContractDataError::OutputAbiDecodeError,
-            )
-        })?;
-        let signature = flashtestations_signer.sign_message(typed_data_hash)?;
+            self.simulate_flashblocks_readonly_call(typed_data_hash_calldata, ctx, evm)?;
+        let signature = flashtestations_signer.sign_message(output)?;
         Ok(signature)
     }
 
@@ -299,35 +186,38 @@ impl FlashblocksNumberBuilderTx {
         &self,
         flashtestations_signer: &Signer,
         ctx: &OpPayloadBuilderCtx<FlashblocksExtraCtx>,
-        evm: &mut OpEvm<
-            &mut State<StateProviderDatabase<impl StateProvider>>,
-            NoOpInspector,
-            PrecompilesMap,
-        >,
+        evm: &mut OpEvm<impl Database + DatabaseRef, NoOpInspector, PrecompilesMap>,
     ) -> Result<BuilderTransactionCtx, BuilderTransactionError> {
-        let current_flashblock_number = self.current_flashblock_number(ctx, evm)?;
-        let signature = self.increment_flashblocks_permit_signature(
-            flashtestations_signer,
-            current_flashblock_number,
-            ctx,
-            evm,
-        )?;
+        let current_flashblock_calldata = IFlashblockNumber::flashblockNumberCall {};
+        let SimulationSuccessResult { output, .. } =
+            self.simulate_flashblocks_readonly_call(current_flashblock_calldata, ctx, evm)?;
+        let signature =
+            self.increment_flashblocks_permit_signature(flashtestations_signer, output, ctx, evm)?;
         let calldata = IFlashblockNumber::permitIncrementFlashblockNumberCall {
-            currentFlashblockNumber: current_flashblock_number,
+            currentFlashblockNumber: output,
             signature: signature.as_bytes().into(),
-        }
-        .abi_encode();
+        };
+        self.increment_flashblocks_tx(calldata, flashtestations_signer, ctx, evm)
+    }
+
+    fn increment_flashblocks_tx<T: SolCall + Clone>(
+        &self,
+        calldata: T,
+        signer: &Signer,
+        ctx: &OpPayloadBuilderCtx<FlashblocksExtraCtx>,
+        evm: &mut OpEvm<impl Database + DatabaseRef, NoOpInspector, PrecompilesMap>,
+    ) -> Result<BuilderTransactionCtx, BuilderTransactionError> {
         let SimulationSuccessResult { gas_used, .. } = self.simulate_flashblocks_call(
             calldata.clone(),
-            Some(IFlashblockNumber::FlashblockIncremented::SIGNATURE_HASH),
+            vec![IFlashblockNumber::FlashblockIncremented::SIGNATURE_HASH],
             ctx,
             evm,
         )?;
         let signed_tx = self.sign_tx(
             self.flashblock_number_address,
-            self.signer,
-            Some(gas_used),
-            calldata.into(),
+            *signer,
+            gas_used,
+            calldata.abi_encode().into(),
             ctx,
             evm.db_mut(),
         )?;
@@ -341,33 +231,34 @@ impl FlashblocksNumberBuilderTx {
         })
     }
 
-    fn simulate_flashblocks_call(
+    fn simulate_flashblocks_readonly_call<T: SolCall>(
         &self,
-        calldata: Vec<u8>,
-        expected_topic: Option<B256>,
+        calldata: T,
         ctx: &OpPayloadBuilderCtx<FlashblocksExtraCtx>,
-        evm: &mut OpEvm<
-            &mut State<StateProviderDatabase<impl StateProvider>>,
-            NoOpInspector,
-            PrecompilesMap,
-        >,
-    ) -> Result<SimulationSuccessResult, BuilderTransactionError> {
-        let signed_tx = self.sign_tx(
-            self.flashblock_number_address,
-            self.signer,
-            None,
-            calldata.into(),
-            ctx,
-            evm.db_mut(),
-        )?;
-        self.simulate_call(signed_tx, expected_topic, Self::handle_revert, evm)
+        evm: &mut OpEvm<impl Database + DatabaseRef, NoOpInspector, PrecompilesMap>,
+    ) -> Result<SimulationSuccessResult<T>, BuilderTransactionError> {
+        self.simulate_flashblocks_call(calldata, vec![], ctx, evm)
     }
 
-    fn handle_revert(revert_output: Bytes) -> BuilderTransactionError {
-        let revert_reason = IFlashblockNumber::IFlashblockNumberErrors::abi_decode(&revert_output)
-            .map(FlashblockNumberError::Revert)
-            .unwrap_or_else(|_| FlashblockNumberError::Unknown(hex::encode(revert_output)));
-        BuilderTransactionError::TransactionReverted(Box::new(revert_reason))
+    fn simulate_flashblocks_call<T: SolCall>(
+        &self,
+        calldata: T,
+        expected_logs: Vec<B256>,
+        ctx: &OpPayloadBuilderCtx<FlashblocksExtraCtx>,
+        evm: &mut OpEvm<impl Database + DatabaseRef, NoOpInspector, PrecompilesMap>,
+    ) -> Result<SimulationSuccessResult<T>, BuilderTransactionError> {
+        let tx_req = OpTransactionRequest::default()
+            .gas_limit(ctx.block_gas_limit())
+            .max_fee_per_gas(ctx.base_fee().into())
+            .to(self.flashblock_number_address)
+            .from(self.signer.address) // use tee key as signer for simulations
+            .nonce(get_nonce(evm.db(), self.signer.address)?)
+            .input(TransactionInput::new(calldata.abi_encode().into()));
+        self.simulate_call::<T, IFlashblockNumber::IFlashblockNumberErrors>(
+            tx_req,
+            expected_logs,
+            evm,
+        )
     }
 }
 
@@ -389,9 +280,7 @@ impl BuilderTransactions<FlashblocksExtraCtx, FlashblocksExecutionInfo>
             builder_txs.extend(self.base_builder_tx.simulate_builder_tx(ctx, &mut *db)?);
         } else {
             // we increment the flashblock number for the next flashblock so we don't increment in the last flashblock
-            let mut evm = ctx
-                .evm_config
-                .evm_with_env(&mut simulation_state, ctx.evm_env.clone());
+            let mut evm = ctx.evm_config.evm_with_env(&mut *db, ctx.evm_env.clone());
             evm.modify_cfg(|cfg| {
                 cfg.disable_balance_check = true;
                 cfg.disable_block_gas_limit = true;
@@ -414,7 +303,7 @@ impl BuilderTransactions<FlashblocksExtraCtx, FlashblocksExecutionInfo>
                 Err(e) => {
                     warn!(target: "builder_tx", error = ?e, "flashblocks number contract tx simulation failed, defaulting to fallback builder tx");
                     self.base_builder_tx
-                        .simulate_builder_tx(ctx, db)?
+                        .simulate_builder_tx(ctx, &mut *db)?
                         .map(|tx| tx.set_top_of_block())
                 }
             };
