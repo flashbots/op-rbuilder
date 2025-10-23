@@ -125,116 +125,6 @@ async fn test_flashtestations_unauthorized_workload(rbuilder: LocalInstance) -> 
     Ok(())
 }
 
-#[rb_test(args = OpRbuilderArgs {
-    chain_block_time: 1000,
-    enable_revert_protection: true,
-    flashtestations: FlashtestationsArgs {
-        flashtestations_enabled: true,
-        registry_address: Some(FLASHTESTATION_REGISTRY_ADDRESS),
-        builder_policy_address: Some(BLOCK_BUILDER_POLICY_ADDRESS),
-        funding_key: Some(flashtestations_signer()),
-        debug: true,
-        enable_block_proofs: true,
-        ..Default::default()
-    },
-    ..Default::default()
-})]
-async fn test_flashtestations_invalid_quote(rbuilder: LocalInstance) -> eyre::Result<()> {
-    let driver = rbuilder.driver().await?;
-    let provider = rbuilder.provider().await?;
-    setup_flashtestation_contracts(&driver, &provider, false, true).await?;
-    // verify not registered
-    let contract = FlashtestationRegistry::new(FLASHTESTATION_REGISTRY_ADDRESS, provider.clone());
-    let result = contract
-        .getRegistrationStatus(TEE_DEBUG_ADDRESS)
-        .call()
-        .await?;
-    assert!(
-        !result.isValid,
-        "The tee key is registered for invalid quote"
-    );
-    // check that only regular builder tx is in the block
-    let (tx_hash, block) = driver.build_new_block_with_valid_transaction().await?;
-    let txs = block.transactions.into_transactions_vec();
-
-    if_flashblocks!(
-        assert_eq!(txs.len(), 4, "Expected 4 transactions in block"); // deposit + valid tx + 2 builder tx + end of block proof
-        // Check builder tx
-        assert_eq!(
-            txs[1].to(),
-            Some(Address::ZERO),
-            "builder tx should send to zero address"
-        );
-    );
-    if_standard!(
-        assert_eq!(txs.len(), 3, "Expected 3 transactions in block"); // deposit + valid tx + builder tx + end of block proof
-    );
-    let last_txs = &txs[txs.len() - 2..];
-    // Check user transaction
-    assert_eq!(
-        last_txs[0].inner.tx_hash(),
-        tx_hash,
-        "tx hash for user transaction should match"
-    );
-    // Check builder tx
-    assert_eq!(
-        last_txs[1].to(),
-        Some(Address::ZERO),
-        "builder tx should send to zero address"
-    );
-    Ok(())
-}
-
-#[rb_test(args = OpRbuilderArgs {
-    chain_block_time: 1000,
-    enable_revert_protection: true,
-    flashtestations: FlashtestationsArgs {
-        flashtestations_enabled: true,
-        registry_address: Some(FLASHTESTATION_REGISTRY_ADDRESS),
-        builder_policy_address: Some(BLOCK_BUILDER_POLICY_ADDRESS),
-        funding_key: Some(flashtestations_signer()),
-        debug: true,
-        enable_block_proofs: true,
-        ..Default::default()
-    },
-    ..Default::default()
-})]
-async fn test_flashtestations_unauthorized_workload(rbuilder: LocalInstance) -> eyre::Result<()> {
-    let driver = rbuilder.driver().await?;
-    let provider = rbuilder.provider().await?;
-    setup_flashtestation_contracts(&driver, &provider, true, false).await?;
-    // check that only the regular builder tx is in the block
-    let (tx_hash, block) = driver.build_new_block_with_valid_transaction().await?;
-    let txs = block.transactions.into_transactions_vec();
-
-    if_flashblocks!(
-        assert_eq!(txs.len(), 4, "Expected 4 transactions in block"); // deposit + valid tx + 2 builder tx + end of block proof
-        // Check builder tx
-        assert_eq!(
-            txs[1].to(),
-            Some(Address::ZERO),
-            "builder tx should send to zero address"
-        );
-    );
-    if_standard!(
-        assert_eq!(txs.len(), 3, "Expected 3 transactions in block"); // deposit + valid tx + builder tx + end of block proof
-    );
-    let last_txs = &txs[txs.len() - 2..];
-    // Check user transaction
-    assert_eq!(
-        last_txs[0].inner.tx_hash(),
-        tx_hash,
-        "tx hash for user transaction should match"
-    );
-    // Check builder tx
-    assert_eq!(
-        last_txs[1].to(),
-        Some(Address::ZERO),
-        "builder tx should send to zero address"
-    );
-    Ok(())
-}
-
 #[rb_test(flashblocks, args = OpRbuilderArgs {
     chain_block_time: 1000,
     enable_revert_protection: true,
@@ -478,7 +368,6 @@ async fn test_flashtestations_permit_with_flashblocks_number_contract(
         flashtestations_enabled: true,
         registry_address: Some(FLASHTESTATION_REGISTRY_ADDRESS),
         builder_policy_address: Some(BLOCK_BUILDER_POLICY_ADDRESS),
-        funding_key: Some(flashtestations_signer()),
         debug: true,
         flashtestations_use_permit: true,
         enable_block_proofs: true,
