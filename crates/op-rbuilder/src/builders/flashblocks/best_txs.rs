@@ -46,6 +46,11 @@ where
     pub(super) fn mark_commited(&mut self, txs: Vec<TxHash>) {
         self.commited_transactions.extend(txs);
     }
+
+    /// Check if a given transaction is commited
+    pub(super) fn is_commited(&self, tx: &TxHash) -> bool {
+        self.commited_transactions.contains(tx)
+    }
 }
 
 impl<T, I> PayloadTransactions for BestFlashblocksTxs<T, I>
