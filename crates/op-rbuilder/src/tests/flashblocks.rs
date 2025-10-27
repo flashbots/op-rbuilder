@@ -60,7 +60,8 @@ async fn smoke_dynamic_base(rbuilder: LocalInstance) -> eyre::Result<()> {
         flashblocks_addr: "127.0.0.1".into(),
         flashblocks_block_time: 200,
         flashblocks_leeway_time: 100,
-        flashblocks_fixed: false,        ..Default::default()
+        flashblocks_fixed: false,
+        ..Default::default()
     },
     ..Default::default()
 })]
@@ -418,7 +419,8 @@ async fn test_flashblock_min_max_filtering(rbuilder: LocalInstance) -> eyre::Res
         flashblocks_block_time: 200,
         flashblocks_leeway_time: 100,
         flashblocks_fixed: false,
-        flashblocks_calculate_state_root: false,        ..Default::default()
+        flashblocks_calculate_state_root: false,
+        ..Default::default()
     },
     ..Default::default()
 })]
@@ -457,7 +459,8 @@ async fn test_flashblocks_no_state_root_calculation(rbuilder: LocalInstance) -> 
     chain_block_time: 1000,
     enable_revert_protection: true,
     flashblocks: FlashblocksArgs {
-        flashblocks_number_contract_address: Some(FLASHBLOCKS_NUMBER_ADDRESS),        ..Default::default()
+        flashblocks_number_contract_address: Some(FLASHBLOCKS_NUMBER_ADDRESS),
+        ..Default::default()
     },
     ..Default::default()
 })]

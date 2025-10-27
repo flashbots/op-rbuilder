@@ -16,7 +16,7 @@ use multiaddr::Protocol;
 use std::{collections::HashMap, time::Duration};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, info, warn};
+use tracing::{debug, warn};
 
 pub use libp2p::{Multiaddr, StreamProtocol};
 
@@ -170,7 +170,7 @@ impl<M: Message + 'static> Node<M> {
                         } => {
                             // when a new connection is established, open outbound streams for each protocol
                             // and add them to the outgoing streams handler.
-                            info!("connection established with peer {peer_id}");
+                            debug!("connection established with peer {peer_id}");
                             if !outgoing_streams_handler.has_peer(&peer_id) {
                                 for protocol in &protocols {
                                         match swarm
@@ -194,7 +194,7 @@ impl<M: Message + 'static> Node<M> {
                             cause,
                             ..
                         } => {
-                            info!("connection closed with peer {peer_id}: {cause:?}");
+                            debug!("connection closed with peer {peer_id}: {cause:?}");
                             outgoing_streams_handler.remove_peer(&peer_id);
                         }
                         SwarmEvent::Behaviour(event) => event.handle(&mut swarm),

@@ -489,6 +489,7 @@ where
                                 // this will only happen if the `build_payload` function returns,
                                 // due to payload building error or the main cancellation token being
                                 // cancelled.
+                                return;
                             }
                         }
                         _ = block_cancel.cancelled() => {
