@@ -988,16 +988,8 @@ where
         //     .with_bundle_prestate(bundle_state)
         //     .build();
 
-        // Directly send payloads
-        let _flashblock_byte_size = self
-            .ws_pub
-            .publish(&fb_payload)
-            .wrap_err("failed to publish flashblock via websocket")?;
-        self.send_payload_to_engine(payload.clone());
-        best_payload.set(payload);
-
-        let batch_new_transactions = execution_info
-            .executed_transactions
+        let batch_new_transactions = execution_info.executed_transactions
+            [execution_info.extra.last_flashblock_index..]
             .to_vec()
             .iter()
             .map(|tx| tx.tx_hash())
@@ -1005,16 +997,8 @@ where
         // update best txns
         best_txs.mark_commited(batch_new_transactions);
 
-        // update batch execution info
-        info.executed_transactions
-            .append(&mut execution_info.executed_transactions);
-        info.executed_senders
-            .append(&mut execution_info.executed_senders);
-        info.receipts.append(&mut execution_info.receipts);
-        info.cumulative_gas_used += execution_info.cumulative_gas_used;
-        info.cumulative_da_bytes_used += execution_info.cumulative_da_bytes_used;
-        info.total_fees += execution_info.total_fees;
-        info.extra.last_flashblock_index = execution_info.extra.last_flashblock_index;
+        // update execution info
+        *info = execution_info;
 
         // Update bundle_state for next iteration
         if let Some(da_limit) = ctx.extra_ctx.da_per_batch {
@@ -1032,6 +1016,14 @@ where
             .extra_ctx
             .clone()
             .next(target_gas_for_batch, target_da_for_batch);
+
+        // Send payloads
+        let _flashblock_byte_size = self
+            .ws_pub
+            .publish(&fb_payload)
+            .wrap_err("failed to publish flashblock via websocket")?;
+        self.send_payload_to_engine(payload.clone());
+        best_payload.set(payload);
 
         Ok(Some(next_extra_ctx))
     }
