@@ -6,7 +6,7 @@ use crate::{
         flashblocks::{
             builder_tx::{FlashblocksBuilderTx, FlashblocksNumberBuilderTx},
             p2p::{AGENT_VERSION, FLASHBLOCKS_STREAM_PROTOCOL, Message},
-            payload::FlashblocksExtraCtx,
+            payload::{FlashblocksExecutionInfo, FlashblocksExtraCtx},
             payload_handler::PayloadHandler,
         },
         generator::BlockPayloadJobGenerator,
@@ -36,7 +36,12 @@ impl FlashblocksServiceBuilder {
     where
         Node: NodeBounds,
         Pool: PoolBounds,
-        BuilderTx: BuilderTransactions<FlashblocksExtraCtx> + Unpin + Clone + Send + Sync + 'static,
+        BuilderTx: BuilderTransactions<FlashblocksExtraCtx, FlashblocksExecutionInfo>
+            + Unpin
+            + Clone
+            + Send
+            + Sync
+            + 'static,
     {
         // TODO: is there a different global token?
         // this is effectively unused right now due to the usage of reth's `task_executor`.
@@ -168,8 +173,12 @@ where
         _: OpEvmConfig,
     ) -> eyre::Result<PayloadBuilderHandle<<Node::Types as NodeTypes>::Payload>> {
         let signer = self.0.builder_signer;
-        let flashtestations_builder_tx = if self.0.flashtestations_config.flashtestations_enabled {
-            match bootstrap_flashtestations(self.0.flashtestations_config.clone(), ctx).await {
+        let flashtestations_builder_tx = if let Some(builder_key) = signer
+            && self.0.flashtestations_config.flashtestations_enabled
+        {
+            match bootstrap_flashtestations(self.0.flashtestations_config.clone(), builder_key)
+                .await
+            {
                 Ok(builder_tx) => Some(builder_tx),
                 Err(e) => {
                     tracing::warn!(error = %e, "Failed to bootstrap flashtestations, builder will not include flashtestations txs");
