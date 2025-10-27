@@ -947,7 +947,7 @@ where
 
         let mut best: Option<FlashblockCandidate> = None;
         loop {
-            // If main token got canceled in here that means we received get_payload and we should drop everything and now update best_payload
+            // If main token got canceled in here that means we received get_payload and we should drop everything and not update best_payload
             // To ensure that we will return same blocks as rollup-boost (to leverage caches)
             if block_cancel.is_cancelled() {
                 return Ok(None);
