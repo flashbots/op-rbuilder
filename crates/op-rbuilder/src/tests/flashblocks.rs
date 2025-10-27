@@ -459,7 +459,8 @@ async fn test_flashblocks_no_state_root_calculation(rbuilder: LocalInstance) -> 
     chain_block_time: 1000,
     enable_revert_protection: true,
     flashblocks: FlashblocksArgs {
-        flashblocks_number_contract_address: Some(FLASHBLOCKS_NUMBER_ADDRESS),        ..Default::default()
+        flashblocks_number_contract_address: Some(FLASHBLOCKS_NUMBER_ADDRESS),
+        ..Default::default()
     },
     ..Default::default()
 })]
