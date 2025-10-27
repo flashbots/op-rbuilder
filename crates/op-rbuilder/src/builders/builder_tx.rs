@@ -4,7 +4,10 @@ use alloy_evm::Database;
 use alloy_op_evm::OpEvm;
 use alloy_primitives::{
     Address, B256, Bytes, TxKind, U256,
-    map::foldhash::{HashMap, HashSet, HashSetExt},
+    map::{
+        DefaultHashBuilder,
+        foldhash::{HashSet, HashSetExt},
+    },
 };
 use alloy_sol_types::{ContractError, Revert, SolCall, SolError, SolInterface};
 use core::fmt::Debug;
@@ -30,6 +33,7 @@ use revm::{
     inspector::NoOpInspector,
     state::Account,
 };
+use std::collections::HashMap;
 use tracing::{trace, warn};
 
 use crate::{
@@ -40,7 +44,7 @@ use crate::{
 pub struct SimulationSuccessResult<T: SolCall> {
     pub gas_used: u64,
     pub output: T::Return,
-    pub state_changes: HashMap<Address, Account>,
+    pub state_changes: HashMap<Address, Account, DefaultHashBuilder>,
 }
 
 #[derive(Debug, Clone)]
