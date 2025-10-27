@@ -95,21 +95,30 @@ where
                     match message {
                         Message::OpBuiltPayload(payload) => {
                             let payload: OpBuiltPayload = payload.into();
-                            let res = execute_flashblock(
-                                payload,
-                                ctx.clone(),
-                                client.clone(),
-                                cancel.clone(),
-                            );
-                            match res {
-                                Ok((payload, _)) => {
-                                    tracing::info!(hash = payload.block().hash().to_string(), block_number = payload.block().header().number, "successfully executed received flashblock");
-                                    let _  = payload_events_handle.send(Events::BuiltPayload(payload));
+                            let ctx = ctx.clone();
+                            let client = client.clone();
+                            let payload_events_handle = payload_events_handle.clone();
+                            let cancel = cancel.clone();
+
+                            // execute the flashblock on a thread where blocking is acceptable,
+                            // as it's potentially a heavy operation
+                            tokio::task::spawn_blocking(move || {
+                                let res = execute_flashblock(
+                                    payload,
+                                    ctx,
+                                    client,
+                                    cancel,
+                                );
+                                match res {
+                                    Ok((payload, _)) => {
+                                        tracing::info!(hash = payload.block().hash().to_string(), block_number = payload.block().header().number, "successfully executed received flashblock");
+                                        let _  = payload_events_handle.send(Events::BuiltPayload(payload));
+                                    }
+                                    Err(e) => {
+                                        tracing::error!(error = ?e, "failed to execute received flashblock");
+                                    }
                                 }
-                                Err(e) => {
-                                    tracing::error!(error = ?e, "failed to execute received flashblock");
-                                }
-                            }
+                            });
                         }
                     }
                 }
