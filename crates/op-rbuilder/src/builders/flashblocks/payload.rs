@@ -39,7 +39,7 @@ use reth_provider::{
 use reth_revm::{
     State, database::StateProviderDatabase, db::states::bundle_state::BundleRetention,
 };
-use reth_transaction_pool::{BestTransactions, TransactionPool, ValidPoolTransaction};
+use reth_transaction_pool::{BestTransactions, TransactionPool};
 use reth_trie::{HashedPostState, updates::TrieUpdates};
 use revm::Database;
 use rollup_boost::{
@@ -205,22 +205,6 @@ where
     ) -> Result<Self::BuiltPayload, PayloadBuilderError> {
         unimplemented!()
     }
-}
-
-/// The arena in which multiple [`FlashblockCandidate`] are competing for a specific flashblock interval batch.
-/// It contains context of the building job, and shared precomputed elements that are required in each candidate.
-struct BatchArena {
-    target_gas_for_batch: u64,
-    target_da_for_batch: Option<u64>,
-}
-
-/// A candidate flashblock payload within a flashblock interval batch building job
-struct FlashblockCandidate {
-    payload: OpBuiltPayload,
-    fb_payload: FlashblocksPayloadV1,
-    execution_info: ExecutionInfo<FlashblocksExecutionInfo>,
-    gas_used: u64,
-    // todo metrics
 }
 
 impl<Pool, Client, BuilderTx> OpPayloadBuilder<Pool, Client, BuilderTx>
@@ -834,30 +818,33 @@ where
         ctx: &OpPayloadBuilderCtx<FlashblocksExtraCtx>,
         state: &mut State<DB>,
         state_provider: impl reth::providers::StateProvider + Clone,
-        best_txs: &NextBestFlashblocksTxs<Pool>,
-        batch_targets: &BatchArena,
-    ) -> eyre::Result<FlashblockCandidate> {
-        // Collect candidate best txs without updates
-        // This is not using best_txn to be able to bound number of txs to execute and collect them, so we need to remove commited txs
-        let candidate_best_txs: Vec<Arc<ValidPoolTransaction<Pool::Transaction>>> = self
-            .pool
-            .best_transactions_with_attributes(ctx.best_transaction_attributes())
-            .without_updates()
-            .filter(|tx| best_txs.is_commited(tx.hash()))
-            .collect();
+        best_txs: &mut NextBestFlashblocksTxs<Pool>,
+        target_gas_for_batch: u64,
+        target_da_for_batch: Option<u64>,
+    ) -> eyre::Result<(
+        OpBuiltPayload,
+        FlashblocksPayloadV1,
+        ExecutionInfo<FlashblocksExecutionInfo>,
+    )> {
+        // Update iterator
+        best_txs.refresh_iterator(
+            BestPayloadTransactions::new(
+                self.pool
+                    .best_transactions_with_attributes(ctx.best_transaction_attributes())
+                    .without_updates(),
+            ),
+            ctx.flashblock_index(),
+        );
 
         // Initialize empty execution info
-        let mut batch_info: ExecutionInfo<FlashblocksExecutionInfo> =
-            ExecutionInfo::with_capacity(candidate_best_txs.len());
-
-        let mut candidate_best_txs = BestPayloadTransactions::new(candidate_best_txs.into_iter());
+        let mut batch_info: ExecutionInfo<FlashblocksExecutionInfo> = ExecutionInfo::default();
 
         ctx.execute_best_transactions(
             &mut batch_info,
             state, //todo
-            &mut candidate_best_txs,
-            batch_targets.target_gas_for_batch,
-            batch_targets.target_da_for_batch,
+            best_txs,
+            target_gas_for_batch,
+            target_da_for_batch,
         )
         .wrap_err("failed to execute best transactions")?;
 
@@ -883,13 +870,7 @@ where
             .map(|(payload, mut fb)| {
                 fb.index = ctx.flashblock_index();
                 fb.base = None;
-                let gas_used = fb.diff.gas_used;
-                FlashblockCandidate {
-                    payload,
-                    fb_payload: fb,
-                    execution_info: batch_info,
-                    gas_used,
-                }
+                (payload, fb, batch_info)
             })
             .wrap_err("failed to build payload")
     }
@@ -909,8 +890,7 @@ where
         best_payload: &BlockCell<OpBuiltPayload>,
         _span: &tracing::Span,
     ) -> eyre::Result<Option<FlashblocksExtraCtx>> {
-        // 1. --- Prepare batch arena with shared context ---
-        let flashblock_index = ctx.flashblock_index();
+        // 1. --- Prepare shared context ---
         let mut target_gas_for_batch = ctx.extra_ctx.target_gas_for_batch;
         let mut target_da_for_batch = ctx.extra_ctx.target_da_for_batch;
 
@@ -931,21 +911,15 @@ where
             *da_limit = da_limit.saturating_sub(builder_tx_da_size);
         }
 
-        // update the batch best txs with a dynamic iterator
-        best_txs.refresh_iterator(
-            BestPayloadTransactions::new(
-                self.pool
-                    .best_transactions_with_attributes(ctx.best_transaction_attributes()),
-            ),
-            flashblock_index,
-        );
+        let target_gas_for_batch = target_gas_for_batch.min(ctx.block_gas_limit());
 
-        let batch_targets = BatchArena {
-            target_gas_for_batch: target_gas_for_batch.min(ctx.block_gas_limit()),
-            target_da_for_batch,
-        };
+        let mut best: Option<(
+            OpBuiltPayload,
+            FlashblocksPayloadV1,
+            ExecutionInfo<FlashblocksExecutionInfo>,
+        )> = None;
 
-        let mut best: Option<FlashblockCandidate> = None;
+        // 2. --- Build candidates and update best ---
         loop {
             // If main token got canceled in here that means we received get_payload and we should drop everything and not update best_payload
             // To ensure that we will return same blocks as rollup-boost (to leverage caches)
@@ -959,11 +933,18 @@ where
 
             // Build one candidate (blocking here)
             // todo: would be best to build async and select on candidate_build/block_cancel/fb_cancel
-            match self.build_candidate(&*ctx, state, &state_provider, &*best_txs, &batch_targets) {
+            match self.build_candidate(
+                &*ctx,
+                state,
+                &state_provider,
+                best_txs,
+                target_gas_for_batch,
+                target_da_for_batch,
+            ) {
                 Ok(candidate) => {
                     if best
                         .as_ref()
-                        .is_none_or(|b| candidate.gas_used > b.gas_used)
+                        .is_none_or(|b| candidate.1.diff.gas_used > b.1.diff.gas_used)
                     {
                         best = Some(candidate);
                     }
@@ -974,38 +955,38 @@ where
             }
         }
 
-        let mut best = best.wrap_err("No best flashblock payload")?;
+        // 3. --- Cancellation token received, send best ---
+        let (payload, fb_payload, mut execution_info) =
+            best.wrap_err("No best flashblock payload")?;
 
         // Directly send payloads
         let _flashblock_byte_size = self
             .ws_pub
-            .publish(&best.fb_payload)
+            .publish(&fb_payload)
             .wrap_err("failed to publish flashblock via websocket")?;
-        self.send_payload_to_engine(best.payload.clone());
-        best_payload.set(best.payload);
+        self.send_payload_to_engine(payload.clone());
+        best_payload.set(payload);
 
         // Apply state mutations from best
-        // todo: update best_txs to take into account candidate_best_txs?
-        let batch_new_transactions = best
-            .execution_info
+        let batch_new_transactions = execution_info
             .executed_transactions
             .to_vec()
             .iter()
             .map(|tx| tx.tx_hash())
             .collect::<Vec<_>>();
-        // update batch best txs
+        // update best txns
         best_txs.mark_commited(batch_new_transactions);
 
         // update batch execution info
         info.executed_transactions
-            .append(&mut best.execution_info.executed_transactions);
+            .append(&mut execution_info.executed_transactions);
         info.executed_senders
-            .append(&mut best.execution_info.executed_senders);
-        info.receipts.append(&mut best.execution_info.receipts);
-        info.cumulative_gas_used += best.execution_info.cumulative_gas_used;
-        info.cumulative_da_bytes_used += best.execution_info.cumulative_da_bytes_used;
-        info.total_fees += best.execution_info.total_fees;
-        info.extra.last_flashblock_index = best.execution_info.extra.last_flashblock_index;
+            .append(&mut execution_info.executed_senders);
+        info.receipts.append(&mut execution_info.receipts);
+        info.cumulative_gas_used += execution_info.cumulative_gas_used;
+        info.cumulative_da_bytes_used += execution_info.cumulative_da_bytes_used;
+        info.total_fees += execution_info.total_fees;
+        info.extra.last_flashblock_index = execution_info.extra.last_flashblock_index;
 
         // todo state
 
