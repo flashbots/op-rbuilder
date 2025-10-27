@@ -1,5 +1,4 @@
 use alloy_primitives::{B256, Bytes, keccak256};
-use reth_node_builder::BuilderContext;
 use std::{
     fs::{self, OpenOptions},
     io::Write,
@@ -8,24 +7,24 @@ use std::{
 };
 use tracing::{info, warn};
 
-use crate::{
-    flashtestations::builder_tx::{FlashtestationsBuilderTx, FlashtestationsBuilderTxArgs},
-    traits::NodeBounds,
-    tx_signer::{Signer, generate_key_from_seed, generate_signer},
-};
-
 use super::{
     args::FlashtestationsArgs,
     attestation::{AttestationConfig, get_attestation_provider},
     tx_manager::TxManager,
 };
+use crate::{
+    flashtestations::builder_tx::{FlashtestationsBuilderTx, FlashtestationsBuilderTxArgs},
+    tx_signer::{Signer, generate_key_from_seed, generate_signer},
+};
+use std::fmt::Debug;
 
-pub async fn bootstrap_flashtestations<Node>(
+pub async fn bootstrap_flashtestations<ExtraCtx, Extra>(
     args: FlashtestationsArgs,
-    ctx: &BuilderContext<Node>,
-) -> eyre::Result<FlashtestationsBuilderTx>
+    builder_key: Signer,
+) -> eyre::Result<FlashtestationsBuilderTx<ExtraCtx, Extra>>
 where
-    Node: NodeBounds,
+    ExtraCtx: Debug + Default,
+    Extra: Debug + Default,
 {
     let tee_service_signer = load_or_generate_tee_key(
         &args.flashtestations_key_path,
@@ -38,9 +37,6 @@ where
         tee_service_signer.address
     );
 
-    let funding_key = args
-        .funding_key
-        .expect("funding key required when flashtestations enabled");
     let registry_address = args
         .registry_address
         .expect("registry address required when flashtestations enabled");
@@ -78,63 +74,40 @@ where
     info!(target: "flashtestations", "requesting TDX attestation");
     let attestation = attestation_provider.get_attestation(report_data).await?;
 
-    let (tx_manager, registered) = if let Some(rpc_url) = args.rpc_url {
+    // Use an external rpc when the builder is not the same as the builder actively building blocks onchain
+    let registered = if let Some(rpc_url) = args.rpc_url {
         let tx_manager = TxManager::new(
             tee_service_signer,
-            funding_key,
+            builder_key,
             rpc_url.clone(),
             registry_address,
         );
         // Submit report onchain by registering the key of the tee service
         match tx_manager
-            .fund_and_register_tee_service(
-                attestation.clone(),
-                ext_data.clone(),
-                args.funding_amount,
-            )
+            .register_tee_service(attestation.clone(), ext_data.clone())
             .await
         {
-            Ok(_) => (Some(tx_manager), true),
+            Ok(_) => true,
             Err(e) => {
                 warn!(error = %e, "Failed to register tee service via rpc");
-                (Some(tx_manager), false)
+                false
             }
         }
     } else {
-        (None, false)
+        false
     };
 
     let flashtestations_builder_tx = FlashtestationsBuilderTx::new(FlashtestationsBuilderTxArgs {
         attestation,
         extra_registration_data: ext_data,
         tee_service_signer,
-        funding_key,
-        funding_amount: args.funding_amount,
         registry_address,
         builder_policy_address,
         builder_proof_version: args.builder_proof_version,
         enable_block_proofs: args.enable_block_proofs,
         registered,
+        builder_key,
     });
-
-    ctx.task_executor()
-        .spawn_critical_with_graceful_shutdown_signal(
-            "flashtestations clean up task",
-            |shutdown| {
-                Box::pin(async move {
-                    let graceful_guard = shutdown.await;
-                    if let Some(tx_manager) = tx_manager {
-                        if let Err(e) = tx_manager.clean_up().await {
-                            warn!(
-                                error = %e,
-                                "Failed to complete clean up for flashtestations service",
-                            );
-                        }
-                    }
-                    drop(graceful_guard)
-                })
-            },
-        );
 
     Ok(flashtestations_builder_tx)
 }

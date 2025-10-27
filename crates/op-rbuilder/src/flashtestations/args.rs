@@ -1,8 +1,8 @@
-use alloy_primitives::{Address, U256, utils::parse_ether};
+use alloy_primitives::Address;
 use clap::Parser;
 use reth_optimism_cli::commands::Commands;
 
-use crate::{args::Cli, tx_signer::Signer};
+use crate::args::Cli;
 
 /// Parameters for Flashtestations configuration
 /// The names in the struct are prefixed with `flashtestations`
@@ -51,23 +51,6 @@ pub struct FlashtestationsArgs {
     /// The rpc url to post the onchain attestation requests to
     #[arg(long = "flashtestations.rpc-url", env = "FLASHTESTATIONS_RPC_URL")]
     pub rpc_url: Option<String>,
-
-    /// Funding key for the TEE key
-    #[arg(
-        long = "flashtestations.funding-key",
-        env = "FLASHTESTATIONS_FUNDING_KEY",
-        required_if_eq("flashtestations_enabled", "true")
-    )]
-    pub funding_key: Option<Signer>,
-
-    /// Funding amount for the generated signer
-    #[arg(
-        long = "flashtestations.funding-amount",
-        env = "FLASHTESTATIONS_FUNDING_AMOUNT",
-        default_value = "1",
-        value_parser = parse_ether
-    )]
-    pub funding_amount: U256,
 
     /// Enable end of block TEE proof
     #[arg(
