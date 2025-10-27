@@ -89,6 +89,7 @@ impl StreamsHandler {
                 }
             }
         }
+
         info!(
             "broadcasted message to {} peers",
             self.peers_to_stream.len()

@@ -116,7 +116,6 @@ impl FlashblocksServiceBuilder {
             metrics.clone(),
         )
         .wrap_err("failed to create flashblocks payload builder")?;
-
         let payload_job_config = BasicPayloadJobGeneratorConfig::default();
 
         let payload_generator = BlockPayloadJobGenerator::with_builder(

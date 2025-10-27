@@ -22,6 +22,7 @@ use reth_payload_builder::EthPayloadBuilderAttributes;
 use rollup_boost::FlashblocksPayloadV1;
 use std::sync::Arc;
 use tokio::sync::mpsc;
+use tracing::warn;
 
 /// Handles newly built or received flashblock payloads.
 ///
@@ -84,7 +85,9 @@ where
         loop {
             tokio::select! {
                 Some(payload) = built_rx.recv() => {
-                    let _ = payload_events_handle.send(Events::BuiltPayload(payload.clone()));
+                    if let Err(e) = payload_events_handle.send(Events::BuiltPayload(payload.clone())) {
+                        warn!(e = ?e, "failed to send BuiltPayload event");
+                    }
                     // ignore error here; if p2p was disabled, the channel will be closed.
                     let _ = p2p_tx.send(payload.into()).await;
                 }
