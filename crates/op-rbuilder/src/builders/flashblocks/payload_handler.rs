@@ -1,5 +1,7 @@
 use crate::{
-    builders::flashblocks::{ctx::OpPayloadSyncerCtx, p2p::Message, payload::ExtraExecutionInfo},
+    builders::flashblocks::{
+        ctx::OpPayloadSyncerCtx, p2p::Message, payload::FlashblocksExecutionInfo,
+    },
     primitives::reth::ExecutionInfo,
     traits::ClientBounds,
 };
@@ -256,7 +258,7 @@ where
 
 #[allow(clippy::too_many_arguments)]
 fn execute_transactions(
-    info: &mut ExecutionInfo<ExtraExecutionInfo>,
+    info: &mut ExecutionInfo<FlashblocksExecutionInfo>,
     state: &mut State<impl alloy_evm::Database>,
     txs: Vec<op_alloy_consensus::OpTxEnvelope>,
     gas_limit: u64,
