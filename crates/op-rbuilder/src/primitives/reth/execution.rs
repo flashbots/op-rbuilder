@@ -24,7 +24,7 @@ pub enum TxnExecutionResult {
     MaxGasUsageExceeded,
 }
 
-#[derive(Default, Debug)]
+#[derive(Clone, Default, Debug)]
 pub struct ExecutionInfo<Extra: Debug + Default = ()> {
     /// All executed transactions (unrecovered).
     pub executed_transactions: Vec<OpTransactionSigned>,

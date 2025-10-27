@@ -34,6 +34,9 @@ pub struct FlashblocksConfig {
     /// Should we calculate state root for each flashblock
     pub calculate_state_root: bool,
 
+    /// Whether to enable continuous flashblock building or not
+    pub enable_continuous_building: bool,
+
     /// The address of the flashblocks number contract.
     ///
     /// If set a builder tx will be added to the start of every flashblock instead of the regular builder tx.
@@ -48,6 +51,7 @@ impl Default for FlashblocksConfig {
             leeway_time: Duration::from_millis(50),
             fixed: false,
             calculate_state_root: true,
+            enable_continuous_building: true,
             flashblocks_number_contract_address: None,
         }
     }
@@ -70,6 +74,8 @@ impl TryFrom<OpRbuilderArgs> for FlashblocksConfig {
 
         let calculate_state_root = args.flashblocks.flashblocks_calculate_state_root;
 
+        let enable_continuous_building = args.flashblocks.flashblocks_enable_continuous_building;
+
         let flashblocks_number_contract_address =
             args.flashblocks.flashblocks_number_contract_address;
 
@@ -79,6 +85,7 @@ impl TryFrom<OpRbuilderArgs> for FlashblocksConfig {
             leeway_time,
             fixed,
             calculate_state_root,
+            enable_continuous_building,
             flashblocks_number_contract_address,
         })
     }
