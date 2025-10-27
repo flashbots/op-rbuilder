@@ -388,7 +388,7 @@ impl<Txs: PayloadTxsBounds> OpBuilder<'_, Txs> {
                 .set(transaction_pool_fetch_time);
 
             if ctx
-                .execute_best_transactions(
+                .simulate_best_transactions(
                     &mut info,
                     db,
                     &mut best_txs,

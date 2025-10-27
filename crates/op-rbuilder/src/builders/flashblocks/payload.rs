@@ -42,6 +42,7 @@ use reth_revm::{
 use reth_transaction_pool::{BestTransactions, TransactionPool};
 use reth_trie::{HashedPostState, updates::TrieUpdates};
 use revm::Database;
+use revm::database::BundleState;
 use rollup_boost::{
     ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, FlashblocksPayloadV1,
 };
@@ -679,7 +680,7 @@ where
             .set(transaction_pool_fetch_time);
 
         let tx_execution_start_time = Instant::now();
-        ctx.execute_best_transactions(
+        ctx.simulate_best_transactions(
             info,
             state,
             best_txs,
@@ -820,10 +821,11 @@ where
             OpBuiltPayload,
             FlashblocksPayloadV1,
             ExecutionInfo<FlashblocksExecutionInfo>,
+            BundleState,
         )>,
         info: &ExecutionInfo<FlashblocksExecutionInfo>,
         ctx: &OpPayloadBuilderCtx<FlashblocksExtraCtx>,
-        state: &mut State<DB>,
+        state: &State<DB>,
         state_provider: impl reth::providers::StateProvider + Clone,
         best_txs: &mut NextBestFlashblocksTxs<Pool>,
         target_gas_for_batch: u64,
@@ -832,6 +834,7 @@ where
         OpBuiltPayload,
         FlashblocksPayloadV1,
         ExecutionInfo<FlashblocksExecutionInfo>,
+        BundleState,
     )> {
         // Update iterator
         best_txs.refresh_iterator(
@@ -844,11 +847,19 @@ where
         );
 
         // Initialize empty execution info
-        let mut batch_info = *info.clone();
+        let mut batch_info = info.clone();
 
-        ctx.execute_best_transactions(
+        // create simulation state
+        // todo/check: is this also taking into account current state only from state cache?
+        let mut simulation_state = State::builder()
+            .with_database(StateProviderDatabase::new(state_provider.clone()))
+            .with_cached_prestate(state.cache.clone())
+            .with_bundle_update()
+            .build();
+
+        ctx.simulate_best_transactions(
             &mut batch_info,
-            state, //todo
+            &mut simulation_state,
             best_txs,
             target_gas_for_batch,
             target_da_for_batch,
@@ -860,7 +871,7 @@ where
             &state_provider,
             &mut batch_info,
             ctx,
-            state, // todo
+            &mut simulation_state,
             false,
         ) {
             error!(target: "payload_builder", "Error simulating builder txs: {}", e);
@@ -872,7 +883,7 @@ where
         };
         if best
             .as_ref()
-            .is_some_and(|(_, _, prev)| !is_better_candidate(prev, &batch_info))
+            .is_some_and(|(_, _, prev, _)| !is_better_candidate(prev, &batch_info))
         {
             // Not better, nothing to refresh so we can return early
             return Ok(best.expect("safe: best matched Some"));
@@ -880,7 +891,7 @@ where
 
         // build block and return new best
         build_block(
-            state, // todo
+            &mut simulation_state,
             ctx,
             &mut batch_info,
             ctx.extra_ctx.calculate_state_root || ctx.attributes().no_tx_pool,
@@ -889,7 +900,8 @@ where
             fb.index = ctx.flashblock_index();
             fb.base = None;
 
-            (payload, fb, batch_info)
+            simulation_state.merge_transitions(BundleRetention::Reverts);
+            (payload, fb, batch_info, simulation_state.take_bundle())
         })
         .wrap_err("failed to build payload")
     }
@@ -936,6 +948,7 @@ where
             OpBuiltPayload,
             FlashblocksPayloadV1,
             ExecutionInfo<FlashblocksExecutionInfo>,
+            BundleState,
         )> = None;
 
         // 2. --- Build candidates and update best ---
@@ -965,8 +978,15 @@ where
         }
 
         // 3. --- Cancellation token received, send best ---
-        let (payload, fb_payload, mut execution_info) =
+        let (payload, fb_payload, mut execution_info, _bundle_state) =
             best.wrap_err("No best flashblock payload")?;
+
+        // Apply state mutations from best
+        // todo, something like:
+        // state = StateBuilder::new()
+        //     .with_database(move state.database)
+        //     .with_bundle_prestate(bundle_state)
+        //     .build();
 
         // Directly send payloads
         let _flashblock_byte_size = self
@@ -976,7 +996,6 @@ where
         self.send_payload_to_engine(payload.clone());
         best_payload.set(payload);
 
-        // Apply state mutations from best
         let batch_new_transactions = execution_info
             .executed_transactions
             .to_vec()
@@ -996,8 +1015,6 @@ where
         info.cumulative_da_bytes_used += execution_info.cumulative_da_bytes_used;
         info.total_fees += execution_info.total_fees;
         info.extra.last_flashblock_index = execution_info.extra.last_flashblock_index;
-
-        // todo state
 
         // Update bundle_state for next iteration
         if let Some(da_limit) = ctx.extra_ctx.da_per_batch {
