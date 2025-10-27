@@ -678,13 +678,13 @@ where
             return Ok(None);
         }
 
-        let payload_tx_simulation_time = tx_execution_start_time.elapsed();
+        let payload_transaction_simulation_time = tx_execution_start_time.elapsed();
         ctx.metrics
-            .payload_tx_simulation_duration
-            .record(payload_tx_simulation_time);
+            .payload_transaction_simulation_duration
+            .record(payload_transaction_simulation_time);
         ctx.metrics
-            .payload_tx_simulation_gauge
-            .set(payload_tx_simulation_time);
+            .payload_transaction_simulation_gauge
+            .set(payload_transaction_simulation_time);
 
         if let Err(e) = self
             .builder_tx
