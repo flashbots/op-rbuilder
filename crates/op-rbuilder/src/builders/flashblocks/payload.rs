@@ -211,8 +211,7 @@ impl<Pool, Client, BuilderTx> OpPayloadBuilder<Pool, Client, BuilderTx>
 where
     Pool: PoolBounds,
     Client: ClientBounds + 'static,
-    BuilderTx:
-        BuilderTransactions<FlashblocksExtraCtx, FlashblocksExecutionInfo> + Send + Sync + 'static,
+    BuilderTx: BuilderTransactions<FlashblocksExtraCtx, FlashblocksExecutionInfo> + Send + Sync,
 {
     fn get_op_payload_builder_ctx(
         &self,
@@ -748,7 +747,7 @@ where
                 fb_payload.index = flashblock_index;
                 fb_payload.base = None;
 
-                // If main token got canceled in here that means we received get_payload and we should drop everything and now update best_payload
+                // If main token got canceled in here that means we received get_payload, and we should drop everything and not update best_payload
                 // To ensure that we will return same blocks as rollup-boost (to leverage caches)
                 if block_cancel.is_cancelled() {
                     self.record_flashblocks_metrics(
@@ -810,11 +809,19 @@ where
         }
     }
 
-    fn build_candidate<
+    /// Takes the current best flashblock candidate, execute new transaction and build a new candidate only if it's better
+    #[expect(clippy::too_many_arguments)]
+    fn refresh_best_flashblock_candidate<
         DB: Database<Error = ProviderError> + std::fmt::Debug + AsRef<P>,
         P: StateRootProvider + HashedPostStateProvider + StorageRootProvider,
     >(
         &self,
+        best: Option<(
+            OpBuiltPayload,
+            FlashblocksPayloadV1,
+            ExecutionInfo<FlashblocksExecutionInfo>,
+        )>,
+        info: &ExecutionInfo<FlashblocksExecutionInfo>,
         ctx: &OpPayloadBuilderCtx<FlashblocksExtraCtx>,
         state: &mut State<DB>,
         state_provider: impl reth::providers::StateProvider + Clone,
@@ -837,7 +844,7 @@ where
         );
 
         // Initialize empty execution info
-        let mut batch_info: ExecutionInfo<FlashblocksExecutionInfo> = ExecutionInfo::default();
+        let mut batch_info = *info.clone();
 
         ctx.execute_best_transactions(
             &mut batch_info,
@@ -859,20 +866,32 @@ where
             error!(target: "payload_builder", "Error simulating builder txs: {}", e);
         };
 
-        // build block
-        let build_result = build_block(
+        // Check if we can build a better block by comparing execution results
+        let is_better_candidate = |prev: &ExecutionInfo<_>, new: &ExecutionInfo<_>| {
+            new.cumulative_gas_used > prev.cumulative_gas_used
+        };
+        if best
+            .as_ref()
+            .is_some_and(|(_, _, prev)| !is_better_candidate(prev, &batch_info))
+        {
+            // Not better, nothing to refresh so we can return early
+            return Ok(best.expect("safe: best matched Some"));
+        }
+
+        // build block and return new best
+        build_block(
             state, // todo
             ctx,
             &mut batch_info,
             ctx.extra_ctx.calculate_state_root || ctx.attributes().no_tx_pool,
-        );
-        build_result
-            .map(|(payload, mut fb)| {
-                fb.index = ctx.flashblock_index();
-                fb.base = None;
-                (payload, fb, batch_info)
-            })
-            .wrap_err("failed to build payload")
+        )
+        .map(|(payload, mut fb)| {
+            fb.index = ctx.flashblock_index();
+            fb.base = None;
+
+            (payload, fb, batch_info)
+        })
+        .wrap_err("failed to build payload")
     }
 
     #[expect(clippy::too_many_arguments)]
@@ -921,7 +940,7 @@ where
 
         // 2. --- Build candidates and update best ---
         loop {
-            // If main token got canceled in here that means we received get_payload and we should drop everything and not update best_payload
+            // If main token got canceled in here that means we received get_payload, and we should drop everything and not update best_payload
             // To ensure that we will return same blocks as rollup-boost (to leverage caches)
             if block_cancel.is_cancelled() {
                 return Ok(None);
@@ -933,26 +952,16 @@ where
 
             // Build one candidate (blocking here)
             // todo: would be best to build async and select on candidate_build/block_cancel/fb_cancel
-            match self.build_candidate(
+            best = Some(self.refresh_best_flashblock_candidate(
+                best,
+                &*info,
                 &*ctx,
                 state,
                 &state_provider,
                 best_txs,
                 target_gas_for_batch,
                 target_da_for_batch,
-            ) {
-                Ok(candidate) => {
-                    if best
-                        .as_ref()
-                        .is_none_or(|b| candidate.1.diff.gas_used > b.1.diff.gas_used)
-                    {
-                        best = Some(candidate);
-                    }
-                }
-                Err(_) => {
-                    ctx.metrics.invalid_blocks_count.increment(1);
-                }
-            }
+            )?);
         }
 
         // 3. --- Cancellation token received, send best ---
@@ -1129,11 +1138,8 @@ impl<Pool, Client, BuilderTx> PayloadBuilder for OpPayloadBuilder<Pool, Client, 
 where
     Pool: PoolBounds,
     Client: ClientBounds + 'static,
-    BuilderTx: BuilderTransactions<FlashblocksExtraCtx, FlashblocksExecutionInfo>
-        + Clone
-        + Send
-        + Sync
-        + 'static,
+    BuilderTx:
+        BuilderTransactions<FlashblocksExtraCtx, FlashblocksExecutionInfo> + Clone + Send + Sync,
 {
     type Attributes = OpPayloadBuilderAttributes<OpTransactionSigned>;
     type BuiltPayload = OpBuiltPayload;
