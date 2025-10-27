@@ -4,10 +4,7 @@ use alloy_evm::Database;
 use alloy_op_evm::OpEvm;
 use alloy_primitives::{
     Address, B256, Bytes, TxKind, U256,
-    map::{
-        DefaultHashBuilder,
-        foldhash::{HashSet, HashSetExt},
-    },
+    map::{HashMap, HashSet},
 };
 use alloy_sol_types::{ContractError, Revert, SolCall, SolError, SolInterface};
 use core::fmt::Debug;
@@ -33,7 +30,6 @@ use revm::{
     inspector::NoOpInspector,
     state::Account,
 };
-use std::collections::HashMap;
 use tracing::{trace, warn};
 
 use crate::{
@@ -44,7 +40,7 @@ use crate::{
 pub struct SimulationSuccessResult<T: SolCall> {
     pub gas_used: u64,
     pub output: T::Return,
-    pub state_changes: HashMap<Address, Account, DefaultHashBuilder>,
+    pub state_changes: HashMap<Address, Account>,
 }
 
 #[derive(Debug, Clone)]
@@ -196,7 +192,7 @@ pub trait BuilderTransactions<ExtraCtx: Debug + Default = (), Extra: Debug + Def
                 .evm_config
                 .evm_with_env(&mut *db, builder_ctx.evm_env.clone());
 
-            let mut invalid: HashSet<Address> = HashSet::new();
+            let mut invalid = HashSet::new();
 
             for builder_tx in builder_txs.iter() {
                 if builder_tx.is_top_of_block != top_of_block {
