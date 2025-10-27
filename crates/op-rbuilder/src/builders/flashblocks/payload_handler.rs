@@ -3,6 +3,7 @@ use reth_node_builder::Events;
 use reth_optimism_node::OpEngineTypes;
 use reth_optimism_payload_builder::OpBuiltPayload;
 use tokio::sync::mpsc;
+use tracing::warn;
 
 pub(crate) struct PayloadHandler {
     // receives new payloads built by us.
@@ -43,7 +44,9 @@ impl PayloadHandler {
         loop {
             tokio::select! {
                 Some(payload) = built_rx.recv() => {
-                    let _ = payload_events_handle.send(Events::BuiltPayload(payload.clone()));
+                    if let Err(e) = payload_events_handle.send(Events::BuiltPayload(payload.clone())) {
+                        warn!(e = ?e, "failed to send BuiltPayload event");
+                    }
                     // ignore error here; if p2p was disabled, the channel will be closed.
                     let _ = p2p_tx.send(payload.into()).await;
                 }
