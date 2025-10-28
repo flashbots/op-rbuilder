@@ -89,6 +89,10 @@ where
         }
     }
 
+    pub fn tee_signer(&self) -> &Signer {
+        &self.tee_service_signer
+    }
+
     /// Computes the block content hash according to the formula:
     /// keccak256(abi.encode(parentHash, blockNumber, timestamp, transactionHashes))
     /// https://github.com/flashbots/rollup-boost/blob/main/specs/flashtestations.md#block-building-process
@@ -136,6 +140,7 @@ where
             .evm_with_env(&mut simulation_state, ctx.evm_env.clone());
         evm.modify_cfg(|cfg| {
             cfg.disable_balance_check = true;
+            cfg.disable_nonce_check = true;
         });
         let calldata = IFlashtestationRegistry::getRegistrationStatusCall {
             teeAddress: self.tee_service_signer.address,
@@ -336,7 +341,7 @@ where
             .gas_limit(ctx.block_gas_limit())
             .max_fee_per_gas(ctx.base_fee().into())
             .to(contract_address)
-            .from(self.tee_service_signer.address) // use tee key as signer for simulations
+            .from(self.builder_signer.address)
             .nonce(get_nonce(evm.db(), self.tee_service_signer.address)?)
             .input(TransactionInput::new(calldata.abi_encode().into()));
         if contract_address == self.registry_address {
