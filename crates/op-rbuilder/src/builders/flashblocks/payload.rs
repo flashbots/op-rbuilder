@@ -50,6 +50,7 @@ use std::{
     sync::{Arc, OnceLock},
     time::Instant,
 };
+use revm::database::BundleState;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, metadata::Level, span, warn};
@@ -341,12 +342,20 @@ where
         let builder_tx_gas = builder_txs.iter().fold(0, |acc, tx| acc + tx.gas_used);
         let builder_tx_da_size: u64 = builder_txs.iter().fold(0, |acc, tx| acc + tx.da_size);
 
-        let (payload, fb_payload) = build_block(
+        let (payload, fb_payload, bundle_state) = build_block(
             &mut state,
             &ctx,
             &mut info,
             calculate_state_root || ctx.attributes().no_tx_pool, // need to calculate state root for CL sync
         )?;
+        let cached_db = state.cache;
+        let database = state.database;
+        let mut state = State::builder()
+            .with_cached_prestate(cached_db)
+            .with_bundle_prestate(bundle_state)
+            .with_database(database)
+            .with_bundle_update()
+            .build();
 
         best_payload.set(payload.clone());
         self.send_payload_to_engine(payload);
@@ -494,7 +503,7 @@ where
             let _entered = fb_span.enter();
 
             // build first flashblock immediately
-            match self.build_next_flashblock(
+            let bundle_state = match self.build_next_flashblock(
                 &mut ctx,
                 &mut info,
                 &mut state,
@@ -504,7 +513,9 @@ where
                 &best_payload,
                 &fb_span,
             ) {
-                Ok(()) => {}
+                Ok(bundle_state) => {
+                    bundle_state
+                }
                 Err(err) => {
                     error!(
                         target: "payload_builder",
@@ -515,6 +526,16 @@ where
                     );
                     return Err(err);
                 }
+            };
+            if let Some(bundle_state) = bundle_state {
+                let cached_db = state.cache;
+                let database = state.database;
+                state = State::builder()
+                    .with_cached_prestate(cached_db)
+                    .with_bundle_prestate(bundle_state)
+                    .with_database(database)
+                    .with_bundle_update()
+                    .build();
             }
 
             tokio::select! {
@@ -549,7 +570,7 @@ where
         block_cancel: &CancellationToken,
         best_payload: &BlockCell<OpBuiltPayload>,
         span: &tracing::Span,
-    ) -> Result<(), PayloadBuilderError> {
+    ) -> Result<Option<BundleState>, PayloadBuilderError> {
         // fallback block is index 0, so we need to increment here
         ctx.increment_flashblock_index();
 
@@ -562,7 +583,7 @@ where
                 block_number = ctx.block_number(),
                 "Skipping flashblock reached target",
             );
-            return Ok(());
+            return Ok(None);
         };
 
         // Continue with flashblock building
@@ -645,7 +666,7 @@ where
                 span,
                 "Payload building complete, channel closed or job cancelled",
             );
-            return Ok(());
+            return Ok(None);
         }
 
         let payload_tx_simulation_time = tx_execution_start_time.elapsed();
@@ -691,7 +712,7 @@ where
                 // Return the error
                 return Err(err);
             }
-            Ok((new_payload, mut fb_payload)) => {
+            Ok((new_payload, mut fb_payload, bundle_state)) => {
                 fb_payload.index = ctx.flashblock_index();
                 fb_payload.base = None;
 
@@ -705,7 +726,7 @@ where
                         span,
                         "Payload building complete, channel closed or job cancelled",
                     );
-                    return Ok(());
+                    return Ok(None);
                 }
                 let flashblock_byte_size = self
                     .ws_pub
@@ -747,9 +768,9 @@ where
                     current_da = info.cumulative_da_bytes_used,
                     target_flashblocks = ctx.target_flashblock_count(),
                 );
+                Ok(Some(bundle_state))
             }
         }
-        Ok(())
     }
 
     /// Do some logging and metric recording when we stop build flashblocks
@@ -918,16 +939,16 @@ fn build_block<DB, P, ExtraCtx>(
     ctx: &OpPayloadBuilderCtx<ExtraCtx>,
     info: &mut ExecutionInfo<ExtraExecutionInfo>,
     calculate_state_root: bool,
-) -> Result<(OpBuiltPayload, FlashblocksPayloadV1), PayloadBuilderError>
+) -> Result<(OpBuiltPayload, FlashblocksPayloadV1, BundleState), PayloadBuilderError>
 where
     DB: Database<Error = ProviderError> + AsRef<P>,
     P: StateRootProvider + HashedPostStateProvider + StorageRootProvider,
     ExtraCtx: std::fmt::Debug + Default,
 {
     // We use it to preserve state, so we run merge_transitions on transition state at most once
-    let untouched_transition_state = state.transition_state.clone();
     let state_merge_start_time = Instant::now();
     state.merge_transitions(BundleRetention::Reverts);
+    let bundle_state = state.take_bundle();
     let state_transition_merge_time = state_merge_start_time.elapsed();
     ctx.metrics
         .state_transition_merge_duration
@@ -940,7 +961,7 @@ where
     assert_eq!(block_number, ctx.parent().number + 1);
 
     let execution_outcome = ExecutionOutcome::new(
-        state.bundle_state.clone(),
+        bundle_state.clone(),
         vec![info.receipts.clone()],
         block_number,
         vec![],
@@ -1091,8 +1112,7 @@ where
         .zip(new_receipts.iter())
         .map(|(tx, receipt)| (tx.tx_hash(), receipt.clone()))
         .collect::<HashMap<B256, OpReceipt>>();
-    let new_account_balances = state
-        .bundle_state
+    let new_account_balances = bundle_state
         .state
         .iter()
         .filter_map(|(address, account)| account.info.as_ref().map(|info| (*address, info.balance)))
@@ -1136,10 +1156,6 @@ where
         metadata: serde_json::to_value(&metadata).unwrap_or_default(),
     };
 
-    // We clean bundle and place initial state transaction back
-    state.take_bundle();
-    state.transition_state = untouched_transition_state;
-
     Ok((
         OpBuiltPayload::new(
             ctx.payload_id(),
@@ -1148,5 +1164,6 @@ where
             Some(executed),
         ),
         fb_payload,
+        bundle_state,
     ))
 }
