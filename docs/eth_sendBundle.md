@@ -59,6 +59,17 @@ The `eth_sendBundle` endpoint is only available when revert protection is enable
 
 If both `minFlashblockNumber` and `maxFlashblockNumber` are specified, min ≤ max.
 
+### Block Number + Flashblock Number interaction
+
+When both block number and flashblock number ranges are specified, they act independently of each other. For example, if the builder receives a bundle request with parameters like
+```
+"minBlockNumber": 100,
+"maxBlockNumber": 105,
+"minFlashblockNumber": 1,
+"maxFlashblockNumber": 3,
+```
+Then the builder will only execute the bundle if the current block number is between 100 and 105 AND the current flashblock number is between 1 and 3.
+
 ### Transaction Constraints
 
 1. **Single Transaction**: Bundles must contain exactly one transaction
@@ -123,8 +134,8 @@ curl -X POST http://localhost:8545 \
     "method": "eth_sendBundle",
     "params": [{
       "txs": ["0x02f86c0182..."],
-      "minFlashblockNumber": 100,  // Flashblock 100
-      "maxFlashblockNumber": 104   // Flashblock 104
+      "minFlashblockNumber": 1,  // Flashblock 1
+      "maxFlashblockNumber": 4   // Flashblock 4
     }],
     "id": 1,
     "jsonrpc": "2.0"
