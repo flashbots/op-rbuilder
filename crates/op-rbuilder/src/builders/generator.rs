@@ -470,7 +470,7 @@ mod tests {
     use alloy_primitives::U256;
     use rand::rng;
     use reth::tasks::TokioTaskExecutor;
-    use reth_chain_state::ExecutedBlockWithTrieUpdates;
+    use reth_chain_state::ExecutedBlock;
     use reth_node_api::NodePrimitives;
     use reth_optimism_payload_builder::{OpPayloadPrimitives, payload::OpPayloadBuilderAttributes};
     use reth_optimism_primitives::OpPrimitives;
@@ -590,7 +590,7 @@ mod tests {
         }
 
         /// Returns the entire execution data for the built block, if available.
-        fn executed_block(&self) -> Option<ExecutedBlockWithTrieUpdates<Self::Primitives>> {
+        fn executed_block(&self) -> Option<ExecutedBlock<Self::Primitives>> {
             None
         }
 

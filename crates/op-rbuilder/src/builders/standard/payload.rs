@@ -14,7 +14,7 @@ use alloy_evm::Database;
 use alloy_primitives::U256;
 use reth::payload::PayloadBuilderAttributes;
 use reth_basic_payload_builder::{BuildOutcome, BuildOutcomeKind, MissingPayloadBehaviour};
-use reth_chain_state::{ExecutedBlock, ExecutedBlockWithTrieUpdates, ExecutedTrieUpdates};
+use reth_chain_state::ExecutedBlock;
 use reth_evm::{ConfigureEvm, execute::BlockBuilder};
 use reth_node_api::{Block, PayloadBuilderError};
 use reth_optimism_consensus::{calculate_receipt_root_no_memo_optimism, isthmus};
@@ -564,17 +564,15 @@ impl<Txs: PayloadTxsBounds> OpBuilder<'_, Txs> {
         info!(target: "payload_builder", id=%ctx.attributes().payload_id(), "sealed built block");
 
         // create the executed block data
-        let executed: ExecutedBlockWithTrieUpdates<OpPrimitives> = ExecutedBlockWithTrieUpdates {
-            block: ExecutedBlock {
-                recovered_block: Arc::new(RecoveredBlock::<
-                    alloy_consensus::Block<OpTransactionSigned>,
-                >::new_sealed(
-                    sealed_block.as_ref().clone(), info.executed_senders
-                )),
-                execution_output: Arc::new(execution_outcome),
-                hashed_state: Arc::new(hashed_state),
-            },
-            trie: ExecutedTrieUpdates::Present(Arc::new(trie_output)),
+        let executed: ExecutedBlock<OpPrimitives> = ExecutedBlock {
+            recovered_block: Arc::new(RecoveredBlock::<
+                alloy_consensus::Block<OpTransactionSigned>,
+            >::new_sealed(
+                sealed_block.as_ref().clone(), info.executed_senders
+            )),
+            execution_output: Arc::new(execution_outcome),
+            hashed_state: Arc::new(hashed_state),
+            trie_updates: Arc::new(trie_output),
         };
 
         let no_tx_pool = ctx.attributes().no_tx_pool;

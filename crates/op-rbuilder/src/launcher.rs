@@ -36,7 +36,7 @@ pub fn launch() -> Result<()> {
         _ => Default::default(),
     };
 
-    let mut cli_app = cli.configure();
+    let cli_app = cli.configure();
 
     #[cfg(feature = "telemetry")]
     {
@@ -45,7 +45,6 @@ pub fn launch() -> Result<()> {
         cli_app.access_tracing_layers()?.add_layer(telemetry_layer);
     }
 
-    cli_app.init_tracing()?;
     match mode {
         BuilderMode::Standard => {
             tracing::info!("Starting OP builder in standard mode");
