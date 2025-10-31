@@ -13,13 +13,14 @@ use crate::{
     traits::{ClientBounds, PoolBounds},
 };
 use alloy_consensus::{
-    BlockBody, EMPTY_OMMER_ROOT_HASH, Header, constants::EMPTY_WITHDRAWALS, proofs,
+    BlockBody, BlockHeader, EMPTY_OMMER_ROOT_HASH, Header, constants::EMPTY_WITHDRAWALS, proofs,
 };
 use alloy_eips::{Encodable2718, eip7685::EMPTY_REQUESTS_HASH, merge::BEACON_NONCE};
 use alloy_primitives::{Address, B256, U256, map::foldhash::HashMap};
 use core::time::Duration;
+use eth_sparse_mpt::{ChangedAccountData, ETHSpareMPTVersion, SparseTrieError, SparseTrieLocalCache, SparseTrieSharedCache};
 use eyre::WrapErr as _;
-use reth::payload::PayloadBuilderAttributes;
+use reth::{payload::PayloadBuilderAttributes, revm::state::EvmState};
 use reth_basic_payload_builder::BuildOutcome;
 use reth_chain_state::{ExecutedBlock, ExecutedBlockWithTrieUpdates, ExecutedTrieUpdates};
 use reth_evm::{ConfigureEvm, execute::BlockBuilder};
@@ -38,6 +39,7 @@ use reth_provider::{
 use reth_revm::{
     State, database::StateProviderDatabase, db::states::bundle_state::BundleRetention,
 };
+use reth_storage_api::{BlockReader, DatabaseProviderFactory};
 use reth_transaction_pool::TransactionPool;
 use reth_trie::{HashedPostState, updates::TrieUpdates};
 use revm::Database;
@@ -50,6 +52,7 @@ use std::{
     sync::Arc,
     time::Instant,
 };
+use reth_provider::providers::ConsistentDbView;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, metadata::Level, span, warn};
@@ -217,6 +220,8 @@ where
         >,
         cancel: CancellationToken,
         extra_ctx: FlashblocksExtraCtx,
+        prefetcher_tx: std::sync::mpsc::Sender<EvmState>,
+        sparse_trie_shared_cache: SparseTrieSharedCache,
     ) -> eyre::Result<OpPayloadBuilderCtx<FlashblocksExtraCtx>> {
         let chain_spec = self.client.chain_spec();
         let timestamp = config.attributes.timestamp();
@@ -260,6 +265,8 @@ where
             extra_ctx,
             max_gas_per_txn: self.config.max_gas_per_txn,
             address_gas_limiter: self.address_gas_limiter.clone(),
+            prefetcher_tx,
+            sparse_trie_shared_cache,
         })
     }
 
@@ -297,6 +304,15 @@ where
             config.attributes.payload_attributes.id.to_string(),
         );
 
+        // Channels for state root prefetcher
+        let (prefetcher_tx, prefetcher_rx) = std::sync::mpsc::channel();
+
+        // Spawn state root prefetcher
+        let sparse_trie_shared_cache = SparseTrieSharedCache::new_with_parent_block_data(
+            config.parent_header.hash(),
+            config.parent_header.state_root(),
+        );
+
         let timestamp = config.attributes.timestamp();
         let calculate_state_root = self.config.specific.calculate_state_root;
         let ctx = self
@@ -308,12 +324,18 @@ where
                     calculate_state_root,
                     ..Default::default()
                 },
+                prefetcher_tx.clone(),
+                sparse_trie_shared_cache.clone(),
             )
             .map_err(|e| PayloadBuilderError::Other(e.into()))?;
 
         let state_provider = self.client.state_by_block_hash(ctx.parent().hash())?;
         let db = StateProviderDatabase::new(&state_provider);
         self.address_gas_limiter.refresh(ctx.block_number());
+
+        let consistent_db = ConsistentDbView::new(state_provider.clone(), Some((ctx.parent().hash(), ctx.parent().number)));
+        // spawn prefetches for eth-sparse-mpt
+        spawn_prefetcher(consistent_db, &sparse_trie_shared_cache, prefetcher_rx);
 
         // 1. execute the pre steps and seal an early block with that
         let sequencer_tx_start_time = Instant::now();
@@ -454,7 +476,13 @@ where
 
         let mut fb_cancel = block_cancel.child_token();
         let mut ctx = self
-            .get_op_payload_builder_ctx(config, fb_cancel.clone(), extra_ctx)
+            .get_op_payload_builder_ctx(
+                config,
+                fb_cancel.clone(),
+                extra_ctx,
+                prefetcher_tx.clone(),
+                sparse_trie_shared_cache.clone(),
+            )
             .map_err(|e| PayloadBuilderError::Other(e.into()))?;
 
         // Create best_transaction iterator
@@ -500,6 +528,8 @@ where
             }
         });
 
+        let mut sparse_trie_local_cache = SparseTrieLocalCache::default();
+
         // Process flashblocks in a blocking loop
         loop {
             let fb_span = if span.is_none() {
@@ -535,6 +565,7 @@ where
                     &block_cancel,
                     &best_payload,
                     &fb_span,
+                    &mut sparse_trie_local_cache,
                 )
                 .await
             {
@@ -593,6 +624,7 @@ where
         block_cancel: &CancellationToken,
         best_payload: &BlockCell<OpBuiltPayload>,
         span: &tracing::Span,
+        sparse_trie_local_cache: &mut SparseTrieLocalCache,
     ) -> eyre::Result<Option<FlashblocksExtraCtx>> {
         let flashblock_index = ctx.flashblock_index();
         let mut target_gas_for_batch = ctx.extra_ctx.target_gas_for_batch;
@@ -655,6 +687,7 @@ where
             best_txs,
             target_gas_for_batch.min(ctx.block_gas_limit()),
             target_da_for_batch,
+            ctx.prefetcher_tx.clone(),
         )
         .wrap_err("failed to execute best transactions")?;
         // Extract last transactions
@@ -699,6 +732,7 @@ where
             ctx,
             info,
             ctx.extra_ctx.calculate_state_root || ctx.attributes().no_tx_pool,
+            sparse_trie_local_cache,
         );
         let total_block_built_duration = total_block_built_duration.elapsed();
         ctx.metrics
@@ -930,6 +964,7 @@ pub(super) fn build_block<DB, P, ExtraCtx>(
     ctx: &OpPayloadBuilderCtx<ExtraCtx>,
     info: &mut ExecutionInfo<FlashblocksExecutionInfo>,
     calculate_state_root: bool,
+    sparse_trie_local_cache: &mut SparseTrieLocalCache,
 ) -> Result<(OpBuiltPayload, FlashblocksPayloadV1), PayloadBuilderError>
 where
     DB: Database<Error = ProviderError> + AsRef<P>,
@@ -980,20 +1015,17 @@ where
 
     if calculate_state_root {
         let state_provider = state.database.as_ref();
-        hashed_state = state_provider.hashed_post_state(execution_outcome.state());
-        (state_root, trie_output) = {
-            state
-                .database
-                .as_ref()
-                .state_root_with_updates(hashed_state.clone())
-                .inspect_err(|err| {
-                    warn!(target: "payload_builder",
-                    parent_header=%ctx.parent().hash(),
-                        %err,
-                        "failed to calculate state root for payload"
-                    );
-                })?
-        };
+        let incremental_changes = info.incremental_changes[info.extra.last_flashblock_index..].to_vec();
+        let consistent_db = ConsistentDbView::new(state_provider, Some((ctx.parent().hash(), ctx.parent().number)));
+        let (state_root, metrics) = eth_sparse_mpt::calculate_root_hash_with_sparse_trie(
+            consistent_db,
+            &state.bundle_state,
+            incremental_changes.iter().flatten().collect(),
+            &ctx.sparse_trie_shared_cache,
+            sparse_trie_local_cache,
+            &None,
+            ETHSpareMPTVersion::V2
+        );
         let state_root_calculation_time = state_root_start_time.elapsed();
         ctx.metrics
             .state_root_calculation_duration
@@ -1161,4 +1193,29 @@ where
         ),
         fb_payload,
     ))
+}
+
+/// Spawns prefetcher
+pub(crate) fn spawn_prefetcher<Provider>(
+    db: ConsistentDbView<Provider>,
+    sparse_trie_shared_cache: &SparseTrieSharedCache,
+    prefetcher_rx: std::sync::mpsc::Receiver<EvmState>,
+) where
+    Provider: DatabaseProviderFactory<Provider: BlockReader> + Send + Sync,
+{
+    tokio::spawn(async move {
+        while let Ok(changes) = prefetcher_rx.recv() {
+            let res = eth_sparse_mpt::prefetch_tries_for_accounts(
+                db.clone(),
+                &sparse_trie_shared_cache,
+                changes,
+                eth_sparse_mpt::ETHSpareMPTVersion::V2,
+            );
+            match res {
+                Ok(num) => info!("fetched {} nodes", num),
+                Err(e) => error!("Failed while prefetching: {}", e),
+            }
+        }
+        error!("Transaction prefetching stopped");
+    });
 }

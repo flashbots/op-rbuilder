@@ -19,7 +19,6 @@ mod builder_tx;
 mod context;
 mod flashblocks;
 mod generator;
-mod standard;
 
 pub use builder_tx::{
     BuilderTransactionCtx, BuilderTransactionError, BuilderTransactions, InvalidContractDataError,
@@ -27,7 +26,6 @@ pub use builder_tx::{
 };
 pub use context::OpPayloadBuilderCtx;
 pub use flashblocks::FlashblocksBuilder;
-pub use standard::StandardBuilder;
 
 /// Defines the payload building mode for the OP builder.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

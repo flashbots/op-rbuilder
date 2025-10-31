@@ -386,6 +386,7 @@ fn execute_transactions(
             depositor_nonce,
             is_canyon_active,
         ));
+        info.incremental_changes.push(state.keys().collect());
 
         evm.db_mut().commit(state);
 
