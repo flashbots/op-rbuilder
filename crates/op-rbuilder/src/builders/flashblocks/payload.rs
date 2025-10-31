@@ -18,7 +18,7 @@ use alloy_consensus::{
 use alloy_eips::{Encodable2718, eip7685::EMPTY_REQUESTS_HASH, merge::BEACON_NONCE};
 use alloy_primitives::{Address, B256, U256, map::foldhash::HashMap};
 use core::time::Duration;
-use eyre::{ContextCompat, WrapErr as _};
+use eyre::WrapErr as _;
 use reth::payload::PayloadBuilderAttributes;
 use reth_basic_payload_builder::BuildOutcome;
 use reth_chain_state::{ExecutedBlock, ExecutedBlockWithTrieUpdates, ExecutedTrieUpdates};
@@ -36,13 +36,13 @@ use reth_provider::{
     ExecutionOutcome, HashedPostStateProvider, ProviderError, StateRootProvider,
     StorageRootProvider,
 };
+use reth_revm::db::CacheState;
 use reth_revm::{
     State, database::StateProviderDatabase, db::states::bundle_state::BundleRetention,
 };
 use reth_transaction_pool::{BestTransactions, TransactionPool};
 use reth_trie::{HashedPostState, updates::TrieUpdates};
 use revm::Database;
-use revm::database::BundleState;
 use rollup_boost::{
     ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, FlashblocksPayloadV1,
 };
@@ -303,7 +303,8 @@ where
 
         let timestamp = config.attributes.timestamp();
         let calculate_state_root = self.config.specific.calculate_state_root;
-        let enable_continuous_building = self.config.specific.enable_continuous_building;
+        //let enable_continuous_building = self.config.specific.enable_continuous_building;
+        let enable_continuous_building = true;
 
         let ctx = self
             .get_op_payload_builder_ctx(
@@ -811,6 +812,7 @@ where
     }
 
     /// Takes the current best flashblock candidate, execute new transaction and build a new candidate only if it's better
+    /// No state is mutated, but it can be applied later by replacing `state.cache` with the returned `CacheState`.
     #[expect(clippy::too_many_arguments)]
     fn refresh_best_flashblock_candidate<
         DB: Database<Error = ProviderError> + std::fmt::Debug + AsRef<P>,
@@ -821,10 +823,10 @@ where
             OpBuiltPayload,
             FlashblocksPayloadV1,
             ExecutionInfo<FlashblocksExecutionInfo>,
-            BundleState,
+            CacheState,
         )>,
-        info: &ExecutionInfo<FlashblocksExecutionInfo>,
         ctx: &OpPayloadBuilderCtx<FlashblocksExtraCtx>,
+        info: &ExecutionInfo<FlashblocksExecutionInfo>,
         state: &State<DB>,
         state_provider: impl reth::providers::StateProvider + Clone,
         best_txs: &mut NextBestFlashblocksTxs<Pool>,
@@ -834,9 +836,20 @@ where
         OpBuiltPayload,
         FlashblocksPayloadV1,
         ExecutionInfo<FlashblocksExecutionInfo>,
-        BundleState,
+        CacheState,
     )> {
-        // Update iterator
+        info!("[continuous] building new candidate");
+        // Clone execution info
+        let mut batch_info = info.clone();
+
+        // create simulation state
+        let mut simulation_state = State::builder()
+            .with_database(StateProviderDatabase::new(&state_provider))
+            .with_cached_prestate(state.cache.clone())
+            .with_bundle_update()
+            .build();
+
+        // Refresh pool txs
         best_txs.refresh_iterator(
             BestPayloadTransactions::new(
                 self.pool
@@ -846,22 +859,11 @@ where
             ctx.flashblock_index(),
         );
 
-        // Initialize empty execution info
-        let mut batch_info = info.clone();
-
-        // create simulation state
-        // todo/check: is this also taking into account current state only from state cache?
-        let mut simulation_state = State::builder()
-            .with_database(StateProviderDatabase::new(state_provider.clone()))
-            .with_cached_prestate(state.cache.clone())
-            .with_bundle_update()
-            .build();
-
         ctx.simulate_best_transactions(
             &mut batch_info,
             &mut simulation_state,
             best_txs,
-            target_gas_for_batch,
+            target_gas_for_batch.min(ctx.block_gas_limit()),
             target_da_for_batch,
         )
         .wrap_err("failed to execute best transactions")?;
@@ -889,6 +891,8 @@ where
             return Ok(best.expect("safe: best matched Some"));
         }
 
+        info!("[continuous] new best candidate found!");
+
         // build block and return new best
         build_block(
             &mut simulation_state,
@@ -900,8 +904,7 @@ where
             fb.index = ctx.flashblock_index();
             fb.base = None;
 
-            simulation_state.merge_transitions(BundleRetention::Reverts);
-            (payload, fb, batch_info, simulation_state.take_bundle())
+            (payload, fb, batch_info, simulation_state.cache)
         })
         .wrap_err("failed to build payload")
     }
@@ -942,20 +945,19 @@ where
             *da_limit = da_limit.saturating_sub(builder_tx_da_size);
         }
 
-        let target_gas_for_batch = target_gas_for_batch.min(ctx.block_gas_limit());
-
+        // 2. --- Build candidates and update best ---
         let mut best: Option<(
             OpBuiltPayload,
             FlashblocksPayloadV1,
             ExecutionInfo<FlashblocksExecutionInfo>,
-            BundleState,
+            CacheState,
         )> = None;
 
-        // 2. --- Build candidates and update best ---
         loop {
             // If main token got canceled in here that means we received get_payload, and we should drop everything and not update best_payload
             // To ensure that we will return same blocks as rollup-boost (to leverage caches)
             if block_cancel.is_cancelled() {
+                info!("[continuous] block cancelled");
                 return Ok(None);
             }
             // interval end: abort worker and publish current best immediately (below)
@@ -964,11 +966,10 @@ where
             }
 
             // Build one candidate (blocking here)
-            // todo: would be best to build async and select on candidate_build/block_cancel/fb_cancel
             best = Some(self.refresh_best_flashblock_candidate(
                 best,
-                &*info,
                 &*ctx,
+                &*info,
                 state,
                 &state_provider,
                 best_txs,
@@ -977,28 +978,34 @@ where
             )?);
         }
 
+        info!("[continuous] interval finished, sending best");
+
         // 3. --- Cancellation token received, send best ---
-        let (payload, fb_payload, mut execution_info, _bundle_state) =
-            best.wrap_err("No best flashblock payload")?;
+        let (payload, fb_payload, execution_info, cache_state) = best.unwrap();
 
         // Apply state mutations from best
-        // todo, something like:
-        // state = StateBuilder::new()
-        //     .with_database(move state.database)
-        //     .with_bundle_prestate(bundle_state)
-        //     .build();
+        state.cache = cache_state;
 
+        // Mark selected transactions as commited
         let batch_new_transactions = execution_info.executed_transactions
             [execution_info.extra.last_flashblock_index..]
             .to_vec()
             .iter()
             .map(|tx| tx.tx_hash())
             .collect::<Vec<_>>();
-        // update best txns
+        // warn: it also marks the top of blocks builder_txs
         best_txs.mark_commited(batch_new_transactions);
 
         // update execution info
         *info = execution_info;
+
+        // Send payloads
+        let _flashblock_byte_size = self
+            .ws_pub
+            .publish(&fb_payload)
+            .wrap_err("failed to publish flashblock via websocket")?;
+        self.send_payload_to_engine(payload.clone());
+        best_payload.set(payload);
 
         // Update bundle_state for next iteration
         if let Some(da_limit) = ctx.extra_ctx.da_per_batch {
@@ -1016,15 +1023,6 @@ where
             .extra_ctx
             .clone()
             .next(target_gas_for_batch, target_da_for_batch);
-
-        // Send payloads
-        let _flashblock_byte_size = self
-            .ws_pub
-            .publish(&fb_payload)
-            .wrap_err("failed to publish flashblock via websocket")?;
-        self.send_payload_to_engine(payload.clone());
-        best_payload.set(payload);
-
         Ok(Some(next_extra_ctx))
     }
 
