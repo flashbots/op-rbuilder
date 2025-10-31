@@ -333,7 +333,7 @@ where
         let db = StateProviderDatabase::new(&state_provider);
         self.address_gas_limiter.refresh(ctx.block_number());
 
-        let consistent_db = ConsistentDbView::new(state_provider.clone(), Some((ctx.parent().hash(), ctx.parent().number)));
+        let consistent_db = ConsistentDbView::new(self.client.clone(), Some((ctx.parent().hash(), ctx.parent().number)));
         // spawn prefetches for eth-sparse-mpt
         spawn_prefetcher(consistent_db, &sparse_trie_shared_cache, prefetcher_rx);
 
@@ -372,11 +372,15 @@ where
         let builder_tx_gas = builder_txs.iter().fold(0, |acc, tx| acc + tx.gas_used);
         let builder_tx_da_size: u64 = builder_txs.iter().fold(0, |acc, tx| acc + tx.da_size);
 
+        let mut sparse_trie_local_cache = SparseTrieLocalCache::default();
+
+
         let (payload, fb_payload) = build_block(
             &mut state,
             &ctx,
             &mut info,
             calculate_state_root || ctx.attributes().no_tx_pool, // need to calculate state root for CL sync
+            &mut sparse_trie_local_cache,
         )?;
 
         self.payload_tx
@@ -527,8 +531,6 @@ where
                 }
             }
         });
-
-        let mut sparse_trie_local_cache = SparseTrieLocalCache::default();
 
         // Process flashblocks in a blocking loop
         loop {
