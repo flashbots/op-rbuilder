@@ -244,9 +244,18 @@ pub trait BuilderTransactions<ExtraCtx: Debug + Default = (), Extra: Debug + Def
                     cumulative_gas_used: info.cumulative_gas_used,
                 };
                 info.receipts.push(builder_ctx.build_receipt(ctx, None));
+                info.incremental_changes.push(state.keys().collect());
 
                 // Commit changes
                 evm.db_mut().commit(state);
+
+                // Send changes to prefetcher
+                let _ = builder_ctx
+                    .prefetcher_tx
+                    .send(state.clone())
+                    .inspect_err(|err| {
+                        warn!("Failed to send prefetch state: {}", err);
+                    });
 
                 // Append sender and transaction to the respective lists
                 info.executed_senders.push(builder_tx.signed_tx.signer());

@@ -5,9 +5,10 @@ use alloy_op_evm::block::receipt_builder::OpReceiptBuilder;
 use alloy_primitives::{BlockHash, Bytes, U256};
 use alloy_rpc_types_eth::Withdrawals;
 use core::fmt::Debug;
+use eth_sparse_mpt::{ChangedAccountData, SparseTrieLocalCache, SparseTrieSharedCache};
 use op_alloy_consensus::OpDepositReceipt;
 use op_revm::OpSpecId;
-use reth::payload::PayloadBuilderAttributes;
+use reth::{payload::PayloadBuilderAttributes, revm::state::AccountStatus};
 use reth_basic_payload_builder::PayloadConfig;
 use reth_chainspec::{EthChainSpec, EthereumHardforks};
 use reth_evm::{
@@ -30,10 +31,12 @@ use reth_primitives::SealedHeader;
 use reth_primitives_traits::{InMemorySize, SignedTransaction};
 use reth_revm::{State, context::Block};
 use reth_transaction_pool::{BestTransactionsAttributes, PoolTransaction};
-use revm::{DatabaseCommit, context::result::ResultAndState, interpreter::as_u64_saturated};
+use revm::{
+    DatabaseCommit, context::result::ResultAndState, interpreter::as_u64_saturated, state::EvmState,
+};
 use std::{sync::Arc, time::Instant};
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, info, trace};
+use tracing::{debug, info, trace, warn};
 
 use crate::{
     gas_limiter::AddressGasLimiter,
@@ -71,6 +74,10 @@ pub struct OpPayloadBuilderCtx<ExtraCtx: Debug + Default = ()> {
     pub max_gas_per_txn: Option<u64>,
     /// Rate limiting based on gas. This is an optional feature.
     pub address_gas_limiter: AddressGasLimiter,
+    /// channel to send applied changed to state root hasher prefetcher
+    pub prefetcher_tx: std::sync::mpsc::Sender<EvmState>,
+    /// shared cache used by state root calculator
+    pub sparse_trie_shared_cache: SparseTrieSharedCache,
 }
 
 impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
@@ -314,7 +321,7 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
                 cumulative_gas_used: info.cumulative_gas_used,
             };
             info.receipts.push(self.build_receipt(ctx, depositor_nonce));
-
+            info.incremental_changes.push(state.keys().collect());
             // commit changes
             evm.db_mut().commit(state);
 
@@ -336,6 +343,7 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
         best_txs: &mut impl PayloadTxsBounds,
         block_gas_limit: u64,
         block_da_limit: Option<u64>,
+        prefetcher_tx: std::sync::mpsc::Sender<EvmState>,
     ) -> Result<Option<()>, PayloadBuilderError> {
         let execute_txs_start_time = Instant::now();
         let mut num_txs_considered = 0;
@@ -529,9 +537,15 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
                 cumulative_gas_used: info.cumulative_gas_used,
             };
             info.receipts.push(self.build_receipt(ctx, None));
-
+            info.incremental_changes.push(state.keys().collect());
             // commit changes
-            evm.db_mut().commit(state);
+            evm.db_mut().commit(state.clone());
+
+            let _ = prefetcher_tx
+                .send(state)
+                .inspect_err(|err| {
+                    warn!("Failed to send prefetch state: {}", err);
+                });
 
             // update add to total fees
             let miner_fee = tx

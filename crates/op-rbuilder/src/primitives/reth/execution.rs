@@ -38,6 +38,9 @@ pub struct ExecutionInfo<Extra: Debug + Default = ()> {
     pub cumulative_da_bytes_used: u64,
     /// Tracks fees from executed mempool transactions
     pub total_fees: U256,
+    /// Incremental changes for state root calculation
+    /// Corresponds to transactions and list of addresses this transaction touched
+    pub incremental_changes: Vec<Vec<Address>>,
     /// Extra execution information that can be attached by individual builders.
     pub extra: Extra,
 }
@@ -53,6 +56,7 @@ impl<T: Debug + Default> ExecutionInfo<T> {
             cumulative_da_bytes_used: 0,
             total_fees: U256::ZERO,
             extra: Default::default(),
+            incremental_changes: Vec::with_capacity(capacity),
         }
     }
 

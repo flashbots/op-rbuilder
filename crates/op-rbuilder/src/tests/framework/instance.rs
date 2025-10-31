@@ -1,6 +1,6 @@
 use crate::{
     args::OpRbuilderArgs,
-    builders::{BuilderConfig, FlashblocksBuilder, PayloadBuilder, StandardBuilder},
+    builders::{BuilderConfig, FlashblocksBuilder, PayloadBuilder},
     primitives::reth::engine_api_builder::OpEngineApiBuilder,
     revert_protection::{EthApiExtServer, RevertProtectionExt},
     tests::{
@@ -187,16 +187,6 @@ impl LocalInstance {
             pool_observer: TransactionPoolObserver::new(pool_monitor, reverted_cache_clone),
             attestation_server,
         })
-    }
-
-    /// Creates new local instance of the OP builder node with the standard builder configuration.
-    /// This method prefunds the default accounts with 1 ETH each.
-    pub async fn standard() -> eyre::Result<Self> {
-        let args = crate::args::Cli::parse_from(["dummy", "node"]);
-        let Commands::Node(ref node_command) = args.command else {
-            unreachable!()
-        };
-        Self::new::<StandardBuilder>(node_command.ext.clone()).await
     }
 
     /// Creates new local instance of the OP builder node with the flashblocks builder configuration.

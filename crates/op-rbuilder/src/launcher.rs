@@ -3,7 +3,7 @@ use reth_optimism_rpc::OpEthApiBuilder;
 
 use crate::{
     args::*,
-    builders::{BuilderConfig, BuilderMode, FlashblocksBuilder, PayloadBuilder, StandardBuilder},
+    builders::{BuilderConfig, BuilderMode, FlashblocksBuilder, PayloadBuilder},
     metrics::{VERSION, record_flag_gauge_metrics},
     monitor_tx_pool::monitor_tx_pool,
     primitives::reth::engine_api_builder::OpEngineApiBuilder,
@@ -49,8 +49,6 @@ pub fn launch() -> Result<()> {
     match mode {
         BuilderMode::Standard => {
             tracing::info!("Starting OP builder in standard mode");
-            let launcher = BuilderLauncher::<StandardBuilder>::new();
-            cli_app.run(launcher)?;
         }
         BuilderMode::Flashblocks => {
             tracing::info!("Starting OP builder in flashblocks mode");
@@ -106,6 +104,7 @@ where
         let op_node = OpNode::new(rollup_args.clone());
         let reverted_cache = Cache::builder().max_capacity(100).build();
         let reverted_cache_copy = reverted_cache.clone();
+
 
         let mut addons: OpAddOns<
             _,
