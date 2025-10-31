@@ -121,7 +121,7 @@ where
                                 match res {
                                     Ok((payload, fb_payload)) => {
                                         tracing::info!(hash = payload.block().hash().to_string(), block_number = payload.block().header().number, "successfully executed received flashblock");
-                                        if let Err(e) = payload_events_handle.send(Events::BuiltPayload(payload.clone())) {
+                                        if let Err(e) = payload_events_handle.send(Events::BuiltPayload(payload)) {
                                             warn!(e = ?e, "failed to send BuiltPayload event on synced block");
                                         }
 
