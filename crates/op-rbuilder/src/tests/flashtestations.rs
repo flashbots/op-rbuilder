@@ -369,7 +369,6 @@ async fn test_flashtestations_permit_with_flashblocks_number_contract(
         registry_address: Some(FLASHTESTATION_REGISTRY_ADDRESS),
         builder_policy_address: Some(BLOCK_BUILDER_POLICY_ADDRESS),
         debug: true,
-        flashtestations_use_permit: true,
         enable_block_proofs: true,
         ..Default::default()
     },

@@ -159,7 +159,7 @@ impl FlashblocksNumberBuilderTx {
         evm: &mut OpEvm<impl Database + DatabaseRef, NoOpInspector, PrecompilesMap>,
     ) -> Result<BuilderTransactionCtx, BuilderTransactionError> {
         let calldata = IFlashblockNumber::incrementFlashblockNumberCall {};
-        self.increment_flashblocks_tx(calldata, &self.signer, ctx, evm)
+        self.increment_flashblocks_tx(calldata, ctx, evm)
     }
 
     fn increment_flashblocks_permit_signature(
@@ -197,13 +197,12 @@ impl FlashblocksNumberBuilderTx {
             currentFlashblockNumber: output,
             signature: signature.as_bytes().into(),
         };
-        self.increment_flashblocks_tx(calldata, flashtestations_signer, ctx, evm)
+        self.increment_flashblocks_tx(calldata, ctx, evm)
     }
 
     fn increment_flashblocks_tx<T: SolCall + Clone>(
         &self,
         calldata: T,
-        signer: &Signer,
         ctx: &OpPayloadBuilderCtx<FlashblocksExtraCtx>,
         evm: &mut OpEvm<impl Database + DatabaseRef, NoOpInspector, PrecompilesMap>,
     ) -> Result<BuilderTransactionCtx, BuilderTransactionError> {
@@ -215,7 +214,7 @@ impl FlashblocksNumberBuilderTx {
         )?;
         let signed_tx = self.sign_tx(
             self.flashblock_number_address,
-            *signer,
+            self.signer,
             gas_used,
             calldata.abi_encode().into(),
             ctx,
