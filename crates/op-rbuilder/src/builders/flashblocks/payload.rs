@@ -20,7 +20,7 @@ use alloy_primitives::{Address, B256, U256, map::foldhash::HashMap};
 use core::time::Duration;
 use reth::payload::PayloadBuilderAttributes;
 use reth_basic_payload_builder::BuildOutcome;
-use reth_chain_state::{ExecutedBlock, ExecutedBlockWithTrieUpdates, ExecutedTrieUpdates};
+use reth_chain_state::ExecutedBlock;
 use reth_evm::{ConfigureEvm, execute::BlockBuilder};
 use reth_node_api::{Block, NodePrimitives, PayloadBuilderError};
 use reth_optimism_consensus::{calculate_receipt_root_no_memo_optimism, isthmus};
@@ -1060,13 +1060,11 @@ where
     let recovered_block =
         RecoveredBlock::new_unhashed(block.clone(), info.executed_senders.clone());
     // create the executed block data
-    let executed: ExecutedBlockWithTrieUpdates<OpPrimitives> = ExecutedBlockWithTrieUpdates {
-        block: ExecutedBlock {
-            recovered_block: Arc::new(recovered_block),
-            execution_output: Arc::new(execution_outcome),
-            hashed_state: Arc::new(hashed_state),
-        },
-        trie: ExecutedTrieUpdates::Present(Arc::new(trie_output)),
+    let executed: ExecutedBlock<OpPrimitives> = ExecutedBlock {
+        recovered_block: Arc::new(recovered_block),
+        execution_output: Arc::new(execution_outcome),
+        hashed_state: Arc::new(hashed_state),
+        trie_updates: Arc::new(trie_output),
     };
     info!(target: "payload_builder", message = "Executed block created");
 

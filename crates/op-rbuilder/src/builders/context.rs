@@ -12,6 +12,7 @@ use reth_basic_payload_builder::PayloadConfig;
 use reth_chainspec::{EthChainSpec, EthereumHardforks};
 use reth_evm::{
     ConfigureEvm, Evm, EvmEnv, EvmError, InvalidTxError, eth::receipt_builder::ReceiptBuilderCtx,
+    op_revm::L1BlockInfo,
 };
 use reth_node_api::PayloadBuilderError;
 use reth_optimism_chainspec::OpChainSpec;
@@ -394,6 +395,15 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
                 }
             }
 
+            let da_footprint_gas_scalar = self
+                .chain_spec
+                .is_jovian_active_at_timestamp(self.attributes().timestamp())
+                .then_some(
+                    L1BlockInfo::fetch_da_footprint_gas_scalar(evm.db_mut()).expect(
+                        "DA footprint should always be available from the database post jovian",
+                    ),
+                );
+
             // ensure we still have capacity for this transaction
             if let Err(result) = info.is_tx_over_limits(
                 tx_da_size,
@@ -401,6 +411,7 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
                 tx_da_limit,
                 block_da_limit,
                 tx.gas_limit(),
+                da_footprint_gas_scalar,
             ) {
                 // we can't fit this transaction into the block, so we need to mark it as
                 // invalid which also removes all dependent transaction from
