@@ -149,11 +149,11 @@ pub struct FlashblocksArgs {
     )]
     pub flashblocks_leeway_time: u64,
 
-    /// Should we calculate state root for each flashblock
+    /// Whether to disable state root calculation for each flashblock
     #[arg(
-        long = "flashblocks.calculate-state-root",
-        default_value = "true",
-        env = "FLASHBLOCKS_CALCULATE_STATE_ROOT"
+        long = "flashblocks.disable-calculate-state-root",
+        default_value = "false",
+        env = "FLASHBLOCKS_DISABLE_STATE_ROOT_CALCULATION"
     )]
     pub flashblocks_calculate_state_root: bool,
 
