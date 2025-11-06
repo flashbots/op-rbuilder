@@ -286,6 +286,7 @@ where
             // Here we use parent token because child token handing is only for proper flashblocks
             cancel: block_cancel.clone(),
             da_config: self.config.da_config.clone(),
+            gas_limit_config: self.config.gas_limit_config.clone(),
             builder_signer: self.config.builder_signer,
             metrics: Default::default(),
             extra_ctx: FlashblocksExtraCtx {

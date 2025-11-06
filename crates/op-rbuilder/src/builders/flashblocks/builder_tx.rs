@@ -279,24 +279,24 @@ impl BuilderTransactions<FlashblocksExtraCtx> for FlashblocksNumberBuilderTx {
             }
         }
 
-        if ctx.is_last_flashblock() {
-            if let Some(flashtestations_builder_tx) = &self.flashtestations_builder_tx {
-                let flashblocks_builder_txs = builder_txs.clone();
-                let mut simulation_state = self.simulate_builder_txs_state::<FlashblocksExtraCtx>(
-                    state_provider.clone(),
-                    flashblocks_builder_txs.iter().collect(),
-                    ctx,
-                    db,
-                )?;
-                // We only include flashtestations txs in the last flashblock
-                let flashtestations_builder_txs = flashtestations_builder_tx.simulate_builder_txs(
-                    state_provider,
-                    info,
-                    ctx,
-                    &mut simulation_state,
-                )?;
-                builder_txs.extend(flashtestations_builder_txs);
-            }
+        if ctx.is_last_flashblock()
+            && let Some(flashtestations_builder_tx) = &self.flashtestations_builder_tx
+        {
+            let flashblocks_builder_txs = builder_txs.clone();
+            let mut simulation_state = self.simulate_builder_txs_state::<FlashblocksExtraCtx>(
+                state_provider.clone(),
+                flashblocks_builder_txs.iter().collect(),
+                ctx,
+                db,
+            )?;
+            // We only include flashtestations txs in the last flashblock
+            let flashtestations_builder_txs = flashtestations_builder_tx.simulate_builder_txs(
+                state_provider,
+                info,
+                ctx,
+                &mut simulation_state,
+            )?;
+            builder_txs.extend(flashtestations_builder_txs);
         }
 
         Ok(builder_txs)

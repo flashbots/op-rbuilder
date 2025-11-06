@@ -19,7 +19,10 @@ use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
 use reth_optimism_forks::OpHardforks;
 use reth_optimism_node::OpPayloadBuilderAttributes;
-use reth_optimism_payload_builder::{config::OpDAConfig, error::OpPayloadBuilderError};
+use reth_optimism_payload_builder::{
+    config::{OpDAConfig, OpGasLimitConfig},
+    error::OpPayloadBuilderError,
+};
 use reth_optimism_primitives::{OpReceipt, OpTransactionSigned};
 use reth_optimism_txpool::{
     conditional::MaybeConditionalTransaction,
@@ -52,6 +55,8 @@ pub struct OpPayloadBuilderCtx<ExtraCtx: Debug + Default = ()> {
     pub evm_config: OpEvmConfig,
     /// The DA config for the payload builder
     pub da_config: OpDAConfig,
+    // Gas limit configuration for the payload builder
+    pub gas_limit_config: OpGasLimitConfig,
     /// The chainspec
     pub chain_spec: Arc<OpChainSpec>,
     /// How to build the payload.
@@ -94,9 +99,13 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
 
     /// Returns the block gas limit to target.
     pub(super) fn block_gas_limit(&self) -> u64 {
-        self.attributes()
-            .gas_limit
-            .unwrap_or(self.evm_env.block_env.gas_limit)
+        match self.gas_limit_config.gas_limit() {
+            Some(gas_limit) => gas_limit,
+            None => self
+                .attributes()
+                .gas_limit
+                .unwrap_or(self.evm_env.block_env.gas_limit),
+        }
     }
 
     /// Returns the block number for the block.
@@ -501,12 +510,12 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
 
             // add gas used by the transaction to cumulative gas used, before creating the
             // receipt
-            if let Some(max_gas_per_txn) = self.max_gas_per_txn {
-                if gas_used > max_gas_per_txn {
-                    log_txn(TxnExecutionResult::MaxGasUsageExceeded);
-                    best_txs.mark_invalid(tx.signer(), tx.nonce());
-                    continue;
-                }
+            if let Some(max_gas_per_txn) = self.max_gas_per_txn
+                && gas_used > max_gas_per_txn
+            {
+                log_txn(TxnExecutionResult::MaxGasUsageExceeded);
+                best_txs.mark_invalid(tx.signer(), tx.nonce());
+                continue;
             }
 
             info.cumulative_gas_used += gas_used;

@@ -231,6 +231,7 @@ where
         let ctx = OpPayloadBuilderCtx {
             evm_config: self.evm_config.clone(),
             da_config: self.config.da_config.clone(),
+            gas_limit_config: self.config.gas_limit_config.clone(),
             chain_spec,
             config,
             evm_env,
@@ -565,11 +566,12 @@ impl<Txs: PayloadTxsBounds> OpBuilder<'_, Txs> {
 
         // create the executed block data
         let executed: ExecutedBlock<OpPrimitives> = ExecutedBlock {
-            recovered_block: Arc::new(RecoveredBlock::<
-                alloy_consensus::Block<OpTransactionSigned>,
-            >::new_sealed(
-                sealed_block.as_ref().clone(), info.executed_senders
-            )),
+            recovered_block: Arc::new(
+                RecoveredBlock::<alloy_consensus::Block<OpTransactionSigned>>::new_sealed(
+                    sealed_block.as_ref().clone(),
+                    info.executed_senders,
+                ),
+            ),
             execution_output: Arc::new(execution_outcome),
             hashed_state: Arc::new(hashed_state),
             trie_updates: Arc::new(trie_output),

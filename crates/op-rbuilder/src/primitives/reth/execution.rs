@@ -76,9 +76,7 @@ impl<T: Debug + Default> ExecutionInfo<T> {
         }
         let total_da_bytes_used = self.cumulative_da_bytes_used.saturating_add(tx_da_size);
 
-        if block_data_limit
-            .is_some_and(|da_limit| total_da_bytes_used > da_limit)
-        {
+        if block_data_limit.is_some_and(|da_limit| total_da_bytes_used > da_limit) {
             return Err(TxnExecutionResult::BlockDALimitExceeded(
                 self.cumulative_da_bytes_used,
                 tx_da_size,

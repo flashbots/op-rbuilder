@@ -120,13 +120,13 @@ where
             |shutdown| {
                 Box::pin(async move {
                     let graceful_guard = shutdown.await;
-                    if let Some(tx_manager) = tx_manager {
-                        if let Err(e) = tx_manager.clean_up().await {
-                            warn!(
-                                error = %e,
-                                "Failed to complete clean up for flashtestations service",
-                            );
-                        }
+                    if let Some(tx_manager) = tx_manager
+                        && let Err(e) = tx_manager.clean_up().await
+                    {
+                        warn!(
+                            error = %e,
+                            "Failed to complete clean up for flashtestations service",
+                        );
                     }
                     drop(graceful_guard)
                 })
