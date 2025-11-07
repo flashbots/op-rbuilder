@@ -208,7 +208,7 @@ pub fn record_flag_gauge_metrics(builder_args: &OpRbuilderArgs) {
 /// Record TEE workload ID and measurement metrics
 /// Parses the quote, computes workload ID, and records workload_id, mr_td (TEE measurement), and rt_mr0 (runtime measurement register 0)
 /// These identify the trusted execution environment configuration provided by GCP
-pub fn record_tee_metrics(raw_quote: &[u8]) -> eyre::Result<()> {
+pub fn record_tee_metrics(raw_quote: &[u8], tee_address: &Address) -> eyre::Result<()> {
     let parsed_quote = parse_report_body(raw_quote)?;
     let workload_id = compute_workload_id_from_parsed(&parsed_quote);
 
@@ -219,6 +219,10 @@ pub fn record_tee_metrics(raw_quote: &[u8]) -> eyre::Result<()> {
     let workload_id_static: &'static str = Box::leak(workload_id_hex.into_boxed_str());
     let mr_td_static: &'static str = Box::leak(mr_td_hex.into_boxed_str());
     let rt_mr0_static: &'static str = Box::leak(rt_mr0_hex.into_boxed_str());
+
+    // Record TEE address
+    let tee_address_labels: [(&str, &str); 1] = [("tee_address", tee_address.to_string().as_str())];
+    gauge!("op_rbuilder_tee_address", &tee_address_labels).set(1);
 
     // Record workload ID
     let workload_labels: [(&str, &str); 1] = [("workload_id", workload_id_static)];
