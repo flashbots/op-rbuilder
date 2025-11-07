@@ -1,3 +1,4 @@
+use alloy_primitives::{Address, hex};
 use metrics::IntoF64;
 use reth_metrics::{
     Metrics,
@@ -216,12 +217,13 @@ pub fn record_tee_metrics(raw_quote: &[u8], tee_address: &Address) -> eyre::Resu
     let mr_td_hex = hex::encode(parsed_quote.mr_td);
     let rt_mr0_hex = hex::encode(parsed_quote.rt_mr0);
 
+    let tee_address_static: &'static str = Box::leak(tee_address.to_string().into_boxed_str());
     let workload_id_static: &'static str = Box::leak(workload_id_hex.into_boxed_str());
     let mr_td_static: &'static str = Box::leak(mr_td_hex.into_boxed_str());
     let rt_mr0_static: &'static str = Box::leak(rt_mr0_hex.into_boxed_str());
 
     // Record TEE address
-    let tee_address_labels: [(&str, &str); 1] = [("tee_address", tee_address.to_string().as_str())];
+    let tee_address_labels: [(&str, &str); 1] = [("tee_address", tee_address_static)];
     gauge!("op_rbuilder_tee_address", &tee_address_labels).set(1);
 
     // Record workload ID

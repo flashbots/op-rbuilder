@@ -76,7 +76,7 @@ where
     let attestation = attestation_provider.get_attestation(report_data).await?;
 
     // Record TEE metrics (workload ID, MRTD, RTMR0)
-    record_tee_metrics(&attestation, tee_service_signer.address)?;
+    record_tee_metrics(&attestation, &tee_service_signer.address)?;
 
     // Use an external rpc when the builder is not the same as the builder actively building blocks onchain
     let registered = if let Some(rpc_url) = args.rpc_url {
