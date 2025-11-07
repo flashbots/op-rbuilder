@@ -100,6 +100,7 @@ async-trait = { workspace = true }
 clap_builder = { workspace = true }
 clap.workspace = true
 derive_more.workspace = true
+either.workspace = true
 metrics.workspace = true
 serde_json.workspace = true
 tokio-util.workspace = true
