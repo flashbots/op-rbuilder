@@ -16,6 +16,21 @@ const TD_TDATTRS_VE_DISABLED: u64 = 0x0000000010000000;
 const TD_TDATTRS_PKS: u64 = 0x0000000040000000;
 const TD_TDATTRS_KL: u64 = 0x0000000080000000;
 
+/// Parsed TDX quote report body containing measurement registers and attributes
+#[derive(Debug, Clone)]
+pub struct ParsedQuote {
+    pub mr_td: [u8; 48],
+    pub rt_mr0: [u8; 48],
+    pub rt_mr1: [u8; 48],
+    pub rt_mr2: [u8; 48],
+    pub rt_mr3: [u8; 48],
+    pub mr_config_id: [u8; 48],
+    pub mr_owner: [u8; 48],
+    pub mr_owner_config: [u8; 48],
+    pub xfam: u64,
+    pub td_attributes: u64,
+}
+
 /// Configuration for attestation
 #[derive(Default)]
 pub struct AttestationConfig {
@@ -77,11 +92,10 @@ pub fn get_attestation_provider(config: AttestationConfig) -> RemoteAttestationP
     }
 }
 
-/// ComputeWorkloadID computes the workload ID from Automata's serialized verifier output
-/// This corresponds to QuoteParser.parseV4VerifierOutput in Solidity implementation
+/// Parse the TDX report body from a raw quote
+/// Extracts measurement registers and attributes according to TD10ReportBody specification
 /// https://github.com/flashbots/flashtestations/tree/7cc7f68492fe672a823dd2dead649793aac1f216
-/// The workload ID uniquely identifies a TEE workload based on its measurement registers
-pub fn compute_workload_id(raw_quote: &[u8]) -> eyre::Result<[u8; 32]> {
+pub fn parse_report_body(raw_quote: &[u8]) -> eyre::Result<ParsedQuote> {
     // Validate quote length
     if raw_quote.len() < HEADER_LENGTH + TD_REPORT10_LENGTH {
         eyre::bail!(
@@ -96,18 +110,62 @@ pub fn compute_workload_id(raw_quote: &[u8]) -> eyre::Result<[u8; 32]> {
 
     // Extract fields exactly as parseRawReportBody does in Solidity
     // Using hardcoded offsets to match Solidity implementation exactly
-    let mr_td = &report_body[136..136 + 48];
-    let rt_mr0 = &report_body[328..328 + 48];
-    let rt_mr1 = &report_body[376..376 + 48];
-    let rt_mr2 = &report_body[424..424 + 48];
-    let rt_mr3 = &report_body[472..472 + 48];
-    let mr_config_id = &report_body[184..184 + 48];
+    let mr_td: [u8; 48] = report_body[136..136 + 48]
+        .try_into()
+        .map_err(|_| eyre::eyre!("failed to extract mr_td"))?;
+    let rt_mr0: [u8; 48] = report_body[328..328 + 48]
+        .try_into()
+        .map_err(|_| eyre::eyre!("failed to extract rt_mr0"))?;
+    let rt_mr1: [u8; 48] = report_body[376..376 + 48]
+        .try_into()
+        .map_err(|_| eyre::eyre!("failed to extract rt_mr1"))?;
+    let rt_mr2: [u8; 48] = report_body[424..424 + 48]
+        .try_into()
+        .map_err(|_| eyre::eyre!("failed to extract rt_mr2"))?;
+    let rt_mr3: [u8; 48] = report_body[472..472 + 48]
+        .try_into()
+        .map_err(|_| eyre::eyre!("failed to extract rt_mr3"))?;
+    let mr_config_id: [u8; 48] = report_body[184..184 + 48]
+        .try_into()
+        .map_err(|_| eyre::eyre!("failed to extract mr_config_id"))?;
+    let mr_owner: [u8; 48] = report_body[232..232 + 48]
+        .try_into()
+        .map_err(|_| eyre::eyre!("failed to extract mr_owner"))?;
+    let mr_owner_config: [u8; 48] = report_body[280..280 + 48]
+        .try_into()
+        .map_err(|_| eyre::eyre!("failed to extract mr_owner_config"))?;
 
     // Extract xFAM and tdAttributes (8 bytes each)
     // In Solidity, bytes8 is treated as big-endian for bitwise operations
-    let xfam = u64::from_be_bytes(report_body[128..128 + 8].try_into().unwrap());
-    let td_attributes = u64::from_be_bytes(report_body[120..120 + 8].try_into().unwrap());
+    let xfam = u64::from_be_bytes(
+        report_body[128..128 + 8]
+            .try_into()
+            .map_err(|e| eyre::eyre!("failed to parse xfam: {}", e))?,
+    );
+    let td_attributes = u64::from_be_bytes(
+        report_body[120..120 + 8]
+            .try_into()
+            .map_err(|e| eyre::eyre!("failed to parse td_attributes: {}", e))?,
+    );
 
+    Ok(ParsedQuote {
+        mr_td,
+        rt_mr0,
+        rt_mr1,
+        rt_mr2,
+        rt_mr3,
+        mr_config_id,
+        mr_owner,
+        mr_owner_config,
+        xfam,
+        td_attributes,
+    })
+}
+
+/// Compute workload ID from parsed quote data
+/// This corresponds to QuoteParser.parseV4VerifierOutput in Solidity implementation
+/// The workload ID uniquely identifies a TEE workload based on its measurement registers
+pub fn compute_workload_id_from_parsed(parsed: &ParsedQuote) -> [u8; 32] {
     // Apply transformations as per the Solidity implementation
     // expectedXfamBits = TD_XFAM_FPU | TD_XFAM_SSE
     let expected_xfam_bits = TD_XFAM_FPU | TD_XFAM_SSE;
@@ -116,10 +174,10 @@ pub fn compute_workload_id(raw_quote: &[u8]) -> eyre::Result<[u8; 32]> {
     let ignored_td_attributes_bitmask = TD_TDATTRS_VE_DISABLED | TD_TDATTRS_PKS | TD_TDATTRS_KL;
 
     // Transform xFAM: xFAM ^ expectedXfamBits
-    let transformed_xfam = xfam ^ expected_xfam_bits;
+    let transformed_xfam = parsed.xfam ^ expected_xfam_bits;
 
     // Transform tdAttributes: tdAttributes & ~ignoredTdAttributesBitmask
-    let transformed_td_attributes = td_attributes & !ignored_td_attributes_bitmask;
+    let transformed_td_attributes = parsed.td_attributes & !ignored_td_attributes_bitmask;
 
     // Convert transformed values to bytes (big-endian, to match Solidity bytes8)
     let xfam_bytes = transformed_xfam.to_be_bytes();
@@ -127,12 +185,12 @@ pub fn compute_workload_id(raw_quote: &[u8]) -> eyre::Result<[u8; 32]> {
 
     // Concatenate all fields
     let mut concatenated = Vec::new();
-    concatenated.extend_from_slice(mr_td);
-    concatenated.extend_from_slice(rt_mr0);
-    concatenated.extend_from_slice(rt_mr1);
-    concatenated.extend_from_slice(rt_mr2);
-    concatenated.extend_from_slice(rt_mr3);
-    concatenated.extend_from_slice(mr_config_id);
+    concatenated.extend_from_slice(&parsed.mr_td);
+    concatenated.extend_from_slice(&parsed.rt_mr0);
+    concatenated.extend_from_slice(&parsed.rt_mr1);
+    concatenated.extend_from_slice(&parsed.rt_mr2);
+    concatenated.extend_from_slice(&parsed.rt_mr3);
+    concatenated.extend_from_slice(&parsed.mr_config_id);
     concatenated.extend_from_slice(&xfam_bytes);
     concatenated.extend_from_slice(&td_attributes_bytes);
 
@@ -144,7 +202,14 @@ pub fn compute_workload_id(raw_quote: &[u8]) -> eyre::Result<[u8; 32]> {
     let mut workload_id = [0u8; 32];
     workload_id.copy_from_slice(&result);
 
-    Ok(workload_id)
+    workload_id
+}
+
+/// Compute workload ID from raw quote bytes
+/// This is a convenience function that combines parsing and computation
+pub fn compute_workload_id(raw_quote: &[u8]) -> eyre::Result<[u8; 32]> {
+    let parsed = parse_report_body(raw_quote)?;
+    Ok(compute_workload_id_from_parsed(&parsed))
 }
 
 #[cfg(test)]

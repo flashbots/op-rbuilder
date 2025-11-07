@@ -4,7 +4,10 @@ use reth_metrics::{
     metrics::{Counter, Gauge, Histogram, gauge},
 };
 
-use crate::args::OpRbuilderArgs;
+use crate::{
+    args::OpRbuilderArgs,
+    flashtestations::attestation::{compute_workload_id_from_parsed, parse_report_body},
+};
 
 /// The latest version from Cargo.toml.
 pub const CARGO_PKG_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -202,13 +205,34 @@ pub fn record_flag_gauge_metrics(builder_args: &OpRbuilderArgs) {
         .set(builder_args.enable_revert_protection as i32);
 }
 
-/// Set the workload id metrics
-pub fn record_workload_id_metrics(workload_id: [u8; 32]) {
-    let encoded = hex::encode(workload_id);
-    let encoded_static: &'static str = Box::leak(encoded.into_boxed_str());
-    let labels: [(&str, &str); 1] = [("workload_id", encoded_static)];
-    let gauge = gauge!("op_rbuilder_workload_id", &labels);
-    gauge.set(1);
+/// Record TEE workload ID and measurement metrics
+/// Parses the quote, computes workload ID, and records workload_id, mr_td (TEE measurement), and rt_mr0 (runtime measurement register 0)
+/// These identify the trusted execution environment configuration provided by GCP
+pub fn record_tee_metrics(raw_quote: &[u8]) -> eyre::Result<()> {
+    let parsed_quote = parse_report_body(raw_quote)?;
+    let workload_id = compute_workload_id_from_parsed(&parsed_quote);
+
+    let workload_id_hex = hex::encode(workload_id);
+    let mr_td_hex = hex::encode(parsed_quote.mr_td);
+    let rt_mr0_hex = hex::encode(parsed_quote.rt_mr0);
+
+    let workload_id_static: &'static str = Box::leak(workload_id_hex.into_boxed_str());
+    let mr_td_static: &'static str = Box::leak(mr_td_hex.into_boxed_str());
+    let rt_mr0_static: &'static str = Box::leak(rt_mr0_hex.into_boxed_str());
+
+    // Record workload ID
+    let workload_labels: [(&str, &str); 1] = [("workload_id", workload_id_static)];
+    gauge!("op_rbuilder_tee_workload_id", &workload_labels).set(1);
+
+    // Record MRTD (TEE measurement)
+    let mr_td_labels: [(&str, &str); 1] = [("mr_td", mr_td_static)];
+    gauge!("op_rbuilder_tee_mr_td", &mr_td_labels).set(1);
+
+    // Record RTMR0 (runtime measurement register 0)
+    let rt_mr0_labels: [(&str, &str); 1] = [("rt_mr0", rt_mr0_static)];
+    gauge!("op_rbuilder_tee_rt_mr0", &rt_mr0_labels).set(1);
+
+    Ok(())
 }
 
 /// Contains version information for the application.
