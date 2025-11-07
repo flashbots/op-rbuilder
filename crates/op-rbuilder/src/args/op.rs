@@ -151,11 +151,11 @@ pub struct FlashblocksArgs {
 
     /// Whether to disable state root calculation for each flashblock
     #[arg(
-        long = "flashblocks.disable-calculate-state-root",
+        long = "flashblocks.disable-state-root",
         default_value = "false",
-        env = "FLASHBLOCKS_DISABLE_STATE_ROOT_CALCULATION"
+        env = "FLASHBLOCKS_DISABLE_STATE_ROOT"
     )]
-    pub flashblocks_calculate_state_root: bool,
+    pub flashblocks_disable_state_root: bool,
 
     /// Flashblocks number contract address
     ///
