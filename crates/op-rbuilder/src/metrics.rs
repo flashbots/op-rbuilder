@@ -202,6 +202,15 @@ pub fn record_flag_gauge_metrics(builder_args: &OpRbuilderArgs) {
         .set(builder_args.enable_revert_protection as i32);
 }
 
+/// Set the workload id metrics
+pub fn record_workload_id_metrics(workload_id: [u8; 32]) {
+    let encoded = hex::encode(workload_id);
+    let encoded_static: &'static str = Box::leak(encoded.into_boxed_str());
+    let labels: [(&str, &str); 1] = [("workload_id", encoded_static)];
+    let gauge = gauge!("op_rbuilder_workload_id", &labels);
+    gauge.set(1);
+}
+
 /// Contains version information for the application.
 #[derive(Debug, Clone)]
 pub struct VersionInfo {

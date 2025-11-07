@@ -13,7 +13,11 @@ use super::{
     tx_manager::TxManager,
 };
 use crate::{
-    flashtestations::builder_tx::{FlashtestationsBuilderTx, FlashtestationsBuilderTxArgs},
+    flashtestations::{
+        attestation::compute_workload_id,
+        builder_tx::{FlashtestationsBuilderTx, FlashtestationsBuilderTxArgs},
+    },
+    metrics::record_workload_id_metrics,
     tx_signer::{Signer, generate_key_from_seed, generate_signer},
 };
 use std::fmt::Debug;
@@ -73,6 +77,10 @@ where
     // Request TDX attestation
     info!(target: "flashtestations", "requesting TDX attestation");
     let attestation = attestation_provider.get_attestation(report_data).await?;
+
+    // Compute workload id and record metrics
+    let workload_id = compute_workload_id(&attestation)?;
+    record_workload_id_metrics(workload_id);
 
     // Use an external rpc when the builder is not the same as the builder actively building blocks onchain
     let registered = if let Some(rpc_url) = args.rpc_url {
