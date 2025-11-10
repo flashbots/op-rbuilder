@@ -329,9 +329,7 @@ impl BuilderTransactions<FlashblocksExtraCtx, FlashblocksExecutionInfo>
                 db,
                 top_of_block,
             ) {
-                Ok(flashtestations_builder_txs) => {
-                    builder_txs.extend(flashtestations_builder_txs)
-                }
+                Ok(flashtestations_builder_txs) => builder_txs.extend(flashtestations_builder_txs),
                 Err(e) => {
                     warn!(target: "flashtestations", error = ?e, "failed to add flashtestations builder tx")
                 }
