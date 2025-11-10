@@ -16,6 +16,23 @@ const TD_TDATTRS_VE_DISABLED: u64 = 0x0000000010000000;
 const TD_TDATTRS_PKS: u64 = 0x0000000040000000;
 const TD_TDATTRS_KL: u64 = 0x0000000080000000;
 
+// TD10ReportBody field offsets
+// These offsets correspond to the Solidity parseRawReportBody implementation
+const OFFSET_TD_ATTRIBUTES: usize = 120;
+const OFFSET_XFAM: usize = 128;
+const OFFSET_MR_TD: usize = 136;
+const OFFSET_MR_CONFIG_ID: usize = 184;
+const OFFSET_MR_OWNER: usize = 232;
+const OFFSET_MR_OWNER_CONFIG: usize = 280;
+const OFFSET_RT_MR0: usize = 328;
+const OFFSET_RT_MR1: usize = 376;
+const OFFSET_RT_MR2: usize = 424;
+const OFFSET_RT_MR3: usize = 472;
+
+// Field lengths
+const MEASUREMENT_REGISTER_LENGTH: usize = 48;
+const ATTRIBUTE_LENGTH: usize = 8;
+
 /// Parsed TDX quote report body containing measurement registers and attributes
 #[derive(Debug, Clone)]
 pub struct ParsedQuote {
@@ -109,41 +126,44 @@ pub fn parse_report_body(raw_quote: &[u8]) -> eyre::Result<ParsedQuote> {
     let report_body = &raw_quote[HEADER_LENGTH..];
 
     // Extract fields exactly as parseRawReportBody does in Solidity
-    // Using hardcoded offsets to match Solidity implementation exactly
-    let mr_td: [u8; 48] = report_body[136..136 + 48]
+    // Using named offset constants to match Solidity implementation exactly
+    let mr_td: [u8; 48] = report_body[OFFSET_MR_TD..OFFSET_MR_TD + MEASUREMENT_REGISTER_LENGTH]
         .try_into()
         .map_err(|_| eyre::eyre!("failed to extract mr_td"))?;
-    let rt_mr0: [u8; 48] = report_body[328..328 + 48]
+    let rt_mr0: [u8; 48] = report_body[OFFSET_RT_MR0..OFFSET_RT_MR0 + MEASUREMENT_REGISTER_LENGTH]
         .try_into()
         .map_err(|_| eyre::eyre!("failed to extract rt_mr0"))?;
-    let rt_mr1: [u8; 48] = report_body[376..376 + 48]
+    let rt_mr1: [u8; 48] = report_body[OFFSET_RT_MR1..OFFSET_RT_MR1 + MEASUREMENT_REGISTER_LENGTH]
         .try_into()
         .map_err(|_| eyre::eyre!("failed to extract rt_mr1"))?;
-    let rt_mr2: [u8; 48] = report_body[424..424 + 48]
+    let rt_mr2: [u8; 48] = report_body[OFFSET_RT_MR2..OFFSET_RT_MR2 + MEASUREMENT_REGISTER_LENGTH]
         .try_into()
         .map_err(|_| eyre::eyre!("failed to extract rt_mr2"))?;
-    let rt_mr3: [u8; 48] = report_body[472..472 + 48]
+    let rt_mr3: [u8; 48] = report_body[OFFSET_RT_MR3..OFFSET_RT_MR3 + MEASUREMENT_REGISTER_LENGTH]
         .try_into()
         .map_err(|_| eyre::eyre!("failed to extract rt_mr3"))?;
-    let mr_config_id: [u8; 48] = report_body[184..184 + 48]
+    let mr_config_id: [u8; 48] = report_body
+        [OFFSET_MR_CONFIG_ID..OFFSET_MR_CONFIG_ID + MEASUREMENT_REGISTER_LENGTH]
         .try_into()
         .map_err(|_| eyre::eyre!("failed to extract mr_config_id"))?;
-    let mr_owner: [u8; 48] = report_body[232..232 + 48]
+    let mr_owner: [u8; 48] = report_body
+        [OFFSET_MR_OWNER..OFFSET_MR_OWNER + MEASUREMENT_REGISTER_LENGTH]
         .try_into()
         .map_err(|_| eyre::eyre!("failed to extract mr_owner"))?;
-    let mr_owner_config: [u8; 48] = report_body[280..280 + 48]
+    let mr_owner_config: [u8; 48] = report_body
+        [OFFSET_MR_OWNER_CONFIG..OFFSET_MR_OWNER_CONFIG + MEASUREMENT_REGISTER_LENGTH]
         .try_into()
         .map_err(|_| eyre::eyre!("failed to extract mr_owner_config"))?;
 
     // Extract xFAM and tdAttributes (8 bytes each)
     // In Solidity, bytes8 is treated as big-endian for bitwise operations
     let xfam = u64::from_be_bytes(
-        report_body[128..128 + 8]
+        report_body[OFFSET_XFAM..OFFSET_XFAM + ATTRIBUTE_LENGTH]
             .try_into()
             .map_err(|e| eyre::eyre!("failed to parse xfam: {}", e))?,
     );
     let td_attributes = u64::from_be_bytes(
-        report_body[120..120 + 8]
+        report_body[OFFSET_TD_ATTRIBUTES..OFFSET_TD_ATTRIBUTES + ATTRIBUTE_LENGTH]
             .try_into()
             .map_err(|e| eyre::eyre!("failed to parse td_attributes: {}", e))?,
     );
