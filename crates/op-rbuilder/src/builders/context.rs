@@ -116,7 +116,7 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
     }
 
     /// Returns the block gas limit to target.
-    pub(super) fn block_gas_limit(&self) -> u64 {
+    pub fn block_gas_limit(&self) -> u64 {
         match self.gas_limit_config.gas_limit() {
             Some(gas_limit) => gas_limit,
             None => self

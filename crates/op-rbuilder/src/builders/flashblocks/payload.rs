@@ -29,7 +29,6 @@ use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
 use reth_optimism_forks::OpHardforks;
 use reth_optimism_node::{OpBuiltPayload, OpPayloadBuilderAttributes};
 use reth_optimism_primitives::{OpPrimitives, OpReceipt, OpTransactionSigned};
-use reth_payload_builder_primitives::Events;
 use reth_payload_primitives::BuiltPayloadExecutedBlock;
 use reth_payload_util::BestPayloadTransactions;
 use reth_primitives_traits::RecoveredBlock;
@@ -258,6 +257,7 @@ where
             block_env_attributes,
             cancel,
             da_config: self.config.da_config.clone(),
+            gas_limit_config: self.config.gas_limit_config.clone(),
             builder_signer: self.config.builder_signer,
             metrics: Default::default(),
             extra_ctx,
