@@ -7111,7 +7111,7 @@ dependencies = [
 
 [[package]]
 name = "op-rbuilder"
-version = "0.2.9"
+version = "0.2.10"
 dependencies = [
  "alloy-consensus",
  "alloy-contract",
@@ -7509,7 +7509,7 @@ dependencies = [
 
 [[package]]
 name = "p2p"
-version = "0.2.9"
+version = "0.2.10"
 dependencies = [
  "derive_more",
  "eyre",
