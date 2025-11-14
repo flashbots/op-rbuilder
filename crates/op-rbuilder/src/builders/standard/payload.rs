@@ -459,6 +459,11 @@ impl<Txs: PayloadTxsBounds> OpBuilder<'_, Txs> {
             };
 
         let block_number = ctx.block_number();
+        // OP doesn't support blobs/EIP-4844.
+        // https://specs.optimism.io/protocol/exec-engine.html#ecotone-disable-blob-transactions
+        // Need [Some] or [None] based on hardfork to match block hash.
+        let (excess_blob_gas, blob_gas_used) = ctx.blob_fields(&info);
+
         let execution_outcome = ExecutionOutcome::new(
             db.take_bundle(),
             vec![info.receipts],
@@ -521,10 +526,6 @@ impl<Txs: PayloadTxsBounds> OpBuilder<'_, Txs> {
         // create the block header
         let transactions_root = proofs::calculate_transaction_root(&info.executed_transactions);
 
-        // OP doesn't support blobs/EIP-4844.
-        // https://specs.optimism.io/protocol/exec-engine.html#ecotone-disable-blob-transactions
-        // Need [Some] or [None] based on hardfork to match block hash.
-        let (excess_blob_gas, blob_gas_used) = ctx.blob_fields();
         let extra_data = ctx.extra_data()?;
 
         let header = Header {

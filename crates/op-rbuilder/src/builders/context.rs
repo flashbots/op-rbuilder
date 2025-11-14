@@ -147,11 +147,14 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
     /// Returns the blob fields for the header.
     ///
     /// This will always return `Some(0)` after ecotone.
-    pub fn blob_fields(&self) -> (Option<u64>, Option<u64>) {
-        // OP doesn't support blobs/EIP-4844.
-        // https://specs.optimism.io/protocol/exec-engine.html#ecotone-disable-blob-transactions
-        // Need [Some] or [None] based on hardfork to match block hash.
-        if self.is_ecotone_active() {
+    pub fn blob_fields<Extra: Debug + Default>(&self, info: &ExecutionInfo<Extra>) -> (Option<u64>, Option<u64>) {
+        if self.is_jovian_active() {
+            let scalar = info.da_footprint_scalar.unwrap();
+            (Some(0), Some(info.cumulative_da_bytes_used * scalar as u64))
+        } else if self.is_ecotone_active() {
+            // OP doesn't support blobs/EIP-4844.
+            // https://specs.optimism.io/protocol/exec-engine.html#ecotone-disable-blob-transactions
+            // Need [Some] or [None] based on hardfork to match block hash.
             (Some(0), Some(0))
         } else {
             (None, None)
@@ -385,6 +388,17 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
             timestamp: self.attributes().timestamp(),
         };
 
+        let da_footprint_gas_scalar = self
+            .chain_spec
+            .is_jovian_active_at_timestamp(self.attributes().timestamp())
+            .then_some(
+                L1BlockInfo::fetch_da_footprint_gas_scalar(evm.db_mut()).expect(
+                    "DA footprint should always be available from the database post jovian",
+                ),
+            );
+
+        info.da_footprint_scalar = da_footprint_gas_scalar;
+
         while let Some(tx) = best_txs.next(()) {
             let interop = tx.interop_deadline();
             let reverted_hashes = tx.reverted_hashes().clone();
@@ -435,15 +449,6 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
                     continue;
                 }
             }
-
-            let da_footprint_gas_scalar = self
-                .chain_spec
-                .is_jovian_active_at_timestamp(self.attributes().timestamp())
-                .then_some(
-                    L1BlockInfo::fetch_da_footprint_gas_scalar(evm.db_mut()).expect(
-                        "DA footprint should always be available from the database post jovian",
-                    ),
-                );
 
             // ensure we still have capacity for this transaction
             if let Err(result) = info.is_tx_over_limits(
