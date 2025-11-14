@@ -162,7 +162,15 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
     ///
     /// After holocene this extracts the extradata from the payload
     pub fn extra_data(&self) -> Result<Bytes, PayloadBuilderError> {
-        if self.is_holocene_active() {
+        if self.is_jovian_active() {
+            self.attributes()
+                .get_jovian_extra_data(
+                    self.chain_spec.base_fee_params_at_timestamp(
+                        self.attributes().payload_attributes.timestamp,
+                    ),
+                )
+                .map_err(PayloadBuilderError::other)
+        } else if self.is_holocene_active() {
             self.attributes()
                 .get_holocene_extra_data(
                     self.chain_spec.base_fee_params_at_timestamp(
@@ -213,6 +221,12 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
     pub fn is_isthmus_active(&self) -> bool {
         self.chain_spec
             .is_isthmus_active_at_timestamp(self.attributes().timestamp())
+    }
+
+    /// Returns true if isthmus is active for the payload.
+    pub fn is_jovian_active(&self) -> bool {
+        self.chain_spec
+            .is_jovian_active_at_timestamp(self.attributes().timestamp())
     }
 
     /// Returns the chain id
