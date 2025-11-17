@@ -41,7 +41,7 @@ pub struct ExecutionInfo<Extra: Debug + Default = ()> {
     /// Extra execution information that can be attached by individual builders.
     pub extra: Extra,
     /// DA Footprint Scalar for Jovian
-    pub da_footprint_scalar: Option<u16>
+    pub da_footprint_scalar: Option<u16>,
 }
 
 impl<T: Debug + Default> ExecutionInfo<T> {

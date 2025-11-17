@@ -201,6 +201,21 @@ where
 
         let chain_spec = self.client.chain_spec();
         let timestamp = config.attributes.timestamp();
+
+        let extra_data = if chain_spec.is_jovian_active_at_timestamp(timestamp) {
+            config
+                .attributes
+                .get_jovian_extra_data(chain_spec.base_fee_params_at_timestamp(timestamp))
+                .map_err(PayloadBuilderError::other)?
+        } else if chain_spec.is_holocene_active_at_timestamp(timestamp) {
+            config
+                .attributes
+                .get_holocene_extra_data(chain_spec.base_fee_params_at_timestamp(timestamp))
+                .map_err(PayloadBuilderError::other)?
+        } else {
+            Default::default()
+        };
+
         let block_env_attributes = OpNextBlockEnvAttributes {
             timestamp,
             suggested_fee_recipient: config.attributes.suggested_fee_recipient(),
@@ -213,14 +228,7 @@ where
                 .attributes
                 .payload_attributes
                 .parent_beacon_block_root,
-            extra_data: if chain_spec.is_holocene_active_at_timestamp(timestamp) {
-                config
-                    .attributes
-                    .get_holocene_extra_data(chain_spec.base_fee_params_at_timestamp(timestamp))
-                    .map_err(PayloadBuilderError::other)?
-            } else {
-                Default::default()
-            },
+            extra_data,
         };
 
         let evm_env = self

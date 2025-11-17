@@ -146,15 +146,20 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
 
     /// Returns the blob fields for the header.
     ///
-    /// This will always return `Some(0)` after ecotone.
-    pub fn blob_fields<Extra: Debug + Default>(&self, info: &ExecutionInfo<Extra>) -> (Option<u64>, Option<u64>) {
+    /// This will return the culmative DA bytes * scalar after Jovian
+    /// after Ecotone, this will always return Some(0) as blobs aren't supported
+    /// pre Ecotone, these fields aren't used.
+    pub fn blob_fields<Extra: Debug + Default>(
+        &self,
+        info: &ExecutionInfo<Extra>,
+    ) -> (Option<u64>, Option<u64>) {
         if self.is_jovian_active() {
-            let scalar = info.da_footprint_scalar.unwrap();
-            (Some(0), Some(info.cumulative_da_bytes_used * scalar as u64))
+            let scalar = info
+                .da_footprint_scalar
+                .expect("Scalar must be defined for Jovian blocks");
+            let result = info.cumulative_da_bytes_used * scalar as u64;
+            (Some(0), Some(result))
         } else if self.is_ecotone_active() {
-            // OP doesn't support blobs/EIP-4844.
-            // https://specs.optimism.io/protocol/exec-engine.html#ecotone-disable-blob-transactions
-            // Need [Some] or [None] based on hardfork to match block hash.
             (Some(0), Some(0))
         } else {
             (None, None)
@@ -340,6 +345,7 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
                 state: &state,
                 cumulative_gas_used: info.cumulative_gas_used,
             };
+
             info.receipts.push(self.build_receipt(ctx, depositor_nonce));
 
             // commit changes
@@ -349,6 +355,16 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
             info.executed_senders.push(sequencer_tx.signer());
             info.executed_transactions.push(sequencer_tx.into_inner());
         }
+
+        let da_footprint_gas_scalar = self
+            .chain_spec
+            .is_jovian_active_at_timestamp(self.attributes().timestamp())
+            .then(|| {
+                L1BlockInfo::fetch_da_footprint_gas_scalar(evm.db_mut())
+                    .expect("DA footprint should always be available from the database post jovian")
+            });
+
+        info.da_footprint_scalar = da_footprint_gas_scalar;
 
         Ok(info)
     }
@@ -387,17 +403,6 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
             number: self.block_number(),
             timestamp: self.attributes().timestamp(),
         };
-
-        let da_footprint_gas_scalar = self
-            .chain_spec
-            .is_jovian_active_at_timestamp(self.attributes().timestamp())
-            .then_some(
-                L1BlockInfo::fetch_da_footprint_gas_scalar(evm.db_mut()).expect(
-                    "DA footprint should always be available from the database post jovian",
-                ),
-            );
-
-        info.da_footprint_scalar = da_footprint_gas_scalar;
 
         while let Some(tx) = best_txs.next(()) {
             let interop = tx.interop_deadline();
@@ -457,7 +462,7 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
                 tx_da_limit,
                 block_da_limit,
                 tx.gas_limit(),
-                da_footprint_gas_scalar,
+                info.da_footprint_scalar,
             ) {
                 // we can't fit this transaction into the block, so we need to mark it as
                 // invalid which also removes all dependent transaction from
