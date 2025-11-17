@@ -1,6 +1,7 @@
 use crate::tests::{BlockTransactionsExt, LocalInstance};
 use alloy_provider::Provider;
 use macros::{if_flashblocks, if_standard, rb_test};
+
 /// This test ensures that the miner gas limit is respected
 /// We will set the limit to 60,000 and see that the builder will not include any transactions
 #[rb_test]
@@ -29,24 +30,20 @@ async fn miner_gas_limit(rbuilder: LocalInstance) -> eyre::Result<()> {
 /// We will set our limit to 1Mgas and ensure that throttling occurs
 /// There is a deposit transaction for 182,706 gas, and builder transactions are 21,600 gas
 ///
-/// Standard = (1.03 million - 182,706 - 21,600) / 53,000 = 15.57 = 15 transactions can fit
-/// Flashblocks = (1.03 million - 182,706 - 21,600 - 21,600) / 53,000 = 15.17 = 15 transactions can fit
+/// Standard = (785,000 - 182,706 - 21,600) / 53,000 = 10.95 = 10 transactions can fit
+/// Flashblocks = (785,000 - 182,706 - 21,600 - 21,600) / 53,000 = 10.54 = 10 transactions can fit
 #[rb_test]
 async fn block_fill(rbuilder: LocalInstance) -> eyre::Result<()> {
-    if_flashblocks! {
-        return Ok(());
-    }
-
     let driver = rbuilder.driver().await?;
 
     let call = driver
         .provider()
-        .raw_request::<(u64,), bool>("miner_setGasLimit".into(), (1_030_000,))
+        .raw_request::<(u64,), bool>("miner_setGasLimit".into(), (785_000,))
         .await?;
     assert!(call, "miner_setGasLimit should be executed successfully");
 
     let mut tx_hashes = Vec::new();
-    for _ in 0..15 {
+    for _ in 0..10 {
         let tx = driver
             .create_transaction()
             .with_gas_limit(53000)
@@ -63,6 +60,7 @@ async fn block_fill(rbuilder: LocalInstance) -> eyre::Result<()> {
         .await?;
 
     let block = driver.build_new_block().await?;
+
     for (i, tx_hash) in tx_hashes.iter().enumerate() {
         assert!(
             block.includes(tx_hash),
@@ -79,7 +77,7 @@ async fn block_fill(rbuilder: LocalInstance) -> eyre::Result<()> {
     if_standard! {
         assert_eq!(
             block.transactions.len(),
-            17,
+            12,
             "deposit + builder + 15 valid txs should be in the block"
         );
     }
@@ -87,8 +85,8 @@ async fn block_fill(rbuilder: LocalInstance) -> eyre::Result<()> {
     if_flashblocks! {
         assert_eq!(
             block.transactions.len(),
-            18,
-            "deposit + 2 builder + 15 valid txs should be in the block"
+            13,
+            "deposit + builder + 15 valid txs should be in the block"
         );
     }
 
