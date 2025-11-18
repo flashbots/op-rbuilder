@@ -288,7 +288,7 @@ where
 
         // We log only every 100th block to reduce usage
         let span = if cfg!(feature = "telemetry")
-            && config.parent_header.number % self.config.sampling_ratio == 0
+            && config.parent_header.number.is_multiple_of(self.config.sampling_ratio)
         {
             span!(Level::INFO, "build_payload")
         } else {
