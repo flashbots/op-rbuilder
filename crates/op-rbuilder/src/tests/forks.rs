@@ -1,7 +1,7 @@
 use crate::tests::{BlockTransactionsExt, LocalInstance};
 use alloy_eips::{BlockNumberOrTag::Latest, eip1559::MIN_PROTOCOL_BASE_FEE};
 use alloy_primitives::bytes;
-use macros::rb_test;
+use macros::{if_flashblocks, if_standard, rb_test};
 use std::time::Duration;
 
 #[rb_test]
@@ -18,9 +18,15 @@ async fn jovian_block_parameters_set(rbuilder: LocalInstance) -> eyre::Result<()
 
     assert!(block.header.blob_gas_used.is_some());
 
-    // 2 transactions (excl. deposit txn) * (100 min size * 400 scalar)
-    // https://specs.optimism.io/protocol/fjord/exec-engine.html#l1-cost-fees-l1-fee-vault
-    assert_eq!(block.header.blob_gas_used.unwrap(), 80_000);
+    // Two user transactions + two builder transactions, all minimum size
+    if_flashblocks! {
+        assert_eq!(block.header.blob_gas_used.unwrap(), 160_000);
+    }
+
+    // Two user transactions + one builder transactions, all minimum size
+    if_standard! {
+        assert_eq!(block.header.blob_gas_used.unwrap(), 120_000);
+    }
 
     // Version byte
     assert_eq!(block.header.extra_data.slice(0..1), bytes!("0x01"));
