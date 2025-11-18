@@ -298,7 +298,10 @@ where
 
         // We log only every 100th block to reduce usage
         let span = if cfg!(feature = "telemetry")
-            && config.parent_header.number % self.config.sampling_ratio == 0
+            && config
+                .parent_header
+                .number
+                .is_multiple_of(self.config.sampling_ratio)
         {
             span!(Level::INFO, "build_payload")
         } else {
@@ -362,7 +365,6 @@ where
         // We subtract gas limit and da limit for builder transaction from the whole limit
         let builder_tx_gas = builder_txs.iter().fold(0, |acc, tx| acc + tx.gas_used);
         let builder_tx_da_size: u64 = builder_txs.iter().fold(0, |acc, tx| acc + tx.da_size);
-        info.cumulative_da_bytes_used += builder_tx_da_size;
 
         let (payload, fb_payload) = build_block(
             &mut state,
@@ -639,7 +641,6 @@ where
 
         let builder_tx_gas = builder_txs.iter().fold(0, |acc, tx| acc + tx.gas_used);
         let builder_tx_da_size: u64 = builder_txs.iter().fold(0, |acc, tx| acc + tx.da_size);
-        info.cumulative_da_bytes_used += builder_tx_da_size;
         target_gas_for_batch = target_gas_for_batch.saturating_sub(builder_tx_gas);
 
         // saturating sub just in case, we will log an error if da_limit too small for builder_tx_da_size

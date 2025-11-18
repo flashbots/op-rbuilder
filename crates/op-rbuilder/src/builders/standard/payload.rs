@@ -375,7 +375,6 @@ impl<Txs: PayloadTxsBounds> OpBuilder<'_, Txs> {
         }
         // Save some space in the block_da_limit for builder tx
         let builder_tx_da_size = builder_txs.iter().fold(0, |acc, tx| acc + tx.da_size);
-        info.cumulative_da_bytes_used += builder_tx_da_size;
         let block_da_limit = ctx
             .da_config
             .max_da_block_size()
