@@ -1,5 +1,5 @@
 use alloy_consensus::{Eip658Value, Transaction, conditional::BlockConditionalAttributes};
-use alloy_eips::Typed2718;
+use alloy_eips::{Encodable2718, Typed2718};
 use alloy_evm::Database;
 use alloy_op_evm::block::receipt_builder::OpReceiptBuilder;
 use alloy_primitives::{BlockHash, Bytes, U256};
@@ -337,6 +337,12 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
             // add gas used by the transaction to cumulative gas used, before creating the receipt
             let gas_used = result.gas_used();
             info.cumulative_gas_used += gas_used;
+
+            if !sequencer_tx.is_deposit() {
+                info.cumulative_da_bytes_used += op_alloy_flz::tx_estimated_size_fjord_bytes(
+                    sequencer_tx.encoded_2718().as_slice(),
+                );
+            }
 
             let ctx = ReceiptBuilderCtx {
                 tx: sequencer_tx.inner(),

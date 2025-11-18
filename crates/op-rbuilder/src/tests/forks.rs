@@ -1,5 +1,5 @@
 use crate::tests::{BlockTransactionsExt, LocalInstance};
-use alloy_eips::{BlockNumberOrTag::Latest, eip1559::MIN_PROTOCOL_BASE_FEE};
+use alloy_eips::{BlockNumberOrTag::Latest, Encodable2718, eip1559::MIN_PROTOCOL_BASE_FEE};
 use alloy_primitives::bytes;
 use macros::{if_flashblocks, if_standard, rb_test};
 use std::time::Duration;
@@ -36,6 +36,51 @@ async fn jovian_block_parameters_set(rbuilder: LocalInstance) -> eyre::Result<()
         block.header.extra_data.slice(9..=16),
         bytes!("0x0000000000000000"),
     );
+
+    Ok(())
+}
+
+#[rb_test]
+async fn jovian_no_tx_pool_sync(rbuilder: LocalInstance) -> eyre::Result<()> {
+    let driver = rbuilder.driver().await?;
+    let block = driver
+        .build_new_block_with_txs_timestamp(vec![], Some(true), None, None, Some(0))
+        .await?;
+
+    // Deposit transaction + user transaction
+    if_flashblocks! {
+        assert_eq!(block.transactions.len(), 1);
+        assert_eq!(block.header.blob_gas_used, Some(0));
+    }
+
+    // Standard includes a builder transaction when no-tx-pool is set
+    if_standard! {
+        assert_eq!(block.transactions.len(), 2);
+        assert_eq!(block.header.blob_gas_used, Some(40_000));
+    }
+
+    let tx = driver.create_transaction().build().await;
+    let block = driver
+        .build_new_block_with_txs_timestamp(
+            vec![tx.encoded_2718().into()],
+            Some(true),
+            None,
+            None,
+            Some(0),
+        )
+        .await?;
+
+    // Deposit transaction + user transaction
+    if_flashblocks! {
+        assert_eq!(block.transactions.len(), 2);
+        assert_eq!(block.header.blob_gas_used, Some(40_000));
+    }
+
+    // Standard includes a builder transaction when no-tx-pool is set
+    if_standard! {
+        assert_eq!(block.transactions.len(), 3);
+        assert_eq!(block.header.blob_gas_used, Some(80_000));
+    }
 
     Ok(())
 }
