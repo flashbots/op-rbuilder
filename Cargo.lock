@@ -12808,7 +12808,7 @@ dependencies = [
 [[package]]
 name = "rollup-boost"
 version = "0.1.0"
-source = "git+http://github.com/flashbots/rollup-boost?tag=v0.7.10#501ae74cf6d93ae4ff0d7454ca7b36827fd1e135"
+source = "git+http://github.com/flashbots/rollup-boost?rev=ce920a1ba6ada1e40078148ca1ff33f6a3a77246#ce920a1ba6ada1e40078148ca1ff33f6a3a77246"
 dependencies = [
  "alloy-primitives 1.4.1",
  "alloy-rpc-types-engine",

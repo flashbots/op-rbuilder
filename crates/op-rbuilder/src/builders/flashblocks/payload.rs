@@ -298,7 +298,7 @@ where
 
         // We log only every 100th block to reduce usage
         let span = if cfg!(feature = "telemetry")
-            && config.parent_header.number % self.config.sampling_ratio == 0
+            && config.parent_header.number.is_multiple_of(self.config.sampling_ratio)
         {
             span!(Level::INFO, "build_payload")
         } else {
@@ -1155,6 +1155,10 @@ where
             transactions: new_transactions_encoded,
             withdrawals: ctx.withdrawals().cloned().unwrap_or_default().to_vec(),
             withdrawals_root: withdrawals_root.unwrap_or_default(),
+            blob_gas_used: info
+                .da_footprint_scalar
+                .map(|scalar| scalar as u64 * info.cumulative_da_bytes_used)
+                .unwrap_or(0),
         },
         metadata: serde_json::to_value(&metadata).unwrap_or_default(),
     };
