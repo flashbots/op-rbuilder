@@ -1,4 +1,4 @@
-use crate::tests::{BlockTransactionsExt, ChainDriverExt, LocalInstance};
+use crate::tests::{BlockTransactionsExt, ChainDriverExt, LocalInstance, TransactionBuilderExt};
 use alloy_provider::Provider;
 use macros::{if_flashblocks, if_standard, rb_test};
 
@@ -115,6 +115,104 @@ async fn block_fill(rbuilder: LocalInstance) -> eyre::Result<()> {
         driver.latest_full().await?.transactions.len() == 5,
         "builder + deposit + 3 valid txs should be in the block"
     );
+
+    Ok(())
+}
+
+/// This test ensures that the DA footprint limit (Jovian) is respected and the block fills
+/// to the DA footprint limit. The DA footprint is calculated as:
+/// total_da_bytes_used * da_footprint_gas_scalar (stored in blob_gas_used).
+/// This must not exceed the block gas limit, accounting for the builder transaction.
+#[rb_test]
+async fn da_footprint_fills_to_limit(rbuilder: LocalInstance) -> eyre::Result<()> {
+    let driver = rbuilder.driver().await?;
+
+    // DA footprint scalar from JOVIAN_DATA is 400
+    // Set a constrained gas limit so DA footprint becomes the limiting factor
+    // With gas limit = 200_000 and scalar = 400:
+    // Max DA bytes = 200_000 / 400 = 500 bytes
+    let gas_limit = 400_000u64;
+    let call = driver
+        .provider()
+        .raw_request::<(u64,), bool>("miner_setGasLimit".into(), (gas_limit,))
+        .await?;
+    assert!(call, "miner_setGasLimit should be executed successfully");
+
+    // Set DA size limit to be permissive (not the constraint)
+    let call = driver
+        .provider()
+        .raw_request::<(i32, i32), bool>("miner_setMaxDASize".into(), (0, 100_000))
+        .await?;
+    assert!(call, "miner_setMaxDASize should be executed successfully");
+
+    let mut tx_hashes = Vec::new();
+    for _ in 0..10 {
+        // 400 * 100 = 400_000 total da footprint
+        let tx = driver
+            .create_transaction()
+            .random_valid_transfer()
+            .with_gas_limit(21000)
+            .send()
+            .await?;
+        tx_hashes.push(tx.tx_hash().clone());
+    }
+
+    let block = driver.build_new_block_with_current_timestamp(None).await?;
+
+    // Verify that blob_gas_used (DA footprint) is set and respects limits
+    assert!(
+        block.header.blob_gas_used.is_some(),
+        "blob_gas_used should be set in Jovian"
+    );
+
+    let blob_gas = block.header.blob_gas_used.unwrap();
+
+    // The DA footprint must not exceed the block gas limit
+    assert!(
+        blob_gas == gas_limit,
+        "DA footprint (blob_gas_used={}) must not exceed block gas limit ({})",
+        blob_gas,
+        gas_limit
+    );
+
+    // Verify the block fills up to the DA footprint limit
+    // accounting for builder tx DA contribution
+    if_standard! {
+        for i in 0..8 {
+            assert!(
+                block.includes(&tx_hashes[i]),
+                "tx {} should be included in the block",
+                i
+            );
+        }
+
+        // Verify the last tx doesn't fit due to DA footprint limit
+        assert!(
+            !block.includes(&tx_hashes[9]),
+            "tx 9 should not fit in the block due to DA footprint limit"
+        );
+    }
+
+    if_flashblocks! {
+        for i in 0..7 {
+            assert!(
+                block.includes(&tx_hashes[i]),
+                "tx {} should be included in the block",
+                i
+            );
+        }
+
+        // Verify the last 2 tx doesn't fit due to DA footprint limit
+        assert!(
+            !block.includes(&tx_hashes[8]),
+            "tx 8 should not fit in the block due to DA footprint limit"
+        );
+
+        assert!(
+            !block.includes(&tx_hashes[9]),
+            "tx 9 should not fit in the block due to DA footprint limit"
+        );
+    }
 
     Ok(())
 }
