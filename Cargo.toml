@@ -165,7 +165,7 @@ alloy-hardforks = "0.4.4"
 rollup-boost = { git = "http://github.com/flashbots/rollup-boost", tag = "v0.7.10" }
 
 # optimism
-alloy-op-evm = { version = "0.24.1", default-features = false }
+alloy-op-evm = { version = "0.23.0", default-features = false }
 alloy-op-hardforks = "0.4.4"
 op-alloy-rpc-types = { version = "0.22.0", default-features = false }
 op-alloy-rpc-types-engine = { version = "0.22.0", default-features = false }
