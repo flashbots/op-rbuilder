@@ -284,7 +284,7 @@ impl TransactionPoolObserver {
                                 tracing::debug!("Transaction pending: {hash}");
                                 observations.entry(hash).or_default().push_back(TransactionEvent::Pending);
                             },
-                            Some(FullTransactionEvent::Queued(hash, _)) => {
+                            Some(FullTransactionEvent::Queued(hash)) => {
                                 tracing::debug!("Transaction queued: {hash}");
                                 observations.entry(hash).or_default().push_back(TransactionEvent::Queued);
                             },
