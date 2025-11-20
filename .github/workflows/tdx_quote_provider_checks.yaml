@@ -11,7 +11,7 @@ env:
 jobs:
   check:
     name: Check
-    runs-on: warp-ubuntu-latest-x64-16x
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: "./crates/tdx-quote-provider"
@@ -48,7 +48,7 @@ jobs:
 
   docker:
     name: Docker Build
-    runs-on: warp-ubuntu-latest-x64-16x
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: "./crates/tdx-quote-provider"

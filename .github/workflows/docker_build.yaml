@@ -8,7 +8,7 @@ on:
 jobs:
   extract-version:
     name: Extract version
-    runs-on: warp-ubuntu-latest-x64-16x
+    runs-on: ubuntu-24.04
     outputs:
       VERSION: ${{ steps.extract_version.outputs.VERSION }}
     steps:
@@ -43,7 +43,7 @@ jobs:
       matrix:
         configs:
           - target: linux/amd64
-            runner: warp-ubuntu-latest-x64-16x
+            runner: ubuntu-24.04
           - target: linux/arm64
             runner: warp-ubuntu-latest-arm64-16x
         docker_target:
