@@ -7138,6 +7138,7 @@ dependencies = [
  "chrono",
  "clap",
  "clap_builder",
+ "concurrent-queue",
  "ctor",
  "dashmap 6.1.0",
  "derive_more",
@@ -7232,6 +7233,7 @@ dependencies = [
  "thiserror 1.0.69",
  "tikv-jemallocator",
  "time",
+ "tips-core",
  "tokio",
  "tokio-tungstenite",
  "tokio-util",
@@ -14278,6 +14280,23 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
 
 [[package]]
+name = "tips-core"
+version = "0.1.0"
+source = "git+https://github.com/base/tips?rev=c08eaa4fe10c26de8911609b41ddab4918698325#c08eaa4fe10c26de8911609b41ddab4918698325"
+dependencies = [
+ "alloy-consensus",
+ "alloy-primitives 1.4.1",
+ "alloy-provider",
+ "alloy-serde",
+ "op-alloy-consensus",
+ "op-alloy-flz",
+ "serde",
+ "tracing",
+ "tracing-subscriber 0.3.20",
+ "uuid",
+]
+
+[[package]]
 name = "tokio"
 version = "1.47.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -15025,9 +15044,9 @@ checksum = "06abde3611657adf66d383f00b093d7faecc7fa57071cce2578660c9f1010821"
 
 [[package]]
 name = "uuid"
-version = "1.18.0"
+version = "1.18.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f33196643e165781c20a5ead5582283a7dacbb87855d867fbc2df3f81eddc1be"
+checksum = "2f87b8aa10b915a06587d0dec516c282ff295b475d94abf425d62b57710070a2"
 dependencies = [
  "getrandom 0.3.3",
  "js-sys",
