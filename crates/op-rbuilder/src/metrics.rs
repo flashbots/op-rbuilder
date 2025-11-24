@@ -16,6 +16,9 @@ pub const CARGO_PKG_VERSION: &str = env!("CARGO_PKG_VERSION");
 /// The 8 character short SHA of the latest commit.
 pub const VERGEN_GIT_SHA: &str = env!("VERGEN_GIT_SHA_SHORT");
 
+/// The git describe output.
+pub const VERGEN_GIT_DESCRIBE: &str = env!("VERGEN_GIT_DESCRIBE");
+
 /// The build timestamp.
 pub const VERGEN_BUILD_TIMESTAMP: &str = env!("VERGEN_BUILD_TIMESTAMP");
 
@@ -55,6 +58,7 @@ pub const VERSION: VersionInfo = VersionInfo {
     build_timestamp: VERGEN_BUILD_TIMESTAMP,
     cargo_features: VERGEN_CARGO_FEATURES,
     git_sha: VERGEN_GIT_SHA,
+    git_describe: VERGEN_GIT_DESCRIBE,
     target_triple: VERGEN_CARGO_TARGET_TRIPLE,
     build_profile: BUILD_PROFILE_NAME,
     commit_author: VERGEN_GIT_AUTHOR,
@@ -252,6 +256,8 @@ pub struct VersionInfo {
     pub cargo_features: &'static str,
     /// The Git SHA of the build.
     pub git_sha: &'static str,
+    /// The git describe output.
+    pub git_describe: &'static str,
     /// The target triple for the build.
     pub target_triple: &'static str,
     /// The build profile (e.g., debug or release).
@@ -265,11 +271,12 @@ pub struct VersionInfo {
 impl VersionInfo {
     /// This exposes op-rbuilder's version information over prometheus.
     pub fn register_version_metrics(&self) {
-        let labels: [(&str, &str); 8] = [
+        let labels: [(&str, &str); 9] = [
             ("version", self.version),
             ("build_timestamp", self.build_timestamp),
             ("cargo_features", self.cargo_features),
             ("git_sha", self.git_sha),
+            ("git_describe", self.git_describe),
             ("target_triple", self.target_triple),
             ("build_profile", self.build_profile),
             ("commit_author", self.commit_author),
