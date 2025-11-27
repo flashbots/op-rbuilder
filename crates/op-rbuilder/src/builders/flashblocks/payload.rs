@@ -555,6 +555,8 @@ where
             {
                 Ok(Some(next_flashblocks_ctx)) => next_flashblocks_ctx,
                 Ok(None) => {
+                    self.resolve_best_payload(&mut state, &ctx, &mut info, &best_payload)
+                        .await;
                     self.record_flashblocks_metrics(
                         &ctx,
                         &info,
@@ -702,8 +704,6 @@ where
         // We got block cancelled, we won't need anything from the block at this point
         // Caution: this assume that block cancel token only cancelled when new FCU is received
         if block_cancel.is_cancelled() {
-            self.resolve_best_payload(state, ctx, info, best_payload)
-                .await;
             self.record_flashblocks_metrics(
                 ctx,
                 info,
