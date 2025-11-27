@@ -366,7 +366,12 @@ where
             );
         };
 
-        let (payload, fb_payload) = build_block(&mut state, &ctx, &mut info, true)?;
+        let (payload, fb_payload) = build_block(
+            &mut state,
+            &ctx,
+            &mut info,
+            !disable_state_root || ctx.attributes().no_tx_pool, // need to calculate state root for CL sync
+        )?;
 
         self.payload_tx
             .send(payload.clone())
