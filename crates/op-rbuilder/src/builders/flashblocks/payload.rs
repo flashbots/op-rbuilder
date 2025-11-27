@@ -1273,7 +1273,6 @@ where
     ExtraCtx: std::fmt::Debug + Default,
 {
     let state_root_start_time = Instant::now();
-    state.merge_transitions(BundleRetention::Reverts);
     let execution_outcome = ExecutionOutcome::new(
         state.bundle_state.clone(),
         vec![info.receipts.clone()],
