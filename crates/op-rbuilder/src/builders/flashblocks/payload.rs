@@ -889,7 +889,8 @@ where
         best_payload: OpBuiltPayload,
         fallback_payload: OpBuiltPayload,
     ) -> OpBuiltPayload {
-        let Ok((state_root, trie_updates)) = calculate_state_root_only(state, ctx, info) else {
+        let Ok((state_root, trie_updates)) = calculate_state_root_on_resolve(state, ctx, info)
+        else {
             // This throws away all previously built fb payloads that has already been broadcasted
             // and is not ideal. The state root calculation should be bulletproof and not fail
             // under normal circumstances.
@@ -1311,7 +1312,7 @@ where
 }
 
 /// Calculates only the state root for an existing payload
-fn calculate_state_root_only<DB, P, ExtraCtx>(
+fn calculate_state_root_on_resolve<DB, P, ExtraCtx>(
     state: &mut State<DB>,
     ctx: &OpPayloadBuilderCtx<ExtraCtx>,
     info: &ExecutionInfo<FlashblocksExecutionInfo>,
@@ -1321,6 +1322,10 @@ where
     P: StateRootProvider + HashedPostStateProvider + StorageRootProvider,
     ExtraCtx: std::fmt::Debug + Default,
 {
+    // Merge transitions to populate the bundle_state with all accumulated
+    // transition states.
+    state.merge_transitions(BundleRetention::Reverts);
+
     let state_root_start_time = Instant::now();
     let execution_outcome = ExecutionOutcome::new(
         state.bundle_state.clone(),
