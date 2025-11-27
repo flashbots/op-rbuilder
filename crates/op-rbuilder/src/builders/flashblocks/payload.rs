@@ -837,11 +837,18 @@ where
         {
             // Calculate state root for best payload on resolve payload to prevent
             // cache misses for locally built payloads.
-            if let Ok(state_root) = calculate_state_root_only(state, ctx, info) {
+            if let Ok((state_root, trie_updates)) = calculate_state_root_only(state, ctx, info) {
                 use reth_payload_primitives::BuiltPayload as _;
                 let payload_id = payload.id();
                 let fees = payload.fees();
-                let executed_block = payload.executed_block();
+                let executed_block = payload
+                    .executed_block()
+                    .map(|executed_block| ExecutedBlock {
+                        recovered_block: Arc::new(executed_block.recovered_block().clone()),
+                        execution_output: Arc::new(executed_block.execution_outcome().clone()),
+                        hashed_state: Arc::new(executed_block.hashed_state().clone()),
+                        trie_updates: Arc::new(trie_updates),
+                    });
 
                 // Get the current sealed block and extract its components
                 let block = payload.into_sealed_block().into_block();
@@ -1253,7 +1260,7 @@ fn calculate_state_root_only<DB, P, ExtraCtx>(
     state: &mut State<DB>,
     ctx: &OpPayloadBuilderCtx<ExtraCtx>,
     info: &ExecutionInfo<FlashblocksExecutionInfo>,
-) -> Result<B256, PayloadBuilderError>
+) -> Result<(B256, TrieUpdates), PayloadBuilderError>
 where
     DB: Database<Error = ProviderError> + AsRef<P>,
     P: StateRootProvider + HashedPostStateProvider + StorageRootProvider,
@@ -1270,7 +1277,7 @@ where
 
     let state_provider = state.database.as_ref();
     let hashed_state = state_provider.hashed_post_state(execution_outcome.state());
-    let (state_root, _trie_output) = state
+    let state_root_updates = state
         .database
         .as_ref()
         .state_root_with_updates(hashed_state)
@@ -1281,6 +1288,7 @@ where
                 "failed to calculate state root for payload"
             );
         })?;
+
     let state_root_calculation_time = state_root_start_time.elapsed();
     ctx.metrics
         .state_root_calculation_duration
@@ -1289,5 +1297,5 @@ where
         .state_root_calculation_gauge
         .set(state_root_calculation_time);
 
-    Ok(state_root)
+    Ok(state_root_updates)
 }
