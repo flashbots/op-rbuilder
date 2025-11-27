@@ -841,14 +841,15 @@ where
                 use reth_payload_primitives::BuiltPayload as _;
                 let payload_id = payload.id();
                 let fees = payload.fees();
-                let executed_block = payload
-                    .executed_block()
-                    .map(|executed_block| ExecutedBlock {
-                        recovered_block: Arc::new(executed_block.recovered_block().clone()),
-                        execution_output: Arc::new(executed_block.execution_outcome().clone()),
-                        hashed_state: Arc::new(executed_block.hashed_state().clone()),
-                        trie_updates: Arc::new(trie_updates),
-                    });
+                let executed_block =
+                    payload
+                        .executed_block()
+                        .map(|executed_block| BuiltPayloadExecutedBlock {
+                            recovered_block: executed_block.recovered_block.clone(),
+                            execution_output: executed_block.execution_output.clone(),
+                            hashed_state: executed_block.hashed_state.clone(),
+                            trie_updates: Either::Left(Arc::new(trie_updates)),
+                        });
 
                 // Get the current sealed block and extract its components
                 let block = payload.into_sealed_block().into_block();
