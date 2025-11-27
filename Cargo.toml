@@ -106,22 +106,22 @@ reth-optimism-rpc = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3
     "client",
 ] }
 
-revm = { version = "33.0.0", features = [
+revm = { version = "31.0.2", features = [
     "std",
     "secp256k1",
     "optional_balance_check",
 ], default-features = false }
 revm-inspectors = { version = "0.32.0", default-features = false }
-op-revm = { version = "14.0.0", default-features = false }
-revm-bytecode = { version = "7.1.0", default-features = false }
-revm-database = { version = "9.0.3", default-features = false }
-revm-state = { version = "8.1.0", default-features = false }
-revm-primitives = { version = "21.0.1", default-features = false }
-revm-interpreter = { version = "29.0.0", default-features = false }
-revm-inspector = { version = "14.0.0", default-features = false }
-revm-context = { version = "11.0.0", default-features = false }
-revm-context-interface = { version = "12.0.0", default-features = false }
-revm-database-interface = { version = "8.0.4", default-features = false }
+op-revm = { version = "12.0.2", default-features = false }
+revm-bytecode = { version = "7.1.1", default-features = false }
+revm-database = { version = "9.0.5", default-features = false }
+revm-state = { version = "8.1.1", default-features = false }
+revm-primitives = { version = "21.0.2", default-features = false }
+revm-interpreter = { version = "29.0.1", default-features = false }
+revm-inspector = { version = "12.0.0", default-features = false }
+revm-context = { version = "11.0.2", default-features = false }
+revm-context-interface = { version = "12.0.1", default-features = false }
+revm-database-interface = { version = "8.0.5", default-features = false }
 
 ethereum_ssz_derive = "0.9.0"
 ethereum_ssz = "0.9.0"
@@ -132,7 +132,7 @@ alloy-primitives = { version = "1.4.1", default-features = false, features = [
 alloy-rlp = "0.3.10"
 alloy-chains = "0.2.5"
 alloy-contract = { version = "1.0.41" }
-alloy-evm = { version = "0.24.1", default-features = false }
+alloy-evm = { version = "0.23.0", default-features = false }
 alloy-provider = { version = "1.0.41", features = [
     "ipc",
     "pubsub",
@@ -165,7 +165,7 @@ alloy-hardforks = "0.4.4"
 rollup-boost = { git = "http://github.com/flashbots/rollup-boost", tag = "v0.7.10" }
 
 # optimism
-alloy-op-evm = { version = "0.24.1", default-features = false }
+alloy-op-evm = { version = "0.23.0", default-features = false }
 alloy-op-hardforks = "0.4.4"
 op-alloy-rpc-types = { version = "0.22.0", default-features = false }
 op-alloy-rpc-types-engine = { version = "0.22.0", default-features = false }
