@@ -909,10 +909,14 @@ where
         let (mut header, body) = block.split();
         header.state_root = state_root;
         let updated_block = alloy_consensus::Block::<OpTransactionSigned>::new(header, body);
+        let recovered_block = RecoveredBlock::new_unhashed(
+            updated_block.clone(),
+            executed_block.recovered_block().senders().to_vec(),
+        );
         let sealed_block = Arc::new(updated_block.seal_slow());
 
         let executed = BuiltPayloadExecutedBlock {
-            recovered_block: executed_block.recovered_block.clone(),
+            recovered_block: Arc::new(recovered_block),
             execution_output: executed_block.execution_output.clone(),
             hashed_state: Either::Left(Arc::new(hashed_state)),
             trie_updates: Either::Left(Arc::new(trie_updates)),
