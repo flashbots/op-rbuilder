@@ -38,7 +38,9 @@ use reth_provider::{
     StorageRootProvider,
 };
 use reth_revm::{
-    State, database::StateProviderDatabase, db::states::bundle_state::BundleRetention,
+    State,
+    database::StateProviderDatabase,
+    db::{BundleState, states::bundle_state::BundleRetention},
 };
 use reth_transaction_pool::TransactionPool;
 use reth_trie::{HashedPostState, updates::TrieUpdates};
@@ -73,9 +75,6 @@ type NextBestFlashblocksTxs<Pool> = BestFlashblocksTxs<
 pub(super) struct FlashblocksExecutionInfo {
     /// Index of the last consumed flashblock
     last_flashblock_index: usize,
-    /// Snapshot of bundle_state from the last successful build_block call.
-    /// Used for state root calculation when resolving payload on cancellation.
-    last_built_bundle_state: Option<reth_revm::db::BundleState>,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -375,12 +374,13 @@ where
         };
 
         // We should always calculate state root for fallback payload
-        let (fallback_payload, fb_payload) = build_block(&mut state, &ctx, &mut info, true)?;
+        let (fallback_payload, fb_payload, bundle_state) =
+            build_block(&mut state, &ctx, &mut info, true)?;
         self.built_fb_payload_tx
             .send(fallback_payload.clone())
             .await
             .map_err(PayloadBuilderError::other)?;
-        let mut best_payload = fallback_payload.clone();
+        let mut best_payload = (fallback_payload.clone(), bundle_state);
 
         info!(
             target: "payload_builder",
@@ -535,7 +535,6 @@ where
                 self.resolve_best_payload(
                     &mut state,
                     &ctx,
-                    &mut info,
                     best_payload,
                     fallback_payload,
                     &resolve_payload,
@@ -570,7 +569,6 @@ where
                     self.resolve_best_payload(
                         &mut state,
                         &ctx,
-                        &mut info,
                         best_payload,
                         fallback_payload,
                         &resolve_payload,
@@ -605,7 +603,6 @@ where
                     self.resolve_best_payload(
                         &mut state,
                         &ctx,
-                        &mut info,
                         best_payload,
                         fallback_payload,
                         &resolve_payload,
@@ -636,7 +633,7 @@ where
         state_provider: impl reth::providers::StateProvider + Clone,
         best_txs: &mut NextBestFlashblocksTxs<Pool>,
         block_cancel: &CancellationToken,
-        best_payload: &mut OpBuiltPayload,
+        best_payload: &mut (OpBuiltPayload, BundleState),
         span: &tracing::Span,
     ) -> eyre::Result<Option<FlashblocksExtraCtx>> {
         let flashblock_index = ctx.flashblock_index();
@@ -776,7 +773,7 @@ where
                 ctx.metrics.invalid_built_blocks_count.increment(1);
                 Err(err).wrap_err("failed to build payload")
             }
-            Ok((new_payload, mut fb_payload)) => {
+            Ok((new_payload, mut fb_payload, bundle_state)) => {
                 fb_payload.index = flashblock_index;
                 fb_payload.base = None;
 
@@ -800,7 +797,7 @@ where
                     .send(new_payload.clone())
                     .await
                     .wrap_err("failed to send built payload to handler")?;
-                *best_payload = new_payload;
+                *best_payload = (new_payload, bundle_state);
 
                 // Record flashblock build duration
                 ctx.metrics
@@ -861,8 +858,7 @@ where
         &self,
         state: &mut State<DB>,
         ctx: &OpPayloadBuilderCtx<FlashblocksExtraCtx>,
-        info: &mut ExecutionInfo<FlashblocksExecutionInfo>,
-        best_payload: OpBuiltPayload,
+        best_payload: (OpBuiltPayload, BundleState),
         fallback_payload: OpBuiltPayload,
         resolve_payload: &BlockCell<OpBuiltPayload>,
     ) {
@@ -870,10 +866,10 @@ where
             return;
         }
 
-        let payload = match best_payload.block().header().state_root {
+        let payload = match best_payload.0.block().header().state_root {
             B256::ZERO => {
                 info!(target: "payload_builder", "Resolving payload with zero state root");
-                self.resolve_zero_state_root(state, ctx, info, best_payload)
+                self.resolve_zero_state_root(state, ctx, best_payload)
                     .await
                     .unwrap_or_else(|err| {
                         warn!(
@@ -884,7 +880,7 @@ where
                         fallback_payload
                     })
             }
-            _ => best_payload,
+            _ => best_payload.0,
         };
         resolve_payload.set(payload);
     }
@@ -896,37 +892,28 @@ where
         &self,
         state: &mut State<DB>,
         ctx: &OpPayloadBuilderCtx<FlashblocksExtraCtx>,
-        info: &ExecutionInfo<FlashblocksExecutionInfo>,
-        best_payload: OpBuiltPayload,
+        best_payload: (OpBuiltPayload, BundleState),
     ) -> Result<OpBuiltPayload, PayloadBuilderError> {
         let (state_root, trie_updates, hashed_state) =
-            calculate_state_root_on_resolve(state, ctx, info)?;
+            calculate_state_root_on_resolve(state, ctx, best_payload.1)?;
 
-        let payload_id = best_payload.id();
-        let fees = best_payload.fees();
-        let execution_outcome = best_payload
-            .executed_block()
-            .ok_or_else(|| {
-                PayloadBuilderError::Other(
-                    eyre::eyre!(
-                        "No executed block available in best payload for payload resolution"
-                    )
+        let payload_id = best_payload.0.id();
+        let fees = best_payload.0.fees();
+        let executed_block = best_payload.0.executed_block().ok_or_else(|| {
+            PayloadBuilderError::Other(
+                eyre::eyre!("No executed block available in best payload for payload resolution")
                     .into(),
-                )
-            })?
-            .execution_output
-            .clone();
-        let block = best_payload.into_sealed_block().into_block();
+            )
+        })?;
+        let block = best_payload.0.into_sealed_block().into_block();
         let (mut header, body) = block.split();
         header.state_root = state_root;
         let updated_block = alloy_consensus::Block::<OpTransactionSigned>::new(header, body);
-        let sealed_block = Arc::new(updated_block.clone().seal_slow());
-        let recovered_block =
-            RecoveredBlock::new_unhashed(updated_block, info.executed_senders.clone());
+        let sealed_block = Arc::new(updated_block.seal_slow());
 
         let executed = BuiltPayloadExecutedBlock {
-            recovered_block: Arc::new(recovered_block),
-            execution_output: execution_outcome,
+            recovered_block: executed_block.recovered_block.clone(),
+            execution_output: executed_block.execution_output.clone(),
             hashed_state: Either::Left(Arc::new(hashed_state)),
             trie_updates: Either::Left(Arc::new(trie_updates)),
         };
@@ -1095,7 +1082,7 @@ pub(super) fn build_block<DB, P, ExtraCtx>(
     ctx: &OpPayloadBuilderCtx<ExtraCtx>,
     info: &mut ExecutionInfo<FlashblocksExecutionInfo>,
     calculate_state_root: bool,
-) -> Result<(OpBuiltPayload, FlashblocksPayloadV1), PayloadBuilderError>
+) -> Result<(OpBuiltPayload, FlashblocksPayloadV1, BundleState), PayloadBuilderError>
 where
     DB: Database<Error = ProviderError> + AsRef<P>,
     P: StateRootProvider + HashedPostStateProvider + StorageRootProvider,
@@ -1105,9 +1092,6 @@ where
     let untouched_transition_state = state.transition_state.clone();
     let state_merge_start_time = Instant::now();
     state.merge_transitions(BundleRetention::Reverts);
-    // Save a snapshot of the bundle_state for state root calculation on payload resolution
-    info.extra.last_built_bundle_state = Some(state.bundle_state.clone());
-
     let state_transition_merge_time = state_merge_start_time.elapsed();
     ctx.metrics
         .state_transition_merge_duration
@@ -1316,7 +1300,7 @@ where
     };
 
     // We clean bundle and place initial state transaction back
-    state.take_bundle();
+    let bundle_state = state.take_bundle();
     state.transition_state = untouched_transition_state;
 
     Ok((
@@ -1327,6 +1311,7 @@ where
             Some(executed),
         ),
         fb_payload,
+        bundle_state,
     ))
 }
 
@@ -1334,7 +1319,7 @@ where
 fn calculate_state_root_on_resolve<DB, P, ExtraCtx>(
     state: &mut State<DB>,
     ctx: &OpPayloadBuilderCtx<ExtraCtx>,
-    info: &ExecutionInfo<FlashblocksExecutionInfo>,
+    bundle_state: BundleState,
 ) -> Result<(B256, TrieUpdates, HashedPostState), PayloadBuilderError>
 where
     DB: Database<Error = ProviderError> + AsRef<P>,
@@ -1342,13 +1327,8 @@ where
     ExtraCtx: std::fmt::Debug + Default,
 {
     let state_root_start_time = Instant::now();
-    let bundle_state = info.extra.last_built_bundle_state.as_ref().ok_or_else(|| {
-        PayloadBuilderError::Other(
-            eyre::eyre!("No bundle state snapshot available for state root calculation").into(),
-        )
-    })?;
     let state_provider = state.database.as_ref();
-    let hashed_state = state_provider.hashed_post_state(bundle_state);
+    let hashed_state = state_provider.hashed_post_state(&bundle_state);
     let state_root_updates = state
         .database
         .as_ref()
