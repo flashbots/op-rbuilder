@@ -30,7 +30,7 @@ use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
 use reth_optimism_forks::OpHardforks;
 use reth_optimism_node::{OpBuiltPayload, OpPayloadBuilderAttributes};
 use reth_optimism_primitives::{OpPrimitives, OpReceipt, OpTransactionSigned};
-use reth_payload_primitives::BuiltPayloadExecutedBlock;
+use reth_payload_primitives::{BuiltPayload, BuiltPayloadExecutedBlock};
 use reth_payload_util::BestPayloadTransactions;
 use reth_primitives_traits::RecoveredBlock;
 use reth_provider::{
@@ -73,6 +73,9 @@ type NextBestFlashblocksTxs<Pool> = BestFlashblocksTxs<
 pub(super) struct FlashblocksExecutionInfo {
     /// Index of the last consumed flashblock
     last_flashblock_index: usize,
+    /// Snapshot of bundle_state from the last successful build_block call.
+    /// Used for state root calculation when resolving payload on cancellation.
+    last_built_bundle_state: Option<reth_revm::db::BundleState>,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -870,8 +873,16 @@ where
         let payload = match best_payload.block().header().state_root {
             B256::ZERO => {
                 info!(target: "payload_builder", "Resolving payload with zero state root");
-                self.resolve_zero_state_root(state, ctx, info, best_payload, fallback_payload)
+                self.resolve_zero_state_root(state, ctx, info, best_payload)
                     .await
+                    .unwrap_or_else(|err| {
+                        warn!(
+                            target: "payload_builder",
+                            error = %err,
+                            "Failed to calculate state root, falling back to fallback payload"
+                        );
+                        fallback_payload
+                    })
             }
             _ => best_payload,
         };
@@ -887,19 +898,24 @@ where
         ctx: &OpPayloadBuilderCtx<FlashblocksExtraCtx>,
         info: &ExecutionInfo<FlashblocksExecutionInfo>,
         best_payload: OpBuiltPayload,
-        fallback_payload: OpBuiltPayload,
-    ) -> OpBuiltPayload {
-        let Ok((state_root, trie_updates, execution_outcome, hashed_state)) =
-            calculate_state_root_on_resolve(state, ctx, info)
-        else {
-            // This throws away all previously built fb payloads that has already been broadcasted
-            // and is not ideal. The state root calculation should be bulletproof and not fail
-            // under normal circumstances.
-            return fallback_payload;
-        };
+    ) -> Result<OpBuiltPayload, PayloadBuilderError> {
+        let (state_root, trie_updates, hashed_state) =
+            calculate_state_root_on_resolve(state, ctx, info)?;
 
         let payload_id = best_payload.id();
         let fees = best_payload.fees();
+        let execution_outcome = best_payload
+            .executed_block()
+            .ok_or_else(|| {
+                PayloadBuilderError::Other(
+                    eyre::eyre!(
+                        "No executed block available in best payload for payload resolution"
+                    )
+                    .into(),
+                )
+            })?
+            .execution_output
+            .clone();
         let block = best_payload.into_sealed_block().into_block();
         let (mut header, body) = block.split();
         header.state_root = state_root;
@@ -910,7 +926,7 @@ where
 
         let executed = BuiltPayloadExecutedBlock {
             recovered_block: Arc::new(recovered_block),
-            execution_output: Arc::new(execution_outcome),
+            execution_output: execution_outcome,
             hashed_state: Either::Left(Arc::new(hashed_state)),
             trie_updates: Either::Left(Arc::new(trie_updates)),
         };
@@ -928,7 +944,7 @@ where
             "Updated payload with calculated state root"
         );
 
-        updated_payload
+        Ok(updated_payload)
     }
 
     /// Do some logging and metric recording when we stop build flashblocks
@@ -1089,6 +1105,9 @@ where
     let untouched_transition_state = state.transition_state.clone();
     let state_merge_start_time = Instant::now();
     state.merge_transitions(BundleRetention::Reverts);
+    // Save a snapshot of the bundle_state for state root calculation on payload resolution
+    info.extra.last_built_bundle_state = Some(state.bundle_state.clone());
+
     let state_transition_merge_time = state_merge_start_time.elapsed();
     ctx.metrics
         .state_transition_merge_duration
@@ -1316,35 +1335,20 @@ fn calculate_state_root_on_resolve<DB, P, ExtraCtx>(
     state: &mut State<DB>,
     ctx: &OpPayloadBuilderCtx<ExtraCtx>,
     info: &ExecutionInfo<FlashblocksExecutionInfo>,
-) -> Result<
-    (
-        B256,
-        TrieUpdates,
-        ExecutionOutcome<OpReceipt>,
-        HashedPostState,
-    ),
-    PayloadBuilderError,
->
+) -> Result<(B256, TrieUpdates, HashedPostState), PayloadBuilderError>
 where
     DB: Database<Error = ProviderError> + AsRef<P>,
     P: StateRootProvider + HashedPostStateProvider + StorageRootProvider,
     ExtraCtx: std::fmt::Debug + Default,
 {
-    // Merge transitions to get the complete state. Note that build_block()
-    // restores transition_state after each flashblock, keeping all transitions
-    // available for this final merge
-    state.merge_transitions(BundleRetention::Reverts);
-
     let state_root_start_time = Instant::now();
-    let execution_outcome: ExecutionOutcome<OpReceipt> = ExecutionOutcome::new(
-        state.bundle_state.clone(),
-        vec![info.receipts.clone()],
-        ctx.block_number(),
-        vec![],
-    );
-
+    let bundle_state = info.extra.last_built_bundle_state.as_ref().ok_or_else(|| {
+        PayloadBuilderError::Other(
+            eyre::eyre!("No bundle state snapshot available for state root calculation").into(),
+        )
+    })?;
     let state_provider = state.database.as_ref();
-    let hashed_state = state_provider.hashed_post_state(execution_outcome.state());
+    let hashed_state = state_provider.hashed_post_state(bundle_state);
     let state_root_updates = state
         .database
         .as_ref()
@@ -1365,10 +1369,5 @@ where
         .state_root_calculation_gauge
         .set(state_root_calculation_time);
 
-    Ok((
-        state_root_updates.0,
-        state_root_updates.1,
-        execution_outcome,
-        hashed_state,
-    ))
+    Ok((state_root_updates.0, state_root_updates.1, hashed_state))
 }
