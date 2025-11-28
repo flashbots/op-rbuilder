@@ -30,7 +30,7 @@ use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
 use reth_optimism_forks::OpHardforks;
 use reth_optimism_node::{OpBuiltPayload, OpPayloadBuilderAttributes};
 use reth_optimism_primitives::{OpPrimitives, OpReceipt, OpTransactionSigned};
-use reth_payload_primitives::{BuiltPayload, BuiltPayloadExecutedBlock};
+use reth_payload_primitives::BuiltPayloadExecutedBlock;
 use reth_payload_util::BestPayloadTransactions;
 use reth_primitives_traits::RecoveredBlock;
 use reth_provider::{
@@ -889,7 +889,8 @@ where
         best_payload: OpBuiltPayload,
         fallback_payload: OpBuiltPayload,
     ) -> OpBuiltPayload {
-        let Ok((state_root, trie_updates)) = calculate_state_root_on_resolve(state, ctx, info)
+        let Ok((state_root, trie_updates, execution_outcome, hashed_state)) =
+            calculate_state_root_on_resolve(state, ctx, info)
         else {
             // This throws away all previously built fb payloads that has already been broadcasted
             // and is not ideal. The state root calculation should be bulletproof and not fail
@@ -899,22 +900,21 @@ where
 
         let payload_id = best_payload.id();
         let fees = best_payload.fees();
-        let executed_block =
-            best_payload
-                .executed_block()
-                .map(|executed_block| BuiltPayloadExecutedBlock {
-                    recovered_block: executed_block.recovered_block.clone(),
-                    execution_output: executed_block.execution_output.clone(),
-                    hashed_state: executed_block.hashed_state.clone(),
-                    trie_updates: Either::Left(Arc::new(trie_updates)),
-                });
         let block = best_payload.into_sealed_block().into_block();
         let (mut header, body) = block.split();
         header.state_root = state_root;
         let updated_block = alloy_consensus::Block::<OpTransactionSigned>::new(header, body);
-        let sealed_block = Arc::new(updated_block.seal_slow());
+        let sealed_block = Arc::new(updated_block.clone().seal_slow());
+        let recovered_block =
+            RecoveredBlock::new_unhashed(updated_block, info.executed_senders.clone());
 
-        let updated_payload = OpBuiltPayload::new(payload_id, sealed_block, fees, executed_block);
+        let executed = BuiltPayloadExecutedBlock {
+            recovered_block: Arc::new(recovered_block),
+            execution_output: Arc::new(execution_outcome),
+            hashed_state: Either::Left(Arc::new(hashed_state)),
+            trie_updates: Either::Left(Arc::new(trie_updates)),
+        };
+        let updated_payload = OpBuiltPayload::new(payload_id, sealed_block, fees, Some(executed));
         if let Err(e) = self.built_payload_tx.send(updated_payload.clone()).await {
             warn!(
                 target: "payload_builder",
@@ -1316,18 +1316,27 @@ fn calculate_state_root_on_resolve<DB, P, ExtraCtx>(
     state: &mut State<DB>,
     ctx: &OpPayloadBuilderCtx<ExtraCtx>,
     info: &ExecutionInfo<FlashblocksExecutionInfo>,
-) -> Result<(B256, TrieUpdates), PayloadBuilderError>
+) -> Result<
+    (
+        B256,
+        TrieUpdates,
+        ExecutionOutcome<OpReceipt>,
+        HashedPostState,
+    ),
+    PayloadBuilderError,
+>
 where
     DB: Database<Error = ProviderError> + AsRef<P>,
     P: StateRootProvider + HashedPostStateProvider + StorageRootProvider,
     ExtraCtx: std::fmt::Debug + Default,
 {
-    // Merge transitions to populate the bundle_state with all accumulated
-    // transition states.
+    // Merge transitions to get the complete state. Note that build_block()
+    // restores transition_state after each flashblock, keeping all transitions
+    // available for this final merge
     state.merge_transitions(BundleRetention::Reverts);
 
     let state_root_start_time = Instant::now();
-    let execution_outcome = ExecutionOutcome::new(
+    let execution_outcome: ExecutionOutcome<OpReceipt> = ExecutionOutcome::new(
         state.bundle_state.clone(),
         vec![info.receipts.clone()],
         ctx.block_number(),
@@ -1339,7 +1348,7 @@ where
     let state_root_updates = state
         .database
         .as_ref()
-        .state_root_with_updates(hashed_state)
+        .state_root_with_updates(hashed_state.clone())
         .inspect_err(|err| {
             warn!(target: "payload_builder",
                 parent_header=%ctx.parent().hash(),
@@ -1356,5 +1365,10 @@ where
         .state_root_calculation_gauge
         .set(state_root_calculation_time);
 
-    Ok(state_root_updates)
+    Ok((
+        state_root_updates.0,
+        state_root_updates.1,
+        execution_outcome,
+        hashed_state,
+    ))
 }
