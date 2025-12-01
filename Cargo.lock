@@ -7085,7 +7085,7 @@ dependencies = [
 
 [[package]]
 name = "op-rbuilder"
-version = "0.2.12"
+version = "0.2.13"
 dependencies = [
  "alloy-consensus",
  "alloy-contract",
@@ -7472,7 +7472,7 @@ dependencies = [
 
 [[package]]
 name = "p2p"
-version = "0.2.12"
+version = "0.2.13"
 dependencies = [
  "derive_more",
  "eyre",
@@ -11871,7 +11871,7 @@ dependencies = [
 [[package]]
 name = "rollup-boost"
 version = "0.1.0"
-source = "git+http://github.com/flashbots/rollup-boost?tag=v0.7.11#196237bab2a02298de994b439e0455abb1ac512f"
+source = "git+https://github.com/flashbots/rollup-boost?tag=v0.7.11#196237bab2a02298de994b439e0455abb1ac512f"
 dependencies = [
  "alloy-primitives 1.4.1",
  "alloy-rpc-types-engine",
