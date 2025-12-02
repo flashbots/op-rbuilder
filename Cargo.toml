@@ -213,3 +213,69 @@ time = { version = "0.3.36", features = ["macros", "formatting", "parsing"] }
 vergen = "9.0.4"
 vergen-git2 = "1.0.5"
 opentelemetry = { version = "0.31", features = ["trace"] }
+
+#mosaik = { git = "http://github.com/flashbots/mosaik", branch = "main" }
+mosaik = { path = "../mosaik" }
+
+[patch."https://github.com/paradigmxyz/reth"]
+reth = { git = "https://github.com/noot/reth", branch = "noot/v1.92-cc" }
+reth-basic-payload-builder = { git = "https://github.com/noot/reth", branch = "noot/v1.92-cc" }
+reth-chain-state = { git = "https://github.com/noot/reth", branch = "noot/v1.92-cc" }
+reth-chainspec = { git = "https://github.com/noot/reth", branch = "noot/v1.92-cc" }
+reth-cli = { git = "https://github.com/noot/reth", branch = "noot/v1.92-cc" }
+reth-cli-commands = { git = "https://github.com/noot/reth", branch = "noot/v1.92-cc" }
+reth-cli-util = { git = "https://github.com/noot/reth", branch = "noot/v1.92-cc" }
+reth-codecs = { git = "https://github.com/noot/reth", branch = "noot/v1.92-cc" }
+reth-codecs-derive = { git = "https://github.com/noot/reth", branch = "noot/v1.92-cc" }
+reth-consensus = { git = "https://github.com/noot/reth", branch = "noot/v1.92-cc" }
+reth-db = { git = "https://github.com/noot/reth", branch = "noot/v1.92-cc" }
+reth-db-common = { git = "https://github.com/noot/reth", branch = "noot/v1.92-cc" }
+reth-errors = { git = "https://github.com/noot/reth", branch = "noot/v1.92-cc" }
+reth-eth-wire-types = { git = "https://github.com/noot/reth", branch = "noot/v1.92-cc" }
+reth-ethereum-payload-builder = { git = "https://github.com/noot/reth", branch = "noot/v1.92-cc" }
+reth-ethereum-primitives = { git = "https://github.com/noot/reth", branch = "noot/v1.92-cc" }
+reth-evm = { git = "https://github.com/noot/reth", branch = "noot/v1.92-cc" }
+reth-evm-ethereum = { git = "https://github.com/noot/reth", branch = "noot/v1.92-cc" }
+reth-execution-errors = { git = "https://github.com/noot/reth", branch = "noot/v1.92-cc" }
+reth-execution-types = { git = "https://github.com/noot/reth", branch = "noot/v1.92-cc" }
+reth-exex = { git = "https://github.com/noot/reth", branch = "noot/v1.92-cc" }
+reth-ipc = { git = "https://github.com/noot/reth", branch = "noot/v1.92-cc" }
+reth-metrics = { git = "https://github.com/noot/reth", branch = "noot/v1.92-cc" }
+reth-network = { git = "https://github.com/noot/reth", branch = "noot/v1.92-cc" }
+reth-network-peers = { git = "https://github.com/noot/reth", branch = "noot/v1.92-cc" }
+reth-node-api = { git = "https://github.com/noot/reth", branch = "noot/v1.92-cc" }
+reth-node-builder = { git = "https://github.com/noot/reth", branch = "noot/v1.92-cc" }
+reth-node-core = { git = "https://github.com/noot/reth", branch = "noot/v1.92-cc" }
+reth-node-ethereum = { git = "https://github.com/noot/reth", branch = "noot/v1.92-cc" }
+reth-node-types = { git = "https://github.com/noot/reth", branch = "noot/v1.92-cc" }
+reth-optimism-chainspec = { git = "https://github.com/noot/reth", branch = "noot/v1.92-cc" }
+reth-optimism-cli = { git = "https://github.com/noot/reth", branch = "noot/v1.92-cc" }
+reth-optimism-consensus = { git = "https://github.com/noot/reth", branch = "noot/v1.92-cc" }
+reth-optimism-evm = { git = "https://github.com/noot/reth", branch = "noot/v1.92-cc" }
+reth-optimism-forks = { git = "https://github.com/noot/reth", branch = "noot/v1.92-cc" }
+reth-optimism-node = { git = "https://github.com/noot/reth", branch = "noot/v1.92-cc" }
+reth-optimism-payload-builder = { git = "https://github.com/noot/reth", branch = "noot/v1.92-cc" }
+reth-optimism-primitives = { git = "https://github.com/noot/reth", branch = "noot/v1.92-cc" }
+reth-optimism-rpc = { git = "https://github.com/noot/reth", branch = "noot/v1.92-cc" }
+reth-optimism-txpool = { git = "https://github.com/noot/reth", branch = "noot/v1.92-cc" }
+reth-payload-builder = { git = "https://github.com/noot/reth", branch = "noot/v1.92-cc" }
+reth-payload-builder-primitives = { git = "https://github.com/noot/reth", branch = "noot/v1.92-cc" }
+reth-payload-primitives = { git = "https://github.com/noot/reth", branch = "noot/v1.92-cc" }
+reth-payload-util = { git = "https://github.com/noot/reth", branch = "noot/v1.92-cc" }
+reth-primitives = { git = "https://github.com/noot/reth", branch = "noot/v1.92-cc" }
+reth-primitives-traits = { git = "https://github.com/noot/reth", branch = "noot/v1.92-cc" }
+reth-provider = { git = "https://github.com/noot/reth", branch = "noot/v1.92-cc" }
+reth-revm = { git = "https://github.com/noot/reth", branch = "noot/v1.92-cc" }
+reth-rpc-api = { git = "https://github.com/noot/reth", branch = "noot/v1.92-cc" }
+reth-rpc-engine-api = { git = "https://github.com/noot/reth", branch = "noot/v1.92-cc" }
+reth-rpc-eth-api = { git = "https://github.com/noot/reth", branch = "noot/v1.92-cc" }
+reth-rpc-eth-types = { git = "https://github.com/noot/reth", branch = "noot/v1.92-cc" }
+reth-rpc-layer = { git = "https://github.com/noot/reth", branch = "noot/v1.92-cc" }
+reth-storage-api = { git = "https://github.com/noot/reth", branch = "noot/v1.92-cc" }
+reth-tasks = { git = "https://github.com/noot/reth", branch = "noot/v1.92-cc" }
+reth-testing-utils = { git = "https://github.com/noot/reth", branch = "noot/v1.92-cc" }
+reth-tracing-otlp = { git = "https://github.com/noot/reth", branch = "noot/v1.92-cc" }
+reth-transaction-pool = { git = "https://github.com/noot/reth", branch = "noot/v1.92-cc" }
+reth-trie = { git = "https://github.com/noot/reth", branch = "noot/v1.92-cc" }
+reth-trie-db = { git = "https://github.com/noot/reth", branch = "noot/v1.92-cc" }
+reth-trie-parallel = { git = "https://github.com/noot/reth", branch = "noot/v1.92-cc" }

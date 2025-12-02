@@ -132,6 +132,7 @@ reqwest = "0.12.23"
 k256 = "0.13.4"
 
 rollup-boost-core.workspace = true
+mosaik.workspace = true
 
 nanoid = { version = "0.4", optional = true }
 reth-ipc = { workspace = true, optional = true }
