@@ -19,7 +19,7 @@ use reth_optimism_node::{OpEngineTypes, OpPayloadBuilderAttributes};
 use reth_optimism_payload_builder::OpBuiltPayload;
 use reth_optimism_primitives::{OpReceipt, OpTransactionSigned};
 use reth_payload_builder::EthPayloadBuilderAttributes;
-use rollup_boost::FlashblocksPayloadV1;
+use rollup_boost_core::flashblocks::FlashblocksPayloadV1;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::warn;

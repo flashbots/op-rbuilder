@@ -162,7 +162,7 @@ alloy-trie = { version = "0.9.1" }
 alloy-hardforks = "0.4.4"
 
 # rollup-boost
-rollup-boost = { git = "https://github.com/flashbots/rollup-boost", tag = "v0.7.11" }
+rollup-boost-core = { git = "http://github.com/flashbots/rollup-boost", branch = "noot/rollup-boost-core" }
 
 # optimism
 alloy-op-evm = { version = "0.23.0", default-features = false }
