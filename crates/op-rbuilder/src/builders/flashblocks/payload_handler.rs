@@ -8,14 +8,12 @@ use crate::{
 use alloy_evm::eth::receipt_builder::ReceiptBuilderCtx;
 use alloy_primitives::B64;
 use eyre::{WrapErr as _, bail};
-use op_alloy_consensus::OpTxEnvelope;
 use reth::revm::{State, database::StateProviderDatabase};
 use reth_basic_payload_builder::PayloadConfig;
-use reth_evm::FromRecoveredTx;
 use reth_node_builder::Events;
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_consensus::OpBeaconConsensus;
-use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
+use reth_optimism_evm::OpNextBlockEnvAttributes;
 use reth_optimism_node::{OpEngineTypes, OpPayloadBuilderAttributes};
 use reth_optimism_payload_builder::OpBuiltPayload;
 use reth_optimism_primitives::{OpReceipt, OpTransactionSigned};
@@ -228,15 +226,13 @@ where
     );
 
     execute_transactions(
+        &ctx,
         &mut info,
         &mut state,
         payload.block().body().transactions.clone(),
         payload.block().header().gas_used,
-        ctx.evm_config(),
+        timestamp,
         evm_env.clone(),
-        ctx.max_gas_per_txn(),
-        is_canyon_active(&chain_spec, timestamp),
-        is_regolith_active(&chain_spec, timestamp),
     )
     .wrap_err("failed to execute best transactions")?;
 
@@ -278,77 +274,55 @@ where
 
 #[allow(clippy::too_many_arguments)]
 fn execute_transactions(
+    ctx: &OpPayloadSyncerCtx,
     info: &mut ExecutionInfo<FlashblocksExecutionInfo>,
     state: &mut State<impl alloy_evm::Database>,
     txs: Vec<op_alloy_consensus::OpTxEnvelope>,
     gas_limit: u64,
-    evm_config: &reth_optimism_evm::OpEvmConfig,
+    timestamp: u64,
     evm_env: alloy_evm::EvmEnv<op_revm::OpSpecId>,
-    max_gas_per_txn: Option<u64>,
-    is_canyon_active: bool,
-    is_regolith_active: bool,
 ) -> eyre::Result<()> {
     use alloy_evm::Evm as _;
-    use op_revm::{OpTransaction, transaction::deposit::DepositTransactionParts};
     use reth_evm::ConfigureEvm as _;
-    use reth_primitives_traits::SignerRecoverable as _;
-    use revm::{
-        DatabaseCommit as _,
-        context::{TxEnv, result::ResultAndState},
-    };
+    use reth_primitives_traits::SignedTransaction;
+    use revm::{DatabaseCommit as _, context::result::ResultAndState};
 
-    let mut evm = evm_config.evm_with_env(&mut *state, evm_env);
+    let mut evm = ctx.evm_config().evm_with_env(&mut *state, evm_env);
 
     for tx in txs {
-        let sender = tx
-            .recover_signer()
-            .wrap_err("failed to recover tx signer")?;
-        let tx_env = TxEnv::from_recovered_tx(&tx, sender);
-        let executable_tx = match tx {
-            OpTxEnvelope::Deposit(ref tx) => {
-                let deposit = DepositTransactionParts {
-                    mint: Some(tx.mint),
-                    source_hash: tx.source_hash,
-                    is_system_transaction: tx.is_system_transaction,
-                };
-                OpTransaction {
-                    base: tx_env,
-                    enveloped_tx: None,
-                    deposit,
-                }
-            }
-            OpTxEnvelope::Legacy(_) => {
-                let mut tx = OpTransaction::new(tx_env);
-                tx.enveloped_tx = Some(vec![0x00].into());
-                tx
-            }
-            OpTxEnvelope::Eip2930(_) => {
-                let mut tx = OpTransaction::new(tx_env);
-                tx.enveloped_tx = Some(vec![0x00].into());
-                tx
-            }
-            OpTxEnvelope::Eip1559(_) => {
-                let mut tx = OpTransaction::new(tx_env);
-                tx.enveloped_tx = Some(vec![0x00].into());
-                tx
-            }
-            OpTxEnvelope::Eip7702(_) => {
-                let mut tx = OpTransaction::new(tx_env);
-                tx.enveloped_tx = Some(vec![0x00].into());
-                tx
-            }
-        };
+        // Convert to recovered transaction
+        let tx_recovered = tx
+            .try_clone_into_recovered()
+            .wrap_err("failed to recover tx")?;
+        let sender = tx_recovered.signer();
 
-        let ResultAndState { result, state } = evm.transact_raw(executable_tx)?;
-        if let Some(max_gas_per_txn) = max_gas_per_txn
-            && result.gas_used() > max_gas_per_txn
+        // Cache the depositor account prior to the state transition for the deposit nonce.
+        //
+        // Note that this *only* needs to be done post-regolith hardfork, as deposit nonces
+        // were not introduced in Bedrock. In addition, regular transactions don't have deposit
+        // nonces, so we don't need to touch the DB for those.
+        let depositor_nonce = (ctx.is_regolith_active(timestamp) && tx_recovered.is_deposit())
+            .then(|| {
+                evm.db_mut()
+                    .load_cache_account(sender)
+                    .map(|acc| acc.account_info().unwrap_or_default().nonce)
+            })
+            .transpose()
+            .wrap_err("failed to get depositor nonce")?;
+
+        let ResultAndState { result, state } = evm
+            .transact(&tx_recovered)
+            .wrap_err("failed to execute transaction")?;
+
+        let tx_gas_used = result.gas_used();
+        if let Some(max_gas_per_txn) = ctx.max_gas_per_txn()
+            && tx_gas_used > max_gas_per_txn
         {
             return Err(eyre::eyre!(
                 "transaction exceeded max gas per txn limit in flashblock"
             ));
         }
 
-        let tx_gas_used = result.gas_used();
         info.cumulative_gas_used = info
             .cumulative_gas_used
             .checked_add(tx_gas_used)
@@ -359,16 +333,7 @@ fn execute_transactions(
             bail!("flashblock exceeded gas limit when executing transactions");
         }
 
-        let depositor_nonce = (is_regolith_active && tx.is_deposit())
-            .then(|| {
-                evm.db_mut()
-                    .load_cache_account(sender)
-                    .map(|acc| acc.account_info().unwrap_or_default().nonce)
-            })
-            .transpose()
-            .wrap_err("failed to get depositor nonce")?;
-
-        let ctx = ReceiptBuilderCtx {
+        let receipt_ctx = ReceiptBuilderCtx {
             tx: &tx,
             evm: &evm,
             result,
@@ -376,12 +341,8 @@ fn execute_transactions(
             cumulative_gas_used: info.cumulative_gas_used,
         };
 
-        info.receipts.push(build_receipt(
-            evm_config,
-            ctx,
-            depositor_nonce,
-            is_canyon_active,
-        ));
+        info.receipts
+            .push(build_receipt(ctx, receipt_ctx, depositor_nonce, timestamp));
 
         evm.db_mut().commit(state);
 
@@ -394,26 +355,26 @@ fn execute_transactions(
 }
 
 fn build_receipt<E: alloy_evm::Evm>(
-    evm_config: &OpEvmConfig,
-    ctx: ReceiptBuilderCtx<'_, OpTransactionSigned, E>,
+    ctx: &OpPayloadSyncerCtx,
+    receipt_ctx: ReceiptBuilderCtx<'_, OpTransactionSigned, E>,
     deposit_nonce: Option<u64>,
-    is_canyon_active: bool,
+    timestamp: u64,
 ) -> OpReceipt {
     use alloy_consensus::Eip658Value;
     use alloy_op_evm::block::receipt_builder::OpReceiptBuilder as _;
     use op_alloy_consensus::OpDepositReceipt;
     use reth_evm::ConfigureEvm as _;
 
-    let receipt_builder = evm_config.block_executor_factory().receipt_builder();
-    match receipt_builder.build_receipt(ctx) {
+    let receipt_builder = ctx.evm_config().block_executor_factory().receipt_builder();
+    match receipt_builder.build_receipt(receipt_ctx) {
         Ok(receipt) => receipt,
-        Err(ctx) => {
+        Err(receipt_ctx) => {
             let receipt = alloy_consensus::Receipt {
                 // Success flag was added in `EIP-658: Embedding transaction status code
                 // in receipts`.
-                status: Eip658Value::Eip658(ctx.result.is_success()),
-                cumulative_gas_used: ctx.cumulative_gas_used,
-                logs: ctx.result.into_logs(),
+                status: Eip658Value::Eip658(receipt_ctx.result.is_success()),
+                cumulative_gas_used: receipt_ctx.cumulative_gas_used,
+                logs: receipt_ctx.result.into_logs(),
             };
 
             receipt_builder.build_deposit_receipt(OpDepositReceipt {
@@ -424,7 +385,7 @@ fn build_receipt<E: alloy_evm::Evm>(
                 // when set. The state transition process ensures
                 // this is only set for post-Canyon deposit
                 // transactions.
-                deposit_receipt_version: is_canyon_active.then_some(1),
+                deposit_receipt_version: ctx.is_canyon_active(timestamp).then_some(1),
             })
         }
     }
@@ -456,14 +417,4 @@ fn validate_pre_execution(
         .wrap_err("header validation against parent failed")?;
 
     Ok(())
-}
-
-fn is_canyon_active(chain_spec: &OpChainSpec, timestamp: u64) -> bool {
-    use reth_optimism_chainspec::OpHardforks as _;
-    chain_spec.is_canyon_active_at_timestamp(timestamp)
-}
-
-fn is_regolith_active(chain_spec: &OpChainSpec, timestamp: u64) -> bool {
-    use reth_optimism_chainspec::OpHardforks as _;
-    chain_spec.is_regolith_active_at_timestamp(timestamp)
 }
