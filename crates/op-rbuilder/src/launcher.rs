@@ -201,7 +201,7 @@ where
                 ctx.task_executor
                     .spawn_critical("pending-tx-forward", async move {
                         while let Some(event) = rx.recv().await {
-                            tracing::warn!(
+                            tracing::debug!(
                                 hash = hex::encode(event.transaction.hash()),
                                 "new transaction event"
                             );
