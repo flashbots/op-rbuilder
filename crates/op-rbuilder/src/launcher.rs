@@ -21,7 +21,7 @@ use reth_optimism_node::{
     OpNode,
     node::{OpAddOns, OpAddOnsBuilder, OpEngineValidatorBuilder, OpPoolBuilder},
 };
-use reth_transaction_pool::TransactionPool;
+use reth_transaction_pool::{PoolTransaction, TransactionPool};
 use std::{marker::PhantomData, sync::Arc};
 
 pub fn launch() -> Result<()> {
@@ -110,6 +110,23 @@ where
         let reverted_cache = Cache::builder().max_capacity(100).build();
         let reverted_cache_copy = reverted_cache.clone();
 
+        let network_id = mosaik::prelude::NetworkId::new("mosaik-demo");
+
+        // bootnode
+        let bootnode_public_key_bytes: [u8; 32] =
+            hex::decode("7eab12fd619391ca3f923feb7bbaca0a8f1473e299b92caec00ea639914d8c57")
+                .expect("valid hex")
+                .try_into()
+                .expect("correct length");
+        let bootnode_id =
+            mosaik::PublicKey::from_bytes(&bootnode_public_key_bytes).expect("valid public key");
+        let bootnode_addr = mosaik::EndpointAddr::new(bootnode_id)
+            .with_ip_addr("127.0.0.1:20201".parse().expect("can parse ip addr"));
+
+        let network = mosaik::prelude::NetworkBuilder::new(network_id)
+            .with_bootstrap_peer(bootnode_addr)
+            .with_port(20202);
+
         let mut addons: OpAddOns<
             _,
             OpEthApiBuilder,
@@ -126,6 +143,11 @@ where
                 OpEngineApiBuilder::default();
             addons = addons.with_engine_api(engine_builder);
         }
+        let executor = builder.task_executor().clone();
+
+        let (pending_transaction_tx, mut pending_transaction_rx) =
+            tokio::sync::mpsc::unbounded_channel::<mosaik::Transaction>();
+
         let handle = builder
             .with_types::<OpNode>()
             .with_components(
@@ -174,12 +196,73 @@ where
                     let task = monitor_tx_pool(listener, reverted_cache_copy);
                     ctx.task_executor.spawn_critical("txlogging", task);
                 }
+
+                let mut rx = ctx.pool.new_transactions_listener();
+                ctx.task_executor
+                    .spawn_critical("pending-tx-forward", async move {
+                        while let Some(event) = rx.recv().await {
+                            tracing::warn!(
+                                hash = hex::encode(event.transaction.hash()),
+                                "new transaction event"
+                            );
+                            let tx = event.transaction;
+                            if let Err(err) = pending_transaction_tx.send(
+                                tx.transaction
+                                    .inner
+                                    .clone()
+                                    .into_consensus()
+                                    .into_inner()
+                                    .into(),
+                            ) {
+                                tracing::error!("failed to forward pending transaction: {err}");
+                            }
+                        }
+                    });
                 Ok(())
             })
             .launch()
             .await?;
 
-        handle.node_exit_future.await?;
+        let p2p_handle = executor.spawn_critical("p2p", async move {
+            use futures::SinkExt as _;
+
+            let network = match network.build_and_run().await {
+                Ok(net) => net,
+                Err(err) => {
+                    tracing::error!("failed to build and run p2p network: {err}");
+                    return;
+                }
+            };
+            network.local().online().await;
+
+            let mut producer = network.produce::<mosaik::Transaction>();
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(15));
+            loop {
+                tokio::select! {
+                    _ = interval.tick() => {
+                        let peers = network.discovery().catalog().len();
+                        tracing::info!("Connected peers: {}", peers);
+                    }
+                    Some(tx) = pending_transaction_rx.recv() => {
+                        if let Err(e) = producer.send(tx).await {
+                            tracing::warn!("failed to broadcast pending transaction: {e}");
+                        } else {
+                            tracing::info!("broadcasted pending transaction");
+                        }
+                    }
+                }
+            }
+        });
+
+        tokio::select! {
+            _ = p2p_handle => {
+                tracing::error!("p2p network task exited unexpectedly");
+            }
+            _ = handle.node_exit_future => {
+                tracing::info!("Node is shutting down");
+            }
+        }
+
         Ok(())
     }
 }

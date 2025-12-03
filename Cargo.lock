@@ -6972,6 +6972,7 @@ dependencies = [
  "iroh",
  "iroh-gossip",
  "n0-error",
+ "op-alloy-consensus",
  "parking_lot",
  "rand 0.9.2",
  "rmp-serde",
