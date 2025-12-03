@@ -100,7 +100,7 @@ where
                             let payload_events_handle = payload_events_handle.clone();
                             let cancel = cancel.clone();
 
-                            // execute the built full payload on a thread where blocking is acceptable,
+                            // execute the flashblock on a thread where blocking is acceptable,
                             // as it's potentially a heavy operation
                             tokio::task::spawn_blocking(move || {
                                 let res = execute_flashblock(
