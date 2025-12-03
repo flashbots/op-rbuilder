@@ -96,33 +96,30 @@ where
                 Some(message) = p2p_rx.recv() => {
                     match message {
                         Message::OpBuiltPayload(payload) => {
-                            let external_payload: OpBuiltPayload = payload.into();
+                            let payload: OpBuiltPayload = payload.into();
                             let ctx = ctx.clone();
                             let client = client.clone();
                             let payload_events_handle = payload_events_handle.clone();
                             let cancel = cancel.clone();
 
-                            // Validating and executing the built full payload on a thread where blocking
-                            // is acceptable, as there should only be one flashblock builder at any point in time.
+                            // execute the built full payload on a thread where blocking is acceptable,
+                            // as there should only be one flashblock builder at any point in time.
                             tokio::task::spawn_blocking(move || {
                                 let res = execute_flashblock(
-                                    &external_payload,
+                                    payload,
                                     ctx,
                                     client,
                                     cancel,
                                 );
-                                // For X Layer
-                                match res.and_then(|(built_payload, _)| {
-                                    tracing::info!(hash = built_payload.block().hash().to_string(), block_number = built_payload.block().header().number, "successfully executed received flashblock");
-                                    validate_post_execute(&built_payload, &external_payload).map(|_| built_payload)
-                                }) {
-                                    Ok(built_payload) => {
-                                        if let Err(e) = payload_events_handle.send(Events::BuiltPayload(built_payload)) {
+                                match res {
+                                    Ok((payload, _)) => {
+                                        tracing::info!(hash = payload.block().hash().to_string(), block_number = payload.block().header().number, "successfully executed received flashblock");
+                                        if let Err(e) = payload_events_handle.send(Events::BuiltPayload(payload)) {
                                             warn!(e = ?e, "failed to send BuiltPayload event on synced block");
                                         }
                                     }
                                     Err(e) => {
-                                        tracing::error!(error = ?e, "failed to received external full payload from flashblock builder");
+                                        tracing::error!(error = ?e, "failed to execute received flashblock");
                                     }
                                 }
                             });
@@ -136,7 +133,7 @@ where
 }
 
 fn execute_flashblock<Client>(
-    payload: &OpBuiltPayload,
+    payload: OpBuiltPayload,
     ctx: OpPayloadSyncerCtx,
     client: Client,
     cancel: tokio_util::sync::CancellationToken,
@@ -161,7 +158,7 @@ where
 
     // For X Layer, validate header and parent relationship before execution
     let chain_spec = client.chain_spec();
-    validate_pre_execution(payload, &parent_header, parent_hash, chain_spec.clone())
+    validate_pre_execution(&payload, &parent_header, parent_hash, chain_spec.clone())
         .wrap_err("pre-execution validation failed")?;
 
     let state_provider = client
@@ -458,18 +455,6 @@ fn validate_pre_execution(
         .validate_header_against_parent(payload.block().sealed_header(), &parent_sealed)
         .wrap_err("header validation against parent failed")?;
 
-    Ok(())
-}
-
-fn validate_post_execute(
-    built_payload: &OpBuiltPayload,
-    external_payload: &OpBuiltPayload,
-) -> eyre::Result<()> {
-    if built_payload.block().hash() != external_payload.block().hash() {
-        return Err(eyre::eyre!(
-            "validation failed, built payload hash mismatch"
-        ));
-    }
     Ok(())
 }
 
