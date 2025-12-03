@@ -103,7 +103,7 @@ where
                             let cancel = cancel.clone();
 
                             // execute the built full payload on a thread where blocking is acceptable,
-                            // as there should only be one flashblock builder at any point in time.
+                            // as it's potentially a heavy operation
                             tokio::task::spawn_blocking(move || {
                                 let res = execute_flashblock(
                                     payload,
