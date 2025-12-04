@@ -9,6 +9,7 @@ use alloy_evm::eth::receipt_builder::ReceiptBuilderCtx;
 use alloy_primitives::B64;
 use eyre::{WrapErr as _, bail};
 use op_alloy_consensus::OpTxEnvelope;
+use op_alloy_rpc_types_engine::OpFlashblockPayload;
 use reth::revm::{State, database::StateProviderDatabase};
 use reth_basic_payload_builder::PayloadConfig;
 use reth_evm::FromRecoveredTx;
@@ -19,7 +20,6 @@ use reth_optimism_node::{OpEngineTypes, OpPayloadBuilderAttributes};
 use reth_optimism_payload_builder::OpBuiltPayload;
 use reth_optimism_primitives::{OpReceipt, OpTransactionSigned};
 use reth_payload_builder::EthPayloadBuilderAttributes;
-use rollup_boost_types::flashblocks::FlashblocksPayloadV1;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::warn;
@@ -135,7 +135,7 @@ fn execute_flashblock<Client>(
     ctx: OpPayloadSyncerCtx,
     client: Client,
     cancel: tokio_util::sync::CancellationToken,
-) -> eyre::Result<(OpBuiltPayload, FlashblocksPayloadV1)>
+) -> eyre::Result<(OpBuiltPayload, OpFlashblockPayload)>
 where
     Client: ClientBounds,
 {

@@ -167,11 +167,11 @@ rollup-boost-types = { git = "http://github.com/flashbots/rollup-boost", rev = "
 # optimism
 alloy-op-evm = { version = "0.23.0", default-features = false }
 alloy-op-hardforks = "0.4.4"
-op-alloy-rpc-types = { version = "0.22.0", default-features = false }
-op-alloy-rpc-types-engine = { version = "0.22.0", default-features = false }
-op-alloy-rpc-jsonrpsee = { version = "0.22.0", default-features = false }
-op-alloy-network = { version = "0.22.0", default-features = false }
-op-alloy-consensus = { version = "0.22.0", default-features = false }
+op-alloy-rpc-types = { version = "0.22.4", default-features = false }
+op-alloy-rpc-types-engine = { version = "0.22.4", default-features = false }
+op-alloy-rpc-jsonrpsee = { version = "0.22.4", default-features = false }
+op-alloy-network = { version = "0.22.4", default-features = false }
+op-alloy-consensus = { version = "0.22.4", default-features = false }
 op-alloy-flz = { version = "0.13.1", default-features = false }
 
 async-trait = { version = "0.1.83" }

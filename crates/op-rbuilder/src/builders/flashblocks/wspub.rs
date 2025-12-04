@@ -5,7 +5,7 @@ use core::{
 };
 use futures::SinkExt;
 use futures_util::StreamExt;
-use rollup_boost_types::flashblocks::FlashblocksPayloadV1;
+use op_alloy_rpc_types_engine::OpFlashblockPayload;
 use std::{io, net::TcpListener, sync::Arc};
 use tokio::{
     net::TcpStream,
@@ -25,7 +25,7 @@ use crate::metrics::OpRBuilderMetrics;
 /// A WebSockets publisher that accepts connections from client websockets and broadcasts to them
 /// updates about new flashblocks. It maintains a count of sent messages and active subscriptions.
 ///
-/// This is modelled as a `futures::Sink` that can be used to send `FlashblocksPayloadV1` messages.
+/// This is modelled as a `futures::Sink` that can be used to send `OpFlashblockPayload` messages.
 pub(super) struct WebSocketPublisher {
     sent: Arc<AtomicUsize>,
     subs: Arc<AtomicUsize>,
@@ -59,7 +59,7 @@ impl WebSocketPublisher {
         })
     }
 
-    pub(super) fn publish(&self, payload: &FlashblocksPayloadV1) -> io::Result<usize> {
+    pub(super) fn publish(&self, payload: &OpFlashblockPayload) -> io::Result<usize> {
         // Serialize the payload to a UTF-8 string
         // serialize only once, then just copy around only a pointer
         // to the serialized data for each subscription.
