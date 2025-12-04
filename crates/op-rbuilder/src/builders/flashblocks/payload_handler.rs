@@ -15,6 +15,7 @@ use reth_evm::FromRecoveredTx;
 use reth_node_builder::Events;
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
+use reth_optimism_forks::OpHardforks;
 use reth_optimism_node::{OpEngineTypes, OpPayloadBuilderAttributes};
 use reth_optimism_payload_builder::OpBuiltPayload;
 use reth_optimism_primitives::{OpReceipt, OpTransactionSigned};
@@ -192,17 +193,30 @@ where
     let mut info = ExecutionInfo::with_capacity(payload.block().body().transactions.len());
 
     let extra_data = payload.block().sealed_header().extra_data.clone();
-    if extra_data.len() != 9 {
-        tracing::error!(len = extra_data.len(), data = ?extra_data, "invalid extra data length in flashblock");
-        bail!("extra data length should be 9 bytes");
-    }
+    let eip_1559_parameters: Option<B64> = if chain_spec.is_jovian_active_at_timestamp(timestamp) {
+        if extra_data.len() != 17 {
+            tracing::debug!(len = extra_data.len(), data = ?extra_data, "invalid extra data length in flashblock for jovian fork");
+            bail!("extra data length should be 17 bytes");
+        }
+        extra_data[1..9].try_into().ok()
+    } else if chain_spec.is_holocene_active_at_timestamp(timestamp) {
+        if extra_data.len() != 9 {
+            tracing::debug!(len = extra_data.len(), data = ?extra_data, "invalid extra data length in flashblock for holocene fork");
+            bail!("extra data length should be 9 bytes");
+        }
+        extra_data[1..9].try_into().ok()
+    } else {
+        if !extra_data.is_empty() {
+            tracing::debug!(len = extra_data.len(), data = ?extra_data, "invalid extra data length in flashblock for pre holocene fork");
+            bail!("extra data length should be 0 bytes");
+        }
+        None
+    };
 
-    // see https://specs.optimism.io/protocol/holocene/exec-engine.html#eip-1559-parameters-in-block-header
-    let eip_1559_parameters: B64 = extra_data[1..9].try_into().unwrap();
     let payload_config = PayloadConfig::new(
         Arc::new(SealedHeader::new(parent_header.clone(), parent_hash)),
         OpPayloadBuilderAttributes {
-            eip_1559_params: Some(eip_1559_parameters),
+            eip_1559_params: eip_1559_parameters,
             payload_attributes: EthPayloadBuilderAttributes {
                 id: payload.id(),    // unused
                 parent: parent_hash, // unused
