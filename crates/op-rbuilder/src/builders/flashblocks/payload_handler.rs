@@ -9,6 +9,7 @@ use alloy_evm::eth::receipt_builder::ReceiptBuilderCtx;
 use alloy_primitives::B64;
 use eyre::{WrapErr as _, bail};
 use op_alloy_consensus::OpTxEnvelope;
+use op_revm::L1BlockInfo;
 use reth::revm::{State, database::StateProviderDatabase};
 use reth_basic_payload_builder::PayloadConfig;
 use reth_evm::FromRecoveredTx;
@@ -191,32 +192,44 @@ where
         .wrap_err("failed to apply pre execution changes")?;
 
     let mut info = ExecutionInfo::with_capacity(payload.block().body().transactions.len());
+    info.optional_blob_fields = Some((
+        payload.block().sealed_header().excess_blob_gas,
+        payload.block().sealed_header().blob_gas_used,
+    ));
 
     let extra_data = payload.block().sealed_header().extra_data.clone();
-    let eip_1559_parameters: Option<B64> = if chain_spec.is_jovian_active_at_timestamp(timestamp) {
+    let (eip_1559_parameters, min_base_fee): (Option<B64>, Option<u64>) = if chain_spec
+        .is_jovian_active_at_timestamp(timestamp)
+    {
         if extra_data.len() != 17 {
             tracing::debug!(len = extra_data.len(), data = ?extra_data, "invalid extra data length in flashblock for jovian fork");
             bail!("extra data length should be 17 bytes");
         }
-        extra_data[1..9].try_into().ok()
+        let eip_1559_params = extra_data[1..9].try_into().ok();
+        let min_base_fee_bytes: [u8; 8] = extra_data[9..17]
+            .try_into()
+            .wrap_err("failed to extract min base fee from jovian extra data")?;
+        let min_base_fee = u64::from_be_bytes(min_base_fee_bytes);
+        (eip_1559_params, Some(min_base_fee))
     } else if chain_spec.is_holocene_active_at_timestamp(timestamp) {
         if extra_data.len() != 9 {
             tracing::debug!(len = extra_data.len(), data = ?extra_data, "invalid extra data length in flashblock for holocene fork");
             bail!("extra data length should be 9 bytes");
         }
-        extra_data[1..9].try_into().ok()
+        (extra_data[1..9].try_into().ok(), None)
     } else {
         if !extra_data.is_empty() {
             tracing::debug!(len = extra_data.len(), data = ?extra_data, "invalid extra data length in flashblock for pre holocene fork");
             bail!("extra data length should be 0 bytes");
         }
-        None
+        (None, None)
     };
 
     let payload_config = PayloadConfig::new(
         Arc::new(SealedHeader::new(parent_header.clone(), parent_hash)),
         OpPayloadBuilderAttributes {
             eip_1559_params: eip_1559_parameters,
+            min_base_fee,
             payload_attributes: EthPayloadBuilderAttributes {
                 id: payload.id(),    // unused
                 parent: parent_hash, // unused
@@ -242,6 +255,7 @@ where
         payload.block().header().gas_used,
         ctx.evm_config(),
         evm_env.clone(),
+        chain_spec.clone(),
         ctx.max_gas_per_txn(),
         is_canyon_active(&chain_spec, timestamp),
         is_regolith_active(&chain_spec, timestamp),
@@ -292,6 +306,7 @@ fn execute_transactions(
     gas_limit: u64,
     evm_config: &reth_optimism_evm::OpEvmConfig,
     evm_env: alloy_evm::EvmEnv<op_revm::OpSpecId>,
+    chain_spec: Arc<OpChainSpec>,
     max_gas_per_txn: Option<u64>,
     is_canyon_active: bool,
     is_regolith_active: bool,
@@ -409,6 +424,15 @@ fn execute_transactions(
         info.executed_senders.push(sender);
         info.executed_transactions.push(tx.clone());
     }
+
+    // Fetch DA footprint gas scalar for Jovian blocks
+    let da_footprint_gas_scalar = chain_spec
+        .is_jovian_active_at_timestamp(timestamp)
+        .then(|| {
+            L1BlockInfo::fetch_da_footprint_gas_scalar(evm.db_mut())
+                .expect("DA footprint should always be available from the database post jovian")
+        });
+    info.da_footprint_scalar = da_footprint_gas_scalar;
 
     Ok(())
 }
