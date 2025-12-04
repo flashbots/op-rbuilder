@@ -6973,7 +6973,7 @@ dependencies = [
  "reth-trie",
  "revm",
  "rlimit",
- "rollup-boost-core",
+ "rollup-boost-types",
  "secp256k1 0.30.0",
  "serde",
  "serde_json",
@@ -11524,9 +11524,9 @@ dependencies = [
 ]
 
 [[package]]
-name = "rollup-boost-core"
+name = "rollup-boost-types"
 version = "0.1.0"
-source = "git+http://github.com/flashbots/rollup-boost?branch=noot%2Frollup-boost-core#753767212b87148ebd6d764b758fc2f511a5f66e"
+source = "git+http://github.com/flashbots/rollup-boost?rev=b282527e5f46d0915d1e5bdf44338593bc8beb2d#b282527e5f46d0915d1e5bdf44338593bc8beb2d"
 dependencies = [
  "alloy-primitives 1.4.1",
  "alloy-rpc-types-engine",

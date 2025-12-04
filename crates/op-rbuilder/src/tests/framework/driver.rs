@@ -9,7 +9,7 @@ use op_alloy_consensus::{OpTypedTransaction, TxDeposit};
 use op_alloy_network::Optimism;
 use op_alloy_rpc_types::Transaction;
 use reth_optimism_node::OpPayloadAttributes;
-use rollup_boost_core::payload::OpExecutionPayloadEnvelope;
+use rollup_boost_types::payload::OpExecutionPayloadEnvelope;
 
 use super::{EngineApi, Ipc, LocalInstance, TransactionBuilder};
 use crate::{

@@ -42,7 +42,7 @@ use reth_revm::{
 use reth_transaction_pool::TransactionPool;
 use reth_trie::{HashedPostState, updates::TrieUpdates};
 use revm::Database;
-use rollup_boost_core::flashblocks::{
+use rollup_boost_types::flashblocks::{
     ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, FlashblocksPayloadV1,
 };
 use serde::{Deserialize, Serialize};
