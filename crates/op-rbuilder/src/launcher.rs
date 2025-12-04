@@ -240,7 +240,7 @@ where
             loop {
                 tokio::select! {
                     _ = interval.tick() => {
-                        let peers = network.discovery().catalog().len();
+                        let peers = network.discovery().catalog().len() - 1;
                         tracing::info!("Connected peers: {}", peers);
                     }
                     Some(tx) = pending_transaction_rx.recv() => {

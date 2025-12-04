@@ -285,10 +285,8 @@ where
 
     fn resolve_kind(
         &mut self,
-        kind: PayloadKind,
+        _kind: PayloadKind,
     ) -> (Self::ResolvePayloadFuture, KeepPayloadJobAlive) {
-        tracing::info!("Resolve kind {:?}", kind);
-
         // check if self.cell has a payload
         self.cancel.cancel();
 
