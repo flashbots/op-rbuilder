@@ -1176,7 +1176,7 @@ where
                 .attributes()
                 .payload_attributes
                 .parent_beacon_block_root
-                .unwrap(),
+                .unwrap_or_default(),
             parent_hash: ctx.parent().hash(),
             fee_recipient: ctx.attributes().suggested_fee_recipient(),
             prev_randao: ctx.attributes().payload_attributes.prev_randao,
