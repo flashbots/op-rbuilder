@@ -6973,7 +6973,6 @@ dependencies = [
  "reth-trie",
  "revm",
  "rlimit",
- "rollup-boost-types",
  "secp256k1 0.30.0",
  "serde",
  "serde_json",
@@ -11521,23 +11520,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8395b4f860856b740f20a296ea2cd4d823e81a2658cf05ef61be22916026a906"
 dependencies = [
  "chrono",
-]
-
-[[package]]
-name = "rollup-boost-types"
-version = "0.1.0"
-source = "git+http://github.com/flashbots/rollup-boost?rev=b282527e5f46d0915d1e5bdf44338593bc8beb2d#b282527e5f46d0915d1e5bdf44338593bc8beb2d"
-dependencies = [
- "alloy-primitives 1.4.1",
- "alloy-rpc-types-engine",
- "alloy-rpc-types-eth",
- "alloy-serde",
- "futures",
- "moka",
- "op-alloy-rpc-types-engine",
- "serde",
- "serde_json",
- "tracing",
 ]
 
 [[package]]
