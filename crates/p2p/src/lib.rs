@@ -10,7 +10,7 @@ use libp2p::{
     identity::{self, ed25519},
     noise,
     swarm::SwarmEvent,
-    tcp, yamux,
+    tcp, yamux, dns,
 };
 use multiaddr::Protocol;
 use std::{collections::HashMap, time::Duration};
@@ -490,7 +490,10 @@ async fn handle_incoming_stream<M: Message>(
 fn create_transport(
     keypair: &identity::Keypair,
 ) -> eyre::Result<libp2p::core::transport::Boxed<(PeerId, libp2p::core::muxing::StreamMuxerBox)>> {
-    let transport = tcp::tokio::Transport::new(tcp::Config::default())
+    let tcp_transport = tcp::tokio::Transport::new(tcp::Config::default());
+    let dns_transport = dns::tokio::Transport::system(tcp_transport)
+        .wrap_err("failed to create DNS transport")?;
+    let transport = dns_transport
         .upgrade(libp2p::core::upgrade::Version::V1)
         .authenticate(noise::Config::new(keypair)?)
         .multiplex(yamux::Config::default())
