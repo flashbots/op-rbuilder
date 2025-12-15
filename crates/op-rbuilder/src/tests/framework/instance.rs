@@ -440,18 +440,19 @@ impl FlashblocksListener {
 
     /// Check if any flashblock contains the given transaction hash
     pub fn contains_transaction(&self, tx_hash: &B256) -> bool {
-        self.flashblocks.lock().iter().any(|fb| {
-            return fb.metadata.receipts.contains_key(tx_hash);
-        })
+        self.flashblocks
+            .lock()
+            .iter()
+            .any(|fb| fb.metadata.receipts.contains_key(tx_hash))
     }
 
     /// Find which flashblock index contains the given transaction hash
     pub fn find_transaction_flashblock(&self, tx_hash: &B256) -> Option<u64> {
         self.flashblocks.lock().iter().find_map(|fb| {
-            if fb.metadata.receipts.contains_key(tx_hash) {
-                return Some(fb.index);
-            }
-            None
+            fb.metadata
+                .receipts
+                .contains_key(tx_hash)
+                .then_some(fb.index)
         })
     }
 
