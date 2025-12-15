@@ -29,6 +29,7 @@ use hyper_util::rt::TokioIo;
 use moka::future::Cache;
 use nanoid::nanoid;
 use op_alloy_network::Optimism;
+use op_alloy_rpc_types_engine::OpFlashblockPayload;
 use parking_lot::Mutex;
 use reth::{
     args::{DatadirArgs, NetworkArgs, RpcServerArgs},
@@ -44,7 +45,6 @@ use reth_optimism_node::{
 };
 use reth_optimism_rpc::OpEthApiBuilder;
 use reth_transaction_pool::{AllTransactionsEvents, TransactionPool};
-use rollup_boost::FlashblocksPayloadV1;
 use std::{
     net::SocketAddr,
     sync::{Arc, LazyLock},
@@ -384,7 +384,7 @@ async fn spawn_attestation_provider() -> eyre::Result<AttestationServer> {
 /// This provides a reusable way to capture and inspect flashblocks that are produced
 /// during test execution, eliminating the need for duplicate WebSocket listening code.
 pub struct FlashblocksListener {
-    pub flashblocks: Arc<Mutex<Vec<FlashblocksPayloadV1>>>,
+    pub flashblocks: Arc<Mutex<Vec<OpFlashblockPayload>>>,
     pub cancellation_token: CancellationToken,
     pub handle: JoinHandle<eyre::Result<()>>,
 }
@@ -392,7 +392,7 @@ pub struct FlashblocksListener {
 impl FlashblocksListener {
     /// Create a new flashblocks listener that connects to the given WebSocket URL.
     ///
-    /// The listener will automatically parse incoming messages as FlashblocksPayloadV1.
+    /// The listener will automatically parse incoming messages as OpFlashblockPayload.
     fn new(flashblocks_ws_url: String) -> Self {
         let flashblocks = Arc::new(Mutex::new(Vec::new()));
         let cancellation_token = CancellationToken::new();
@@ -425,12 +425,12 @@ impl FlashblocksListener {
     }
 
     /// Get a snapshot of all received flashblocks
-    pub fn get_flashblocks(&self) -> Vec<FlashblocksPayloadV1> {
+    pub fn get_flashblocks(&self) -> Vec<OpFlashblockPayload> {
         self.flashblocks.lock().clone()
     }
 
     /// Find a flashblock by index
-    pub fn find_flashblock(&self, index: u64) -> Option<FlashblocksPayloadV1> {
+    pub fn find_flashblock(&self, index: u64) -> Option<OpFlashblockPayload> {
         self.flashblocks
             .lock()
             .iter()
@@ -440,28 +440,19 @@ impl FlashblocksListener {
 
     /// Check if any flashblock contains the given transaction hash
     pub fn contains_transaction(&self, tx_hash: &B256) -> bool {
-        let tx_hash_str = format!("{tx_hash:#x}");
-        self.flashblocks.lock().iter().any(|fb| {
-            if let Some(receipts) = fb.metadata.get("receipts")
-                && let Some(receipts_obj) = receipts.as_object()
-            {
-                return receipts_obj.contains_key(&tx_hash_str);
-            }
-            false
-        })
+        self.flashblocks
+            .lock()
+            .iter()
+            .any(|fb| fb.metadata.receipts.contains_key(tx_hash))
     }
 
     /// Find which flashblock index contains the given transaction hash
     pub fn find_transaction_flashblock(&self, tx_hash: &B256) -> Option<u64> {
-        let tx_hash_str = format!("{tx_hash:#x}");
         self.flashblocks.lock().iter().find_map(|fb| {
-            if let Some(receipts) = fb.metadata.get("receipts")
-                && let Some(receipts_obj) = receipts.as_object()
-                && receipts_obj.contains_key(&tx_hash_str)
-            {
-                return Some(fb.index);
-            }
-            None
+            fb.metadata
+                .receipts
+                .contains_key(tx_hash)
+                .then_some(fb.index)
         })
     }
 
