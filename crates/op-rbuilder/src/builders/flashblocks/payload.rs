@@ -439,6 +439,14 @@ where
                 .set(info.executed_transactions.len() as f64);
 
             // return early since we don't need to build a block with transactions from the pool
+            self.resolve_best_payload(
+                &mut state,
+                &ctx,
+                best_payload,
+                fallback_payload,
+                &resolve_payload,
+            )
+            .await;
             return Ok(());
         }
         // We adjust our flashblocks timings based on time_drift if dynamic adjustment enable
