@@ -2,10 +2,10 @@ use alloy_consensus::{Eip658Value, Transaction, conditional::BlockConditionalAtt
 use alloy_eips::{Encodable2718, Typed2718};
 use alloy_evm::Database;
 use alloy_op_evm::block::receipt_builder::OpReceiptBuilder;
-use alloy_primitives::{BlockHash, Bytes, U256};
+use alloy_primitives::{Address, BlockHash, Bytes, U256};
 use alloy_rpc_types_eth::Withdrawals;
 use core::fmt::Debug;
-use op_alloy_consensus::OpDepositReceipt;
+use op_alloy_consensus::{OpDepositReceipt, OpTxType};
 use op_revm::OpSpecId;
 use reth::payload::PayloadBuilderAttributes;
 use reth_basic_payload_builder::PayloadConfig;
@@ -31,15 +31,20 @@ use reth_optimism_txpool::{
 };
 use reth_payload_builder::PayloadId;
 use reth_primitives::SealedHeader;
-use reth_primitives_traits::{InMemorySize, SignedTransaction};
+use reth_primitives_traits::{InMemorySize, Recovered, SignedTransaction};
 use reth_revm::{State, context::Block};
 use reth_transaction_pool::{BestTransactionsAttributes, PoolTransaction};
-use revm::{DatabaseCommit, context::result::ResultAndState, interpreter::as_u64_saturated};
-use std::{sync::Arc, time::Instant};
+use revm::{DatabaseCommit, DatabaseRef, context::result::ResultAndState, interpreter::as_u64_saturated};
+use std::{
+    sync::{Arc, Mutex}, thread, time::Instant
+};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, trace};
 
 use crate::{
+    block_stm::{
+        MVHashMap, VersionedDatabase, scheduler::Scheduler, types::Task, view::WriteSet
+    },
     gas_limiter::AddressGasLimiter,
     metrics::OpRBuilderMetrics,
     primitives::reth::{ExecutionInfo, TxnExecutionResult},
@@ -381,6 +386,7 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
     /// Executes the given best transactions and updates the execution info.
     ///
     /// Returns `Ok(Some(())` if the job was cancelled.
+    #[expect(dead_code)]
     pub(super) fn execute_best_transactions<E: Debug + Default>(
         &self,
         info: &mut ExecutionInfo<E>,
@@ -622,5 +628,481 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
             bundles_reverted = num_bundles_reverted,
         );
         Ok(None)
+    }
+
+
+    /// Executes the given best transactions in parallel using Block-STM.
+    ///
+    /// This implementation uses Block-STM for true parallel execution:
+    /// - Each transaction gets its own `State<VersionedDatabaseRef>` 
+    /// - Reads route through MVHashMap to see earlier transactions' writes
+    /// - Conflicts are detected via read/write set tracking
+    /// - Commits happen in transaction order
+    ///
+    /// Returns `Ok(Some(())` if the job was cancelled.
+    pub(super) fn execute_best_transactions_parallel<E, DB>(
+        &self,
+        info: &mut ExecutionInfo<E>,
+        db: &mut State<DB>,
+        best_txs: &mut (impl PayloadTxsBounds + Send),
+        block_gas_limit: u64,
+        block_da_limit: Option<u64>,
+        _block_da_footprint_limit: Option<u64>,
+    ) -> Result<Option<()>, PayloadBuilderError>
+    where
+        ExtraCtx: Sync,
+        E: Debug + Default + Send,
+        DB: Database + DatabaseRef + Send + Sync,
+    {
+        /// Number of parallel execution threads.
+        const NUM_THREADS: usize = 4;
+
+        let execute_txs_start_time = Instant::now();
+        let base_fee = self.base_fee();
+        let tx_da_limit = self.da_config.max_da_tx_size();
+
+        let block_attr = BlockConditionalAttributes {
+            number: self.block_number(),
+            timestamp: self.attributes().timestamp(),
+        };
+
+        // Collect candidate transactions from the iterator.
+        let mut candidate_txs = Vec::new();
+        while let Some(tx) = best_txs.next(()) {
+            candidate_txs.push(tx);
+        }
+
+        let num_candidates = candidate_txs.len();
+        if num_candidates == 0 {
+            return Ok(None);
+        }
+
+        info!(
+            target: "payload_builder",
+            message = "Executing best transactions (Block-STM)",
+            block_da_limit = ?block_da_limit,
+            tx_da_limit = ?tx_da_limit,
+            block_gas_limit = ?block_gas_limit,
+            num_threads = NUM_THREADS,
+            num_candidates = num_candidates,
+        );
+
+        // Initialize Block-STM components
+        let scheduler = Arc::new(Scheduler::new(num_candidates));
+        let mv_hashmap = Arc::new(MVHashMap::new(num_candidates));
+
+        // Store execution results per transaction (for deferred commit)
+        let execution_results: Arc<Mutex<Vec<Option<TxExecutionResult>>>> = 
+            Arc::new(Mutex::new(vec![None; num_candidates]));
+
+        // Shared state (info still needs mutex for cumulative values, best_txs for mark_invalid)
+        let shared_info = Arc::new(Mutex::new(std::mem::take(info)));
+        let shared_best_txs = Arc::new(Mutex::new(best_txs));
+        let metrics = Arc::new(ParallelExecutionMetrics::new());
+
+        // Shared reference to database for reads (workers only need DatabaseRef)
+        let db_ref: &State<DB> = &*db;
+
+        // Spawn worker threads using Block-STM scheduler
+        thread::scope(|s| {
+            let num_threads = NUM_THREADS.min(num_candidates);
+            
+            for worker_id in 0..num_threads {
+                let scheduler = Arc::clone(&scheduler);
+                let mv_hashmap = Arc::clone(&mv_hashmap);
+                let execution_results = Arc::clone(&execution_results);
+                let _shared_info = Arc::clone(&shared_info);
+                let shared_best_txs = Arc::clone(&shared_best_txs);
+                let metrics = Arc::clone(&metrics);
+                let candidate_txs = &candidate_txs;
+                let evm_config = &self.evm_config;
+                let address_gas_limiter = &self.address_gas_limiter;
+                let max_gas_per_txn = self.max_gas_per_txn;
+                let cancelled = &self.cancel;
+                let evm_env = &self.evm_env;
+                let base_db = db_ref; // Shared reference for reads
+
+                s.spawn(move || {
+                    scheduler.worker_start();
+                    trace!(worker_id = worker_id, "Block-STM worker started");
+
+                    loop {
+                        // Check for cancellation
+                        if cancelled.is_cancelled() {
+                            trace!(worker_id = worker_id, "Cancellation detected");
+                            break;
+                        }
+
+                        // Get next task from Block-STM scheduler
+                        let task = scheduler.next_task();
+                        
+                        match task {
+                            Task::Execute { txn_idx, incarnation } => {
+                                trace!(
+                                    worker_id = worker_id,
+                                    txn_idx = txn_idx,
+                                    incarnation = incarnation,
+                                    "Executing transaction"
+                                );
+
+                                scheduler.start_execution(txn_idx, incarnation);
+                                
+                                metrics.num_txs_considered
+                                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
+                                let pool_tx = &candidate_txs[txn_idx as usize];
+                                let tx_da_size = pool_tx.estimated_da_size();
+                                let reverted_hashes = pool_tx.reverted_hashes().clone();
+                                let conditional = pool_tx.conditional().cloned();
+                                let tx = pool_tx.clone().into_consensus();
+                                let tx_hash = tx.tx_hash();
+
+                                let is_bundle_tx = reverted_hashes.is_some();
+                                let exclude_reverting_txs =
+                                    is_bundle_tx && !reverted_hashes.unwrap().contains(&tx_hash);
+
+                                // Pre-execution checks (no DB access)
+                                let skip_tx = if let Some(conditional) = conditional {
+                                    !conditional.matches_block_attributes(&block_attr)
+                                } else {
+                                    false
+                                } || tx.is_eip4844() || tx.is_deposit();
+
+                                if skip_tx {
+                                    shared_best_txs.lock().unwrap()
+                                        .mark_invalid(tx.signer(), tx.nonce());
+                                    scheduler.finish_execution(
+                                        txn_idx, incarnation,
+                                        crate::block_stm::CapturedReads::new(),
+                                        WriteSet::new(),
+                                        0, false, &mv_hashmap,
+                                    );
+                                    continue;
+                                }
+
+                                // Create versioned database for this transaction
+                                // Routes reads through MVHashMap, falls back to base state
+                                let versioned_db = VersionedDatabase::new(txn_idx, incarnation, &mv_hashmap, base_db);
+
+                                // Create State wrapper for EVM execution
+                                let mut tx_state = State::builder()
+                                    .with_database(versioned_db)
+                                    .build();
+
+                                // Execute transaction with versioned state
+                                let exec_result = {
+                                    let mut evm = evm_config
+                                        .evm_with_env(&mut tx_state, evm_env.clone());
+                                    evm.transact(&tx)
+                                };
+
+                                let exec_result = match exec_result {
+                                    Ok(res) => res,
+                                    Err(err) => {
+                                        if let Some(err) = err.as_invalid_tx_err() {
+                                            if !err.is_nonce_too_low() {
+                                                shared_best_txs.lock().unwrap()
+                                                    .mark_invalid(tx.signer(), tx.nonce());
+                                            }
+                                        }
+                                        // Get captured reads even on failure
+                                        let captured_reads = tx_state.database.take_captured_reads();
+                                        scheduler.finish_execution(
+                                            txn_idx, incarnation,
+                                            captured_reads,
+                                            WriteSet::new(),
+                                            0, false, &mv_hashmap,
+                                        );
+                                        continue;
+                                    }
+                                };
+
+                                // Check if we read from an aborted transaction
+                                if let Some(aborted_txn) = tx_state.database.was_aborted() {
+                                    trace!(
+                                        worker_id = worker_id,
+                                        txn_idx = txn_idx,
+                                        aborted_txn = aborted_txn,
+                                        "Read from aborted transaction, will re-execute"
+                                    );
+                                    let captured_reads = tx_state.database.take_captured_reads();
+                                    scheduler.finish_execution(
+                                        txn_idx, incarnation,
+                                        captured_reads,
+                                        WriteSet::new(),
+                                        0, false, &mv_hashmap,
+                                    );
+                                    continue;
+                                }
+
+                                let ResultAndState { result, state } = exec_result;
+                                let gas_used = result.gas_used();
+
+                                // Post-execution checks
+                                let should_skip = address_gas_limiter
+                                    .consume_gas(tx.signer(), gas_used).is_err()
+                                    || (!result.is_success() && exclude_reverting_txs)
+                                    || max_gas_per_txn.map(|max| gas_used > max).unwrap_or(false);
+
+                                if should_skip {
+                                    shared_best_txs.lock().unwrap()
+                                        .mark_invalid(tx.signer(), tx.nonce());
+                                    let captured_reads = tx_state.database.take_captured_reads();
+                                    scheduler.finish_execution(
+                                        txn_idx, incarnation,
+                                        captured_reads,
+                                        WriteSet::new(),
+                                        gas_used, false, &mv_hashmap,
+                                    );
+                                    continue;
+                                }
+
+                                // Build write set from state changes
+                                let mut write_set = WriteSet::new();
+                                for (addr, account) in state.iter() {
+                                    if account.is_touched() {
+                                        write_set.write_balance(*addr, account.info.balance);
+                                        write_set.write_nonce(*addr, account.info.nonce);
+                                        for (slot, value) in account.storage.iter() {
+                                            if value.is_changed() {
+                                                write_set.write_storage(*addr, *slot, value.present_value);
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // Get captured reads for validation
+                                let captured_reads = tx_state.database.take_captured_reads();
+
+                                // Store execution result for commit phase
+                                let miner_fee = tx.effective_tip_per_gas(base_fee)
+                                    .expect("fee is always valid");
+                                
+                                // Extract success and logs from result
+                                let success = result.is_success();
+                                let logs = result.into_logs();
+                                
+                                {
+                                    let mut results = execution_results.lock().unwrap();
+                                    results[txn_idx as usize] = Some(TxExecutionResult {
+                                        tx,
+                                        state,
+                                        success,
+                                        logs,
+                                        gas_used,
+                                        tx_da_size,
+                                        miner_fee,
+                                    });
+                                }
+
+                                // Update metrics
+                                metrics.num_txs_simulated
+                                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
+                                if success {
+                                    metrics.num_txs_simulated_success
+                                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                                } else {
+                                    metrics.num_txs_simulated_fail
+                                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                                    metrics.reverted_gas_used
+                                        .fetch_add(gas_used as i32, std::sync::atomic::Ordering::Relaxed);
+                                }
+
+                                // Report to scheduler
+                                scheduler.finish_execution(
+                                    txn_idx, incarnation,
+                                    captured_reads,
+                                    write_set,
+                                    gas_used, success, &mv_hashmap,
+                                );
+
+                                trace!(
+                                    worker_id = worker_id,
+                                    txn_idx = txn_idx,
+                                    gas_used = gas_used,
+                                    success = success,
+                                    "Transaction execution complete"
+                                );
+                            }
+                            Task::Validate { txn_idx: _ } => {
+                                // Validation handled in scheduler's try_commit
+                            }
+                            Task::NoTask => {
+                                if scheduler.is_done() {
+                                    break;
+                                }
+                                scheduler.wait_for_work();
+                            }
+                            Task::Done => {
+                                break;
+                            }
+                        }
+                    }
+
+                    scheduler.worker_done();
+                    trace!(worker_id = worker_id, "Block-STM worker finished");
+                });
+            }
+        });
+
+        // Commit phase: apply results in order
+        let results = Arc::try_unwrap(execution_results)
+            .map_err(|_| PayloadBuilderError::Other("Failed to unwrap execution results".into()))?
+            .into_inner()
+            .unwrap();
+
+        let mut info_guard = shared_info.lock().unwrap();
+
+        // Process committed transactions in order
+        for (txn_idx, result_opt) in results.into_iter().enumerate() {
+            if let Some(tx_result) = result_opt {
+                // Update cumulative gas before building receipt
+                info_guard.cumulative_gas_used += tx_result.gas_used;
+                info_guard.cumulative_da_bytes_used += tx_result.tx_da_size;
+                info_guard.total_fees += U256::from(tx_result.miner_fee) * U256::from(tx_result.gas_used);
+
+                // Build receipt with correct cumulative gas
+                let receipt = alloy_consensus::Receipt {
+                    status: Eip658Value::Eip658(tx_result.success),
+                    cumulative_gas_used: info_guard.cumulative_gas_used,
+                    logs: tx_result.logs,
+                };
+
+                // Build OpReceipt based on transaction type
+                let op_receipt = match tx_result.tx.tx_type() {
+                    OpTxType::Legacy => OpReceipt::Legacy(receipt),
+                    OpTxType::Eip2930 => OpReceipt::Eip2930(receipt),
+                    OpTxType::Eip1559 => OpReceipt::Eip1559(receipt),
+                    OpTxType::Eip7702 => OpReceipt::Eip7702(receipt),
+                    OpTxType::Deposit => {
+                        // Deposits shouldn't come from the pool, but handle gracefully
+                        OpReceipt::Deposit(OpDepositReceipt {
+                            inner: receipt,
+                            deposit_nonce: None,
+                            deposit_receipt_version: None,
+                        })
+                    }
+                };
+                info_guard.receipts.push(op_receipt);
+
+                // Load accounts into cache before committing
+                // (State requires accounts to be in cache before applying changes)
+                for address in tx_result.state.keys() {
+                    let _ = db.load_cache_account(*address);
+                }
+                
+                // Commit state to actual DB
+                db.commit(tx_result.state);
+
+                // Record transaction
+                info_guard.executed_senders.push(tx_result.tx.signer());
+                info_guard.executed_transactions.push(tx_result.tx.into_inner());
+
+                trace!(
+                    txn_idx = txn_idx,
+                    cumulative_gas = info_guard.cumulative_gas_used,
+                    "Committed transaction"
+                );
+            }
+        }
+
+        // Restore info
+        *info = std::mem::take(&mut *info_guard);
+        drop(info_guard);
+
+        // Get scheduler stats
+        let sched_stats = scheduler.get_stats();
+        debug!(
+            target: "payload_builder",
+            total_executions = sched_stats.total_executions,
+            total_aborts = sched_stats.total_aborts,
+            total_commits = sched_stats.total_commits,
+            "Block-STM scheduler stats"
+        );
+
+        // Read metrics from atomics
+        let num_txs_considered = metrics.num_txs_considered
+            .load(std::sync::atomic::Ordering::Relaxed);
+        let num_txs_simulated = metrics.num_txs_simulated
+            .load(std::sync::atomic::Ordering::Relaxed);
+        let num_txs_simulated_success = metrics.num_txs_simulated_success
+            .load(std::sync::atomic::Ordering::Relaxed);
+        let num_txs_simulated_fail = metrics.num_txs_simulated_fail
+            .load(std::sync::atomic::Ordering::Relaxed);
+        let num_bundles_reverted = metrics.num_bundles_reverted
+            .load(std::sync::atomic::Ordering::Relaxed);
+        let reverted_gas_used = metrics.reverted_gas_used
+            .load(std::sync::atomic::Ordering::Relaxed);
+
+        if self.cancel.is_cancelled() {
+            debug!("Cancellation detected, returning");
+            return Ok(Some(()));
+        }
+
+        let payload_transaction_simulation_time = execute_txs_start_time.elapsed();
+        self.metrics.set_payload_builder_metrics(
+            payload_transaction_simulation_time,
+            num_txs_considered as i32,
+            num_txs_simulated as i32,
+            num_txs_simulated_success as i32,
+            num_txs_simulated_fail as i32,
+            num_bundles_reverted as i32,
+            reverted_gas_used,
+        );
+
+        debug!(
+            target: "payload_builder",
+            message = "Completed executing best transactions (Block-STM)",
+            txs_executed = num_txs_considered,
+            txs_applied = num_txs_simulated_success,
+            txs_rejected = num_txs_simulated_fail,
+            bundles_reverted = num_bundles_reverted,
+        );
+
+        Ok(None)
+    }
+}
+
+/// Result of executing a single transaction in parallel.
+/// Stored for deferred commit during the commit phase.
+#[derive(Clone)]
+struct TxExecutionResult {
+    /// The transaction that was executed
+    tx: Recovered<op_alloy_consensus::OpTxEnvelope>,
+    /// State changes from execution (using alloy's HashMap for compatibility)
+    state: alloy_primitives::map::HashMap<Address, revm::state::Account>,
+    /// Whether execution succeeded
+    success: bool,
+    /// Logs from execution (needed for receipt building)
+    logs: Vec<alloy_primitives::Log>,
+    /// Gas used
+    gas_used: u64,
+    /// DA size
+    tx_da_size: u64,
+    /// Miner fee per gas
+    miner_fee: u128,
+}
+
+/// Atomic metrics counters for parallel execution.
+struct ParallelExecutionMetrics {
+    num_txs_considered: std::sync::atomic::AtomicUsize,
+    num_txs_simulated: std::sync::atomic::AtomicUsize,
+    num_txs_simulated_success: std::sync::atomic::AtomicUsize,
+    num_txs_simulated_fail: std::sync::atomic::AtomicUsize,
+    num_bundles_reverted: std::sync::atomic::AtomicUsize,
+    reverted_gas_used: std::sync::atomic::AtomicI32,
+}
+
+impl ParallelExecutionMetrics {
+    fn new() -> Self {
+        Self {
+            num_txs_considered: std::sync::atomic::AtomicUsize::new(0),
+            num_txs_simulated: std::sync::atomic::AtomicUsize::new(0),
+            num_txs_simulated_success: std::sync::atomic::AtomicUsize::new(0),
+            num_txs_simulated_fail: std::sync::atomic::AtomicUsize::new(0),
+            num_bundles_reverted: std::sync::atomic::AtomicUsize::new(0),
+            reverted_gas_used: std::sync::atomic::AtomicI32::new(0),
+        }
     }
 }

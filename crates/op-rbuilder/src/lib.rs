@@ -1,4 +1,5 @@
 pub mod args;
+pub mod block_stm;
 pub mod builders;
 pub mod flashtestations;
 pub mod gas_limiter;

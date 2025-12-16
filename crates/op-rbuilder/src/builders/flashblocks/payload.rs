@@ -41,7 +41,7 @@ use reth_revm::{
 };
 use reth_transaction_pool::TransactionPool;
 use reth_trie::{HashedPostState, updates::TrieUpdates};
-use revm::Database;
+use revm::{Database, DatabaseRef};
 use rollup_boost::{
     ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, FlashblocksPayloadV1,
 };
@@ -344,7 +344,7 @@ where
         // 1. execute the pre steps and seal an early block with that
         let sequencer_tx_start_time = Instant::now();
         let mut state = State::builder()
-            .with_database(cached_reads.as_db_mut(db))
+            .with_database(db)
             .with_bundle_update()
             .build();
 
@@ -596,7 +596,7 @@ where
 
     #[allow(clippy::too_many_arguments)]
     async fn build_next_flashblock<
-        DB: Database<Error = ProviderError> + std::fmt::Debug + AsRef<P>,
+        DB: Database<Error = ProviderError> + DatabaseRef<Error = ProviderError> + std::fmt::Debug + AsRef<P> + Send + Sync,
         P: StateRootProvider + HashedPostStateProvider + StorageRootProvider,
     >(
         &self,
@@ -681,7 +681,7 @@ where
             .set(transaction_pool_fetch_time);
 
         let tx_execution_start_time = Instant::now();
-        ctx.execute_best_transactions(
+        ctx.execute_best_transactions_parallel(
             info,
             state,
             best_txs,
@@ -874,6 +874,7 @@ where
         // FCU(a) could arrive with `block_time - fb_time < delay`. In this case we could only produce 1 flashblock
         // FCU(a) could arrive with `delay < fb_time` - in this case we will shrink first flashblock
         // FCU(a) could arrive with `fb_time < delay < block_time - fb_time` - in this case we will issue less flashblocks
+
         let target_time = std::time::SystemTime::UNIX_EPOCH + Duration::from_secs(timestamp)
             - self.config.specific.leeway_time;
         let now = std::time::SystemTime::now();

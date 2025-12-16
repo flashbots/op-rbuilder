@@ -32,6 +32,7 @@ use reth_revm::{
 use reth_transaction_pool::{
     BestTransactions, BestTransactionsAttributes, PoolTransaction, TransactionPool,
 };
+use revm::DatabaseRef;
 use std::{sync::Arc, time::Instant};
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
@@ -91,7 +92,7 @@ pub(super) trait OpPayloadTransactions<Transaction>:
         &self,
         pool: Pool,
         attr: BestTransactionsAttributes,
-    ) -> impl PayloadTransactions<Transaction = Transaction>;
+    ) -> impl PayloadTransactions<Transaction = Transaction> + Send;
 }
 
 impl<T: PoolTransaction> OpPayloadTransactions<T> for () {
@@ -115,7 +116,7 @@ where
     Pool: PoolBounds,
     Client: ClientBounds,
     BuilderTx: BuilderTransactions + Clone + Send + Sync,
-    Txs: OpPayloadTransactions<Pool::Transaction>,
+    Txs: OpPayloadTransactions<Pool::Transaction> + Send,
 {
     type Attributes = OpPayloadBuilderAttributes<OpTransactionSigned>;
     type BuiltPayload = OpBuiltPayload;
@@ -187,7 +188,7 @@ where
     /// Given build arguments including an Optimism client, transaction pool,
     /// and configuration, this function creates a transaction payload. Returns
     /// a result indicating success with the payload or an error in case of failure.
-    fn build_payload<'a, Txs: PayloadTxsBounds>(
+    fn build_payload<'a, Txs: PayloadTxsBounds + Send>(
         &self,
         args: BuildArguments<OpPayloadBuilderAttributes<OpTransactionSigned>, OpBuiltPayload>,
         best: impl FnOnce(BestTransactionsAttributes) -> Txs + Send + Sync + 'a,
@@ -270,7 +271,7 @@ where
         } else {
             // sequencer mode we can reuse cachedreads from previous runs
             let state = State::builder()
-                .with_database(cached_reads.as_db_mut(db))
+                .with_database(db)
                 .with_bundle_update()
                 .build();
             builder.build(state, &state_provider, ctx, self.builder_tx.clone())
@@ -305,12 +306,12 @@ where
 /// And finally
 /// 5. build the block: compute all roots (txs, state)
 #[derive(derive_more::Debug)]
-pub(super) struct OpBuilder<'a, Txs> {
+pub(super) struct OpBuilder<'a, Txs: Send> {
     /// Yields the best transaction to include if transactions from the mempool are allowed.
     best: Box<dyn FnOnce(BestTransactionsAttributes) -> Txs + 'a>,
 }
 
-impl<'a, Txs> OpBuilder<'a, Txs> {
+impl<'a, Txs: Send> OpBuilder<'a, Txs> {
     fn new(best: impl FnOnce(BestTransactionsAttributes) -> Txs + Send + Sync + 'a) -> Self {
         Self {
             best: Box::new(best),
@@ -325,12 +326,12 @@ pub(super) struct ExecutedPayload {
     pub info: ExecutionInfo,
 }
 
-impl<Txs: PayloadTxsBounds> OpBuilder<'_, Txs> {
+impl<Txs: PayloadTxsBounds + Send> OpBuilder<'_, Txs> {
     /// Executes the payload and returns the outcome.
-    pub(crate) fn execute<BuilderTx>(
+    pub(crate) fn execute<BuilderTx, DB: Database + DatabaseRef + Send + Sync>(
         self,
         state_provider: impl StateProvider,
-        db: &mut State<impl Database>,
+        db: &mut State<DB>,
         ctx: &OpPayloadBuilderCtx,
         builder_tx: BuilderTx,
     ) -> Result<BuildOutcomeKind<ExecutedPayload>, PayloadBuilderError>
@@ -408,7 +409,7 @@ impl<Txs: PayloadTxsBounds> OpBuilder<'_, Txs> {
                 .set(transaction_pool_fetch_time);
 
             if ctx
-                .execute_best_transactions(
+                .execute_best_transactions_parallel(
                     &mut info,
                     db,
                     &mut best_txs,
@@ -457,7 +458,7 @@ impl<Txs: PayloadTxsBounds> OpBuilder<'_, Txs> {
     /// Builds the payload on top of the state.
     pub(super) fn build<BuilderTx>(
         self,
-        state: impl Database,
+        state: impl Database + DatabaseRef + Send + Sync,
         state_provider: impl StateProvider,
         ctx: OpPayloadBuilderCtx,
         builder_tx: BuilderTx,
