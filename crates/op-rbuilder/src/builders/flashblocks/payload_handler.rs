@@ -29,8 +29,10 @@ use tracing::warn;
 /// In the case of a payload built by this node, it is broadcast to peers and an event is sent to the payload builder.
 /// In the case of a payload received from a peer, it is executed and if successful, an event is sent to the payload builder.
 pub(crate) struct PayloadHandler<Client> {
-    // receives new payloads built by this builder.
-    built_rx: mpsc::Receiver<OpBuiltPayload>,
+    // receives new flashblock payloads built by this builder.
+    built_fb_payload_rx: mpsc::Receiver<OpBuiltPayload>,
+    // receives new full block payloads built by this builder.
+    built_payload_rx: mpsc::Receiver<OpBuiltPayload>,
     // receives incoming p2p messages from peers.
     p2p_rx: mpsc::Receiver<Message>,
     // outgoing p2p channel to broadcast new payloads to peers.
@@ -50,7 +52,8 @@ where
 {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
-        built_rx: mpsc::Receiver<OpBuiltPayload>,
+        built_fb_payload_rx: mpsc::Receiver<OpBuiltPayload>,
+        built_payload_rx: mpsc::Receiver<OpBuiltPayload>,
         p2p_rx: mpsc::Receiver<Message>,
         p2p_tx: mpsc::Sender<Message>,
         payload_events_handle: tokio::sync::broadcast::Sender<Events<OpEngineTypes>>,
@@ -59,7 +62,8 @@ where
         cancel: tokio_util::sync::CancellationToken,
     ) -> Self {
         Self {
-            built_rx,
+            built_fb_payload_rx,
+            built_payload_rx,
             p2p_rx,
             p2p_tx,
             payload_events_handle,
@@ -71,7 +75,8 @@ where
 
     pub(crate) async fn run(self) {
         let Self {
-            mut built_rx,
+            mut built_fb_payload_rx,
+            mut built_payload_rx,
             mut p2p_rx,
             p2p_tx,
             payload_events_handle,
@@ -84,12 +89,15 @@ where
 
         loop {
             tokio::select! {
-                Some(payload) = built_rx.recv() => {
+                Some(payload) = built_fb_payload_rx.recv() => {
+                    // ignore error here; if p2p was disabled, the channel will be closed.
+                    let _ = p2p_tx.send(payload.into()).await;
+                }
+                Some(payload) = built_payload_rx.recv() => {
+                    // Update engine tree state with locally built block payloads
                     if let Err(e) = payload_events_handle.send(Events::BuiltPayload(payload.clone())) {
                         warn!(e = ?e, "failed to send BuiltPayload event");
                     }
-                    // ignore error here; if p2p was disabled, the channel will be closed.
-                    let _ = p2p_tx.send(payload.into()).await;
                 }
                 Some(message) = p2p_rx.recv() => {
                     match message {
@@ -241,7 +249,7 @@ where
         cancel,
     );
 
-    let (built_payload, fb_payload) = crate::builders::flashblocks::payload::build_block(
+    let (built_payload, fb_payload, _) = crate::builders::flashblocks::payload::build_block(
         &mut state,
         &builder_ctx,
         &mut info,
