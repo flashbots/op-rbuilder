@@ -618,6 +618,14 @@ where
                         ctx.block_number(),
                         err
                     );
+                    self.resolve_best_payload(
+                        &mut state,
+                        &ctx,
+                        best_payload,
+                        fallback_payload,
+                        &resolve_payload,
+                    )
+                    .await;
                     return Err(PayloadBuilderError::Other(err.into()));
                 }
             };
