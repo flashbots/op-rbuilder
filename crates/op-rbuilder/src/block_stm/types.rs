@@ -49,8 +49,6 @@ pub enum EvmStateKey {
     Code(Address),
     /// Storage slot: key is (address, slot)
     Storage(Address, U256),
-    /// Block hash: key is block number (for BLOCKHASH opcode)
-    BlockHash(u64),
 }
 
 impl fmt::Display for EvmStateKey {
@@ -61,7 +59,6 @@ impl fmt::Display for EvmStateKey {
             EvmStateKey::CodeHash(addr) => write!(f, "CodeHash({})", addr),
             EvmStateKey::Code(addr) => write!(f, "Code({})", addr),
             EvmStateKey::Storage(addr, slot) => write!(f, "Storage({}, {})", addr, slot),
-            EvmStateKey::BlockHash(num) => write!(f, "BlockHash({})", num),
         }
     }
 }
@@ -80,8 +77,6 @@ pub enum EvmStateValue {
     Code(Bytes),
     /// Storage slot value
     Storage(U256),
-    /// Block hash
-    BlockHash(B256),
     /// Account does not exist (for distinguishing "not found" from "zero")
     NotFound,
 }

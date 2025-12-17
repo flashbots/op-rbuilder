@@ -326,26 +326,10 @@ where
     }
 
     /// Read a block hash.
+    /// Block hashes are immutable within a block, so we don't track them as dependencies.
     fn block_hash_ref(&self, number: u64) -> Result<B256, VersionedDbError> {
-        let key = EvmStateKey::BlockHash(number);
-
-        match self.mv_hashmap.read(self.txn_idx, &key) {
-            ReadResult::Value { value: EvmStateValue::BlockHash(h), version } => {
-                self.record_versioned_read(key, version, EvmStateValue::BlockHash(h));
-                Ok(h)
-            }
-            ReadResult::Value { .. } => Ok(B256::ZERO),
-            ReadResult::NotFound => {
-                let hash = self.base_db.block_hash_ref(number)
-                    .map_err(|e| VersionedDbError::BaseDbError(e.to_string()))?;
-                self.record_base_read(key, EvmStateValue::BlockHash(hash));
-                Ok(hash)
-            }
-            ReadResult::Aborted { txn_idx: aborted_txn_idx } => {
-                self.mark_aborted(aborted_txn_idx);
-                Err(VersionedDbError::ReadAborted { aborted_txn_idx })
-            }
-        }
+        self.base_db.block_hash_ref(number)
+            .map_err(|e| VersionedDbError::BaseDbError(e.to_string()))
     }
 
     /// Read contract code by hash.

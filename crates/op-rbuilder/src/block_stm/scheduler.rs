@@ -275,6 +275,9 @@ impl Scheduler {
     }
 
     /// Try to commit transactions in order.
+    /// 
+    /// Uses compare_exchange on commit_idx to ensure exactly one thread
+    /// commits each transaction, preventing race conditions in stats tracking.
     fn try_commit(&self, mv_hashmap: &MVHashMap) {
         loop {
             let commit_idx = self.commit_idx.load(Ordering::SeqCst);
@@ -294,23 +297,39 @@ impl Scheduler {
                     if self.validate_transaction(commit_idx as TxnIndex, &state, mv_hashmap) {
                         drop(state);
                         
-                        // Commit this transaction
-                        {
-                            let mut state = self.txn_states[commit_idx].write();
-                            state.status = ExecutionStatus::Committed;
+                        // Atomically claim this commit slot using compare_exchange.
+                        // Only the thread that successfully advances commit_idx is 
+                        // responsible for updating the status and incrementing stats.
+                        match self.commit_idx.compare_exchange(
+                            commit_idx,
+                            commit_idx + 1,
+                            Ordering::SeqCst,
+                            Ordering::SeqCst,
+                        ) {
+                            Ok(_) => {
+                                // We successfully claimed this commit slot
+                                {
+                                    let mut state = self.txn_states[commit_idx].write();
+                                    state.status = ExecutionStatus::Committed;
+                                }
+                                
+                                self.stats.lock().total_commits += 1;
+                                
+                                debug!(
+                                    txn_idx = commit_idx,
+                                    incarnation = incarnation,
+                                    "Transaction committed"
+                                );
+                                
+                                // Continue to try committing the next transaction
+                                continue;
+                            }
+                            Err(_) => {
+                                // Another thread already claimed this slot, 
+                                // loop to check the next transaction
+                                continue;
+                            }
                         }
-                        
-                        self.commit_idx.fetch_add(1, Ordering::SeqCst);
-                        self.stats.lock().total_commits += 1;
-                        
-                        debug!(
-                            txn_idx = commit_idx,
-                            incarnation = incarnation,
-                            "Transaction committed"
-                        );
-                        
-                        // Continue to try committing the next transaction
-                        continue;
                     } else {
                         // Validation failed, abort and re-execute
                         drop(state);

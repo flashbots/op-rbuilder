@@ -71,7 +71,7 @@ Core type definitions:
 | `Version` | Tuple of (TxnIndex, Incarnation) identifying a specific execution |
 | `ExecutionStatus` | State machine: PendingScheduling → Executing → Executed → Committed |
 | `Task` | Work unit: Execute, Validate, NoTask, Done |
-| `EvmStateKey` | EVM state identifier (Balance, Nonce, Code, Storage, BlockHash) |
+| `EvmStateKey` | EVM state identifier (Balance, Nonce, Code, Storage) |
 | `EvmStateValue` | Corresponding state values |
 | `ReadResult` | Result of reading from MVHashMap (Value, NotFound, Aborted) |
 
@@ -303,7 +303,8 @@ fn validate_transaction(&self, txn_idx: TxnIndex, state: &TxnState) -> bool {
 | Contract code | `Code(Address)` | `Code(Bytes)` |
 | Code hash | `CodeHash(Address)` | `CodeHash(B256)` |
 | Storage slot | `Storage(Address, U256)` | `Storage(U256)` |
-| Block hash | `BlockHash(u64)` | `BlockHash(B256)` |
+
+Note: Block hashes and code (by hash) are not tracked as dependencies since they are immutable within a block.
 
 ## Performance Considerations
 
