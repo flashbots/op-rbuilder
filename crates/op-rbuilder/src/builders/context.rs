@@ -955,6 +955,10 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
 
         let mut info_guard = shared_info.lock().unwrap();
 
+        // only save up to committed_idx
+        let committed_idx = scheduler.get_commit_idx();
+        let results = results.into_iter().take(committed_idx).collect::<Vec<_>>();
+
         // Process committed transactions in order
         for (txn_idx, result_opt) in results.into_iter().enumerate() {
             if let Some(tx_result) = result_opt {
@@ -992,7 +996,7 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
                 for address in tx_result.state.keys() {
                     let _ = db.load_cache_account(*address);
                 }
-                
+
                 // Commit state to actual DB
                 db.commit(tx_result.state);
 

@@ -115,6 +115,10 @@ impl Scheduler {
         }
     }
 
+    pub fn get_commit_idx(&self) -> usize {
+        self.commit_idx.load(Ordering::SeqCst)
+    }
+
     /// Get the number of transactions.
     pub fn num_txns(&self) -> usize {
         self.num_txns
