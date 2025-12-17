@@ -85,6 +85,8 @@ pub struct OpPayloadBuilderCtx<ExtraCtx: Debug + Default = ()> {
     pub address_gas_limiter: AddressGasLimiter,
     /// Per transaction resource metering information
     pub resource_metering: ResourceMetering,
+    /// Number of parallel threads for transaction execution.
+    pub parallel_threads: usize,
 }
 
 impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
@@ -654,8 +656,7 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
         E: Debug + Default + Send,
         DB: Database + DatabaseRef + Send + Sync,
     {
-        /// Number of parallel execution threads.
-        const NUM_THREADS: usize = 4;
+        let num_threads = self.parallel_threads;
 
         let execute_txs_start_time = Instant::now();
         let base_fee = self.base_fee();
@@ -683,7 +684,7 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
             block_da_limit = ?block_da_limit,
             tx_da_limit = ?tx_da_limit,
             block_gas_limit = ?block_gas_limit,
-            num_threads = NUM_THREADS,
+            num_threads = num_threads,
             num_candidates = num_candidates,
         );
 
@@ -705,7 +706,7 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
 
         // Spawn worker threads using Block-STM scheduler
         thread::scope(|s| {
-            let num_threads = NUM_THREADS.min(num_candidates);
+            let num_threads = num_threads.min(num_candidates);
             
             for worker_id in 0..num_threads {
                 let scheduler = Arc::clone(&scheduler);

@@ -32,6 +32,8 @@ pub(super) struct OpPayloadSyncerCtx {
     metrics: Arc<OpRBuilderMetrics>,
     /// Resource metering tracking
     resource_metering: ResourceMetering,
+    /// Number of parallel threads for transaction execution.
+    parallel_threads: usize,
 }
 
 impl OpPayloadSyncerCtx {
@@ -52,6 +54,7 @@ impl OpPayloadSyncerCtx {
             max_gas_per_txn: builder_config.max_gas_per_txn,
             metrics,
             resource_metering: builder_config.resource_metering,
+            parallel_threads: builder_config.parallel_threads,
         })
     }
 
@@ -85,6 +88,7 @@ impl OpPayloadSyncerCtx {
             max_gas_per_txn: self.max_gas_per_txn,
             address_gas_limiter: AddressGasLimiter::new(GasLimiterArgs::default()),
             resource_metering: self.resource_metering.clone(),
+            parallel_threads: self.parallel_threads,
         }
     }
 }

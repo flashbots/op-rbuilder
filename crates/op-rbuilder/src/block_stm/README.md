@@ -307,10 +307,10 @@ fn validate_transaction(&self, txn_idx: TxnIndex, state: &TxnState) -> bool {
 
 ## Performance Considerations
 
-1. **Thread Count**: Currently hardcoded to 4. Should be tuned based on:
-   - Number of CPU cores
-   - Transaction complexity
-   - Contention patterns
+1. **Thread Count**: Configurable via `--builder.parallel-threads` CLI flag or `BUILDER_PARALLEL_THREADS` env var. Defaults to the number of available CPU cores. Tuning considerations:
+   - More threads help with many independent transactions
+   - Diminishing returns with high-conflict workloads
+   - Memory overhead per thread (each maintains local state)
 
 2. **Conflict Rate**: High conflict rates reduce parallelism benefit
    - Common patterns: DEX swaps to same pool, token transfers
@@ -328,7 +328,7 @@ fn validate_transaction(&self, txn_idx: TxnIndex, state: &TxnState) -> bool {
 
 ## Future Improvements
 
-- [ ] Configurable thread count
+- [x] Configurable thread count
 - [ ] Metrics for conflict rate and re-execution count
 - [ ] Adaptive parallelism based on conflict patterns
 - [ ] Pre-execution dependency analysis

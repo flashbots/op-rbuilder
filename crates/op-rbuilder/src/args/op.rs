@@ -58,6 +58,11 @@ pub struct OpRbuilderArgs {
     )]
     pub resource_metering_buffer_size: usize,
 
+    /// Number of parallel threads for transaction execution.
+    /// Defaults to the number of available CPU cores.
+    #[arg(long = "builder.parallel-threads", env = "BUILDER_PARALLEL_THREADS")]
+    pub parallel_threads: Option<usize>,
+
     /// Path to builder playgorund to automatically start up the node connected to it
     #[arg(
         long = "builder.playground",

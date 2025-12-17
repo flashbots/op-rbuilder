@@ -23,9 +23,6 @@ use std::sync::Arc;
 use std::thread;
 use tracing::{info, trace};
 
-/// Default number of worker threads for Block-STM execution.
-const DEFAULT_NUM_THREADS: usize = 4;
-
 /// Configuration for the Block-STM executor.
 #[derive(Debug, Clone)]
 pub struct BlockStmConfig {
@@ -36,7 +33,9 @@ pub struct BlockStmConfig {
 impl Default for BlockStmConfig {
     fn default() -> Self {
         Self {
-            num_threads: DEFAULT_NUM_THREADS,
+            num_threads: std::thread::available_parallelism()
+                .map(|p| p.get())
+                .unwrap_or(4),
         }
     }
 }

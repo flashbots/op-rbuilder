@@ -130,6 +130,10 @@ pub struct BuilderConfig<Specific: Clone> {
 
     /// Resource metering context
     pub resource_metering: ResourceMetering,
+
+    /// Number of parallel threads for transaction execution.
+    /// Defaults to the number of available CPU cores.
+    pub parallel_threads: usize,
 }
 
 impl<S: Debug + Clone> core::fmt::Debug for BuilderConfig<S> {
@@ -152,6 +156,7 @@ impl<S: Debug + Clone> core::fmt::Debug for BuilderConfig<S> {
             .field("specific", &self.specific)
             .field("max_gas_per_txn", &self.max_gas_per_txn)
             .field("gas_limiter_config", &self.gas_limiter_config)
+            .field("parallel_threads", &self.parallel_threads)
             .finish()
     }
 }
@@ -171,6 +176,9 @@ impl<S: Default + Clone> Default for BuilderConfig<S> {
             max_gas_per_txn: None,
             gas_limiter_config: GasLimiterArgs::default(),
             resource_metering: ResourceMetering::default(),
+            parallel_threads: std::thread::available_parallelism()
+                .map(|p| p.get())
+                .unwrap_or(4),
         }
     }
 }
@@ -197,6 +205,11 @@ where
                 args.enable_resource_metering,
                 args.resource_metering_buffer_size,
             ),
+            parallel_threads: args.parallel_threads.unwrap_or_else(|| {
+                std::thread::available_parallelism()
+                    .map(|p| p.get())
+                    .unwrap_or(4)
+            }),
             specific: S::try_from(args)?,
         })
     }
