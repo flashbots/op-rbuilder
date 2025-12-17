@@ -385,10 +385,10 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
         Ok(info)
     }
 
-    /// Executes the given best transactions and updates the execution info.
+    /// Executes the given best transactions sequentially and updates the execution info.
+    /// Used when `parallel_threads == 1`.
     ///
     /// Returns `Ok(Some(())` if the job was cancelled.
-    #[expect(dead_code)]
     pub(super) fn execute_best_transactions<E: Debug + Default>(
         &self,
         info: &mut ExecutionInfo<E>,

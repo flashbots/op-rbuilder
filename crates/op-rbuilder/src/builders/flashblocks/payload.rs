@@ -302,7 +302,7 @@ where
     ) -> Result<(), PayloadBuilderError> {
         let block_build_start_time = Instant::now();
         let BuildArguments {
-            mut cached_reads,
+            cached_reads: _, // Flashblocks always uses parallel execution which doesn't use cached_reads
             config,
             cancel: block_cancel,
         } = args;

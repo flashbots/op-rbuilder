@@ -307,7 +307,9 @@ fn validate_transaction(&self, txn_idx: TxnIndex, state: &TxnState) -> bool {
 
 ## Performance Considerations
 
-1. **Thread Count**: Configurable via `--builder.parallel-threads` CLI flag or `BUILDER_PARALLEL_THREADS` env var. Defaults to the number of available CPU cores. Tuning considerations:
+1. **Thread Count**: Configurable via `--builder.parallel-threads` CLI flag or `BUILDER_PARALLEL_THREADS` env var. Defaults to the number of available CPU cores.
+   - **`parallel_threads == 1`**: Disables parallel execution, uses sequential execution with `CachedReads` for better repeated-read performance
+   - **`parallel_threads > 1`**: Enables Block-STM parallel execution
    - More threads help with many independent transactions
    - Diminishing returns with high-conflict workloads
    - Memory overhead per thread (each maintains local state)
