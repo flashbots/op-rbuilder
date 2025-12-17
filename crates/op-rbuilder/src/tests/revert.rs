@@ -6,8 +6,8 @@ use crate::{
     args::OpRbuilderArgs,
     primitives::bundle::MAX_BLOCK_RANGE_BLOCKS,
     tests::{
-        BlockTransactionsExt, BundleOpts, ChainDriver, ChainDriverExt, LocalInstance, ONE_ETH,
-        OpRbuilderArgsTestExt, TransactionBuilderExt,
+        BlockTransactionsExt, BuilderTxValidation, BundleOpts, ChainDriver, ChainDriverExt,
+        LocalInstance, ONE_ETH, OpRbuilderArgsTestExt, TransactionBuilderExt,
     },
 };
 
@@ -53,6 +53,14 @@ async fn monitor_transaction_gc(rbuilder: LocalInstance) -> eyre::Result<()> {
             assert_eq!(generated_block.transactions.len(), 3);
         }
 
+        // Validate builder transactions using BuilderTxValidation
+        if_standard! {
+            generated_block.assert_builder_tx_count(1);
+        }
+        if_flashblocks! {
+            generated_block.assert_builder_tx_count(2);
+        }
+
         // since we created the 10 transactions with increasing block ranges, as we generate blocks
         // one transaction will be gc on each block.
         // transactions from [0, i] should be dropped, transactions from [i+1, 10] should be queued
@@ -88,6 +96,9 @@ async fn disabled(rbuilder: LocalInstance) -> eyre::Result<()> {
 
         assert!(block.includes(valid_tx.tx_hash()));
         assert!(block.includes(reverting_tx.tx_hash()));
+
+        // Validate builder transactions are present
+        assert!(block.has_builder_tx());
     }
 
     Ok(())
@@ -396,6 +407,9 @@ async fn allow_reverted_transactions_without_bundle(rbuilder: LocalInstance) -> 
 
         assert!(block.includes(valid_tx.tx_hash()));
         assert!(block.includes(reverting_tx.tx_hash()));
+
+        // Validate builder transactions are present
+        assert!(block.has_builder_tx());
     }
 
     Ok(())

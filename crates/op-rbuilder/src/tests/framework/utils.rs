@@ -9,6 +9,7 @@ use crate::{
     tx_signer::Signer,
 };
 use alloy_eips::Encodable2718;
+use alloy_network::TransactionResponse;
 use alloy_primitives::{Address, B256, BlockHash, TxHash, TxKind, U256, hex};
 use alloy_rpc_types_eth::{Block, BlockTransactionHashes};
 use alloy_sol_types::SolCall;

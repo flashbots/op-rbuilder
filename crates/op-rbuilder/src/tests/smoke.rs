@@ -53,6 +53,14 @@ async fn chain_produces_blocks(rbuilder: LocalInstance) -> eyre::Result<()> {
                 "Empty blocks should have exactly three transactions"
             );
         }
+
+        // Validate builder transactions are present
+        if_standard! {
+            block.assert_builder_tx_count(1);
+        }
+        if_flashblocks! {
+            block.assert_builder_tx_count(2);
+        }
     }
 
     // ensure that transactions are included in blocks and each block has all the transactions
@@ -102,6 +110,14 @@ async fn chain_produces_blocks(rbuilder: LocalInstance) -> eyre::Result<()> {
                 "Transaction {} should be included in the block",
                 tx_hash
             );
+        }
+
+        // Validate builder transactions are present
+        if_standard! {
+            block.assert_builder_tx_count(1);
+        }
+        if_flashblocks! {
+            block.assert_builder_tx_count(2);
         }
     }
     Ok(())
@@ -249,6 +265,14 @@ async fn chain_produces_big_tx_with_gas_limit(rbuilder: LocalInstance) -> eyre::
     let exclusion_result = txs.hashes().find(|hash| hash == tx_high_gas.tx_hash());
     assert!(exclusion_result.is_none());
 
+    // Validate builder transactions are present
+    if_standard! {
+        block.assert_builder_tx_count(1);
+    }
+    if_flashblocks! {
+        block.assert_builder_tx_count(2);
+    }
+
     Ok(())
 }
 
@@ -292,6 +316,14 @@ async fn chain_produces_big_tx_without_gas_limit(rbuilder: LocalInstance) -> eyr
             4,
             "Should have 4 transactions"
         );
+    }
+
+    // Validate builder transactions are present
+    if_standard! {
+        block.assert_builder_tx_count(1);
+    }
+    if_flashblocks! {
+        block.assert_builder_tx_count(2);
     }
 
     Ok(())
