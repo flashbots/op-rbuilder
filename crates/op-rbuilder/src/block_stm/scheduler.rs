@@ -268,8 +268,9 @@ impl Scheduler {
 
         drop(state);
 
-        // Schedule re-execution
-        self.execution_queue.lock().push_back(txn_idx);
+        // Schedule re-execution at the FRONT of the queue.
+        // Aborted transactions block commits, so they should be prioritized.
+        self.execution_queue.lock().push_front(txn_idx);
 
         // Abort dependent transactions
         for dep_idx in dependents {
