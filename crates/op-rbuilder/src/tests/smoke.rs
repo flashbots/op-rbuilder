@@ -1,6 +1,6 @@
 use crate::{
     args::OpRbuilderArgs,
-    tests::{LocalInstance, TransactionBuilderExt},
+    tests::{BuilderTxValidation, LocalInstance, TransactionBuilderExt},
 };
 use alloy_primitives::TxHash;
 
@@ -34,6 +34,15 @@ async fn chain_produces_blocks(rbuilder: LocalInstance) -> eyre::Result<()> {
     // the deposit transaction and the block generator's transaction
     for _ in 0..SAMPLE_SIZE {
         let block = driver.build_new_block_with_current_timestamp(None).await?;
+
+        // Validate builder transactions are present (must be done before moving transactions)
+        if_standard! {
+            block.assert_builder_tx_count(1);
+        }
+        if_flashblocks! {
+            block.assert_builder_tx_count(2);
+        }
+
         let transactions = block.transactions;
 
         if_standard! {
@@ -72,6 +81,14 @@ async fn chain_produces_blocks(rbuilder: LocalInstance) -> eyre::Result<()> {
         }
 
         let block = driver.build_new_block_with_current_timestamp(None).await?;
+
+        // Validate builder transactions are present (must be done before moving transactions)
+        if_standard! {
+            block.assert_builder_tx_count(1);
+        }
+        if_flashblocks! {
+            block.assert_builder_tx_count(2);
+        }
 
         let txs = block.transactions;
 
@@ -223,6 +240,15 @@ async fn chain_produces_big_tx_with_gas_limit(rbuilder: LocalInstance) -> eyre::
         .expect("Failed to send transaction");
 
     let block = driver.build_new_block_with_current_timestamp(None).await?;
+
+    // Validate builder transactions are present (must be done before moving transactions)
+    if_standard! {
+        block.assert_builder_tx_count(1);
+    }
+    if_flashblocks! {
+        block.assert_builder_tx_count(2);
+    }
+
     let txs = block.transactions;
 
     if_standard! {
@@ -272,6 +298,15 @@ async fn chain_produces_big_tx_without_gas_limit(rbuilder: LocalInstance) -> eyr
         .expect("Failed to send transaction");
 
     let block = driver.build_new_block_with_current_timestamp(None).await?;
+
+    // Validate builder transactions are present (must be done before moving transactions)
+    if_standard! {
+        block.assert_builder_tx_count(1);
+    }
+    if_flashblocks! {
+        block.assert_builder_tx_count(2);
+    }
+
     let txs = block.transactions;
 
     // assert we included the tx
@@ -292,6 +327,37 @@ async fn chain_produces_big_tx_without_gas_limit(rbuilder: LocalInstance) -> eyr
             4,
             "Should have 4 transactions"
         );
+    }
+
+    Ok(())
+}
+
+/// Validates that each block contains builder transactions using the
+/// BuilderTxValidation utility.
+#[rb_test]
+async fn block_includes_builder_transaction(rbuilder: LocalInstance) -> eyre::Result<()> {
+    let driver = rbuilder.driver().await?;
+
+    const SAMPLE_SIZE: usize = 5;
+
+    for _ in 0..SAMPLE_SIZE {
+        let block = driver.build_new_block_with_current_timestamp(None).await?;
+
+        // Validate that the block contains builder transactions
+        assert!(
+            block.has_builder_tx(),
+            "Block should contain at least one builder transaction"
+        );
+
+        // Standard builder: 1 builder tx
+        // Flashblocks builder: 2 builder txs (fallback + flashblock number)
+        if_standard! {
+            block.assert_builder_tx_count(1);
+        }
+
+        if_flashblocks! {
+            block.assert_builder_tx_count(2);
+        }
     }
 
     Ok(())
