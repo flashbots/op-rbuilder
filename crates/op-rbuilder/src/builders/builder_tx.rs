@@ -24,8 +24,7 @@ use reth_rpc_api::eth::{EthTxEnvError, transaction::TryIntoTxEnv};
 use revm::{
     DatabaseCommit, DatabaseRef,
     context::{
-        ContextTr,
-        result::{EVMError, ExecutionResult, ResultAndState},
+        ContextTr, inner::LazyEvmStateHandle, result::{EVMError, ExecutionResult, ResultAndState}
     },
     inspector::NoOpInspector,
     state::Account,
@@ -225,6 +224,7 @@ pub trait BuilderTransactions<ExtraCtx: Debug + Default = (), Extra: Debug + Def
                         return Err(BuilderTransactionError::EvmExecutionError(Box::new(err)));
                     }
                 };
+                let state = LazyEvmStateHandle(state).resolve_full_state(evm.db_mut()).unwrap();
 
                 if !result.is_success() {
                     warn!(target: "payload_builder", tx_hash = ?builder_tx.signed_tx.tx_hash(), result = ?result, "builder tx reverted");
@@ -312,6 +312,7 @@ pub trait BuilderTransactions<ExtraCtx: Debug + Default = (), Extra: Debug + Def
             let ResultAndState { state, .. } = evm
                 .transact(&signed_tx)
                 .map_err(|err| BuilderTransactionError::EvmExecutionError(Box::new(err)))?;
+            let state = LazyEvmStateHandle(state).resolve_full_state(evm.db_mut()).unwrap();
             evm.db_mut().commit(state)
         }
         Ok(())
@@ -338,6 +339,8 @@ pub trait BuilderTransactions<ExtraCtx: Debug + Default = (), Extra: Debug + Def
                 }
             }
         };
+        let state = LazyEvmStateHandle(state).resolve_full_state(evm.db_mut()).unwrap();
+
 
         match result {
             ExecutionResult::Success {

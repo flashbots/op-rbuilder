@@ -19,6 +19,7 @@ use reth_optimism_node::{OpEngineTypes, OpPayloadBuilderAttributes};
 use reth_optimism_payload_builder::OpBuiltPayload;
 use reth_optimism_primitives::{OpReceipt, OpTransactionSigned};
 use reth_payload_builder::EthPayloadBuilderAttributes;
+use revm::context::inner::LazyEvmStateHandle;
 use rollup_boost::FlashblocksPayloadV1;
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -345,6 +346,7 @@ fn execute_transactions(
                 return Err(err).wrap_err("failed to execute flashblock transaction");
             }
         };
+        let state = LazyEvmStateHandle(state).resolve_full_state(evm.db_mut()).unwrap();
 
         if let Some(max_gas_per_txn) = max_gas_per_txn
             && result.gas_used() > max_gas_per_txn

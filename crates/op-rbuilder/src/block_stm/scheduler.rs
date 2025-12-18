@@ -16,7 +16,7 @@ use crate::block_stm::{
     captured_reads::CapturedReads,
     mv_hashmap::MVHashMap,
     types::{ExecutionStatus, Incarnation, Task, TxnIndex},
-    view::WriteSet,
+    view::{WriteSet},
 };
 use parking_lot::{Condvar, Mutex, RwLock};
 use std::collections::{HashSet, VecDeque};

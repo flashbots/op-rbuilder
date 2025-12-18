@@ -34,7 +34,7 @@ use reth_primitives::SealedHeader;
 use reth_primitives_traits::{InMemorySize, Recovered, SignedTransaction};
 use reth_revm::{State, context::Block};
 use reth_transaction_pool::{BestTransactionsAttributes, PoolTransaction};
-use revm::{DatabaseCommit, DatabaseRef, context::result::ResultAndState, interpreter::as_u64_saturated};
+use revm::{DatabaseCommit, DatabaseRef, context::{inner::LazyEvmStateHandle, result::ResultAndState}, interpreter::as_u64_saturated, state::LazyEvmState};
 use std::{
     sync::{Arc, Mutex}, thread, time::Instant
 };
@@ -343,6 +343,7 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
                     return Err(PayloadBuilderError::EvmExecutionError(Box::new(err)));
                 }
             };
+            let state = LazyEvmStateHandle(state).resolve_full_state(evm.db_mut()).unwrap();
 
             // add gas used by the transaction to cumulative gas used, before creating the receipt
             let gas_used = result.gas_used();
@@ -530,6 +531,8 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
                     return Err(PayloadBuilderError::evm(err));
                 }
             };
+            let state = LazyEvmStateHandle(state).resolve_full_state(evm.db_mut()).unwrap();
+
 
             self.metrics
                 .tx_simulation_duration
@@ -860,7 +863,7 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
 
                                 // Build write set from state changes
                                 let mut write_set = WriteSet::new();
-                                for (addr, account) in state.iter() {
+                                for (addr, account) in state.loaded_state.iter() {
                                     if account.is_touched() {
                                         write_set.write_balance(*addr, account.info.balance);
                                         write_set.write_nonce(*addr, account.info.nonce);
@@ -1076,7 +1079,7 @@ struct TxExecutionResult {
     /// The transaction that was executed
     tx: Recovered<op_alloy_consensus::OpTxEnvelope>,
     /// State changes from execution (using alloy's HashMap for compatibility)
-    state: alloy_primitives::map::HashMap<Address, revm::state::Account>,
+    state: LazyEvmState,
     /// Whether execution succeeded
     success: bool,
     /// Logs from execution (needed for receipt building)

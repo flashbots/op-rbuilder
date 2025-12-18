@@ -18,6 +18,7 @@ use crate::block_stm::{
 };
 use alloy_primitives::{Address, B256, Bytes, U256};
 use parking_lot::Mutex;
+use revm::primitives::HashMap;
 use tracing::trace;
 
 /// Error returned when a read encounters an aborted transaction.

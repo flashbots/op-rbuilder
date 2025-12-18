@@ -12,7 +12,7 @@
 
 use crate::block_stm::{
     captured_reads::CapturedReads,
-    mv_hashmap::MVHashMap,
+    mv_hashmap::{MVHashMap},
     types::{EvmStateKey, EvmStateValue, Incarnation, ReadResult, TxnIndex, Version},
     view::WriteSet,
 };
