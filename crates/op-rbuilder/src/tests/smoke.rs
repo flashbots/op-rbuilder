@@ -34,6 +34,15 @@ async fn chain_produces_blocks(rbuilder: LocalInstance) -> eyre::Result<()> {
     // the deposit transaction and the block generator's transaction
     for _ in 0..SAMPLE_SIZE {
         let block = driver.build_new_block_with_current_timestamp(None).await?;
+
+        // Validate builder transactions are present (must be done before moving transactions)
+        if_standard! {
+            block.assert_builder_tx_count(1);
+        }
+        if_flashblocks! {
+            block.assert_builder_tx_count(2);
+        }
+
         let transactions = block.transactions;
 
         if_standard! {
@@ -52,14 +61,6 @@ async fn chain_produces_blocks(rbuilder: LocalInstance) -> eyre::Result<()> {
                 3,
                 "Empty blocks should have exactly three transactions"
             );
-        }
-
-        // Validate builder transactions are present
-        if_standard! {
-            block.assert_builder_tx_count(1);
-        }
-        if_flashblocks! {
-            block.assert_builder_tx_count(2);
         }
     }
 
@@ -80,6 +81,14 @@ async fn chain_produces_blocks(rbuilder: LocalInstance) -> eyre::Result<()> {
         }
 
         let block = driver.build_new_block_with_current_timestamp(None).await?;
+
+        // Validate builder transactions are present (must be done before moving transactions)
+        if_standard! {
+            block.assert_builder_tx_count(1);
+        }
+        if_flashblocks! {
+            block.assert_builder_tx_count(2);
+        }
 
         let txs = block.transactions;
 
@@ -110,14 +119,6 @@ async fn chain_produces_blocks(rbuilder: LocalInstance) -> eyre::Result<()> {
                 "Transaction {} should be included in the block",
                 tx_hash
             );
-        }
-
-        // Validate builder transactions are present
-        if_standard! {
-            block.assert_builder_tx_count(1);
-        }
-        if_flashblocks! {
-            block.assert_builder_tx_count(2);
         }
     }
     Ok(())
@@ -239,6 +240,15 @@ async fn chain_produces_big_tx_with_gas_limit(rbuilder: LocalInstance) -> eyre::
         .expect("Failed to send transaction");
 
     let block = driver.build_new_block_with_current_timestamp(None).await?;
+
+    // Validate builder transactions are present (must be done before moving transactions)
+    if_standard! {
+        block.assert_builder_tx_count(1);
+    }
+    if_flashblocks! {
+        block.assert_builder_tx_count(2);
+    }
+
     let txs = block.transactions;
 
     if_standard! {
@@ -265,14 +275,6 @@ async fn chain_produces_big_tx_with_gas_limit(rbuilder: LocalInstance) -> eyre::
     let exclusion_result = txs.hashes().find(|hash| hash == tx_high_gas.tx_hash());
     assert!(exclusion_result.is_none());
 
-    // Validate builder transactions are present
-    if_standard! {
-        block.assert_builder_tx_count(1);
-    }
-    if_flashblocks! {
-        block.assert_builder_tx_count(2);
-    }
-
     Ok(())
 }
 
@@ -296,6 +298,15 @@ async fn chain_produces_big_tx_without_gas_limit(rbuilder: LocalInstance) -> eyr
         .expect("Failed to send transaction");
 
     let block = driver.build_new_block_with_current_timestamp(None).await?;
+
+    // Validate builder transactions are present (must be done before moving transactions)
+    if_standard! {
+        block.assert_builder_tx_count(1);
+    }
+    if_flashblocks! {
+        block.assert_builder_tx_count(2);
+    }
+
     let txs = block.transactions;
 
     // assert we included the tx
@@ -316,14 +327,6 @@ async fn chain_produces_big_tx_without_gas_limit(rbuilder: LocalInstance) -> eyr
             4,
             "Should have 4 transactions"
         );
-    }
-
-    // Validate builder transactions are present
-    if_standard! {
-        block.assert_builder_tx_count(1);
-    }
-    if_flashblocks! {
-        block.assert_builder_tx_count(2);
     }
 
     Ok(())
