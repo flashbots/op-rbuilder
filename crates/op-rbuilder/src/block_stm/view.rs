@@ -18,7 +18,6 @@ use crate::block_stm::{
 };
 use alloy_primitives::{Address, B256, Bytes, U256};
 use parking_lot::Mutex;
-use revm::primitives::HashMap;
 use tracing::trace;
 
 /// Error returned when a read encounters an aborted transaction.
@@ -145,14 +144,20 @@ impl<'a, BaseDB> LatestView<'a, BaseDB> {
 /// Write set collected during transaction execution.
 #[derive(Debug, Default)]
 pub struct WriteSet {
-    /// The writes to be applied
+    /// The writes to be applied (regular state changes)
     writes: Vec<(EvmStateKey, EvmStateValue)>,
+    /// Balance deltas (commutative fee increments)
+    /// These are handled separately to allow parallel accumulation
+    balance_deltas: Vec<(Address, U256)>,
 }
 
 impl WriteSet {
     /// Create a new empty write set.
     pub fn new() -> Self {
-        Self { writes: Vec::new() }
+        Self {
+            writes: Vec::new(),
+            balance_deltas: Vec::new(),
+        }
     }
 
     /// Add a write to the set.
@@ -188,19 +193,43 @@ impl WriteSet {
         );
     }
 
-    /// Consume the write set and return the writes.
+    /// Add a balance delta (commutative fee increment).
+    ///
+    /// Balance deltas are different from regular writes - they can be
+    /// accumulated in parallel without conflicts. Only when the balance
+    /// is read do they need to be resolved.
+    pub fn add_balance_delta(&mut self, address: Address, delta: U256) {
+        self.balance_deltas.push((address, delta));
+    }
+
+    /// Consume the write set and return the regular writes.
     pub fn into_writes(self) -> Vec<(EvmStateKey, EvmStateValue)> {
         self.writes
     }
 
-    /// Get the number of writes.
+    /// Consume the write set and return both regular writes and balance deltas.
+    pub fn into_parts(self) -> (Vec<(EvmStateKey, EvmStateValue)>, Vec<(Address, U256)>) {
+        (self.writes, self.balance_deltas)
+    }
+
+    /// Get the balance deltas.
+    pub fn balance_deltas(&self) -> &[(Address, U256)] {
+        &self.balance_deltas
+    }
+
+    /// Get the number of regular writes.
     pub fn len(&self) -> usize {
         self.writes.len()
     }
 
-    /// Check if empty.
+    /// Get the number of balance deltas.
+    pub fn num_deltas(&self) -> usize {
+        self.balance_deltas.len()
+    }
+
+    /// Check if empty (no writes or deltas).
     pub fn is_empty(&self) -> bool {
-        self.writes.is_empty()
+        self.writes.is_empty() && self.balance_deltas.is_empty()
     }
 }
 

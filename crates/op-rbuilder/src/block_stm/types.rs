@@ -118,6 +118,57 @@ pub struct RecordedRead {
     pub value: EvmStateValue,
 }
 
+/// A balance delta (fee increment) that can be accumulated without conflicts.
+///
+/// Balance deltas are commutative operations - they can be applied in any order
+/// with the same result. This enables parallel fee accumulation to coinbase
+/// without creating read-write conflicts.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BalanceDelta {
+    /// The address receiving the balance increment
+    pub address: Address,
+    /// The amount to add to the balance
+    pub delta: U256,
+}
+
+impl BalanceDelta {
+    /// Create a new balance delta.
+    pub fn new(address: Address, delta: U256) -> Self {
+        Self { address, delta }
+    }
+}
+
+/// Entry for a balance delta with version tracking.
+#[derive(Debug, Clone)]
+pub struct VersionedDelta {
+    /// The version (txn_idx, incarnation) that wrote this delta
+    pub version: Version,
+    /// The delta amount
+    pub delta: U256,
+}
+
+impl VersionedDelta {
+    /// Create a new versioned delta.
+    pub fn new(version: Version, delta: U256) -> Self {
+        Self { version, delta }
+    }
+}
+
+/// Result of resolving a balance with pending deltas.
+#[derive(Debug, Clone)]
+pub struct ResolvedBalance {
+    /// The base value (from storage or earlier write)
+    pub base_value: U256,
+    /// The version of the base value (None if from storage)
+    pub base_version: Option<Version>,
+    /// Sum of all deltas applied
+    pub total_delta: U256,
+    /// The final resolved value (base + total_delta)
+    pub resolved_value: U256,
+    /// All versions that contributed deltas (for dependency tracking)
+    pub contributors: Vec<Version>,
+}
+
 /// Represents a write operation to be committed.
 #[derive(Debug, Clone)]
 pub struct WriteOp {

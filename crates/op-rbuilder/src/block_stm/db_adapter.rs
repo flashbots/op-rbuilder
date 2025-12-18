@@ -12,7 +12,7 @@
 
 use crate::block_stm::{
     captured_reads::CapturedReads,
-    mv_hashmap::{MVHashMap},
+    mv_hashmap::MVHashMap,
     types::{EvmStateKey, EvmStateValue, Incarnation, ReadResult, TxnIndex, Version},
     view::WriteSet,
 };
@@ -135,9 +135,66 @@ impl<'a, BaseDB> VersionedDatabase<'a, BaseDB> {
         self.captured_reads.lock().unwrap().capture_base_read(key, value);
     }
 
+    /// Record a resolved balance read (balance with deltas applied).
+    fn record_resolved_balance(&self, address: Address, resolved: crate::block_stm::types::ResolvedBalance) {
+        self.captured_reads
+            .lock()
+            .unwrap()
+            .capture_resolved_balance(address, resolved);
+    }
+
     /// Mark execution as aborted.
     fn mark_aborted(&self, aborted_txn_idx: TxnIndex) {
         *self.aborted.lock().unwrap() = Some(aborted_txn_idx);
+    }
+
+    /// Resolve a balance including any pending deltas.
+    ///
+    /// This handles the case where earlier transactions have written balance deltas
+    /// (e.g., fee increments) that need to be applied to the balance.
+    fn resolve_balance_with_deltas(
+        &self,
+        address: Address,
+        base_value: U256,
+        base_version: Option<Version>,
+    ) -> Result<U256, VersionedDbError> {
+        // Check if there are pending deltas for this address
+        if !self.mv_hashmap.has_pending_deltas(&address, self.txn_idx) {
+            // No deltas, just return the base value (already recorded)
+            return Ok(base_value);
+        }
+
+        // Resolve deltas
+        match self.mv_hashmap.resolve_balance(address, self.txn_idx, base_value, base_version) {
+            Ok(resolved) => {
+                let final_value = resolved.resolved_value;
+                
+                trace!(
+                    txn_idx = self.txn_idx,
+                    address = %address,
+                    base_value = %base_value,
+                    total_delta = %resolved.total_delta,
+                    resolved_value = %final_value,
+                    num_contributors = resolved.contributors.len(),
+                    "Resolved balance with deltas"
+                );
+
+                // Record the resolved balance read (tracks all contributors)
+                self.record_resolved_balance(address, resolved);
+                
+                Ok(final_value)
+            }
+            Err(aborted_txn_idx) => {
+                trace!(
+                    txn_idx = self.txn_idx,
+                    address = %address,
+                    aborted_txn = aborted_txn_idx,
+                    "Read delta from aborted transaction"
+                );
+                self.mark_aborted(aborted_txn_idx);
+                Err(VersionedDbError::ReadAborted { aborted_txn_idx })
+            }
+        }
     }
 }
 
@@ -218,14 +275,27 @@ where
         let base_info = base_account.unwrap_or_default();
 
         // Merge MVHashMap values with base state
+        // For balance, we also need to consider pending deltas (fee increments)
         let balance = match &balance_result {
             ReadResult::Value { value: EvmStateValue::Balance(b), version } => {
-                self.record_versioned_read(balance_key, *version, EvmStateValue::Balance(*b));
-                *b
+                // Got a direct write from MVHashMap - now resolve any pending deltas
+                self.record_versioned_read(balance_key.clone(), *version, EvmStateValue::Balance(*b));
+                // Resolve with deltas (if any)
+                self.resolve_balance_with_deltas(address, *b, Some(*version))?
             }
             _ => {
-                self.record_base_read(balance_key, EvmStateValue::Balance(base_info.balance));
-                base_info.balance
+                // No direct write, use base state - but still check for deltas
+                let base_balance = base_info.balance;
+                
+                // Check if there are pending deltas
+                if self.mv_hashmap.has_pending_deltas(&address, self.txn_idx) {
+                    // Resolve with deltas - this will record the resolved balance read
+                    self.resolve_balance_with_deltas(address, base_balance, None)?
+                } else {
+                    // No deltas, just record as normal base read
+                    self.record_base_read(balance_key, EvmStateValue::Balance(base_balance));
+                    base_balance
+                }
             }
         };
 

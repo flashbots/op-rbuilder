@@ -7,7 +7,8 @@
 //! The `CapturedReads` struct records all reads performed during execution,
 //! including the version (which transaction wrote the value) for validation.
 
-use crate::block_stm::types::{EvmStateKey, EvmStateValue, Version};
+use crate::block_stm::types::{EvmStateKey, EvmStateValue, ResolvedBalance, Version};
+use alloy_primitives::{Address, U256};
 use std::collections::HashMap;
 
 /// A single captured read operation.
@@ -38,6 +39,37 @@ impl CapturedRead {
     }
 }
 
+/// A captured resolved balance read (with deltas applied).
+#[derive(Debug, Clone)]
+pub struct CapturedResolvedBalance {
+    /// The address whose balance was resolved
+    pub address: Address,
+    /// The base value before deltas
+    pub base_value: U256,
+    /// The version of the base value (None if from storage)
+    pub base_version: Option<Version>,
+    /// The total delta that was applied
+    pub total_delta: U256,
+    /// The final resolved value
+    pub resolved_value: U256,
+    /// All versions that contributed deltas
+    pub contributors: Vec<Version>,
+}
+
+impl CapturedResolvedBalance {
+    /// Create from a ResolvedBalance.
+    pub fn from_resolved(address: Address, resolved: ResolvedBalance) -> Self {
+        Self {
+            address,
+            base_value: resolved.base_value,
+            base_version: resolved.base_version,
+            total_delta: resolved.total_delta,
+            resolved_value: resolved.resolved_value,
+            contributors: resolved.contributors,
+        }
+    }
+}
+
 /// Tracks all reads performed during a transaction's execution.
 ///
 /// Used for:
@@ -47,6 +79,9 @@ impl CapturedRead {
 pub struct CapturedReads {
     /// Map from state key to the read that was performed.
     reads: HashMap<EvmStateKey, CapturedRead>,
+    /// Resolved balance reads (balance reads that included deltas).
+    /// These are tracked separately because they depend on multiple transactions.
+    resolved_balances: HashMap<Address, CapturedResolvedBalance>,
 }
 
 impl CapturedReads {
@@ -54,6 +89,7 @@ impl CapturedReads {
     pub fn new() -> Self {
         Self {
             reads: HashMap::new(),
+            resolved_balances: HashMap::new(),
         }
     }
 
@@ -68,38 +104,78 @@ impl CapturedReads {
         self.reads.insert(key, CapturedRead::from_base_state(value));
     }
 
+    /// Record a resolved balance read (balance with deltas applied).
+    pub fn capture_resolved_balance(&mut self, address: Address, resolved: ResolvedBalance) {
+        self.resolved_balances
+            .insert(address, CapturedResolvedBalance::from_resolved(address, resolved));
+    }
+
     /// Get all captured reads.
     pub fn reads(&self) -> &HashMap<EvmStateKey, CapturedRead> {
         &self.reads
     }
 
+    /// Get all captured resolved balances.
+    pub fn resolved_balances(&self) -> &HashMap<Address, CapturedResolvedBalance> {
+        &self.resolved_balances
+    }
+
     /// Get the set of transaction indices that this transaction depends on.
+    /// Includes dependencies from both regular reads and resolved balance reads.
     pub fn dependencies(&self) -> impl Iterator<Item = u32> + '_ {
-        self.reads
+        // Dependencies from regular reads
+        let read_deps = self
+            .reads
             .values()
-            .filter_map(|read| read.version.map(|v| v.txn_idx))
+            .filter_map(|read| read.version.map(|v| v.txn_idx));
+
+        // Dependencies from resolved balances (all contributors)
+        let balance_deps = self
+            .resolved_balances
+            .values()
+            .flat_map(|rb| {
+                rb.base_version
+                    .iter()
+                    .map(|v| v.txn_idx)
+                    .chain(rb.contributors.iter().map(|v| v.txn_idx))
+            });
+
+        read_deps.chain(balance_deps)
     }
 
     /// Check if any read depends on the given transaction index.
     pub fn depends_on(&self, txn_idx: u32) -> bool {
-        self.reads
+        // Check regular reads
+        let has_read_dep = self
+            .reads
             .values()
-            .any(|read| read.version.map(|v| v.txn_idx) == Some(txn_idx))
+            .any(|read| read.version.map(|v| v.txn_idx) == Some(txn_idx));
+
+        if has_read_dep {
+            return true;
+        }
+
+        // Check resolved balances (base version + contributors)
+        self.resolved_balances.values().any(|rb| {
+            rb.base_version.map(|v| v.txn_idx) == Some(txn_idx)
+                || rb.contributors.iter().any(|v| v.txn_idx == txn_idx)
+        })
     }
 
     /// Clear all captured reads (for re-execution).
     pub fn clear(&mut self) {
         self.reads.clear();
+        self.resolved_balances.clear();
     }
 
-    /// Get the number of reads captured.
+    /// Get the number of reads captured (regular reads + resolved balances).
     pub fn len(&self) -> usize {
-        self.reads.len()
+        self.reads.len() + self.resolved_balances.len()
     }
 
     /// Check if no reads have been captured.
     pub fn is_empty(&self) -> bool {
-        self.reads.is_empty()
+        self.reads.is_empty() && self.resolved_balances.is_empty()
     }
 }
 

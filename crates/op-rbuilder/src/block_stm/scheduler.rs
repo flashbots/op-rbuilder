@@ -210,12 +210,15 @@ impl Scheduler {
         success: bool,
         mv_hashmap: &MVHashMap,
     ) {
-        // Apply writes to MVHashMap
-        mv_hashmap.apply_writes(
-            txn_idx,
-            incarnation,
-            writes.into_writes().into_iter().collect(),
-        );
+        // Separate regular writes and balance deltas
+        let (regular_writes, balance_deltas) = writes.into_parts();
+
+        // Apply regular writes to MVHashMap
+        mv_hashmap.apply_writes(txn_idx, incarnation, regular_writes);
+
+        // Apply balance deltas to MVHashMap
+        // These are tracked separately for commutative accumulation
+        mv_hashmap.apply_balance_deltas(txn_idx, incarnation, balance_deltas);
 
         // Update transaction state
         {
@@ -361,7 +364,7 @@ impl Scheduler {
             None => return true, // No reads to validate
         };
 
-        // Check each read to see if it's still valid
+        // Check each regular read to see if it's still valid
         for (key, captured) in reads.reads() {
             // Re-read from MVHashMap
             let current = mv_hashmap.read(txn_idx, key);
@@ -379,6 +382,69 @@ impl Scheduler {
                         key = %key,
                         original_version = ?captured.version,
                         "Validation failed - read version mismatch"
+                    );
+                    return false;
+                }
+            }
+        }
+
+        // Check resolved balance reads (balance reads with deltas applied)
+        for (address, resolved) in reads.resolved_balances() {
+            // Re-resolve the balance with current deltas
+            let current_result = mv_hashmap.resolve_balance(
+                *address,
+                txn_idx,
+                resolved.base_value,
+                resolved.base_version,
+            );
+
+            match current_result {
+                Ok(current) => {
+                    // Check if the resolved value is the same
+                    if current.resolved_value != resolved.resolved_value {
+                        debug!(
+                            txn_idx = txn_idx,
+                            address = %address,
+                            original_value = %resolved.resolved_value,
+                            current_value = %current.resolved_value,
+                            "Validation failed - resolved balance mismatch"
+                        );
+                        return false;
+                    }
+
+                    // Check if contributors are the same (versions match)
+                    if current.contributors.len() != resolved.contributors.len() {
+                        debug!(
+                            txn_idx = txn_idx,
+                            address = %address,
+                            original_contributors = resolved.contributors.len(),
+                            current_contributors = current.contributors.len(),
+                            "Validation failed - contributor count mismatch"
+                        );
+                        return false;
+                    }
+
+                    // Verify each contributor version matches
+                    for (orig, curr) in resolved.contributors.iter().zip(current.contributors.iter()) {
+                        if orig != curr {
+                            debug!(
+                                txn_idx = txn_idx,
+                                address = %address,
+                                original_version = ?orig,
+                                current_version = ?curr,
+                                "Validation failed - contributor version mismatch"
+                            );
+                            return false;
+                        }
+                    }
+                }
+                Err(aborted_txn_idx) => {
+                    // One of the contributors was aborted
+                    debug!(
+                        txn_idx = txn_idx,
+                        address = %address,
+                        aborted_contributor = aborted_txn_idx,
+                        "Validation failed - contributor was aborted"
                     );
                     return false;
                 }

@@ -2,7 +2,7 @@ use alloy_consensus::{Eip658Value, Transaction, conditional::BlockConditionalAtt
 use alloy_eips::{Encodable2718, Typed2718};
 use alloy_evm::Database;
 use alloy_op_evm::block::receipt_builder::OpReceiptBuilder;
-use alloy_primitives::{Address, BlockHash, Bytes, U256};
+use alloy_primitives::{BlockHash, Bytes, U256};
 use alloy_rpc_types_eth::Withdrawals;
 use core::fmt::Debug;
 use op_alloy_consensus::{OpDepositReceipt, OpTxType};
@@ -863,6 +863,8 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
 
                                 // Build write set from state changes
                                 let mut write_set = WriteSet::new();
+                                
+                                // Add regular writes from loaded_state
                                 for (addr, account) in state.loaded_state.iter() {
                                     if account.is_touched() {
                                         write_set.write_balance(*addr, account.info.balance);
@@ -873,6 +875,12 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
                                             }
                                         }
                                     }
+                                }
+                                
+                                // Add pending balance increments as deltas (commutative fee accumulation)
+                                // These are tracked separately to allow parallel accumulation
+                                for (addr, delta) in state.pending_balance_increments.iter() {
+                                    write_set.add_balance_delta(*addr, *delta);
                                 }
 
                                 // Get captured reads for validation
@@ -996,12 +1004,24 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
 
                 // Load accounts into cache before committing
                 // (State requires accounts to be in cache before applying changes)
-                for address in tx_result.state.keys() {
+                // Note: LazyEvmState has both loaded_state and pending_balance_increments
+                for address in tx_result.state.loaded_state.keys() {
+                    let _ = db.load_cache_account(*address);
+                }
+                for address in tx_result.state.pending_balance_increments.keys() {
                     let _ = db.load_cache_account(*address);
                 }
 
-                // Commit state to actual DB
-                db.commit(tx_result.state);
+                // Resolve the lazy state to get the full EvmState
+                // This combines loaded_state with any remaining pending_balance_increments
+                let resolved_state = revm::context::inner::LazyEvmStateHandle(tx_result.state)
+                    .resolve_full_state(db)
+                    .map_err(|e| PayloadBuilderError::Other(
+                        format!("Failed to resolve state: {:?}", e).into()
+                    ))?;
+
+                // Commit resolved state to actual DB
+                db.commit(resolved_state);
 
                 // Record transaction
                 info_guard.executed_senders.push(tx_result.tx.signer());

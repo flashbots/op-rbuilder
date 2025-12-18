@@ -11,8 +11,9 @@
 //! - **Concurrent Access**: Uses fine-grained locking for parallel read/write
 
 use crate::block_stm::types::{
-    EvmStateKey, EvmStateValue, Incarnation, ReadResult, TxnIndex, Version,
+    EvmStateKey, EvmStateValue, Incarnation, ReadResult, ResolvedBalance, TxnIndex, Version,
 };
+use alloy_primitives::{Address, U256};
 use parking_lot::RwLock;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -141,13 +142,113 @@ impl VersionedValue {
 }
 
 
+/// Entry for a balance delta with abort tracking.
+#[derive(Debug)]
+struct DeltaEntry {
+    /// The incarnation that wrote this delta
+    incarnation: Incarnation,
+    /// The delta amount
+    delta: U256,
+    /// Whether this entry has been marked as aborted
+    aborted: AtomicBool,
+}
+
+impl DeltaEntry {
+    fn new(incarnation: Incarnation, delta: U256) -> Self {
+        Self {
+            incarnation,
+            delta,
+            aborted: AtomicBool::new(false),
+        }
+    }
+
+    fn is_aborted(&self) -> bool {
+        self.aborted.load(Ordering::Acquire)
+    }
+
+    fn mark_aborted(&self) {
+        self.aborted.store(true, Ordering::Release);
+    }
+}
+
+/// Versioned deltas for a single address.
+#[derive(Debug, Default)]
+struct VersionedDeltas {
+    /// Map from txn_idx to delta entry.
+    deltas: BTreeMap<TxnIndex, DeltaEntry>,
+    /// Readers that have resolved deltas for this address.
+    /// Maps reader txn_idx to the list of contributor versions they observed.
+    readers: HashMap<TxnIndex, Vec<Version>>,
+}
+
+impl VersionedDeltas {
+    /// Write a delta at the given version.
+    fn write(&mut self, txn_idx: TxnIndex, incarnation: Incarnation, delta: U256) {
+        self.deltas.insert(txn_idx, DeltaEntry::new(incarnation, delta));
+    }
+
+    /// Resolve all deltas from transactions before reader_txn_idx.
+    /// Returns the total delta and the list of contributor versions.
+    fn resolve(&mut self, reader_txn_idx: TxnIndex) -> Result<(U256, Vec<Version>), TxnIndex> {
+        let mut total = U256::ZERO;
+        let mut contributors = Vec::new();
+
+        for (&txn_idx, entry) in self.deltas.range(..reader_txn_idx) {
+            if entry.is_aborted() {
+                return Err(txn_idx);
+            }
+            total = total.saturating_add(entry.delta);
+            contributors.push(Version::new(txn_idx, entry.incarnation));
+        }
+
+        // Track that this reader resolved these deltas
+        self.readers.insert(reader_txn_idx, contributors.clone());
+
+        Ok((total, contributors))
+    }
+
+    /// Mark a transaction's delta as aborted.
+    /// Returns the set of reader transactions that need to be invalidated.
+    fn mark_aborted(&mut self, txn_idx: TxnIndex) -> HashSet<TxnIndex> {
+        if let Some(entry) = self.deltas.get(&txn_idx) {
+            entry.mark_aborted();
+        }
+
+        // Find all readers that included this transaction's delta
+        self.readers
+            .iter()
+            .filter_map(|(&reader_idx, contributors)| {
+                if contributors.iter().any(|v| v.txn_idx == txn_idx) {
+                    Some(reader_idx)
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    /// Clear the read tracking for a transaction (when it's re-executed).
+    fn clear_reader(&mut self, txn_idx: TxnIndex) {
+        self.readers.remove(&txn_idx);
+    }
+
+    /// Delete a transaction's delta (when the transaction is re-executed).
+    fn delete_delta(&mut self, txn_idx: TxnIndex) {
+        self.deltas.remove(&txn_idx);
+    }
+}
+
 /// Multi-Version Hash Map for Block-STM parallel execution.
 ///
 /// Stores versioned writes per key and tracks read dependencies for push-based invalidation.
+/// Also stores balance deltas separately for commutative fee accumulation.
 #[derive(Debug)]
 pub struct MVHashMap {
     /// Map from state key to versioned values.
     data: RwLock<HashMap<EvmStateKey, RwLock<VersionedValue>>>,
+    /// Balance deltas indexed by address.
+    /// These are commutative increments that don't conflict with each other.
+    balance_deltas: RwLock<HashMap<Address, RwLock<VersionedDeltas>>>,
     /// Number of transactions in the block (reserved for future use).
     #[allow(dead_code)]
     num_txns: usize,
@@ -158,6 +259,7 @@ impl MVHashMap {
     pub fn new(num_txns: usize) -> Self {
         Self {
             data: RwLock::new(HashMap::new()),
+            balance_deltas: RwLock::new(HashMap::new()),
             num_txns,
         }
     }
@@ -218,12 +320,18 @@ impl MVHashMap {
         trace!(txn_idx = txn_idx, "MVHashMap marking transaction as aborted");
 
         let mut dependents = HashSet::new();
-        let data = self.data.read();
         
+        // Mark regular writes as aborted
+        let data = self.data.read();
         for versioned in data.values() {
             let affected = versioned.write().mark_aborted(txn_idx);
             dependents.extend(affected);
         }
+        drop(data);
+
+        // Mark deltas as aborted
+        let delta_dependents = self.mark_delta_aborted(txn_idx);
+        dependents.extend(delta_dependents);
 
         trace!(
             txn_idx = txn_idx,
@@ -236,18 +344,28 @@ impl MVHashMap {
 
     /// Clear all read tracking for a transaction (called before re-execution).
     pub fn clear_reads(&self, txn_idx: TxnIndex) {
+        // Clear regular reads
         let data = self.data.read();
         for versioned in data.values() {
             versioned.write().clear_reader(txn_idx);
         }
+        drop(data);
+
+        // Clear delta reads
+        self.clear_delta_reads(txn_idx);
     }
 
     /// Delete all writes from a transaction (called before re-execution with new incarnation).
     pub fn delete_writes(&self, txn_idx: TxnIndex) {
+        // Delete regular writes
         let data = self.data.read();
         for versioned in data.values() {
             versioned.write().delete_write(txn_idx);
         }
+        drop(data);
+
+        // Delete deltas
+        self.delete_deltas(txn_idx);
     }
 
     /// Apply multiple writes from a transaction.
@@ -273,6 +391,161 @@ impl MVHashMap {
     /// Get all keys that have been written to.
     pub fn get_written_keys(&self) -> Vec<EvmStateKey> {
         self.data.read().keys().cloned().collect()
+    }
+
+    // ========== Balance Delta Methods (for commutative fee accumulation) ==========
+
+    /// Write a balance delta (fee increment) at the given version.
+    ///
+    /// Balance deltas are commutative - multiple transactions can write deltas
+    /// to the same address without conflicting. Conflicts only occur when
+    /// a transaction reads the resolved balance.
+    pub fn write_balance_delta(
+        &self,
+        address: Address,
+        txn_idx: TxnIndex,
+        incarnation: Incarnation,
+        delta: U256,
+    ) {
+        trace!(
+            txn_idx = txn_idx,
+            incarnation = incarnation,
+            address = %address,
+            delta = %delta,
+            "MVHashMap write_balance_delta"
+        );
+
+        // Get or create the versioned deltas entry for this address
+        {
+            let data = self.balance_deltas.read();
+            if let Some(versioned) = data.get(&address) {
+                versioned.write().write(txn_idx, incarnation, delta);
+                return;
+            }
+        }
+
+        // Address doesn't exist, need to create it
+        let mut data = self.balance_deltas.write();
+        let versioned = data
+            .entry(address)
+            .or_insert_with(|| RwLock::new(VersionedDeltas::default()));
+        versioned.write().write(txn_idx, incarnation, delta);
+    }
+
+    /// Resolve balance including all deltas from transactions before reader_txn_idx.
+    ///
+    /// This combines:
+    /// 1. A base value (from storage or an earlier write to Balance(address))
+    /// 2. All deltas written by transactions with index < reader_txn_idx
+    ///
+    /// Returns a ResolvedBalance with the final value and all contributing versions.
+    /// Returns Err(aborted_txn_idx) if a delta from an aborted transaction was encountered.
+    pub fn resolve_balance(
+        &self,
+        address: Address,
+        reader_txn_idx: TxnIndex,
+        base_value: U256,
+        base_version: Option<Version>,
+    ) -> Result<ResolvedBalance, TxnIndex> {
+        let data = self.balance_deltas.read();
+
+        let (total_delta, contributors) = match data.get(&address) {
+            Some(versioned) => versioned.write().resolve(reader_txn_idx)?,
+            None => (U256::ZERO, Vec::new()),
+        };
+
+        let resolved_value = base_value.saturating_add(total_delta);
+
+        trace!(
+            reader_txn_idx = reader_txn_idx,
+            address = %address,
+            base_value = %base_value,
+            total_delta = %total_delta,
+            resolved_value = %resolved_value,
+            num_contributors = contributors.len(),
+            "MVHashMap resolve_balance"
+        );
+
+        Ok(ResolvedBalance {
+            base_value,
+            base_version,
+            total_delta,
+            resolved_value,
+            contributors,
+        })
+    }
+
+    /// Check if there are any pending deltas for an address from transactions before reader_txn_idx.
+    pub fn has_pending_deltas(&self, address: &Address, reader_txn_idx: TxnIndex) -> bool {
+        let data = self.balance_deltas.read();
+        match data.get(address) {
+            Some(versioned) => {
+                let v = versioned.read();
+                v.deltas.range(..reader_txn_idx).next().is_some()
+            }
+            None => false,
+        }
+    }
+
+    /// Mark a transaction's delta as aborted and return dependent readers.
+    pub fn mark_delta_aborted(&self, txn_idx: TxnIndex) -> HashSet<TxnIndex> {
+        trace!(txn_idx = txn_idx, "MVHashMap marking delta as aborted");
+
+        let mut dependents = HashSet::new();
+        let data = self.balance_deltas.read();
+
+        for versioned in data.values() {
+            let affected = versioned.write().mark_aborted(txn_idx);
+            dependents.extend(affected);
+        }
+
+        dependents
+    }
+
+    /// Clear delta read tracking for a transaction (called before re-execution).
+    pub fn clear_delta_reads(&self, txn_idx: TxnIndex) {
+        let data = self.balance_deltas.read();
+        for versioned in data.values() {
+            versioned.write().clear_reader(txn_idx);
+        }
+    }
+
+    /// Delete a transaction's deltas (called before re-execution with new incarnation).
+    pub fn delete_deltas(&self, txn_idx: TxnIndex) {
+        let data = self.balance_deltas.read();
+        for versioned in data.values() {
+            versioned.write().delete_delta(txn_idx);
+        }
+    }
+
+    /// Apply multiple balance deltas from a transaction.
+    pub fn apply_balance_deltas(
+        &self,
+        txn_idx: TxnIndex,
+        incarnation: Incarnation,
+        deltas: Vec<(Address, U256)>,
+    ) {
+        for (address, delta) in deltas {
+            self.write_balance_delta(address, txn_idx, incarnation, delta);
+        }
+    }
+
+    /// Get the final committed delta sum for an address.
+    /// Should only be called after all transactions are committed.
+    pub fn get_committed_delta_sum(&self, address: &Address) -> U256 {
+        let data = self.balance_deltas.read();
+        match data.get(address) {
+            Some(versioned) => {
+                let v = versioned.read();
+                v.deltas.values().map(|e| e.delta).fold(U256::ZERO, |acc, d| acc.saturating_add(d))
+            }
+            None => U256::ZERO,
+        }
+    }
+
+    /// Get all addresses that have balance deltas.
+    pub fn get_delta_addresses(&self) -> Vec<Address> {
+        self.balance_deltas.read().keys().cloned().collect()
     }
 }
 
@@ -456,6 +729,141 @@ mod tests {
             ReadResult::NotFound => {}
             _ => panic!("Expected NotFound"),
         }
+    }
+
+    // ========== Balance Delta Tests ==========
+
+    #[test]
+    fn test_balance_delta_simple() {
+        let mv = MVHashMap::new(10);
+        let coinbase = Address::from([1u8; 20]);
+
+        // Tx0 adds delta +100
+        mv.write_balance_delta(coinbase, 0, 0, U256::from(100));
+
+        // Tx1 adds delta +50
+        mv.write_balance_delta(coinbase, 1, 0, U256::from(50));
+
+        // Tx2 resolves balance with base=1000
+        let result = mv.resolve_balance(coinbase, 2, U256::from(1000), None).unwrap();
+
+        assert_eq!(result.base_value, U256::from(1000));
+        assert_eq!(result.total_delta, U256::from(150)); // 100 + 50
+        assert_eq!(result.resolved_value, U256::from(1150)); // 1000 + 150
+        assert_eq!(result.contributors.len(), 2);
+    }
+
+    #[test]
+    fn test_balance_delta_no_conflict_between_delta_writes() {
+        let mv = MVHashMap::new(10);
+        let coinbase = Address::from([1u8; 20]);
+
+        // Multiple transactions add deltas - this should NOT cause conflicts
+        mv.write_balance_delta(coinbase, 0, 0, U256::from(100));
+        mv.write_balance_delta(coinbase, 1, 0, U256::from(200));
+        mv.write_balance_delta(coinbase, 2, 0, U256::from(300));
+
+        // Get the total committed sum
+        let total = mv.get_committed_delta_sum(&coinbase);
+        assert_eq!(total, U256::from(600)); // 100 + 200 + 300
+    }
+
+    #[test]
+    fn test_balance_delta_resolution_only_sees_earlier_txns() {
+        let mv = MVHashMap::new(10);
+        let coinbase = Address::from([1u8; 20]);
+
+        // Tx0, Tx2, Tx5 add deltas
+        mv.write_balance_delta(coinbase, 0, 0, U256::from(100));
+        mv.write_balance_delta(coinbase, 2, 0, U256::from(200));
+        mv.write_balance_delta(coinbase, 5, 0, U256::from(500));
+
+        // Tx3 resolves - should see Tx0 and Tx2, but NOT Tx5
+        let result = mv.resolve_balance(coinbase, 3, U256::ZERO, None).unwrap();
+        assert_eq!(result.total_delta, U256::from(300)); // 100 + 200
+        assert_eq!(result.contributors.len(), 2);
+
+        // Tx6 resolves - should see all three
+        let result2 = mv.resolve_balance(coinbase, 6, U256::ZERO, None).unwrap();
+        assert_eq!(result2.total_delta, U256::from(800)); // 100 + 200 + 500
+        assert_eq!(result2.contributors.len(), 3);
+    }
+
+    #[test]
+    fn test_balance_delta_abort_invalidates_readers() {
+        let mv = MVHashMap::new(10);
+        let coinbase = Address::from([1u8; 20]);
+
+        // Tx0 and Tx1 add deltas
+        mv.write_balance_delta(coinbase, 0, 0, U256::from(100));
+        mv.write_balance_delta(coinbase, 1, 0, U256::from(50));
+
+        // Tx2 resolves (reads from both Tx0 and Tx1)
+        let _ = mv.resolve_balance(coinbase, 2, U256::ZERO, None).unwrap();
+
+        // Mark Tx0 as aborted
+        let dependents = mv.mark_aborted(0);
+
+        // Tx2 should be in the dependents set
+        assert!(dependents.contains(&2));
+    }
+
+    #[test]
+    fn test_balance_delta_no_deltas() {
+        let mv = MVHashMap::new(10);
+        let coinbase = Address::from([1u8; 20]);
+
+        // No deltas written - should return base value unchanged
+        let result = mv.resolve_balance(coinbase, 5, U256::from(1000), None).unwrap();
+
+        assert_eq!(result.resolved_value, U256::from(1000));
+        assert_eq!(result.total_delta, U256::ZERO);
+        assert!(result.contributors.is_empty());
+    }
+
+    #[test]
+    fn test_balance_delta_reexecution() {
+        let mv = MVHashMap::new(10);
+        let coinbase = Address::from([1u8; 20]);
+
+        // Tx0 first execution adds +100
+        mv.write_balance_delta(coinbase, 0, 0, U256::from(100));
+
+        // Tx1 resolves
+        let result1 = mv.resolve_balance(coinbase, 1, U256::ZERO, None).unwrap();
+        assert_eq!(result1.total_delta, U256::from(100));
+
+        // Tx0 re-executes with different delta
+        mv.delete_deltas(0);
+        mv.write_balance_delta(coinbase, 0, 1, U256::from(200)); // incarnation 1
+
+        // Tx1 resolves again - should see new value
+        let result2 = mv.resolve_balance(coinbase, 1, U256::ZERO, None).unwrap();
+        assert_eq!(result2.total_delta, U256::from(200));
+        assert_eq!(result2.contributors[0].incarnation, 1);
+    }
+
+    #[test]
+    fn test_has_pending_deltas() {
+        let mv = MVHashMap::new(10);
+        let coinbase = Address::from([1u8; 20]);
+        let other = Address::from([2u8; 20]);
+
+        // No deltas yet
+        assert!(!mv.has_pending_deltas(&coinbase, 5));
+
+        // Add delta for coinbase
+        mv.write_balance_delta(coinbase, 0, 0, U256::from(100));
+
+        // Tx1+ should see pending delta for coinbase
+        assert!(mv.has_pending_deltas(&coinbase, 1));
+        assert!(mv.has_pending_deltas(&coinbase, 5));
+
+        // Tx0 should NOT see its own delta
+        assert!(!mv.has_pending_deltas(&coinbase, 0));
+
+        // Other address has no deltas
+        assert!(!mv.has_pending_deltas(&other, 5));
     }
 }
 
