@@ -862,13 +862,33 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
                                 }
 
                                 // Build write set from state changes
-                                let mut write_set = WriteSet::new();
+                                let mut write_set: WriteSet = WriteSet::new();
+let captured_reads = tx_state.database.take_captured_reads();
                                 
-                                // Add regular writes from loaded_state
+                                // Add writes only for values that actually changed
                                 for (addr, account) in state.loaded_state.iter() {
                                     if account.is_touched() {
+// Get original values from captured reads (if available)
+                                        let original_balance = captured_reads.get_balance(*addr);
+                                        let original_nonce = captured_reads.get_nonce(*addr);
+                                        let original_code_hash = captured_reads.get_code_hash(*addr);
+
+                                        // Only write balance if it changed
+                                        if original_balance != Some(account.info.balance) {
                                         write_set.write_balance(*addr, account.info.balance);
+}
+
+                                        // Only write nonce if it changed
+                                        if original_nonce != Some(account.info.nonce) {
                                         write_set.write_nonce(*addr, account.info.nonce);
+}
+
+                                        // Only write code hash if it changed
+                                        if original_code_hash != Some(account.info.code_hash) {
+                                            write_set.write_code_hash(*addr, account.info.code_hash);
+                                        }
+
+                                        // Storage slots already have is_changed() check
                                         for (slot, value) in account.storage.iter() {
                                             if value.is_changed() {
                                                 write_set.write_storage(*addr, *slot, value.present_value);
@@ -884,7 +904,6 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
                                 }
 
                                 // Get captured reads for validation
-                                let captured_reads = tx_state.database.take_captured_reads();
 
                                 // Store execution result for commit phase
                                 let miner_fee = tx.effective_tip_per_gas(base_fee)

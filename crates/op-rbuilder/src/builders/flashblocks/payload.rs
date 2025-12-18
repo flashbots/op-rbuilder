@@ -682,6 +682,9 @@ where
             .set(transaction_pool_fetch_time);
 
         let tx_execution_start_time = Instant::now();
+        
+        // Use parallel execution only when parallel_threads > 1
+        if ctx.parallel_threads > 1 {
         ctx.execute_best_transactions_parallel(
             info,
             state,
@@ -691,6 +694,18 @@ where
             target_da_footprint_for_batch,
         )
         .wrap_err("failed to execute best transactions")?;
+        } else {
+            // Sequential execution for single-threaded mode
+            ctx.execute_best_transactions(
+                info,
+                state,
+                best_txs,
+                target_gas_for_batch.min(ctx.block_gas_limit()),
+                target_da_for_batch,
+                target_da_footprint_for_batch,
+            )
+            .wrap_err("failed to execute best transactions")?;
+        }
         // Extract last transactions
         let new_transactions = info.executed_transactions[info.extra.last_flashblock_index..]
             .to_vec()

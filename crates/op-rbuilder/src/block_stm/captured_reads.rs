@@ -177,6 +177,45 @@ impl CapturedReads {
     pub fn is_empty(&self) -> bool {
         self.reads.is_empty() && self.resolved_balances.is_empty()
     }
+
+    /// Get the original balance for an address (if it was read).
+    /// Returns None if the balance was never read.
+    pub fn get_balance(&self, address: Address) -> Option<U256> {
+        let key = EvmStateKey::Balance(address);
+        self.reads.get(&key).and_then(|read| {
+            if let EvmStateValue::Balance(balance) = read.value {
+                Some(balance)
+            } else {
+                None
+            }
+        })
+    }
+
+    /// Get the original nonce for an address (if it was read).
+    /// Returns None if the nonce was never read.
+    pub fn get_nonce(&self, address: Address) -> Option<u64> {
+        let key = EvmStateKey::Nonce(address);
+        self.reads.get(&key).and_then(|read| {
+            if let EvmStateValue::Nonce(nonce) = read.value {
+                Some(nonce)
+            } else {
+                None
+            }
+        })
+    }
+
+    /// Get the original code hash for an address (if it was read).
+    /// Returns None if the code hash was never read.
+    pub fn get_code_hash(&self, address: Address) -> Option<alloy_primitives::B256> {
+        let key = EvmStateKey::CodeHash(address);
+        self.reads.get(&key).and_then(|read| {
+            if let EvmStateValue::CodeHash(hash) = read.value {
+                Some(hash)
+            } else {
+                None
+            }
+        })
+    }
 }
 
 /// Result of validating a transaction's read set.
