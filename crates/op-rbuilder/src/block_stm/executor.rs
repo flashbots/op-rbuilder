@@ -21,7 +21,7 @@ use crate::block_stm::{
 };
 use std::sync::Arc;
 use std::thread;
-use tracing::{info, trace};
+use tracing::{instrument, Span};
 
 /// Configuration for the Block-STM executor.
 #[derive(Debug, Clone)]
@@ -105,6 +105,7 @@ impl BlockStmExecutor {
     /// - `WriteSet`: The writes to apply
     /// - `u64`: Gas used
     /// - `bool`: Whether the transaction succeeded
+    #[instrument(level = "info", name = "block_stm_execute", skip_all, fields(num_txns = transactions.len(), num_threads = self.config.num_threads))]
     pub fn execute<Tx, BaseDB, ExecFn>(
         &self,
         transactions: &[Tx],
@@ -126,15 +127,12 @@ impl BlockStmExecutor {
             };
         }
 
-        info!(
-            num_txns = num_txns,
-            num_threads = self.config.num_threads,
-            "Starting Block-STM parallel execution"
-        );
-
         // Initialize shared state
         let mv_hashmap = Arc::new(MVHashMap::new(num_txns));
         let scheduler = Arc::new(Scheduler::new(num_txns));
+
+        // Capture parent span for cross-thread propagation
+        let parent_span = Span::current();
 
         // Use scoped threads so we can borrow transactions and base_db
         // Reference to exec_fn for sharing across threads
@@ -147,26 +145,28 @@ impl BlockStmExecutor {
             for thread_id in 0..num_threads {
                 let mv_hashmap = Arc::clone(&mv_hashmap);
                 let scheduler = Arc::clone(&scheduler);
+                let parent_span = parent_span.clone();
                 
                 s.spawn(move || {
+                    // Create worker span as child of parent
+                    let _worker_span = tracing::info_span!(
+                        parent: &parent_span,
+                        "block_stm_worker",
+                        thread_id = thread_id
+                    ).entered();
+
                     scheduler.worker_start();
-                    
-                    trace!(
-                        thread_id = thread_id,
-                        "Block-STM worker started"
-                    );
 
                     loop {
                         let task = scheduler.next_task();
                         
                         match task {
                             Task::Execute { txn_idx, incarnation } => {
-                                trace!(
-                                    thread_id = thread_id,
+                                let _tx_span = tracing::info_span!(
+                                    "block_stm_tx_execute",
                                     txn_idx = txn_idx,
-                                    incarnation = incarnation,
-                                    "Worker executing transaction"
-                                );
+                                    incarnation = incarnation
+                                ).entered();
 
                                 scheduler.start_execution(txn_idx, incarnation);
 
@@ -182,17 +182,6 @@ impl BlockStmExecutor {
                                 let tx = &transactions[txn_idx as usize];
                                 let (reads, writes, gas_used, success) = exec_fn_ref(txn_idx, tx, &view);
 
-                                trace!(
-                                    thread_id = thread_id,
-                                    txn_idx = txn_idx,
-                                    incarnation = incarnation,
-                                    gas_used = gas_used,
-                                    success = success,
-                                    num_reads = reads.len(),
-                                    num_writes = writes.len(),
-                                    "Worker finished executing transaction"
-                                );
-
                                 // Notify scheduler of completion
                                 scheduler.finish_execution(
                                     txn_idx,
@@ -204,12 +193,7 @@ impl BlockStmExecutor {
                                     &mv_hashmap,
                                 );
                             }
-                            Task::Validate { txn_idx } => {
-                                trace!(
-                                    thread_id = thread_id,
-                                    txn_idx = txn_idx,
-                                    "Worker validating transaction"
-                                );
+                            Task::Validate { txn_idx: _ } => {
                                 // Validation is handled in try_commit for now
                             }
                             Task::NoTask => {
@@ -226,11 +210,6 @@ impl BlockStmExecutor {
                     }
 
                     scheduler.worker_done();
-                    
-                    trace!(
-                        thread_id = thread_id,
-                        "Block-STM worker finished"
-                    );
                 });
             }
         });
@@ -244,13 +223,6 @@ impl BlockStmExecutor {
                 success: scheduler.was_successful(txn_idx),
             })
             .collect();
-
-        info!(
-            num_txns = num_txns,
-            total_executions = stats.total_executions,
-            total_aborts = stats.total_aborts,
-            "Block-STM parallel execution complete"
-        );
 
         ParallelExecutionResult { results, stats }
     }
@@ -387,18 +359,11 @@ mod tests {
         
         let db = MockDb;
 
-        let result = executor.execute(&transactions, &db, |txn_idx, tx, view| {
+        let result = executor.execute(&transactions, &db, |_txn_idx, tx, view| {
             // Simulate reads
             for key in &tx.reads {
                 match view.read_from_mvhashmap(key) {
-                    Ok(Some((_value, version))) => {
-                        trace!(
-                            txn_idx = txn_idx,
-                            key = %key,
-                            source_txn = version.txn_idx,
-                            "Read value from MVHashMap"
-                        );
-                    }
+                    Ok(Some(_)) => {}
                     Ok(None) => {
                         // Would read from base, record it
                         view.record_base_read(key.clone(), EvmStateValue::NotFound);

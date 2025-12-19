@@ -17,7 +17,7 @@ use alloy_primitives::{Address, U256};
 use parking_lot::RwLock;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
-use tracing::trace;
+use tracing::instrument;
 
 /// Entry for a single transaction's write to a key.
 #[derive(Debug)]
@@ -265,14 +265,8 @@ impl MVHashMap {
     }
 
     /// Write a value at the given version.
+    #[instrument(level = "trace", skip(self, value), fields(txn_idx, incarnation, key = %key))]
     pub fn write(&self, txn_idx: TxnIndex, incarnation: Incarnation, key: EvmStateKey, value: EvmStateValue) {
-        trace!(
-            txn_idx = txn_idx,
-            incarnation = incarnation,
-            key = %key,
-            "MVHashMap write"
-        );
-
         // Get or create the versioned value entry for this key
         {
             let data = self.data.read();
@@ -289,36 +283,20 @@ impl MVHashMap {
     }
 
     /// Read the latest value for a key that was written by a transaction before reader_txn_idx.
+    #[instrument(level = "trace", skip(self), fields(reader_txn_idx, key = %key))]
     pub fn read(&self, reader_txn_idx: TxnIndex, key: &EvmStateKey) -> ReadResult {
         let data = self.data.read();
         
         match data.get(key) {
-            Some(versioned) => {
-                let result = versioned.write().read(reader_txn_idx);
-                trace!(
-                    reader_txn_idx = reader_txn_idx,
-                    key = %key,
-                    result = ?result,
-                    "MVHashMap read"
-                );
-                result
-            }
-            None => {
-                trace!(
-                    reader_txn_idx = reader_txn_idx,
-                    key = %key,
-                    "MVHashMap read - key not in map"
-                );
-                ReadResult::NotFound
-            }
+            Some(versioned) => versioned.write().read(reader_txn_idx),
+            None => ReadResult::NotFound,
         }
     }
 
     /// Mark a transaction as aborted and return the set of dependent transactions
     /// that need to be invalidated.
+    #[instrument(level = "trace", skip(self), fields(txn_idx))]
     pub fn mark_aborted(&self, txn_idx: TxnIndex) -> HashSet<TxnIndex> {
-        trace!(txn_idx = txn_idx, "MVHashMap marking transaction as aborted");
-
         let mut dependents = HashSet::new();
         
         // Mark regular writes as aborted
@@ -332,12 +310,6 @@ impl MVHashMap {
         // Mark deltas as aborted
         let delta_dependents = self.mark_delta_aborted(txn_idx);
         dependents.extend(delta_dependents);
-
-        trace!(
-            txn_idx = txn_idx,
-            num_dependents = dependents.len(),
-            "MVHashMap found dependent transactions"
-        );
 
         dependents
     }
@@ -400,6 +372,7 @@ impl MVHashMap {
     /// Balance deltas are commutative - multiple transactions can write deltas
     /// to the same address without conflicting. Conflicts only occur when
     /// a transaction reads the resolved balance.
+    #[instrument(level = "trace", skip(self), fields(txn_idx, incarnation, address = %address))]
     pub fn write_balance_delta(
         &self,
         address: Address,
@@ -407,14 +380,6 @@ impl MVHashMap {
         incarnation: Incarnation,
         delta: U256,
     ) {
-        trace!(
-            txn_idx = txn_idx,
-            incarnation = incarnation,
-            address = %address,
-            delta = %delta,
-            "MVHashMap write_balance_delta"
-        );
-
         // Get or create the versioned deltas entry for this address
         {
             let data = self.balance_deltas.read();
@@ -440,6 +405,7 @@ impl MVHashMap {
     ///
     /// Returns a ResolvedBalance with the final value and all contributing versions.
     /// Returns Err(aborted_txn_idx) if a delta from an aborted transaction was encountered.
+    #[instrument(level = "trace", skip(self), fields(reader_txn_idx, address = %address))]
     pub fn resolve_balance(
         &self,
         address: Address,
@@ -455,16 +421,6 @@ impl MVHashMap {
         };
 
         let resolved_value = base_value.saturating_add(total_delta);
-
-        trace!(
-            reader_txn_idx = reader_txn_idx,
-            address = %address,
-            base_value = %base_value,
-            total_delta = %total_delta,
-            resolved_value = %resolved_value,
-            num_contributors = contributors.len(),
-            "MVHashMap resolve_balance"
-        );
 
         Ok(ResolvedBalance {
             base_value,
@@ -488,9 +444,8 @@ impl MVHashMap {
     }
 
     /// Mark a transaction's delta as aborted and return dependent readers.
+    #[instrument(level = "trace", skip(self), fields(txn_idx))]
     pub fn mark_delta_aborted(&self, txn_idx: TxnIndex) -> HashSet<TxnIndex> {
-        trace!(txn_idx = txn_idx, "MVHashMap marking delta as aborted");
-
         let mut dependents = HashSet::new();
         let data = self.balance_deltas.read();
 

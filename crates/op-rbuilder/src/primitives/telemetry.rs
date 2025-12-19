@@ -8,9 +8,9 @@ pub fn setup_telemetry_layer(
 ) -> eyre::Result<impl Layer<tracing_subscriber::Registry>> {
     use tracing::level_filters::LevelFilter;
 
-    if args.otlp_endpoint.is_none() {
+    let Some(otlp_endpoint) = args.otlp_endpoint.as_ref() else {
         return Err(eyre::eyre!("OTLP endpoint is not set"));
-    }
+    };
 
     // Otlp uses evn vars inside
 
@@ -21,7 +21,7 @@ pub fn setup_telemetry_layer(
     // Create OTLP layer with custom configuration
     let otlp_layer = reth_tracing_otlp::span_layer(
         "op-rbuilder",
-        &Url::parse(args.otlp_endpoint.as_ref().unwrap()).expect("Invalid OTLP endpoint"),
+        &Url::parse(otlp_endpoint).expect("Invalid OTLP endpoint"),
         reth_tracing_otlp::OtlpProtocol::Http,
     )?;
 

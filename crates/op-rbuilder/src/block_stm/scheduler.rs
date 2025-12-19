@@ -21,7 +21,7 @@ use crate::block_stm::{
 use parking_lot::{Condvar, Mutex, RwLock};
 use std::collections::{HashSet, VecDeque};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use tracing::debug;
+use tracing::instrument;
 
 /// Per-transaction execution state.
 #[derive(Debug)]
@@ -191,12 +191,6 @@ impl Scheduler {
         let mut state = self.txn_states[txn_idx as usize].write();
         state.status = ExecutionStatus::Executing(incarnation);
         self.stats.lock().total_executions += 1;
-        
-        debug!(
-            txn_idx = txn_idx,
-            incarnation = incarnation,
-            "Transaction starting execution"
-        );
     }
 
     /// Record execution completion for a transaction.
@@ -230,37 +224,22 @@ impl Scheduler {
             state.success = success;
         }
 
-        debug!(
-            txn_idx = txn_idx,
-            incarnation = incarnation,
-            gas_used = gas_used,
-            success = success,
-            "Transaction finished execution"
-        );
-
         // Try to commit if this is the next transaction to commit
         self.try_commit(mv_hashmap);
     }
 
     /// Abort a transaction due to a conflict.
+    #[instrument(level = "info", name = "block_stm_tx_abort", skip(self, mv_hashmap), fields(txn_idx))]
     pub fn abort(&self, txn_idx: TxnIndex, mv_hashmap: &MVHashMap) {
         let mut state = self.txn_states[txn_idx as usize].write();
-        let old_incarnation = state.incarnation;
         
         // Increment incarnation for re-execution
         state.incarnation += 1;
-        state.status = ExecutionStatus::Aborted(old_incarnation);
+        state.status = ExecutionStatus::Aborted(state.incarnation - 1);
         state.reads = None;
         state.writes = None;
         
         self.stats.lock().total_aborts += 1;
-
-        debug!(
-            txn_idx = txn_idx,
-            old_incarnation = old_incarnation,
-            new_incarnation = state.incarnation,
-            "Transaction aborted"
-        );
 
         // Clear MVHashMap entries and get dependents to abort
         mv_hashmap.delete_writes(txn_idx);
@@ -300,7 +279,7 @@ impl Scheduler {
             
             // Check if the transaction at commit_idx is ready to commit
             match state.status {
-                ExecutionStatus::Executed(incarnation) => {
+                ExecutionStatus::Executed(_incarnation) => {
                     // Validate the transaction
                     if self.validate_transaction(commit_idx as TxnIndex, &state, mv_hashmap) {
                         drop(state);
@@ -316,18 +295,17 @@ impl Scheduler {
                         ) {
                             Ok(_) => {
                                 // We successfully claimed this commit slot
+                                let _commit_span = tracing::info_span!(
+                                    "block_stm_tx_commit",
+                                    txn_idx = commit_idx
+                                ).entered();
+
                                 {
                                     let mut state = self.txn_states[commit_idx].write();
                                     state.status = ExecutionStatus::Committed;
                                 }
                                 
                                 self.stats.lock().total_commits += 1;
-                                
-                                debug!(
-                                    txn_idx = commit_idx,
-                                    incarnation = incarnation,
-                                    "Transaction committed"
-                                );
                                 
                                 // Continue to try committing the next transaction
                                 continue;
@@ -360,6 +338,13 @@ impl Scheduler {
         state: &TxnState,
         mv_hashmap: &MVHashMap,
     ) -> bool {
+        let validate_span = tracing::info_span!(
+            "block_stm_tx_validate",
+            txn_idx = txn_idx,
+            error = tracing::field::Empty
+        );
+        let _entered = validate_span.enter();
+
         let reads = match &state.reads {
             Some(r) => r,
             None => return true, // No reads to validate
@@ -378,12 +363,7 @@ impl Scheduler {
                 (None, crate::block_stm::types::ReadResult::NotFound) => continue,
                 // Mismatch - invalid
                 _ => {
-                    debug!(
-                        txn_idx = txn_idx,
-                        key = %key,
-                        original_version = ?captured.version,
-                        "Validation failed - read version mismatch"
-                    );
+                    validate_span.record("error", "read_version_mismatch");
                     return false;
                 }
             }
@@ -403,50 +383,27 @@ impl Scheduler {
                 Ok(current) => {
                     // Check if the resolved value is the same
                     if current.resolved_value != resolved.resolved_value {
-                        debug!(
-                            txn_idx = txn_idx,
-                            address = %address,
-                            original_value = %resolved.resolved_value,
-                            current_value = %current.resolved_value,
-                            "Validation failed - resolved balance mismatch"
-                        );
+                        validate_span.record("error", "balance_value_mismatch");
                         return false;
                     }
 
                     // Check if contributors are the same (versions match)
                     if current.contributors.len() != resolved.contributors.len() {
-                        debug!(
-                            txn_idx = txn_idx,
-                            address = %address,
-                            original_contributors = resolved.contributors.len(),
-                            current_contributors = current.contributors.len(),
-                            "Validation failed - contributor count mismatch"
-                        );
+                        validate_span.record("error", "contributor_count_mismatch");
                         return false;
                     }
 
                     // Verify each contributor version matches
                     for (orig, curr) in resolved.contributors.iter().zip(current.contributors.iter()) {
                         if orig != curr {
-                            debug!(
-                                txn_idx = txn_idx,
-                                address = %address,
-                                original_version = ?orig,
-                                current_version = ?curr,
-                                "Validation failed - contributor version mismatch"
-                            );
+                            validate_span.record("error", "contributor_version_mismatch");
                             return false;
                         }
                     }
                 }
-                Err(aborted_txn_idx) => {
+                Err(_aborted_txn_idx) => {
                     // One of the contributors was aborted
-                    debug!(
-                        txn_idx = txn_idx,
-                        address = %address,
-                        aborted_contributor = aborted_txn_idx,
-                        "Validation failed - contributor was aborted"
-                    );
+                    validate_span.record("error", "contributor_aborted");
                     return false;
                 }
             }

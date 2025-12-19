@@ -18,7 +18,7 @@ use crate::block_stm::{
 };
 use alloy_primitives::{Address, B256, Bytes, U256};
 use parking_lot::Mutex;
-use tracing::trace;
+use tracing::instrument;
 
 /// Error returned when a read encounters an aborted transaction.
 #[derive(Debug, Clone)]
@@ -89,17 +89,10 @@ impl<'a, BaseDB> LatestView<'a, BaseDB> {
     /// Returns the value if found, or an error if an aborted transaction was encountered.
     /// If the key is not in MVHashMap, the caller should read from base state
     /// and call `record_base_read` with the result.
+    #[instrument(level = "trace", skip(self), fields(txn_idx = self.txn_idx, key = %key))]
     pub fn read_from_mvhashmap(&self, key: &EvmStateKey) -> ViewResult<Option<(EvmStateValue, Version)>> {
         match self.mv_hashmap.read(self.txn_idx, key) {
             ReadResult::Value { value, version } => {
-                trace!(
-                    txn_idx = self.txn_idx,
-                    incarnation = self.incarnation,
-                    key = %key,
-                    source_txn = version.txn_idx,
-                    "View read from MVHashMap"
-                );
-                
                 // Record the read
                 self.captured_reads
                     .lock()
@@ -107,23 +100,8 @@ impl<'a, BaseDB> LatestView<'a, BaseDB> {
                 
                 Ok(Some((value, version)))
             }
-            ReadResult::NotFound => {
-                trace!(
-                    txn_idx = self.txn_idx,
-                    incarnation = self.incarnation,
-                    key = %key,
-                    "View read - not in MVHashMap, will read from base"
-                );
-                Ok(None)
-            }
+            ReadResult::NotFound => Ok(None),
             ReadResult::Aborted { txn_idx: aborted_txn_idx } => {
-                trace!(
-                    txn_idx = self.txn_idx,
-                    incarnation = self.incarnation,
-                    key = %key,
-                    aborted_txn = aborted_txn_idx,
-                    "View read - encountered aborted transaction"
-                );
                 Err(ReadAbortedError { aborted_txn_idx })
             }
         }
@@ -131,12 +109,6 @@ impl<'a, BaseDB> LatestView<'a, BaseDB> {
 
     /// Record a read from base state (when MVHashMap doesn't have the value).
     pub fn record_base_read(&self, key: EvmStateKey, value: EvmStateValue) {
-        trace!(
-            txn_idx = self.txn_idx,
-            incarnation = self.incarnation,
-            key = %key,
-            "View recording base state read"
-        );
         self.captured_reads.lock().capture_base_read(key, value);
     }
 }

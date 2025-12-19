@@ -23,7 +23,7 @@ use revm::database_interface::DBErrorMarker;
 use revm::state::AccountInfo;
 use std::{collections::HashMap};
 use std::sync::Mutex;
-use tracing::trace;
+use tracing::instrument;
 
 /// Error type for versioned database operations.
 #[derive(Debug, Clone)]
@@ -152,6 +152,7 @@ impl<'a, BaseDB> VersionedDatabase<'a, BaseDB> {
     ///
     /// This handles the case where earlier transactions have written balance deltas
     /// (e.g., fee increments) that need to be applied to the balance.
+    #[instrument(level = "trace", skip(self), fields(txn_idx = self.txn_idx, address = %address))]
     fn resolve_balance_with_deltas(
         &self,
         address: Address,
@@ -168,16 +169,6 @@ impl<'a, BaseDB> VersionedDatabase<'a, BaseDB> {
         match self.mv_hashmap.resolve_balance(address, self.txn_idx, base_value, base_version) {
             Ok(resolved) => {
                 let final_value = resolved.resolved_value;
-                
-                trace!(
-                    txn_idx = self.txn_idx,
-                    address = %address,
-                    base_value = %base_value,
-                    total_delta = %resolved.total_delta,
-                    resolved_value = %final_value,
-                    num_contributors = resolved.contributors.len(),
-                    "Resolved balance with deltas"
-                );
 
                 // Record the resolved balance read (tracks all contributors)
                 self.record_resolved_balance(address, resolved);
@@ -185,12 +176,6 @@ impl<'a, BaseDB> VersionedDatabase<'a, BaseDB> {
                 Ok(final_value)
             }
             Err(aborted_txn_idx) => {
-                trace!(
-                    txn_idx = self.txn_idx,
-                    address = %address,
-                    aborted_txn = aborted_txn_idx,
-                    "Read delta from aborted transaction"
-                );
                 self.mark_aborted(aborted_txn_idx);
                 Err(VersionedDbError::ReadAborted { aborted_txn_idx })
             }
@@ -231,6 +216,7 @@ where
     type Error = VersionedDbError;
 
     /// Read account info (balance, nonce, code_hash).
+    #[instrument(level = "trace", skip(self), fields(txn_idx = self.txn_idx, address = %address))]
     fn basic_ref(&self, address: Address) -> Result<Option<AccountInfo>, VersionedDbError> {
         // Check cache first
         {
@@ -328,14 +314,6 @@ where
             code: base_info.code.clone(),
         };
 
-        trace!(
-            txn_idx = self.txn_idx,
-            address = %address,
-            balance = %balance,
-            nonce = nonce,
-            "Read account info"
-        );
-
         // Cache the result
         {
             let mut cache = self.account_cache.lock().unwrap();
@@ -347,19 +325,12 @@ where
     }
 
     /// Read a storage slot.
+    #[instrument(level = "trace", skip(self), fields(txn_idx = self.txn_idx, address = %address, slot = %slot))]
     fn storage_ref(&self, address: Address, slot: U256) -> Result<U256, VersionedDbError> {
         let key = EvmStateKey::Storage(address, slot);
 
         match self.mv_hashmap.read(self.txn_idx, &key) {
             ReadResult::Value { value: EvmStateValue::Storage(v), version } => {
-                trace!(
-                    txn_idx = self.txn_idx,
-                    address = %address,
-                    slot = %slot,
-                    value = %v,
-                    source_txn = version.txn_idx,
-                    "Read storage from MVHashMap"
-                );
                 self.record_versioned_read(key, version, EvmStateValue::Storage(v));
                 Ok(v)
             }
@@ -371,24 +342,10 @@ where
                 // Read from base state
                 let value = self.base_db.storage_ref(address, slot)
                     .map_err(|e| VersionedDbError::BaseDbError(e.to_string()))?;
-                trace!(
-                    txn_idx = self.txn_idx,
-                    address = %address,
-                    slot = %slot,
-                    value = %value,
-                    "Read storage from base state"
-                );
                 self.record_base_read(key, EvmStateValue::Storage(value));
                 Ok(value)
             }
             ReadResult::Aborted { txn_idx: aborted_txn_idx } => {
-                trace!(
-                    txn_idx = self.txn_idx,
-                    address = %address,
-                    slot = %slot,
-                    aborted_txn = aborted_txn_idx,
-                    "Read storage from aborted transaction"
-                );
                 self.mark_aborted(aborted_txn_idx);
                 Err(VersionedDbError::ReadAborted { aborted_txn_idx })
             }

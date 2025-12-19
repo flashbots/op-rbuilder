@@ -39,7 +39,7 @@ use std::{
     sync::{Arc, Mutex}, thread, time::Instant
 };
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, info, trace};
+use tracing::{debug, info, trace, Span};
 
 use crate::{
     block_stm::{
@@ -399,6 +399,11 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
         block_da_limit: Option<u64>,
         block_da_footprint_limit: Option<u64>,
     ) -> Result<Option<()>, PayloadBuilderError> {
+        let _execute_span = tracing::info_span!(
+            "sequential_execute",
+            block_gas_limit = block_gas_limit
+        ).entered();
+
         let execute_txs_start_time = Instant::now();
         let mut num_txs_considered = 0;
         let mut num_txs_simulated = 0;
@@ -407,6 +412,7 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
         let mut num_bundles_reverted = 0;
         let mut reverted_gas_used = 0;
         let base_fee = self.base_fee();
+        let mut txn_idx: u32 = 0;
 
         let tx_da_limit = self.da_config.max_da_tx_size();
         let mut evm = self.evm_config.evm_with_env(&mut *db, self.evm_env.clone());
@@ -425,6 +431,12 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
         };
 
         while let Some(tx) = best_txs.next(()) {
+            let _tx_span = tracing::info_span!(
+                "sequential_tx_execute",
+                txn_idx = txn_idx
+            ).entered();
+            txn_idx += 1;
+
             let interop = tx.interop_deadline();
             let reverted_hashes = tx.reverted_hashes().clone();
             let conditional = tx.conditional().cloned();
@@ -681,6 +693,15 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
             return Ok(None);
         }
 
+        // Capture parent span for cross-thread propagation (links to build_flashblock)
+        let parent_span = Span::current();
+        let _execute_span = tracing::info_span!(
+            parent: &parent_span,
+            "block_stm_execute",
+            num_txns = num_candidates,
+            num_threads = num_threads
+        ).entered();
+
         info!(
             target: "payload_builder",
             message = "Executing best transactions (Block-STM)",
@@ -707,6 +728,9 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
         // Shared reference to database for reads (workers only need DatabaseRef)
         let db_ref: &State<DB> = &*db;
 
+        // Capture current span for cross-thread propagation
+        let worker_parent_span = Span::current();
+
         // Spawn worker threads using Block-STM scheduler
         thread::scope(|s| {
             let num_threads = num_threads.min(num_candidates);
@@ -725,15 +749,21 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
                 let cancelled = &self.cancel;
                 let evm_env = &self.evm_env;
                 let base_db = db_ref; // Shared reference for reads
+                let worker_parent_span = worker_parent_span.clone();
 
                 s.spawn(move || {
+                    // Create worker span as child of parent (linked to build_flashblock)
+                    let _worker_span = tracing::info_span!(
+                        parent: &worker_parent_span,
+                        "block_stm_worker",
+                        worker_id = worker_id
+                    ).entered();
+
                     scheduler.worker_start();
-                    trace!(worker_id = worker_id, "Block-STM worker started");
 
                     loop {
                         // Check for cancellation
                         if cancelled.is_cancelled() {
-                            trace!(worker_id = worker_id, "Cancellation detected");
                             break;
                         }
 
@@ -742,12 +772,11 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
                         
                         match task {
                             Task::Execute { txn_idx, incarnation } => {
-                                trace!(
-                                    worker_id = worker_id,
+                                let _tx_span = tracing::info_span!(
+                                    "block_stm_tx_execute",
                                     txn_idx = txn_idx,
-                                    incarnation = incarnation,
-                                    "Executing transaction"
-                                );
+                                    incarnation = incarnation
+                                ).entered();
 
                                 scheduler.start_execution(txn_idx, incarnation);
                                 
@@ -972,7 +1001,6 @@ let captured_reads = tx_state.database.take_captured_reads();
                     }
 
                     scheduler.worker_done();
-                    trace!(worker_id = worker_id, "Block-STM worker finished");
                 });
             }
         });
