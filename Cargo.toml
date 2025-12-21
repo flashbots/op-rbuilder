@@ -132,7 +132,7 @@ alloy-primitives = { version = "1.4.1", default-features = false, features = [
 alloy-rlp = "0.3.10"
 alloy-chains = "0.2.5"
 alloy-contract = { version = "1.0.41" }
-alloy-evm = { path = "../evm/crates/evm" }
+alloy-evm = { version = "0.23.0", default-features = false }
 alloy-provider = { version = "1.0.41", features = [
     "ipc",
     "pubsub",
@@ -165,7 +165,7 @@ alloy-hardforks = "0.4.4"
 rollup-boost = { git = "https://github.com/flashbots/rollup-boost", tag = "v0.7.11" }
 
 # optimism
-alloy-op-evm = { path = "../evm/crates/op-evm" }
+alloy-op-evm = { version = "0.23.0", default-features = false }
 alloy-op-hardforks = "0.4.4"
 op-alloy-rpc-types = { version = "0.22.0", default-features = false }
 op-alloy-rpc-types-engine = { version = "0.22.0", default-features = false }
@@ -217,71 +217,3 @@ opentelemetry = { version = "0.31", features = ["trace"] }
 # Base Path
 concurrent-queue = "2.5.0"
 tips-core = { git = "https://github.com/base/tips", rev = "c08eaa4fe10c26de8911609b41ddab4918698325", default-features = false }
-
-[patch."https://github.com/paradigmxyz/reth"]
-reth = { path = "../reth/bin/reth" }
-reth-chain-state = { path = "../reth/crates/chain-state" }
-reth-cli = { path = "../reth/crates/cli/cli" }
-reth-cli-commands = { path = "../reth/crates/cli/commands" }
-reth-cli-util = { path = "../reth/crates/cli/util" }
-reth-db = { path = "../reth/crates/storage/db" }
-reth-db-common = { path = "../reth/crates/storage/db-common" }
-reth-errors = { path = "../reth/crates/errors" }
-reth-payload-builder = { path = "../reth/crates/payload/builder" }
-reth-node-api = { path = "../reth/crates/node/api" }
-reth-rpc-engine-api = { path = "../reth/crates/rpc/rpc-engine-api" }
-reth-node-ethereum = { path = "../reth/crates/ethereum/node" }
-reth-trie = { path = "../reth/crates/trie/trie" }
-reth-trie-parallel = { path = "../reth/crates/trie/parallel" }
-reth-basic-payload-builder = { path = "../reth/crates/payload/basic" }
-reth-node-core = { path = "../reth/crates/node/core" }
-reth-primitives = { path = "../reth/crates/primitives" }
-reth-primitives-traits = { path = "../reth/crates/primitives-traits" }
-reth-provider = { path = "../reth/crates/storage/provider" }
-reth-chainspec = { path = "../reth/crates/chainspec" }
-reth-storage-api = { path = "../reth/crates/storage/storage-api" }
-reth-rpc-api = { path = "../reth/crates/rpc/rpc-api" }
-reth-evm = { path = "../reth/crates/evm/evm" }
-reth-evm-ethereum = { path = "../reth/crates/ethereum/evm" }
-reth-execution-errors = { path = "../reth/crates/evm/execution-errors" }
-reth-exex = { path = "../reth/crates/exex/exex" }
-reth-tasks = { path = "../reth/crates/tasks" }
-reth-metrics = { path = "../reth/crates/metrics" }
-reth-trie-db = { path = "../reth/crates/trie/db" }
-reth-payload-primitives = { path = "../reth/crates/payload/primitives" }
-reth-transaction-pool = { path = "../reth/crates/transaction-pool" }
-reth-execution-types = { path = "../reth/crates/evm/execution-types" }
-reth-revm = { path = "../reth/crates/revm" }
-reth-payload-builder-primitives = { path = "../reth/crates/payload/builder-primitives" }
-reth-payload-util = { path = "../reth/crates/payload/util" }
-reth-rpc-layer = { path = "../reth/crates/rpc/rpc-layer" }
-reth-network-peers = { path = "../reth/crates/net/peers" }
-reth-testing-utils = { path = "../reth/testing/testing-utils" }
-reth-node-builder = { path = "../reth/crates/node/builder" }
-reth-rpc-eth-types = { path = "../reth/crates/rpc/rpc-eth-types" }
-reth-tracing-otlp = { path = "../reth/crates/tracing-otlp" }
-reth-ipc = { path = "../reth/crates/rpc/ipc" }
-reth-optimism-primitives = { path = "../reth/crates/optimism/primitives" }
-reth-optimism-consensus = { path = "../reth/crates/optimism/consensus" }
-reth-optimism-cli = { path = "../reth/crates/optimism/cli" }
-reth-optimism-forks = { path = "../reth/crates/optimism/hardforks" }
-reth-optimism-evm = { path = "../reth/crates/optimism/evm" }
-reth-optimism-node = { path = "../reth/crates/optimism/node" }
-reth-optimism-payload-builder = { path = "../reth/crates/optimism/payload" }
-reth-optimism-chainspec = { path = "../reth/crates/optimism/chainspec" }
-reth-optimism-txpool = { path = "../reth/crates/optimism/txpool" }
-reth-optimism-rpc = { path = "../reth/crates/optimism/rpc" }
-
-[patch.crates-io]
-revm = { git = "https://github.com/meyer9/revm", branch = "meyer9/lazy-load-accounts-31.0.2" }
-revm-bytecode = { git = "https://github.com/meyer9/revm", branch = "meyer9/lazy-load-accounts-31.0.2" }
-revm-database = { git = "https://github.com/meyer9/revm", branch = "meyer9/lazy-load-accounts-31.0.2" }
-revm-state = { git = "https://github.com/meyer9/revm", branch = "meyer9/lazy-load-accounts-31.0.2" }
-revm-primitives = { git = "https://github.com/meyer9/revm", branch = "meyer9/lazy-load-accounts-31.0.2" }
-revm-interpreter = { git = "https://github.com/meyer9/revm", branch = "meyer9/lazy-load-accounts-31.0.2" }
-revm-inspector = { git = "https://github.com/meyer9/revm", branch = "meyer9/lazy-load-accounts-31.0.2" }
-revm-context = { git = "https://github.com/meyer9/revm", branch = "meyer9/lazy-load-accounts-31.0.2" }
-revm-context-interface = { git = "https://github.com/meyer9/revm", branch = "meyer9/lazy-load-accounts-31.0.2" }
-revm-database-interface = { git = "https://github.com/meyer9/revm", branch = "meyer9/lazy-load-accounts-31.0.2" }
-op-revm = { git = "https://github.com/meyer9/revm", branch = "meyer9/lazy-load-accounts-31.0.2" }
-alloy-evm = { path = "../evm/crates/evm" }

@@ -34,7 +34,7 @@ use reth_primitives::SealedHeader;
 use reth_primitives_traits::{InMemorySize, Recovered, SignedTransaction};
 use reth_revm::{State, context::Block};
 use reth_transaction_pool::{BestTransactionsAttributes, PoolTransaction};
-use revm::{DatabaseCommit, DatabaseRef, context::{inner::LazyEvmStateHandle, result::ResultAndState}, interpreter::as_u64_saturated, state::LazyEvmState};
+use revm::{DatabaseCommit, DatabaseRef, context::{result::ResultAndState}, interpreter::as_u64_saturated};
 use std::{
     sync::{Arc, Mutex}, thread, time::Instant
 };
@@ -343,7 +343,6 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
                     return Err(PayloadBuilderError::EvmExecutionError(Box::new(err)));
                 }
             };
-            let state = LazyEvmStateHandle(state).resolve_full_state(evm.db_mut()).unwrap();
 
             // add gas used by the transaction to cumulative gas used, before creating the receipt
             let gas_used = result.gas_used();
@@ -547,8 +546,6 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
                     return Err(PayloadBuilderError::evm(err));
                 }
             };
-            let state = LazyEvmStateHandle(state).resolve_full_state(evm.db_mut()).unwrap();
-
 
             self.metrics
                 .tx_simulation_duration
@@ -1063,13 +1060,6 @@ let captured_reads = tx_state.database.take_captured_reads();
                     let _ = db.load_cache_account(*address);
                 }
 
-                // Resolve the lazy state to get the full EvmState
-                // This combines loaded_state with any remaining pending_balance_increments
-                let resolved_state = revm::context::inner::LazyEvmStateHandle(tx_result.state)
-                    .resolve_full_state(db)
-                    .map_err(|e| PayloadBuilderError::Other(
-                        format!("Failed to resolve state: {:?}", e).into()
-                    ))?;
 
                 // Commit resolved state to actual DB
                 db.commit(resolved_state);
