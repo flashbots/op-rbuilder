@@ -105,7 +105,7 @@ impl BlockStmExecutor {
     /// - `WriteSet`: The writes to apply
     /// - `u64`: Gas used
     /// - `bool`: Whether the transaction succeeded
-    #[instrument(level = "info", name = "block_stm_execute", skip_all, fields(num_txns = transactions.len(), num_threads = self.config.num_threads))]
+    #[instrument(level = "info", name = "execute_txs", skip_all, fields(num_txns = transactions.len(), num_threads = self.config.num_threads))]
     pub fn execute<Tx, BaseDB, ExecFn>(
         &self,
         transactions: &[Tx],

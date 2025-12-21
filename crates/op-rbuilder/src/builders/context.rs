@@ -399,8 +399,12 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
         block_da_limit: Option<u64>,
         block_da_footprint_limit: Option<u64>,
     ) -> Result<Option<()>, PayloadBuilderError> {
+        // Capture parent span (build_flashblock) for proper linking
+        let parent_span = Span::current();
         let _execute_span = tracing::info_span!(
-            "sequential_execute",
+            parent: &parent_span,
+            "execute_txs",
+            num_threads = 1,
             block_gas_limit = block_gas_limit
         ).entered();
 
@@ -697,7 +701,7 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
         let parent_span = Span::current();
         let _execute_span = tracing::info_span!(
             parent: &parent_span,
-            "block_stm_execute",
+            "execute_txs",
             num_txns = num_candidates,
             num_threads = num_threads
         ).entered();

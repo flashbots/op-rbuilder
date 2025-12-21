@@ -525,6 +525,7 @@ where
                     parent: &span,
                     Level::INFO,
                     "build_flashblock",
+                    num_threads = ctx.parallel_threads
                 )
             };
             let _entered = fb_span.enter();
