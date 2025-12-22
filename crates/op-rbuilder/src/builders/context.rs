@@ -37,8 +37,11 @@ use reth_primitives_traits::{InMemorySize, Recovered, SignedTransaction};
 use reth_revm::{State, context::Block};
 use reth_transaction_pool::{BestTransactionsAttributes, PoolTransaction};
 use revm::{
-    DatabaseCommit, DatabaseRef, context::result::ResultAndState, interpreter::as_u64_saturated,
-    primitives::HashMap, state::EvmState,
+    DatabaseCommit, DatabaseRef,
+    context::result::ResultAndState,
+    interpreter::as_u64_saturated,
+    primitives::HashMap,
+    state::{Account, EvmState},
 };
 use std::{
     collections::hash_map::Entry,
@@ -1278,7 +1281,9 @@ impl StateWithIncrements {
                 Entry::Vacant(entry) => {
                     let mut account = db.basic(*addr)?.unwrap_or_default();
                     account.balance = account.balance.saturating_add(*delta);
-                    entry.insert(account.into());
+                    let mut account: Account = account.into();
+                    account.mark_touch();
+                    entry.insert(account);
                 }
             }
         }
