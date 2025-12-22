@@ -4,15 +4,12 @@
 //! customization of the execution process.
 
 use op_revm::{
-    api::exec::OpContextTr,
-    constants::{BASE_FEE_RECIPIENT, L1_FEE_RECIPIENT, OPERATOR_FEE_RECIPIENT},
-    transaction::{deposit::DEPOSIT_TRANSACTION_TYPE, OpTransactionError, OpTxTr},
-    L1BlockInfo, OpHaltReason, OpSpecId,
+    L1BlockInfo, OpHaltReason, OpSpecId, constants::{BASE_FEE_RECIPIENT, L1_FEE_RECIPIENT, OPERATOR_FEE_RECIPIENT}, handler::IsTxError, transaction::{OpTransactionError, OpTxTr, deposit::DEPOSIT_TRANSACTION_TYPE}
 };
 use revm::{
     context::{LocalContextTr, journaled_state::JournalCheckpoint, result::InvalidTransaction},
     context_interface::{
-        Block, Cfg, ContextTr, JournalTr, Transaction, context::ContextError, result::{EVMError, ExecutionResult, FromStringError}
+        Block, Cfg, ContextTr, JournalTr, Transaction, context::ContextError, result::{ExecutionResult, FromStringError}
     },
     handler::{
         EthFrame, EvmTr, FrameResult, Handler, MainnetHandler, evm::FrameTr, handler::EvmTrError, post_execution::{self, reimburse_caller}, pre_execution::{calculate_caller_fee, validate_account_nonce_and_code_with_components}
@@ -48,20 +45,6 @@ impl<EVM, ERROR, FRAME> LazyRevmHandler<EVM, ERROR, FRAME> {
 impl<EVM, ERROR, FRAME> Default for LazyRevmHandler<EVM, ERROR, FRAME> {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-/// Trait to check if the error is a transaction error.
-///
-/// Used in catch_error handler to catch deposit transaction that was halted.
-pub trait IsTxError {
-    /// Check if the error is a transaction error.
-    fn is_tx_error(&self) -> bool;
-}
-
-impl<DB, TX> IsTxError for EVMError<DB, TX> {
-    fn is_tx_error(&self) -> bool {
-        matches!(self, EVMError::Transaction(_))
     }
 }
 

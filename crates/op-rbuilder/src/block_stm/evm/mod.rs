@@ -1,8 +1,8 @@
 pub use alloy_evm::op::{spec, spec_by_timestamp_after_bedrock};
 
-use alloy_evm::{Database, Evm, EvmEnv, EvmFactory};
+use alloy_evm::{Database, Evm, EvmEnv};
 use alloy_op_evm::OpEvm;
-use alloy_primitives::{Address, Bytes, U256};
+use alloy_primitives::{Address, Bytes};
 use core::ops::{Deref, DerefMut};
 use op_revm::{
     DefaultOp, OpBuilder, OpContext, OpHaltReason, OpSpecId, OpTransaction, OpTransactionError,
@@ -21,8 +21,11 @@ use revm::{
 mod custom_evm;
 mod exec;
 mod handler;
+mod lazy_db;
 
 pub use custom_evm::OpLazyEvmInner;
+pub use handler::LazyRevmHandler;
+pub use lazy_db::{LazyDatabase, LazyDatabaseWrapper};
 
 
 /// OP EVM implementation.
@@ -147,9 +150,6 @@ where
     }
 }
 
-trait LazyDatabase {
-    fn lazily_increment_balance(&self, address: Address, amount: U256);
-}
 
 /// Factory producing [`OpLazyEvm`]s.
 #[derive(Debug, Default, Clone, Copy)]

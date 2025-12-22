@@ -749,7 +749,7 @@ fn test_balance_delta_stress_parallel() {
     let num_threads = 4;
     let mut handles = Vec::new();
     
-    for thread_id in 0..num_threads {
+    for _thread_id in 0..num_threads {
         let mv = Arc::clone(&mv);
         let scheduler = Arc::clone(&scheduler);
         

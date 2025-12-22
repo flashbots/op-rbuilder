@@ -2,7 +2,7 @@ use alloy_consensus::{Eip658Value, Transaction, conditional::BlockConditionalAtt
 use alloy_eips::{Encodable2718, Typed2718};
 use alloy_evm::Database;
 use alloy_op_evm::{OpBlockExecutorFactory, OpEvmFactory, block::receipt_builder::OpReceiptBuilder};
-use alloy_primitives::{BlockHash, Bytes, U256};
+use alloy_primitives::{Address, BlockHash, Bytes, U256};
 use alloy_rpc_types_eth::Withdrawals;
 use core::fmt::Debug;
 use op_alloy_consensus::{OpDepositReceipt, OpTxType};
@@ -11,7 +11,7 @@ use reth::payload::PayloadBuilderAttributes;
 use reth_basic_payload_builder::PayloadConfig;
 use reth_chainspec::{EthChainSpec, EthereumHardforks};
 use reth_evm::{
-    ConfigureEvm, Evm, EvmEnv, EvmError, EvmFactory, InvalidTxError, eth::receipt_builder::ReceiptBuilderCtx, op_revm::L1BlockInfo
+    ConfigureEvm, Evm, EvmEnv, EvmError, InvalidTxError, eth::receipt_builder::ReceiptBuilderCtx, op_revm::L1BlockInfo
 };
 use reth_node_api::PayloadBuilderError;
 use reth_optimism_chainspec::OpChainSpec;
@@ -33,9 +33,9 @@ use reth_primitives::SealedHeader;
 use reth_primitives_traits::{InMemorySize, Recovered, SignedTransaction};
 use reth_revm::{State, context::Block};
 use reth_transaction_pool::{BestTransactionsAttributes, PoolTransaction};
-use revm::{DatabaseCommit, DatabaseRef, context::result::ResultAndState, interpreter::as_u64_saturated, state::EvmState};
+use revm::{DatabaseCommit, DatabaseRef, context::result::ResultAndState, interpreter::as_u64_saturated, primitives::HashMap, state::EvmState};
 use std::{
-    sync::{Arc, Mutex}, thread, time::Instant
+    collections::hash_map::Entry, sync::{Arc, Mutex}, thread, time::Instant
 };
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, trace, Span};
@@ -774,7 +774,6 @@ impl <ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpLazyEvmFactory>
                 let shared_best_txs = Arc::clone(&shared_best_txs);
                 let metrics = Arc::clone(&metrics);
                 let candidate_txs = &candidate_txs;
-                let evm_config = &self.evm_config;
                 let address_gas_limiter = &self.address_gas_limiter;
                 let max_gas_per_txn = self.max_gas_per_txn;
                 let cancelled = &self.cancel;
@@ -849,15 +848,17 @@ impl <ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpLazyEvmFactory>
                                 let versioned_db = VersionedDatabase::new(txn_idx, incarnation, &mv_hashmap, base_db);
 
                                 // Create State wrapper for EVM execution
-                                let mut tx_state = State::builder()
+                                let tx_state = State::builder()
                                     .with_database(versioned_db)
                                     .build();
 
+                                // Wrap State with LazyDatabaseWrapper to support lazy balance increments
+                                let mut lazy_state = crate::block_stm::evm::LazyDatabaseWrapper::new(tx_state);
+
                                 // Execute transaction with versioned state
                                 let exec_result = {
-                                    let mut evm = evm_config.executor_factory.evm_factory().create_evm(&mut tx_state, evm_env.clone());
-                                    // evm_config
-                                    //     .evm_with_env(&mut tx_state, evm_env.clone());
+                                    let lazy_factory = crate::block_stm::evm::OpLazyEvmFactory;
+                                    let mut evm = lazy_factory.create_evm(&mut lazy_state, evm_env.clone());
                                     evm.transact(&tx)
                                 };
 
@@ -871,7 +872,7 @@ impl <ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpLazyEvmFactory>
                                             }
                                         }
                                         // Get captured reads even on failure
-                                        let captured_reads = tx_state.database.take_captured_reads();
+                                        let captured_reads = lazy_state.inner().database.take_captured_reads();
                                         scheduler.finish_execution(
                                             txn_idx, incarnation,
                                             captured_reads,
@@ -883,14 +884,14 @@ impl <ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpLazyEvmFactory>
                                 };
 
                                 // Check if we read from an aborted transaction
-                                if let Some(aborted_txn) = tx_state.database.was_aborted() {
+                                if let Some(aborted_txn) = lazy_state.inner().database.was_aborted() {
                                     trace!(
                                         worker_id = worker_id,
                                         txn_idx = txn_idx,
                                         aborted_txn = aborted_txn,
                                         "Read from aborted transaction, will re-execute"
                                     );
-                                    let captured_reads = tx_state.database.take_captured_reads();
+                                    let captured_reads = lazy_state.inner().database.take_captured_reads();
                                     scheduler.finish_execution(
                                         txn_idx, incarnation,
                                         captured_reads,
@@ -912,7 +913,7 @@ impl <ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpLazyEvmFactory>
                                 if should_skip {
                                     shared_best_txs.lock().unwrap()
                                         .mark_invalid(tx.signer(), tx.nonce());
-                                    let captured_reads = tx_state.database.take_captured_reads();
+                                    let captured_reads = lazy_state.inner().database.take_captured_reads();
                                     scheduler.finish_execution(
                                         txn_idx, incarnation,
                                         captured_reads,
@@ -924,10 +925,10 @@ impl <ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpLazyEvmFactory>
 
                                 // Build write set from state changes
                                 let mut write_set: WriteSet = WriteSet::new();
-let captured_reads = tx_state.database.take_captured_reads();
+let captured_reads = lazy_state.inner().database.take_captured_reads();
                                 
                                 // Add writes only for values that actually changed
-                                for (addr, account) in state.loaded_state.iter() {
+                                for (addr, account) in state.iter() {
                                     if account.is_touched() {
 // Get original values from captured reads (if available)
                                         let original_balance = captured_reads.get_balance(*addr);
@@ -957,10 +958,12 @@ let captured_reads = tx_state.database.take_captured_reads();
                                         }
                                     }
                                 }
+
+                                let (_, pending_balance_increments) = lazy_state.into_inner();
                                 
                                 // Add pending balance increments as deltas (commutative fee accumulation)
                                 // These are tracked separately to allow parallel accumulation
-                                for (addr, delta) in state.pending_balance_increments.iter() {
+                                for (addr, delta) in pending_balance_increments.iter() {
                                     write_set.add_balance_delta(*addr, *delta);
                                 }
 
@@ -978,7 +981,10 @@ let captured_reads = tx_state.database.take_captured_reads();
                                     let mut results = execution_results.lock().unwrap();
                                     results[txn_idx as usize] = Some(TxExecutionResult {
                                         tx,
-                                        state,
+                                        state: StateWithIncrements {
+                                            loaded_state: state,
+                                            pending_balance_increments,
+                                        },
                                         success,
                                         logs,
                                         gas_used,
@@ -1091,6 +1097,7 @@ let captured_reads = tx_state.database.take_captured_reads();
                     let _ = db.load_cache_account(*address);
                 }
 
+                let resolved_state = tx_result.state.resolve_state(db).map_err(|e| PayloadBuilderError::Other(e.to_string().into()))?;
 
                 // Commit resolved state to actual DB
                 db.commit(resolved_state);
@@ -1164,6 +1171,31 @@ let captured_reads = tx_state.database.take_captured_reads();
     }
 }
 
+#[derive(Clone)]
+struct StateWithIncrements {
+    loaded_state: EvmState,
+    pending_balance_increments: HashMap<Address, U256>,
+}
+
+impl StateWithIncrements {
+    fn resolve_state<DB: Database>(self, db: &mut DB) -> Result<EvmState, DB::Error> {
+        let mut state = self.loaded_state;
+        for (addr, delta) in self.pending_balance_increments.iter() {
+            match state.entry(*addr) {
+                Entry::Occupied(mut entry) => {
+                    entry.get_mut().info.balance = entry.get().info.balance.saturating_add(*delta);
+                }
+                Entry::Vacant(entry) => {
+                    let mut account = db.basic(*addr)?.unwrap_or_default();
+                    account.balance = account.balance.saturating_add(*delta);
+                    entry.insert(account.into());
+                }
+            }
+        }
+        Ok(state)
+    }
+}
+
 /// Result of executing a single transaction in parallel.
 /// Stored for deferred commit during the commit phase.
 #[derive(Clone)]
@@ -1171,7 +1203,7 @@ struct TxExecutionResult {
     /// The transaction that was executed
     tx: Recovered<op_alloy_consensus::OpTxEnvelope>,
     /// State changes from execution (using alloy's HashMap for compatibility)
-    state: EvmState,
+    state: StateWithIncrements,
     /// Whether execution succeeded
     success: bool,
     /// Logs from execution (needed for receipt building)

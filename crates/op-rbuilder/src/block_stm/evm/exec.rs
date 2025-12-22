@@ -7,7 +7,7 @@ use crate::block_stm::evm::handler::LazyOpContextTr;
 
 use super::custom_evm::OpLazyEvmInner;
 use super::handler::LazyRevmHandler;
-use op_revm::{api::exec::OpContextTr, transaction::OpTransactionError, OpHaltReason};
+use op_revm::{transaction::OpTransactionError, OpHaltReason};
 use revm::{
     context::{result::ExecResultAndState, ContextSetters},
     context_interface::{
@@ -26,7 +26,7 @@ use revm::{
 };
 
 /// Type alias for the error type of the OpLazyEvmInner.
-pub type OpError<CTX> = EVMError<<<CTX as ContextTr>::Db as Database>::Error, OpTransactionError>;
+type OpError<CTX> = EVMError<<<CTX as ContextTr>::Db as Database>::Error, OpTransactionError>;
 
 impl<CTX, INSP, PRECOMPILE> ExecuteEvm
     for OpLazyEvmInner<CTX, INSP, EthInstructions<EthInterpreter, CTX>, PRECOMPILE>
