@@ -25,6 +25,7 @@ pub mod view;
 pub mod scheduler;
 pub mod executor;
 pub mod db_adapter;
+pub mod evm;
 
 #[cfg(test)]
 mod tests;

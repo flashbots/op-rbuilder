@@ -1,7 +1,7 @@
 use alloy_consensus::{Eip658Value, Transaction, conditional::BlockConditionalAttributes};
 use alloy_eips::{Encodable2718, Typed2718};
 use alloy_evm::Database;
-use alloy_op_evm::block::receipt_builder::OpReceiptBuilder;
+use alloy_op_evm::{OpBlockExecutorFactory, OpEvmFactory, block::receipt_builder::OpReceiptBuilder};
 use alloy_primitives::{BlockHash, Bytes, U256};
 use alloy_rpc_types_eth::Withdrawals;
 use core::fmt::Debug;
@@ -11,19 +11,18 @@ use reth::payload::PayloadBuilderAttributes;
 use reth_basic_payload_builder::PayloadConfig;
 use reth_chainspec::{EthChainSpec, EthereumHardforks};
 use reth_evm::{
-    ConfigureEvm, Evm, EvmEnv, EvmError, InvalidTxError, eth::receipt_builder::ReceiptBuilderCtx,
-    op_revm::L1BlockInfo,
+    ConfigureEvm, Evm, EvmEnv, EvmError, EvmFactory, InvalidTxError, eth::receipt_builder::ReceiptBuilderCtx, op_revm::L1BlockInfo
 };
 use reth_node_api::PayloadBuilderError;
 use reth_optimism_chainspec::OpChainSpec;
-use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
+use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes, OpRethReceiptBuilder};
 use reth_optimism_forks::OpHardforks;
 use reth_optimism_node::OpPayloadBuilderAttributes;
 use reth_optimism_payload_builder::{
     config::{OpDAConfig, OpGasLimitConfig},
     error::OpPayloadBuilderError,
 };
-use reth_optimism_primitives::{OpReceipt, OpTransactionSigned};
+use reth_optimism_primitives::{OpReceipt, OpTransactionSigned, OpPrimitives};
 use reth_optimism_txpool::{
     conditional::MaybeConditionalTransaction,
     estimated_da_size::DataAvailabilitySized,
@@ -34,7 +33,7 @@ use reth_primitives::SealedHeader;
 use reth_primitives_traits::{InMemorySize, Recovered, SignedTransaction};
 use reth_revm::{State, context::Block};
 use reth_transaction_pool::{BestTransactionsAttributes, PoolTransaction};
-use revm::{DatabaseCommit, DatabaseRef, context::{result::ResultAndState}, interpreter::as_u64_saturated};
+use revm::{DatabaseCommit, DatabaseRef, context::result::ResultAndState, interpreter::as_u64_saturated, state::EvmState};
 use std::{
     sync::{Arc, Mutex}, thread, time::Instant
 };
@@ -52,13 +51,14 @@ use crate::{
     traits::PayloadTxsBounds,
     tx::MaybeRevertingTransaction,
     tx_signer::Signer,
+    block_stm::evm::OpLazyEvmFactory,
 };
 
 /// Container type that holds all necessities to build a new payload.
-#[derive(Debug)]
-pub struct OpPayloadBuilderCtx<ExtraCtx: Debug + Default = ()> {
+#[derive(Debug, Clone)]
+pub struct OpPayloadBuilderCtx<ExtraCtx: Debug + Default = (), EvmFactory = OpEvmFactory> {
     /// The type that knows how to perform system calls and configure the evm.
-    pub evm_config: OpEvmConfig,
+    pub evm_config: OpEvmConfig<OpChainSpec, OpPrimitives, OpRethReceiptBuilder, EvmFactory>,
     /// The DA config for the payload builder
     pub da_config: OpDAConfig,
     // Gas limit configuration for the payload builder
@@ -89,9 +89,37 @@ pub struct OpPayloadBuilderCtx<ExtraCtx: Debug + Default = ()> {
     pub parallel_threads: usize,
 }
 
-impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
+impl<ExtraCtx: Debug + Default, EF: EvmFactory> OpPayloadBuilderCtx<ExtraCtx, EF> {
     pub(super) fn with_cancel(self, cancel: CancellationToken) -> Self {
         Self { cancel, ..self }
+    }
+
+    pub(super) fn to_lazy_evm(self) -> OpPayloadBuilderCtx<ExtraCtx, OpLazyEvmFactory> {
+
+        let OpPayloadBuilderCtx { evm_config, da_config, gas_limit_config, chain_spec, config, evm_env, block_env_attributes, cancel, builder_signer, metrics, extra_ctx, max_gas_per_txn, address_gas_limiter, resource_metering, parallel_threads } = self;
+
+        OpPayloadBuilderCtx {
+            da_config,
+            gas_limit_config,
+            chain_spec: chain_spec.clone(),
+            config,
+            evm_env,
+            block_env_attributes,
+            cancel,
+            builder_signer,
+            metrics,
+            extra_ctx,
+            max_gas_per_txn,
+            address_gas_limiter,
+            resource_metering,
+            parallel_threads,
+            evm_config: OpEvmConfig {
+                block_assembler: evm_config.block_assembler.clone(),
+                executor_factory: OpBlockExecutorFactory::new(
+                    *evm_config.executor_factory.receipt_builder(), chain_spec, OpLazyEvmFactory),
+                _pd: Default::default(),
+            },
+        }
     }
 
     pub(super) fn with_extra_ctx(self, extra_ctx: ExtraCtx) -> Self {
@@ -253,7 +281,7 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
     }
 }
 
-impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
+impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpEvmFactory> {
     /// Constructs a receipt for the given transaction.
     pub fn build_receipt<E: Evm>(
         &self,
@@ -647,7 +675,9 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
         );
         Ok(None)
     }
+}
 
+impl <ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpLazyEvmFactory> {
 
     /// Executes the given best transactions in parallel using Block-STM.
     ///
@@ -1140,7 +1170,7 @@ struct TxExecutionResult {
     /// The transaction that was executed
     tx: Recovered<op_alloy_consensus::OpTxEnvelope>,
     /// State changes from execution (using alloy's HashMap for compatibility)
-    state: LazyEvmState,
+    state: EvmState,
     /// Whether execution succeeded
     success: bool,
     /// Logs from execution (needed for receipt building)

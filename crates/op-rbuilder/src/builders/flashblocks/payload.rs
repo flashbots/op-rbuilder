@@ -686,14 +686,15 @@ where
         
         // Use parallel execution only when parallel_threads > 1
         if ctx.parallel_threads > 1 {
-        ctx.execute_best_transactions_parallel(
-            info,
-            state,
-            best_txs,
-            target_gas_for_batch.min(ctx.block_gas_limit()),
-            target_da_for_batch,
-            target_da_footprint_for_batch,
-        )
+            let ctx = ctx.clone().to_lazy_evm();
+            ctx.execute_best_transactions_parallel(
+                info,
+                state,
+                best_txs,
+                target_gas_for_batch.min(ctx.block_gas_limit()),
+                target_da_for_batch,
+                target_da_footprint_for_batch,
+            )
         .wrap_err("failed to execute best transactions")?;
         } else {
             // Sequential execution for single-threaded mode

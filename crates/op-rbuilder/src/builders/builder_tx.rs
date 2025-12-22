@@ -1,7 +1,7 @@
 use alloy_consensus::TxEip1559;
 use alloy_eips::{Encodable2718, eip7623::TOTAL_COST_FLOOR_PER_TOKEN};
 use alloy_evm::Database;
-use alloy_op_evm::OpEvm;
+use alloy_op_evm::{OpEvm, OpEvmFactory};
 use alloy_primitives::{
     Address, B256, Bytes, TxKind, U256,
     map::{HashMap, HashSet},
@@ -140,7 +140,7 @@ impl BuilderTransactionError {
     }
 }
 
-pub trait BuilderTransactions<ExtraCtx: Debug + Default = (), Extra: Debug + Default = ()> {
+pub trait BuilderTransactions<ExtraCtx: Debug + Default = (), Extra: Debug + Default = (), EvmFactory = OpEvmFactory> {
     // Simulates and returns the signed builder transactions. The simulation modifies and commit
     // changes to the db so call new_simulation_state to simulate on a new copy of the state
     fn simulate_builder_txs(
@@ -174,7 +174,7 @@ pub trait BuilderTransactions<ExtraCtx: Debug + Default = (), Extra: Debug + Def
         &self,
         state_provider: impl StateProvider + Clone,
         info: &mut ExecutionInfo<Extra>,
-        builder_ctx: &OpPayloadBuilderCtx<ExtraCtx>,
+        builder_ctx: &OpPayloadBuilderCtx<ExtraCtx, OpEvmFactory>,
         db: &mut State<impl Database>,
         top_of_block: bool,
     ) -> Result<Vec<BuilderTransactionCtx>, BuilderTransactionError> {
