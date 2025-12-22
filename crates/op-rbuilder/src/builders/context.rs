@@ -89,7 +89,7 @@ pub struct OpPayloadBuilderCtx<ExtraCtx: Debug + Default = (), EvmFactory = OpEv
     pub parallel_threads: usize,
 }
 
-impl<ExtraCtx: Debug + Default, EF: EvmFactory> OpPayloadBuilderCtx<ExtraCtx, EF> {
+impl<ExtraCtx: Debug + Default, EF> OpPayloadBuilderCtx<ExtraCtx, EF> {
     pub(super) fn with_cancel(self, cancel: CancellationToken) -> Self {
         Self { cancel, ..self }
     }
@@ -855,8 +855,9 @@ impl <ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpLazyEvmFactory>
 
                                 // Execute transaction with versioned state
                                 let exec_result = {
-                                    let mut evm = evm_config
-                                        .evm_with_env(&mut tx_state, evm_env.clone());
+                                    let mut evm = evm_config.executor_factory.evm_factory().create_evm(&mut tx_state, evm_env.clone());
+                                    // evm_config
+                                    //     .evm_with_env(&mut tx_state, evm_env.clone());
                                     evm.transact(&tx)
                                 };
 

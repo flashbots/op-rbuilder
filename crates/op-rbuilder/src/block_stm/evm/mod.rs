@@ -32,13 +32,13 @@ pub use custom_evm::OpLazyEvmInner;
 ///
 /// This uses our custom EVM implementation that allows overriding parts of the execution process.
 #[allow(missing_debug_implementations)] // missing revm::OpContext Debug impl
-pub struct OpLazyEvm<DB: Database + LazyDatabase, I, P> {
+pub struct OpLazyEvm<DB: Database, I, P> {
     inner: OpLazyEvmInner<OpContext<DB>, I, EthInstructions<EthInterpreter, OpContext<DB>>, P>,
     inspect: bool,
 }
 
 
-impl<DB: Database + LazyDatabase, I, P> OpLazyEvm<DB, I, P> {
+impl<DB: Database, I, P> OpLazyEvm<DB, I, P> {
     /// Creates a new OP EVM instance.
     ///
     /// The `inspect` argument determines whether the configured [`Inspector`] should be
@@ -61,7 +61,7 @@ impl<DB: Database + LazyDatabase, I, P> OpLazyEvm<DB, I, P> {
     }
 }
 
-impl<DB: Database + LazyDatabase, I, P> Deref for OpLazyEvm<DB, I, P> {
+impl<DB: Database, I, P> Deref for OpLazyEvm<DB, I, P> {
     type Target = OpContext<DB>;
 
     #[inline]
@@ -70,7 +70,7 @@ impl<DB: Database + LazyDatabase, I, P> Deref for OpLazyEvm<DB, I, P> {
     }
 }
 
-impl<DB: Database + LazyDatabase, I, P> DerefMut for OpLazyEvm<DB, I, P> {
+impl<DB: Database, I, P> DerefMut for OpLazyEvm<DB, I, P> {
     #[inline]
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.inner.0.ctx
@@ -156,22 +156,12 @@ trait LazyDatabase {
 #[non_exhaustive]
 pub struct OpLazyEvmFactory;
 
-impl EvmFactory for OpLazyEvmFactory {
-    type Evm<DB: Database + LazyDatabase, I: Inspector<OpContext<DB>>> = OpLazyEvm<DB, I, Self::Precompiles>;
-    type Context<DB: Database + LazyDatabase> = OpContext<DB>;
-    type Tx = OpTransaction<TxEnv>;
-    type Error<DBError: core::error::Error + Send + Sync + 'static> =
-        EVMError<DBError, OpTransactionError>;
-    type HaltReason = OpHaltReason;
-    type Spec = OpSpecId;
-    type BlockEnv = BlockEnv;
-    type Precompiles = PrecompilesMap;
-
-    fn create_evm<DB: Database + LazyDatabase>(
+impl OpLazyEvmFactory {
+    pub fn create_evm<DB: Database + LazyDatabase>(
         &self,
         db: DB,
         input: EvmEnv<OpSpecId>,
-    ) -> Self::Evm<DB, NoOpInspector> {
+    ) -> OpLazyEvm<DB, NoOpInspector, PrecompilesMap> {
         let spec_id = input.cfg_env.spec;
         // Build the base EVM using the op_revm builder, then wrap in our custom type
         let base_evm = Context::op()
@@ -186,12 +176,12 @@ impl EvmFactory for OpLazyEvmFactory {
         OpLazyEvm::new(OpLazyEvmInner(base_evm.0), false)
     }
 
-    fn create_evm_with_inspector<DB: Database + LazyDatabase, I: Inspector<Self::Context<DB>>>(
+    pub fn create_evm_with_inspector<DB: Database + LazyDatabase, I: Inspector<OpContext<DB>>>(
         &self,
         db: DB,
         input: EvmEnv<OpSpecId>,
         inspector: I,
-    ) -> Self::Evm<DB, I> {
+    ) -> OpLazyEvm<DB, I, PrecompilesMap> {
         let spec_id = input.cfg_env.spec;
         // Build the base EVM using the op_revm builder, then wrap in our custom type
         let base_evm = Context::op()
