@@ -1,47 +1,39 @@
-
 pub use alloy_evm::op::{spec, spec_by_timestamp_after_bedrock};
 
 use alloy_evm::{Database, Evm, EvmEnv, EvmFactory};
 use alloy_op_evm::OpEvm;
 use alloy_primitives::{Address, Bytes};
-use reth_evm::precompiles::PrecompilesMap;
-use core::{
-    fmt::Debug,
-    ops::{Deref, DerefMut},
-};
+use core::ops::{Deref, DerefMut};
 use op_revm::{
-    DefaultOp, L1BlockInfo, OpBuilder, OpContext, OpHaltReason, OpSpecId, OpTransaction, OpTransactionError, api::OpContextTr, precompiles::OpPrecompiles, transaction::OpTxTr
+    DefaultOp, OpBuilder, OpContext, OpHaltReason, OpSpecId, OpTransaction, OpTransactionError,
+    precompiles::OpPrecompiles,
 };
+use reth_evm::precompiles::PrecompilesMap;
 use revm::{
-    Context, ExecuteEvm, InspectEvm, InspectSystemCallEvm, Inspector, SystemCallEvm, context::{BlockEnv, Cfg, ContextError, FrameStack, TxEnv}, context_interface::result::{EVMError, ResultAndState}, handler::{EthFrame, FrameInitOrResult, FrameTr, ItemOrResult, PrecompileProvider, SystemCallTx, instructions::{EthInstructions, InstructionProvider}}, inspector::{InspectorEvmTr, NoOpInspector}, interpreter::{InterpreterResult, interpreter::EthInterpreter}, primitives::HashMap, state::EvmState
-};
-use revm::{
-    context::{
-        result::{ExecResultAndState},
-        ContextSetters,
-    },
-    context_interface::{
-        result::{ExecutionResult},
-        ContextTr, JournalTr,
-    },
-    handler::{EvmTr, Handler},
-    inspector::{InspectCommitEvm, InspectorHandler, JournalExt},
-    DatabaseCommit, ExecuteCommitEvm,
+    Context, ExecuteEvm, InspectEvm, Inspector, SystemCallEvm,
+    context::{BlockEnv, TxEnv},
+    context_interface::result::{EVMError, ResultAndState},
+    handler::{PrecompileProvider, instructions::EthInstructions},
+    inspector::NoOpInspector,
+    interpreter::{InterpreterResult, interpreter::EthInterpreter},
 };
 
-use crate::block_stm::evm::handler::LazyRevmHandler;
-
+mod custom_evm;
+mod exec;
 mod handler;
+
+pub use custom_evm::OpLazyEvmInner;
 
 
 /// OP EVM implementation.
 ///
-/// This is a wrapper type around the `revm` evm with optional [`Inspector`] (tracing)
-/// support. [`Inspector`] support is configurable at runtime because it's part of the underlying
-/// [`OpEvm`](op_revm::OpEvm) type.
+/// This is a wrapper type around the custom [`OpLazyEvmInner`] with optional [`Inspector`] (tracing)
+/// support. [`Inspector`] support is configurable at runtime.
+///
+/// This uses our custom EVM implementation that allows overriding parts of the execution process.
 #[allow(missing_debug_implementations)] // missing revm::OpContext Debug impl
 pub struct OpLazyEvm<DB: Database, I, P> {
-    inner: op_revm::OpEvm<OpContext<DB>, I, EthInstructions<EthInterpreter, OpContext<DB>>, P>,
+    inner: OpLazyEvmInner<OpContext<DB>, I, EthInstructions<EthInterpreter, OpContext<DB>>, P>,
     inspect: bool,
 }
 
@@ -49,17 +41,23 @@ pub struct OpLazyEvm<DB: Database, I, P> {
 impl<DB: Database, I, P> OpLazyEvm<DB, I, P> {
     /// Creates a new OP EVM instance.
     ///
-    /// The `inspect` argument determines whether the configured [`Inspector`] of the given
-    /// [`OpEvm`](op_revm::OpEvm) should be invoked on [`Evm::transact`].
+    /// The `inspect` argument determines whether the configured [`Inspector`] should be
+    /// invoked on [`Evm::transact`].
     pub const fn new(
-        evm: op_revm::OpEvm<OpContext<DB>, I, EthInstructions<EthInterpreter, OpContext<DB>>, P>,
+        evm: OpLazyEvmInner<OpContext<DB>, I, EthInstructions<EthInterpreter, OpContext<DB>>, P>,
         inspect: bool,
     ) -> Self {
         Self { inner: evm, inspect }
     }
 
+    /// Converts to an `alloy_op_evm::OpEvm` by wrapping the inner EVM.
+    ///
+    /// Note: This creates a new `op_revm::OpEvm` from our custom inner EVM's context.
     pub fn to_inner(self) -> OpEvm<DB, I, P> {
-        OpEvm::new(self.inner, self.inspect)
+        OpEvm::new(
+            op_revm::OpEvm(self.inner.0),
+            self.inspect,
+        )
     }
 }
 
@@ -171,15 +169,17 @@ impl EvmFactory for OpLazyEvmFactory {
         input: EvmEnv<OpSpecId>,
     ) -> Self::Evm<DB, NoOpInspector> {
         let spec_id = input.cfg_env.spec;
-        OpLazyEvm::new(Context::op()
-        .with_db(db)
-        .with_block(input.block_env)
-        .with_cfg(input.cfg_env)
-        .build_op_with_inspector(NoOpInspector {})
-        .with_precompiles(
-            PrecompilesMap::from_static(OpPrecompiles::new_with_spec(spec_id).precompiles()),
-        )
-                    , false)
+        // Build the base EVM using the op_revm builder, then wrap in our custom type
+        let base_evm = Context::op()
+            .with_db(db)
+            .with_block(input.block_env)
+            .with_cfg(input.cfg_env)
+            .build_op_with_inspector(NoOpInspector {})
+            .with_precompiles(
+                PrecompilesMap::from_static(OpPrecompiles::new_with_spec(spec_id).precompiles()),
+            );
+        // Convert op_revm::OpEvm to our custom OpLazyEvmInner
+        OpLazyEvm::new(OpLazyEvmInner(base_evm.0), false)
     }
 
     fn create_evm_with_inspector<DB: Database, I: Inspector<Self::Context<DB>>>(
@@ -189,14 +189,16 @@ impl EvmFactory for OpLazyEvmFactory {
         inspector: I,
     ) -> Self::Evm<DB, I> {
         let spec_id = input.cfg_env.spec;
-        OpLazyEvm::new(
-            Context::op()
-                .with_db(db)
-                .with_block(input.block_env)
-                .with_cfg(input.cfg_env)
-                .build_op_with_inspector(inspector)
-                .with_precompiles(
-                    PrecompilesMap::from_static(OpPrecompiles::new_with_spec(spec_id).precompiles()),
-                ), true)
+        // Build the base EVM using the op_revm builder, then wrap in our custom type
+        let base_evm = Context::op()
+            .with_db(db)
+            .with_block(input.block_env)
+            .with_cfg(input.cfg_env)
+            .build_op_with_inspector(inspector)
+            .with_precompiles(
+                PrecompilesMap::from_static(OpPrecompiles::new_with_spec(spec_id).precompiles()),
+            );
+        // Convert op_revm::OpEvm to our custom OpLazyEvmInner
+        OpLazyEvm::new(OpLazyEvmInner(base_evm.0), true)
     }
 }

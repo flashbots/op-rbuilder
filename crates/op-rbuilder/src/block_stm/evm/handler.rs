@@ -1,3 +1,8 @@
+//! Custom Optimism handler that extends the base Handler with Optimism-specific logic.
+//!
+//! This is based on `op_revm::OpHandler` but lives in this crate to allow
+//! customization of the execution process.
+
 use op_revm::{
     api::exec::OpContextTr,
     constants::{BASE_FEE_RECIPIENT, L1_FEE_RECIPIENT, OPERATOR_FEE_RECIPIENT},
@@ -5,11 +10,7 @@ use op_revm::{
     L1BlockInfo, OpHaltReason, OpSpecId,
 };
 use revm::{
-    context::{
-        journaled_state::{JournalCheckpoint, entry::{JournalEntryTr}},
-        result::InvalidTransaction,
-        LocalContextTr,
-    },
+    context::{journaled_state::JournalCheckpoint, result::InvalidTransaction, LocalContextTr},
     context_interface::{
         context::ContextError,
         result::{EVMError, ExecutionResult, FromStringError},
@@ -28,16 +29,19 @@ use revm::{
 };
 use std::boxed::Box;
 
-/// Optimism handler extends the [`Handler`] with Optimism specific logic.
+/// Custom Optimism handler that extends the [`Handler`] with Optimism-specific logic.
+///
+/// This implementation mirrors `op_revm::OpHandler` but lives in this crate
+/// to allow overriding parts of the execution process.
 #[derive(Debug, Clone)]
 pub struct LazyRevmHandler<EVM, ERROR, FRAME> {
     /// Mainnet handler allows us to use functions from the mainnet handler inside optimism handler.
-    /// So we dont duplicate the logic
+    /// This avoids duplicating logic.
     pub mainnet: MainnetHandler<EVM, ERROR, FRAME>,
 }
 
 impl<EVM, ERROR, FRAME> LazyRevmHandler<EVM, ERROR, FRAME> {
-    /// Create a new Optimism handler.
+    /// Create a new custom Optimism handler.
     pub fn new() -> Self {
         Self {
             mainnet: MainnetHandler::default(),
@@ -53,7 +57,7 @@ impl<EVM, ERROR, FRAME> Default for LazyRevmHandler<EVM, ERROR, FRAME> {
 
 /// Trait to check if the error is a transaction error.
 ///
-/// Used in cache_error handler to catch deposit transaction that was halted.
+/// Used in catch_error handler to catch deposit transaction that was halted.
 pub trait IsTxError {
     /// Check if the error is a transaction error.
     fn is_tx_error(&self) -> bool;
@@ -215,10 +219,13 @@ where
                 // Regolith, gas is reported as normal.
                 gas.erase_cost(remaining);
                 gas.record_refund(refunded);
-            } else if is_deposit && tx.is_system_transaction() {
-                // System transactions were a special type of deposit transaction in
-                // the Bedrock hardfork that did not incur any gas costs.
-                gas.erase_cost(tx_gas_limit);
+            } else if is_deposit {
+                let tx = ctx.tx();
+                if tx.is_system_transaction() {
+                    // System transactions were a special type of deposit transaction in
+                    // the Bedrock hardfork that did not incur any gas costs.
+                    gas.erase_cost(tx_gas_limit);
+                }
             }
         } else if instruction_result.is_revert() {
             // On Optimism, deposit transactions report gas usage uniquely to other
@@ -373,11 +380,7 @@ where
         error: Self::Error,
     ) -> Result<ExecutionResult<Self::HaltReason>, Self::Error> {
         let is_deposit = evm.ctx().tx().tx_type() == DEPOSIT_TRANSACTION_TYPE;
-        let is_tx_error = error.is_tx_error();
-        let mut output = Err(error);
-
-        // Deposit transaction can't fail so we manually handle it here.
-        if is_tx_error && is_deposit {
+        let output = if error.is_tx_error() && is_deposit {
             let ctx = evm.ctx();
             let spec = ctx.cfg().spec();
             let tx = ctx.tx();
@@ -404,8 +407,6 @@ where
             acc.bump_nonce();
             acc.incr_balance(U256::from(mint.unwrap_or_default()));
 
-            drop(acc); // Drop acc to avoid borrow checker issues.
-
             // We can now commit the changes.
             journal.commit_tx();
 
@@ -419,11 +420,13 @@ where
                 0
             };
             // clear the journal
-            output = Ok(ExecutionResult::Halt {
+            Ok(ExecutionResult::Halt {
                 reason: OpHaltReason::FailedDeposit,
                 gas_used,
             })
-        }
+        } else {
+            Err(error)
+        };
 
         // do the cleanup
         evm.ctx().chain_mut().clear_tx_l1_cost();
@@ -445,3 +448,4 @@ where
 {
     type IT = EthInterpreter;
 }
+
