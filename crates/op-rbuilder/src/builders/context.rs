@@ -103,7 +103,7 @@ impl<ExtraCtx: Debug + Default, EF> OpPayloadBuilderCtx<ExtraCtx, EF> {
         Self { cancel, ..self }
     }
 
-    pub(super) fn to_lazy_evm(self) -> OpPayloadBuilderCtx<ExtraCtx, OpLazyEvmFactory> {
+    pub(super) fn into_lazy_evm(self) -> OpPayloadBuilderCtx<ExtraCtx, OpLazyEvmFactory> {
         let OpPayloadBuilderCtx {
             evm_config,
             da_config,
@@ -908,13 +908,13 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpLazyEvmFactory> 
                                 let exec_result = match exec_result {
                                     Ok(res) => res,
                                     Err(err) => {
-                                        if let Some(err) = err.as_invalid_tx_err() {
-                                            if !err.is_nonce_too_low() {
-                                                shared_best_txs
-                                                    .lock()
-                                                    .unwrap()
-                                                    .mark_invalid(tx.signer(), tx.nonce());
-                                            }
+                                        if let Some(err) = err.as_invalid_tx_err()
+                                            && !err.is_nonce_too_low()
+                                        {
+                                            shared_best_txs
+                                                .lock()
+                                                .unwrap()
+                                                .mark_invalid(tx.signer(), tx.nonce());
                                         }
                                         // Get captured reads even on failure
                                         let captured_reads =
@@ -991,6 +991,7 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpLazyEvmFactory> 
 
                                 // Add writes only for values that actually changed
                                 for (addr, account) in state.iter() {
+                                    debug!("Account touched: {}", addr);
                                     if account.is_touched() {
                                         // Get original values from captured reads (if available)
                                         let original_balance = captured_reads.get_balance(*addr);

@@ -234,10 +234,11 @@ where
         // Check cache first
         {
             let cache = self.account_cache.lock().unwrap();
-            if let Some(cached) = cache.get(&address) {
-                if cached.info.is_some() {
-                    return Ok(cached.info.clone());
-                }
+            if let Some(CachedAccount {
+                info: Some(info), ..
+            }) = cache.get(&address)
+            {
+                return Ok(Some(info.clone()));
             }
         }
 

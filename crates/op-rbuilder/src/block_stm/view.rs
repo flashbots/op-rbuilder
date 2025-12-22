@@ -189,6 +189,7 @@ impl WriteSet {
     }
 
     /// Consume the write set and return both regular writes and balance deltas.
+    #[expect(clippy::type_complexity)]
     pub fn into_parts(self) -> (Vec<(EvmStateKey, EvmStateValue)>, Vec<(Address, U256)>) {
         (self.writes, self.balance_deltas)
     }

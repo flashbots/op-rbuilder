@@ -200,6 +200,7 @@ impl Scheduler {
     }
 
     /// Record execution completion for a transaction.
+    #[expect(clippy::too_many_arguments)]
     pub fn finish_execution(
         &self,
         txn_idx: TxnIndex,
