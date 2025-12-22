@@ -16,11 +16,13 @@ use crate::block_stm::{
     captured_reads::CapturedReads,
     mv_hashmap::MVHashMap,
     types::{ExecutionStatus, Incarnation, Task, TxnIndex},
-    view::{WriteSet},
+    view::WriteSet,
 };
 use parking_lot::{Condvar, Mutex, RwLock};
-use std::collections::{HashSet, VecDeque};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::{
+    collections::{HashSet, VecDeque},
+    sync::atomic::{AtomicUsize, Ordering},
+};
 use tracing::instrument;
 
 /// Per-transaction execution state.
@@ -154,7 +156,10 @@ impl Scheduler {
         if let Some(txn_idx) = self.execution_queue.lock().pop_front() {
             let state = self.txn_states[txn_idx as usize].read();
             let incarnation = state.incarnation;
-            return Task::Execute { txn_idx, incarnation };
+            return Task::Execute {
+                txn_idx,
+                incarnation,
+            };
         }
 
         // Try to get a transaction to validate
@@ -178,7 +183,8 @@ impl Scheduler {
             return;
         }
         // Wait with timeout to avoid deadlocks
-        self.work_available.wait_for(&mut lock, std::time::Duration::from_millis(10));
+        self.work_available
+            .wait_for(&mut lock, std::time::Duration::from_millis(10));
     }
 
     /// Notify that work is available.
@@ -229,16 +235,21 @@ impl Scheduler {
     }
 
     /// Abort a transaction due to a conflict.
-    #[instrument(level = "info", name = "block_stm_tx_abort", skip(self, mv_hashmap), fields(txn_idx))]
+    #[instrument(
+        level = "info",
+        name = "block_stm_tx_abort",
+        skip(self, mv_hashmap),
+        fields(txn_idx)
+    )]
     pub fn abort(&self, txn_idx: TxnIndex, mv_hashmap: &MVHashMap) {
         let mut state = self.txn_states[txn_idx as usize].write();
-        
+
         // Increment incarnation for re-execution
         state.incarnation += 1;
         state.status = ExecutionStatus::Aborted(state.incarnation - 1);
         state.reads = None;
         state.writes = None;
-        
+
         self.stats.lock().total_aborts += 1;
 
         // Clear MVHashMap entries and get dependents to abort
@@ -262,7 +273,7 @@ impl Scheduler {
     }
 
     /// Try to commit transactions in order.
-    /// 
+    ///
     /// Uses compare_exchange on commit_idx to ensure exactly one thread
     /// commits each transaction, preventing race conditions in stats tracking.
     fn try_commit(&self, mv_hashmap: &MVHashMap) {
@@ -276,16 +287,16 @@ impl Scheduler {
             }
 
             let state = self.txn_states[commit_idx].read();
-            
+
             // Check if the transaction at commit_idx is ready to commit
             match state.status {
                 ExecutionStatus::Executed(_incarnation) => {
                     // Validate the transaction
                     if self.validate_transaction(commit_idx as TxnIndex, &state, mv_hashmap) {
                         drop(state);
-                        
+
                         // Atomically claim this commit slot using compare_exchange.
-                        // Only the thread that successfully advances commit_idx is 
+                        // Only the thread that successfully advances commit_idx is
                         // responsible for updating the status and incrementing stats.
                         match self.commit_idx.compare_exchange(
                             commit_idx,
@@ -298,20 +309,21 @@ impl Scheduler {
                                 let _commit_span = tracing::info_span!(
                                     "block_stm_tx_commit",
                                     txn_idx = commit_idx
-                                ).entered();
+                                )
+                                .entered();
 
                                 {
                                     let mut state = self.txn_states[commit_idx].write();
                                     state.status = ExecutionStatus::Committed;
                                 }
-                                
+
                                 self.stats.lock().total_commits += 1;
-                                
+
                                 // Continue to try committing the next transaction
                                 continue;
                             }
                             Err(_) => {
-                                // Another thread already claimed this slot, 
+                                // Another thread already claimed this slot,
                                 // loop to check the next transaction
                                 continue;
                             }
@@ -354,11 +366,14 @@ impl Scheduler {
         for (key, captured) in reads.reads() {
             // Re-read from MVHashMap
             let current = mv_hashmap.read(txn_idx, key);
-            
+
             match (captured.version, &current) {
                 // Both read from same version - valid
-                (Some(v1), crate::block_stm::types::ReadResult::Value { version: v2, .. }) 
-                    if v1 == *v2 => continue,
+                (Some(v1), crate::block_stm::types::ReadResult::Value { version: v2, .. })
+                    if v1 == *v2 =>
+                {
+                    continue;
+                }
                 // Both read from base state - valid
                 (None, crate::block_stm::types::ReadResult::NotFound) => continue,
                 // Mismatch - invalid
@@ -394,7 +409,11 @@ impl Scheduler {
                     }
 
                     // Verify each contributor version matches
-                    for (orig, curr) in resolved.contributors.iter().zip(current.contributors.iter()) {
+                    for (orig, curr) in resolved
+                        .contributors
+                        .iter()
+                        .zip(current.contributors.iter())
+                    {
                         if orig != curr {
                             validate_span.record("error", "contributor_version_mismatch");
                             return false;
@@ -445,24 +464,39 @@ mod tests {
     #[test]
     fn test_scheduler_initial_state() {
         let scheduler = Scheduler::new(5);
-        
+
         assert_eq!(scheduler.num_txns(), 5);
         assert!(!scheduler.is_done());
-        
+
         // All transactions should be queued for execution
         let task = scheduler.next_task();
-        assert!(matches!(task, Task::Execute { txn_idx: 0, incarnation: 0 }));
+        assert!(matches!(
+            task,
+            Task::Execute {
+                txn_idx: 0,
+                incarnation: 0
+            }
+        ));
     }
 
     #[test]
     fn test_scheduler_task_ordering() {
         let scheduler = Scheduler::new(3);
-        
+
         // Should get transactions in order
-        assert!(matches!(scheduler.next_task(), Task::Execute { txn_idx: 0, .. }));
-        assert!(matches!(scheduler.next_task(), Task::Execute { txn_idx: 1, .. }));
-        assert!(matches!(scheduler.next_task(), Task::Execute { txn_idx: 2, .. }));
-        
+        assert!(matches!(
+            scheduler.next_task(),
+            Task::Execute { txn_idx: 0, .. }
+        ));
+        assert!(matches!(
+            scheduler.next_task(),
+            Task::Execute { txn_idx: 1, .. }
+        ));
+        assert!(matches!(
+            scheduler.next_task(),
+            Task::Execute { txn_idx: 2, .. }
+        ));
+
         // No more tasks
         assert!(matches!(scheduler.next_task(), Task::NoTask));
     }
@@ -471,31 +505,49 @@ mod tests {
     fn test_scheduler_execution_flow() {
         let scheduler = Scheduler::new(2);
         let mv = MVHashMap::new(2);
-        
+
         // Execute tx0
         let task = scheduler.next_task();
-        assert!(matches!(task, Task::Execute { txn_idx: 0, incarnation: 0 }));
+        assert!(matches!(
+            task,
+            Task::Execute {
+                txn_idx: 0,
+                incarnation: 0
+            }
+        ));
         scheduler.start_execution(0, 0);
-        
+
         let reads = CapturedReads::new();
         let writes = WriteSet::new();
         scheduler.finish_execution(0, 0, reads, writes, 21000, true, &mv);
-        
+
         // tx0 should now be committed
-        assert!(matches!(scheduler.get_status(0), ExecutionStatus::Committed));
-        
+        assert!(matches!(
+            scheduler.get_status(0),
+            ExecutionStatus::Committed
+        ));
+
         // Execute tx1
         let task = scheduler.next_task();
-        assert!(matches!(task, Task::Execute { txn_idx: 1, incarnation: 0 }));
+        assert!(matches!(
+            task,
+            Task::Execute {
+                txn_idx: 1,
+                incarnation: 0
+            }
+        ));
         scheduler.start_execution(1, 0);
-        
+
         let reads = CapturedReads::new();
         let writes = WriteSet::new();
         scheduler.finish_execution(1, 0, reads, writes, 21000, true, &mv);
-        
+
         // tx1 should now be committed
-        assert!(matches!(scheduler.get_status(1), ExecutionStatus::Committed));
-        
+        assert!(matches!(
+            scheduler.get_status(1),
+            ExecutionStatus::Committed
+        ));
+
         // Should be done
         assert!(scheduler.is_done());
     }
@@ -504,37 +556,58 @@ mod tests {
     fn test_scheduler_abort_reschedules() {
         let scheduler = Scheduler::new(3);
         let mv = MVHashMap::new(3);
-        
+
         // Get all initial tasks
         let _ = scheduler.next_task(); // tx0
         let _ = scheduler.next_task(); // tx1
         let _ = scheduler.next_task(); // tx2
-        
+
         // Abort tx1
         scheduler.start_execution(1, 0);
         scheduler.abort(1, &mv);
-        
+
         // tx1 should be re-queued with incremented incarnation
         let task = scheduler.next_task();
-        assert!(matches!(task, Task::Execute { txn_idx: 1, incarnation: 1 }));
+        assert!(matches!(
+            task,
+            Task::Execute {
+                txn_idx: 1,
+                incarnation: 1
+            }
+        ));
     }
 
     #[test]
     fn test_scheduler_stats() {
         let scheduler = Scheduler::new(2);
         let mv = MVHashMap::new(2);
-        
+
         // Execute both transactions
         scheduler.start_execution(0, 0);
-        scheduler.finish_execution(0, 0, CapturedReads::new(), WriteSet::new(), 21000, true, &mv);
-        
+        scheduler.finish_execution(
+            0,
+            0,
+            CapturedReads::new(),
+            WriteSet::new(),
+            21000,
+            true,
+            &mv,
+        );
+
         scheduler.start_execution(1, 0);
-        scheduler.finish_execution(1, 0, CapturedReads::new(), WriteSet::new(), 21000, true, &mv);
-        
+        scheduler.finish_execution(
+            1,
+            0,
+            CapturedReads::new(),
+            WriteSet::new(),
+            21000,
+            true,
+            &mv,
+        );
+
         let stats = scheduler.get_stats();
         assert_eq!(stats.total_executions, 2);
         assert_eq!(stats.total_commits, 2);
         assert_eq!(stats.total_aborts, 0);
     }
 }
-

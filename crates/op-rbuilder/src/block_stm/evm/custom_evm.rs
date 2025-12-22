@@ -5,16 +5,16 @@
 
 use op_revm::precompiles::OpPrecompiles;
 use revm::{
+    Database, Inspector,
     context::{ContextError, ContextSetters, Evm, FrameStack},
     context_interface::ContextTr,
     handler::{
+        EthFrame, EvmTr, FrameInitOrResult, ItemOrResult, PrecompileProvider,
         evm::FrameTr,
         instructions::{EthInstructions, InstructionProvider},
-        EthFrame, EvmTr, FrameInitOrResult, ItemOrResult, PrecompileProvider,
     },
     inspector::{InspectorEvmTr, JournalExt},
-    interpreter::{interpreter::EthInterpreter, InterpreterResult},
-    Database, Inspector,
+    interpreter::{InterpreterResult, interpreter::EthInterpreter},
 };
 
 /// Custom Optimism EVM that wraps the base [`Evm`] type.
@@ -33,7 +33,9 @@ pub struct OpLazyEvmInner<
     pub Evm<CTX, INSP, I, P, F>,
 );
 
-impl<CTX: ContextTr, INSP> OpLazyEvmInner<CTX, INSP, EthInstructions<EthInterpreter, CTX>, OpPrecompiles> {
+impl<CTX: ContextTr, INSP>
+    OpLazyEvmInner<CTX, INSP, EthInstructions<EthInterpreter, CTX>, OpPrecompiles>
+{
     /// Create a new custom Optimism EVM.
     pub fn new(ctx: CTX, inspector: INSP) -> Self {
         Self(Evm {
@@ -163,4 +165,3 @@ where
         self.0.frame_return_result(result)
     }
 }
-

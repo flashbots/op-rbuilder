@@ -15,8 +15,10 @@ use crate::block_stm::types::{
 };
 use alloy_primitives::{Address, U256};
 use parking_lot::RwLock;
-use std::collections::{BTreeMap, HashMap, HashSet};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::{
+    collections::{BTreeMap, HashMap, HashSet},
+    sync::atomic::{AtomicBool, Ordering},
+};
 use tracing::instrument;
 
 /// Entry for a single transaction's write to a key.
@@ -63,24 +65,24 @@ struct VersionedValue {
 impl VersionedValue {
     /// Write a value at the given version.
     fn write(&mut self, txn_idx: TxnIndex, incarnation: Incarnation, value: EvmStateValue) {
-        self.writes.insert(txn_idx, WriteEntry::new(incarnation, value));
+        self.writes
+            .insert(txn_idx, WriteEntry::new(incarnation, value));
     }
 
     /// Read the latest value written by a transaction with index < reader_txn_idx.
     /// Returns the value and version, or NotFound if no such write exists.
     fn read(&mut self, reader_txn_idx: TxnIndex) -> ReadResult {
         // Find the latest write with txn_idx < reader_txn_idx
-        let maybe_entry = self
-            .writes
-            .range(..reader_txn_idx)
-            .next_back();
+        let maybe_entry = self.writes.range(..reader_txn_idx).next_back();
 
         match maybe_entry {
             Some((&writer_txn_idx, entry)) => {
                 if entry.is_aborted() {
                     // Track that we tried to read from an aborted transaction
                     self.readers.insert(reader_txn_idx, None);
-                    ReadResult::Aborted { txn_idx: writer_txn_idx }
+                    ReadResult::Aborted {
+                        txn_idx: writer_txn_idx,
+                    }
                 } else {
                     let version = Version::new(writer_txn_idx, entry.incarnation);
                     // Track the dependency
@@ -108,8 +110,11 @@ impl VersionedValue {
 
         // Find all readers that read from this transaction or later
         // (they may have been affected by this write)
-        let version = self.writes.get(&txn_idx).map(|e| Version::new(txn_idx, e.incarnation));
-        
+        let version = self
+            .writes
+            .get(&txn_idx)
+            .map(|e| Version::new(txn_idx, e.incarnation));
+
         self.readers
             .iter()
             .filter_map(|(&reader_idx, &observed_version)| {
@@ -140,7 +145,6 @@ impl VersionedValue {
         self.writes.remove(&txn_idx);
     }
 }
-
 
 /// Entry for a balance delta with abort tracking.
 #[derive(Debug)]
@@ -184,7 +188,8 @@ struct VersionedDeltas {
 impl VersionedDeltas {
     /// Write a delta at the given version.
     fn write(&mut self, txn_idx: TxnIndex, incarnation: Incarnation, delta: U256) {
-        self.deltas.insert(txn_idx, DeltaEntry::new(incarnation, delta));
+        self.deltas
+            .insert(txn_idx, DeltaEntry::new(incarnation, delta));
     }
 
     /// Resolve all deltas from transactions before reader_txn_idx.
@@ -266,7 +271,13 @@ impl MVHashMap {
 
     /// Write a value at the given version.
     #[instrument(level = "trace", skip(self, value), fields(txn_idx, incarnation, key = %key))]
-    pub fn write(&self, txn_idx: TxnIndex, incarnation: Incarnation, key: EvmStateKey, value: EvmStateValue) {
+    pub fn write(
+        &self,
+        txn_idx: TxnIndex,
+        incarnation: Incarnation,
+        key: EvmStateKey,
+        value: EvmStateValue,
+    ) {
         // Get or create the versioned value entry for this key
         {
             let data = self.data.read();
@@ -278,7 +289,9 @@ impl MVHashMap {
 
         // Key doesn't exist, need to create it
         let mut data = self.data.write();
-        let versioned = data.entry(key.clone()).or_insert_with(|| RwLock::new(VersionedValue::default()));
+        let versioned = data
+            .entry(key.clone())
+            .or_insert_with(|| RwLock::new(VersionedValue::default()));
         versioned.write().write(txn_idx, incarnation, value);
     }
 
@@ -286,7 +299,7 @@ impl MVHashMap {
     #[instrument(level = "trace", skip(self), fields(reader_txn_idx, key = %key))]
     pub fn read(&self, reader_txn_idx: TxnIndex, key: &EvmStateKey) -> ReadResult {
         let data = self.data.read();
-        
+
         match data.get(key) {
             Some(versioned) => versioned.write().read(reader_txn_idx),
             None => ReadResult::NotFound,
@@ -298,7 +311,7 @@ impl MVHashMap {
     #[instrument(level = "trace", skip(self), fields(txn_idx))]
     pub fn mark_aborted(&self, txn_idx: TxnIndex) -> HashSet<TxnIndex> {
         let mut dependents = HashSet::new();
-        
+
         // Mark regular writes as aborted
         let data = self.data.read();
         for versioned in data.values() {
@@ -341,7 +354,12 @@ impl MVHashMap {
     }
 
     /// Apply multiple writes from a transaction.
-    pub fn apply_writes(&self, txn_idx: TxnIndex, incarnation: Incarnation, writes: Vec<(EvmStateKey, EvmStateValue)>) {
+    pub fn apply_writes(
+        &self,
+        txn_idx: TxnIndex,
+        incarnation: Incarnation,
+        writes: Vec<(EvmStateKey, EvmStateValue)>,
+    ) {
         for (key, value) in writes {
             self.write(txn_idx, incarnation, key, value);
         }
@@ -492,7 +510,10 @@ impl MVHashMap {
         match data.get(address) {
             Some(versioned) => {
                 let v = versioned.read();
-                v.deltas.values().map(|e| e.delta).fold(U256::ZERO, |acc, d| acc.saturating_add(d))
+                v.deltas
+                    .values()
+                    .map(|e| e.delta)
+                    .fold(U256::ZERO, |acc, d| acc.saturating_add(d))
             }
             None => U256::ZERO,
         }
@@ -700,7 +721,9 @@ mod tests {
         mv.write_balance_delta(coinbase, 1, 0, U256::from(50));
 
         // Tx2 resolves balance with base=1000
-        let result = mv.resolve_balance(coinbase, 2, U256::from(1000), None).unwrap();
+        let result = mv
+            .resolve_balance(coinbase, 2, U256::from(1000), None)
+            .unwrap();
 
         assert_eq!(result.base_value, U256::from(1000));
         assert_eq!(result.total_delta, U256::from(150)); // 100 + 50
@@ -769,7 +792,9 @@ mod tests {
         let coinbase = Address::from([1u8; 20]);
 
         // No deltas written - should return base value unchanged
-        let result = mv.resolve_balance(coinbase, 5, U256::from(1000), None).unwrap();
+        let result = mv
+            .resolve_balance(coinbase, 5, U256::from(1000), None)
+            .unwrap();
 
         assert_eq!(result.resolved_value, U256::from(1000));
         assert_eq!(result.total_delta, U256::ZERO);
@@ -821,4 +846,3 @@ mod tests {
         assert!(!mv.has_pending_deltas(&other, 5));
     }
 }
-

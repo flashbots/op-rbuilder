@@ -24,7 +24,8 @@ use reth_rpc_api::eth::{EthTxEnvError, transaction::TryIntoTxEnv};
 use revm::{
     DatabaseCommit, DatabaseRef,
     context::{
-        ContextTr, result::{EVMError, ExecutionResult, ResultAndState}
+        ContextTr,
+        result::{EVMError, ExecutionResult, ResultAndState},
     },
     inspector::NoOpInspector,
     state::Account,
@@ -140,7 +141,12 @@ impl BuilderTransactionError {
     }
 }
 
-pub trait BuilderTransactions<ExtraCtx: Debug + Default = (), Extra: Debug + Default = (), EvmFactory = OpEvmFactory> {
+pub trait BuilderTransactions<
+    ExtraCtx: Debug + Default = (),
+    Extra: Debug + Default = (),
+    EvmFactory = OpEvmFactory,
+>
+{
     // Simulates and returns the signed builder transactions. The simulation modifies and commit
     // changes to the db so call new_simulation_state to simulate on a new copy of the state
     fn simulate_builder_txs(

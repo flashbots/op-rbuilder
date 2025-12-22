@@ -598,7 +598,12 @@ where
 
     #[allow(clippy::too_many_arguments)]
     async fn build_next_flashblock<
-        DB: Database<Error = ProviderError> + DatabaseRef<Error = ProviderError> + std::fmt::Debug + AsRef<P> + Send + Sync,
+        DB: Database<Error = ProviderError>
+            + DatabaseRef<Error = ProviderError>
+            + std::fmt::Debug
+            + AsRef<P>
+            + Send
+            + Sync,
         P: StateRootProvider + HashedPostStateProvider + StorageRootProvider,
     >(
         &self,
@@ -683,7 +688,7 @@ where
             .set(transaction_pool_fetch_time);
 
         let tx_execution_start_time = Instant::now();
-        
+
         // Use parallel execution only when parallel_threads > 1
         if ctx.parallel_threads > 1 {
             let ctx = ctx.clone().to_lazy_evm();
@@ -695,7 +700,7 @@ where
                 target_da_for_batch,
                 target_da_footprint_for_batch,
             )
-        .wrap_err("failed to execute best transactions")?;
+            .wrap_err("failed to execute best transactions")?;
         } else {
             // Sequential execution for single-threaded mode
             ctx.execute_best_transactions(

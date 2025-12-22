@@ -1,7 +1,9 @@
 use alloy_consensus::{Eip658Value, Transaction, conditional::BlockConditionalAttributes};
 use alloy_eips::{Encodable2718, Typed2718};
 use alloy_evm::Database;
-use alloy_op_evm::{OpBlockExecutorFactory, OpEvmFactory, block::receipt_builder::OpReceiptBuilder};
+use alloy_op_evm::{
+    OpBlockExecutorFactory, OpEvmFactory, block::receipt_builder::OpReceiptBuilder,
+};
 use alloy_primitives::{Address, BlockHash, Bytes, U256};
 use alloy_rpc_types_eth::Withdrawals;
 use core::fmt::Debug;
@@ -11,7 +13,8 @@ use reth::payload::PayloadBuilderAttributes;
 use reth_basic_payload_builder::PayloadConfig;
 use reth_chainspec::{EthChainSpec, EthereumHardforks};
 use reth_evm::{
-    ConfigureEvm, Evm, EvmEnv, EvmError, InvalidTxError, eth::receipt_builder::ReceiptBuilderCtx, op_revm::L1BlockInfo
+    ConfigureEvm, Evm, EvmEnv, EvmError, InvalidTxError, eth::receipt_builder::ReceiptBuilderCtx,
+    op_revm::L1BlockInfo,
 };
 use reth_node_api::PayloadBuilderError;
 use reth_optimism_chainspec::OpChainSpec;
@@ -22,7 +25,7 @@ use reth_optimism_payload_builder::{
     config::{OpDAConfig, OpGasLimitConfig},
     error::OpPayloadBuilderError,
 };
-use reth_optimism_primitives::{OpReceipt, OpTransactionSigned, OpPrimitives};
+use reth_optimism_primitives::{OpPrimitives, OpReceipt, OpTransactionSigned};
 use reth_optimism_txpool::{
     conditional::MaybeConditionalTransaction,
     estimated_da_size::DataAvailabilitySized,
@@ -33,16 +36,23 @@ use reth_primitives::SealedHeader;
 use reth_primitives_traits::{InMemorySize, Recovered, SignedTransaction};
 use reth_revm::{State, context::Block};
 use reth_transaction_pool::{BestTransactionsAttributes, PoolTransaction};
-use revm::{DatabaseCommit, DatabaseRef, context::result::ResultAndState, interpreter::as_u64_saturated, primitives::HashMap, state::EvmState};
+use revm::{
+    DatabaseCommit, DatabaseRef, context::result::ResultAndState, interpreter::as_u64_saturated,
+    primitives::HashMap, state::EvmState,
+};
 use std::{
-    collections::hash_map::Entry, sync::{Arc, Mutex}, thread, time::Instant
+    collections::hash_map::Entry,
+    sync::{Arc, Mutex},
+    thread,
+    time::Instant,
 };
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, info, trace, Span};
+use tracing::{Span, debug, info, trace};
 
 use crate::{
     block_stm::{
-        MVHashMap, VersionedDatabase, scheduler::Scheduler, types::Task, view::WriteSet
+        MVHashMap, VersionedDatabase, evm::OpLazyEvmFactory, scheduler::Scheduler, types::Task,
+        view::WriteSet,
     },
     gas_limiter::AddressGasLimiter,
     metrics::OpRBuilderMetrics,
@@ -51,7 +61,6 @@ use crate::{
     traits::PayloadTxsBounds,
     tx::MaybeRevertingTransaction,
     tx_signer::Signer,
-    block_stm::evm::OpLazyEvmFactory,
 };
 
 /// Container type that holds all necessities to build a new payload.
@@ -95,8 +104,23 @@ impl<ExtraCtx: Debug + Default, EF> OpPayloadBuilderCtx<ExtraCtx, EF> {
     }
 
     pub(super) fn to_lazy_evm(self) -> OpPayloadBuilderCtx<ExtraCtx, OpLazyEvmFactory> {
-
-        let OpPayloadBuilderCtx { evm_config, da_config, gas_limit_config, chain_spec, config, evm_env, block_env_attributes, cancel, builder_signer, metrics, extra_ctx, max_gas_per_txn, address_gas_limiter, resource_metering, parallel_threads } = self;
+        let OpPayloadBuilderCtx {
+            evm_config,
+            da_config,
+            gas_limit_config,
+            chain_spec,
+            config,
+            evm_env,
+            block_env_attributes,
+            cancel,
+            builder_signer,
+            metrics,
+            extra_ctx,
+            max_gas_per_txn,
+            address_gas_limiter,
+            resource_metering,
+            parallel_threads,
+        } = self;
 
         OpPayloadBuilderCtx {
             da_config,
@@ -116,7 +140,10 @@ impl<ExtraCtx: Debug + Default, EF> OpPayloadBuilderCtx<ExtraCtx, EF> {
             evm_config: OpEvmConfig {
                 block_assembler: evm_config.block_assembler.clone(),
                 executor_factory: OpBlockExecutorFactory::new(
-                    *evm_config.executor_factory.receipt_builder(), chain_spec, OpLazyEvmFactory),
+                    *evm_config.executor_factory.receipt_builder(),
+                    chain_spec,
+                    OpLazyEvmFactory,
+                ),
                 _pd: Default::default(),
             },
         }
@@ -433,7 +460,8 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpEvmFactory> {
             "execute_txs",
             num_threads = 1,
             block_gas_limit = block_gas_limit
-        ).entered();
+        )
+        .entered();
 
         let execute_txs_start_time = Instant::now();
         let mut num_txs_considered = 0;
@@ -462,10 +490,8 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpEvmFactory> {
         };
 
         while let Some(tx) = best_txs.next(()) {
-            let _tx_span = tracing::info_span!(
-                "sequential_tx_execute",
-                txn_idx = txn_idx
-            ).entered();
+            let _tx_span =
+                tracing::info_span!("sequential_tx_execute", txn_idx = txn_idx).entered();
             txn_idx += 1;
 
             let interop = tx.interop_deadline();
@@ -677,12 +703,11 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpEvmFactory> {
     }
 }
 
-impl <ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpLazyEvmFactory> {
-
+impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpLazyEvmFactory> {
     /// Executes the given best transactions in parallel using Block-STM.
     ///
     /// This implementation uses Block-STM for true parallel execution:
-    /// - Each transaction gets its own `State<VersionedDatabaseRef>` 
+    /// - Each transaction gets its own `State<VersionedDatabaseRef>`
     /// - Reads route through MVHashMap to see earlier transactions' writes
     /// - Conflicts are detected via read/write set tracking
     /// - Commits happen in transaction order
@@ -731,7 +756,8 @@ impl <ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpLazyEvmFactory>
             "execute_txs",
             num_txns = num_candidates,
             num_threads = num_threads
-        ).entered();
+        )
+        .entered();
 
         info!(
             target: "payload_builder",
@@ -748,7 +774,7 @@ impl <ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpLazyEvmFactory>
         let mv_hashmap = Arc::new(MVHashMap::new(num_candidates));
 
         // Store execution results per transaction (for deferred commit)
-        let execution_results: Arc<Mutex<Vec<Option<TxExecutionResult>>>> = 
+        let execution_results: Arc<Mutex<Vec<Option<TxExecutionResult>>>> =
             Arc::new(Mutex::new(vec![None; num_candidates]));
 
         // Shared state (info still needs mutex for cumulative values, best_txs for mark_invalid)
@@ -765,7 +791,7 @@ impl <ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpLazyEvmFactory>
         // Spawn worker threads using Block-STM scheduler
         thread::scope(|s| {
             let num_threads = num_threads.min(num_candidates);
-            
+
             for worker_id in 0..num_threads {
                 let scheduler = Arc::clone(&scheduler);
                 let mv_hashmap = Arc::clone(&mv_hashmap);
@@ -787,7 +813,8 @@ impl <ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpLazyEvmFactory>
                         parent: &worker_parent_span,
                         "block_stm_worker",
                         worker_id = worker_id
-                    ).entered();
+                    )
+                    .entered();
 
                     scheduler.worker_start();
 
@@ -799,18 +826,23 @@ impl <ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpLazyEvmFactory>
 
                         // Get next task from Block-STM scheduler
                         let task = scheduler.next_task();
-                        
+
                         match task {
-                            Task::Execute { txn_idx, incarnation } => {
+                            Task::Execute {
+                                txn_idx,
+                                incarnation,
+                            } => {
                                 let _tx_span = tracing::info_span!(
                                     "block_stm_tx_execute",
                                     txn_idx = txn_idx,
                                     incarnation = incarnation
-                                ).entered();
+                                )
+                                .entered();
 
                                 scheduler.start_execution(txn_idx, incarnation);
-                                
-                                metrics.num_txs_considered
+
+                                metrics
+                                    .num_txs_considered
                                     .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
                                 let pool_tx = &candidate_txs[txn_idx as usize];
@@ -829,36 +861,47 @@ impl <ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpLazyEvmFactory>
                                     !conditional.matches_block_attributes(&block_attr)
                                 } else {
                                     false
-                                } || tx.is_eip4844() || tx.is_deposit();
+                                } || tx.is_eip4844()
+                                    || tx.is_deposit();
 
                                 if skip_tx {
-                                    shared_best_txs.lock().unwrap()
+                                    shared_best_txs
+                                        .lock()
+                                        .unwrap()
                                         .mark_invalid(tx.signer(), tx.nonce());
                                     scheduler.finish_execution(
-                                        txn_idx, incarnation,
+                                        txn_idx,
+                                        incarnation,
                                         crate::block_stm::CapturedReads::new(),
                                         WriteSet::new(),
-                                        0, false, &mv_hashmap,
+                                        0,
+                                        false,
+                                        &mv_hashmap,
                                     );
                                     continue;
                                 }
 
                                 // Create versioned database for this transaction
                                 // Routes reads through MVHashMap, falls back to base state
-                                let versioned_db = VersionedDatabase::new(txn_idx, incarnation, &mv_hashmap, base_db);
+                                let versioned_db = VersionedDatabase::new(
+                                    txn_idx,
+                                    incarnation,
+                                    &mv_hashmap,
+                                    base_db,
+                                );
 
                                 // Create State wrapper for EVM execution
-                                let tx_state = State::builder()
-                                    .with_database(versioned_db)
-                                    .build();
+                                let tx_state = State::builder().with_database(versioned_db).build();
 
                                 // Wrap State with LazyDatabaseWrapper to support lazy balance increments
-                                let mut lazy_state = crate::block_stm::evm::LazyDatabaseWrapper::new(tx_state);
+                                let mut lazy_state =
+                                    crate::block_stm::evm::LazyDatabaseWrapper::new(tx_state);
 
                                 // Execute transaction with versioned state
                                 let exec_result = {
                                     let lazy_factory = crate::block_stm::evm::OpLazyEvmFactory;
-                                    let mut evm = lazy_factory.create_evm(&mut lazy_state, evm_env.clone());
+                                    let mut evm =
+                                        lazy_factory.create_evm(&mut lazy_state, evm_env.clone());
                                     evm.transact(&tx)
                                 };
 
@@ -867,36 +910,47 @@ impl <ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpLazyEvmFactory>
                                     Err(err) => {
                                         if let Some(err) = err.as_invalid_tx_err() {
                                             if !err.is_nonce_too_low() {
-                                                shared_best_txs.lock().unwrap()
+                                                shared_best_txs
+                                                    .lock()
+                                                    .unwrap()
                                                     .mark_invalid(tx.signer(), tx.nonce());
                                             }
                                         }
                                         // Get captured reads even on failure
-                                        let captured_reads = lazy_state.inner().database.take_captured_reads();
+                                        let captured_reads =
+                                            lazy_state.inner().database.take_captured_reads();
                                         scheduler.finish_execution(
-                                            txn_idx, incarnation,
+                                            txn_idx,
+                                            incarnation,
                                             captured_reads,
                                             WriteSet::new(),
-                                            0, false, &mv_hashmap,
+                                            0,
+                                            false,
+                                            &mv_hashmap,
                                         );
                                         continue;
                                     }
                                 };
 
                                 // Check if we read from an aborted transaction
-                                if let Some(aborted_txn) = lazy_state.inner().database.was_aborted() {
+                                if let Some(aborted_txn) = lazy_state.inner().database.was_aborted()
+                                {
                                     trace!(
                                         worker_id = worker_id,
                                         txn_idx = txn_idx,
                                         aborted_txn = aborted_txn,
                                         "Read from aborted transaction, will re-execute"
                                     );
-                                    let captured_reads = lazy_state.inner().database.take_captured_reads();
+                                    let captured_reads =
+                                        lazy_state.inner().database.take_captured_reads();
                                     scheduler.finish_execution(
-                                        txn_idx, incarnation,
+                                        txn_idx,
+                                        incarnation,
                                         captured_reads,
                                         WriteSet::new(),
-                                        0, false, &mv_hashmap,
+                                        0,
+                                        false,
+                                        &mv_hashmap,
                                     );
                                     continue;
                                 }
@@ -906,61 +960,75 @@ impl <ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpLazyEvmFactory>
 
                                 // Post-execution checks
                                 let should_skip = address_gas_limiter
-                                    .consume_gas(tx.signer(), gas_used).is_err()
+                                    .consume_gas(tx.signer(), gas_used)
+                                    .is_err()
                                     || (!result.is_success() && exclude_reverting_txs)
                                     || max_gas_per_txn.map(|max| gas_used > max).unwrap_or(false);
 
                                 if should_skip {
-                                    shared_best_txs.lock().unwrap()
+                                    shared_best_txs
+                                        .lock()
+                                        .unwrap()
                                         .mark_invalid(tx.signer(), tx.nonce());
-                                    let captured_reads = lazy_state.inner().database.take_captured_reads();
+                                    let captured_reads =
+                                        lazy_state.inner().database.take_captured_reads();
                                     scheduler.finish_execution(
-                                        txn_idx, incarnation,
+                                        txn_idx,
+                                        incarnation,
                                         captured_reads,
                                         WriteSet::new(),
-                                        gas_used, false, &mv_hashmap,
+                                        gas_used,
+                                        false,
+                                        &mv_hashmap,
                                     );
                                     continue;
                                 }
 
                                 // Build write set from state changes
                                 let mut write_set: WriteSet = WriteSet::new();
-let captured_reads = lazy_state.inner().database.take_captured_reads();
-                                
+                                let captured_reads =
+                                    lazy_state.inner().database.take_captured_reads();
+
                                 // Add writes only for values that actually changed
                                 for (addr, account) in state.iter() {
                                     if account.is_touched() {
-// Get original values from captured reads (if available)
+                                        // Get original values from captured reads (if available)
                                         let original_balance = captured_reads.get_balance(*addr);
                                         let original_nonce = captured_reads.get_nonce(*addr);
-                                        let original_code_hash = captured_reads.get_code_hash(*addr);
+                                        let original_code_hash =
+                                            captured_reads.get_code_hash(*addr);
 
                                         // Only write balance if it changed
                                         if original_balance != Some(account.info.balance) {
-                                        write_set.write_balance(*addr, account.info.balance);
-}
+                                            write_set.write_balance(*addr, account.info.balance);
+                                        }
 
                                         // Only write nonce if it changed
                                         if original_nonce != Some(account.info.nonce) {
-                                        write_set.write_nonce(*addr, account.info.nonce);
-}
+                                            write_set.write_nonce(*addr, account.info.nonce);
+                                        }
 
                                         // Only write code hash if it changed
                                         if original_code_hash != Some(account.info.code_hash) {
-                                            write_set.write_code_hash(*addr, account.info.code_hash);
+                                            write_set
+                                                .write_code_hash(*addr, account.info.code_hash);
                                         }
 
                                         // Storage slots already have is_changed() check
                                         for (slot, value) in account.storage.iter() {
                                             if value.is_changed() {
-                                                write_set.write_storage(*addr, *slot, value.present_value);
+                                                write_set.write_storage(
+                                                    *addr,
+                                                    *slot,
+                                                    value.present_value,
+                                                );
                                             }
                                         }
                                     }
                                 }
 
                                 let (_, pending_balance_increments) = lazy_state.into_inner();
-                                
+
                                 // Add pending balance increments as deltas (commutative fee accumulation)
                                 // These are tracked separately to allow parallel accumulation
                                 for (addr, delta) in pending_balance_increments.iter() {
@@ -970,13 +1038,14 @@ let captured_reads = lazy_state.inner().database.take_captured_reads();
                                 // Get captured reads for validation
 
                                 // Store execution result for commit phase
-                                let miner_fee = tx.effective_tip_per_gas(base_fee)
+                                let miner_fee = tx
+                                    .effective_tip_per_gas(base_fee)
                                     .expect("fee is always valid");
-                                
+
                                 // Extract success and logs from result
                                 let success = result.is_success();
                                 let logs = result.into_logs();
-                                
+
                                 {
                                     let mut results = execution_results.lock().unwrap();
                                     results[txn_idx as usize] = Some(TxExecutionResult {
@@ -994,25 +1063,33 @@ let captured_reads = lazy_state.inner().database.take_captured_reads();
                                 }
 
                                 // Update metrics
-                                metrics.num_txs_simulated
+                                metrics
+                                    .num_txs_simulated
                                     .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
                                 if success {
-                                    metrics.num_txs_simulated_success
+                                    metrics
+                                        .num_txs_simulated_success
                                         .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                                 } else {
-                                    metrics.num_txs_simulated_fail
+                                    metrics
+                                        .num_txs_simulated_fail
                                         .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                                    metrics.reverted_gas_used
-                                        .fetch_add(gas_used as i32, std::sync::atomic::Ordering::Relaxed);
+                                    metrics.reverted_gas_used.fetch_add(
+                                        gas_used as i32,
+                                        std::sync::atomic::Ordering::Relaxed,
+                                    );
                                 }
 
                                 // Report to scheduler
                                 scheduler.finish_execution(
-                                    txn_idx, incarnation,
+                                    txn_idx,
+                                    incarnation,
                                     captured_reads,
                                     write_set,
-                                    gas_used, success, &mv_hashmap,
+                                    gas_used,
+                                    success,
+                                    &mv_hashmap,
                                 );
 
                                 trace!(
@@ -1061,7 +1138,8 @@ let captured_reads = lazy_state.inner().database.take_captured_reads();
                 // Update cumulative gas before building receipt
                 info_guard.cumulative_gas_used += tx_result.gas_used;
                 info_guard.cumulative_da_bytes_used += tx_result.tx_da_size;
-                info_guard.total_fees += U256::from(tx_result.miner_fee) * U256::from(tx_result.gas_used);
+                info_guard.total_fees +=
+                    U256::from(tx_result.miner_fee) * U256::from(tx_result.gas_used);
 
                 // Build receipt with correct cumulative gas
                 let receipt = alloy_consensus::Receipt {
@@ -1097,14 +1175,19 @@ let captured_reads = lazy_state.inner().database.take_captured_reads();
                     let _ = db.load_cache_account(*address);
                 }
 
-                let resolved_state = tx_result.state.resolve_state(db).map_err(|e| PayloadBuilderError::Other(e.to_string().into()))?;
+                let resolved_state = tx_result
+                    .state
+                    .resolve_state(db)
+                    .map_err(|e| PayloadBuilderError::Other(e.to_string().into()))?;
 
                 // Commit resolved state to actual DB
                 db.commit(resolved_state);
 
                 // Record transaction
                 info_guard.executed_senders.push(tx_result.tx.signer());
-                info_guard.executed_transactions.push(tx_result.tx.into_inner());
+                info_guard
+                    .executed_transactions
+                    .push(tx_result.tx.into_inner());
 
                 trace!(
                     txn_idx = txn_idx,
@@ -1129,17 +1212,23 @@ let captured_reads = lazy_state.inner().database.take_captured_reads();
         );
 
         // Read metrics from atomics
-        let num_txs_considered = metrics.num_txs_considered
+        let num_txs_considered = metrics
+            .num_txs_considered
             .load(std::sync::atomic::Ordering::Relaxed);
-        let num_txs_simulated = metrics.num_txs_simulated
+        let num_txs_simulated = metrics
+            .num_txs_simulated
             .load(std::sync::atomic::Ordering::Relaxed);
-        let num_txs_simulated_success = metrics.num_txs_simulated_success
+        let num_txs_simulated_success = metrics
+            .num_txs_simulated_success
             .load(std::sync::atomic::Ordering::Relaxed);
-        let num_txs_simulated_fail = metrics.num_txs_simulated_fail
+        let num_txs_simulated_fail = metrics
+            .num_txs_simulated_fail
             .load(std::sync::atomic::Ordering::Relaxed);
-        let num_bundles_reverted = metrics.num_bundles_reverted
+        let num_bundles_reverted = metrics
+            .num_bundles_reverted
             .load(std::sync::atomic::Ordering::Relaxed);
-        let reverted_gas_used = metrics.reverted_gas_used
+        let reverted_gas_used = metrics
+            .reverted_gas_used
             .load(std::sync::atomic::Ordering::Relaxed);
 
         if self.cancel.is_cancelled() {

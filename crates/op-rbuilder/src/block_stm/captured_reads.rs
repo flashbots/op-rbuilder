@@ -106,8 +106,10 @@ impl CapturedReads {
 
     /// Record a resolved balance read (balance with deltas applied).
     pub fn capture_resolved_balance(&mut self, address: Address, resolved: ResolvedBalance) {
-        self.resolved_balances
-            .insert(address, CapturedResolvedBalance::from_resolved(address, resolved));
+        self.resolved_balances.insert(
+            address,
+            CapturedResolvedBalance::from_resolved(address, resolved),
+        );
     }
 
     /// Get all captured reads.
@@ -130,15 +132,12 @@ impl CapturedReads {
             .filter_map(|read| read.version.map(|v| v.txn_idx));
 
         // Dependencies from resolved balances (all contributors)
-        let balance_deps = self
-            .resolved_balances
-            .values()
-            .flat_map(|rb| {
-                rb.base_version
-                    .iter()
-                    .map(|v| v.txn_idx)
-                    .chain(rb.contributors.iter().map(|v| v.txn_idx))
-            });
+        let balance_deps = self.resolved_balances.values().flat_map(|rb| {
+            rb.base_version
+                .iter()
+                .map(|v| v.txn_idx)
+                .chain(rb.contributors.iter().map(|v| v.txn_idx))
+        });
 
         read_deps.chain(balance_deps)
     }
@@ -329,4 +328,3 @@ mod tests {
         assert!(reads.is_empty());
     }
 }
-

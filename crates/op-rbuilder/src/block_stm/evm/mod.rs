@@ -27,7 +27,6 @@ pub use custom_evm::OpLazyEvmInner;
 pub use handler::LazyRevmHandler;
 pub use lazy_db::{LazyDatabase, LazyDatabaseWrapper};
 
-
 /// OP EVM implementation.
 ///
 /// This is a wrapper type around the custom [`OpLazyEvmInner`] with optional [`Inspector`] (tracing)
@@ -40,7 +39,6 @@ pub struct OpLazyEvm<DB: Database, I, P> {
     inspect: bool,
 }
 
-
 impl<DB: Database, I, P> OpLazyEvm<DB, I, P> {
     /// Creates a new OP EVM instance.
     ///
@@ -50,17 +48,17 @@ impl<DB: Database, I, P> OpLazyEvm<DB, I, P> {
         evm: OpLazyEvmInner<OpContext<DB>, I, EthInstructions<EthInterpreter, OpContext<DB>>, P>,
         inspect: bool,
     ) -> Self {
-        Self { inner: evm, inspect }
+        Self {
+            inner: evm,
+            inspect,
+        }
     }
 
     /// Converts to an `alloy_op_evm::OpEvm` by wrapping the inner EVM.
     ///
     /// Note: This creates a new `op_revm::OpEvm` from our custom inner EVM's context.
     pub fn to_inner(self) -> OpEvm<DB, I, P> {
-        OpEvm::new(
-            op_revm::OpEvm(self.inner.0),
-            self.inspect,
-        )
+        OpEvm::new(op_revm::OpEvm(self.inner.0), self.inspect)
     }
 }
 
@@ -124,7 +122,12 @@ where
     }
 
     fn finish(self) -> (Self::DB, EvmEnv<Self::Spec>) {
-        let Context { block: block_env, cfg: cfg_env, journaled_state, .. } = self.inner.0.ctx;
+        let Context {
+            block: block_env,
+            cfg: cfg_env,
+            journaled_state,
+            ..
+        } = self.inner.0.ctx;
 
         (journaled_state.database, EvmEnv { block_env, cfg_env })
     }
@@ -150,7 +153,6 @@ where
     }
 }
 
-
 /// Factory producing [`OpLazyEvm`]s.
 #[derive(Debug, Default, Clone, Copy)]
 #[non_exhaustive]
@@ -169,9 +171,9 @@ impl OpLazyEvmFactory {
             .with_block(input.block_env)
             .with_cfg(input.cfg_env)
             .build_op_with_inspector(NoOpInspector {})
-            .with_precompiles(
-                PrecompilesMap::from_static(OpPrecompiles::new_with_spec(spec_id).precompiles()),
-            );
+            .with_precompiles(PrecompilesMap::from_static(
+                OpPrecompiles::new_with_spec(spec_id).precompiles(),
+            ));
         // Convert op_revm::OpEvm to our custom OpLazyEvmInner
         OpLazyEvm::new(OpLazyEvmInner(base_evm.0), false)
     }
@@ -189,9 +191,9 @@ impl OpLazyEvmFactory {
             .with_block(input.block_env)
             .with_cfg(input.cfg_env)
             .build_op_with_inspector(inspector)
-            .with_precompiles(
-                PrecompilesMap::from_static(OpPrecompiles::new_with_spec(spec_id).precompiles()),
-            );
+            .with_precompiles(PrecompilesMap::from_static(
+                OpPrecompiles::new_with_spec(spec_id).precompiles(),
+            ));
         // Convert op_revm::OpEvm to our custom OpLazyEvmInner
         OpLazyEvm::new(OpLazyEvmInner(base_evm.0), true)
     }

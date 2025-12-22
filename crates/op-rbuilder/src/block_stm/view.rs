@@ -90,20 +90,23 @@ impl<'a, BaseDB> LatestView<'a, BaseDB> {
     /// If the key is not in MVHashMap, the caller should read from base state
     /// and call `record_base_read` with the result.
     #[instrument(level = "trace", skip(self), fields(txn_idx = self.txn_idx, key = %key))]
-    pub fn read_from_mvhashmap(&self, key: &EvmStateKey) -> ViewResult<Option<(EvmStateValue, Version)>> {
+    pub fn read_from_mvhashmap(
+        &self,
+        key: &EvmStateKey,
+    ) -> ViewResult<Option<(EvmStateValue, Version)>> {
         match self.mv_hashmap.read(self.txn_idx, key) {
             ReadResult::Value { value, version } => {
                 // Record the read
                 self.captured_reads
                     .lock()
                     .capture_read(key.clone(), version, value.clone());
-                
+
                 Ok(Some((value, version)))
             }
             ReadResult::NotFound => Ok(None),
-            ReadResult::Aborted { txn_idx: aborted_txn_idx } => {
-                Err(ReadAbortedError { aborted_txn_idx })
-            }
+            ReadResult::Aborted {
+                txn_idx: aborted_txn_idx,
+            } => Err(ReadAbortedError { aborted_txn_idx }),
         }
     }
 
@@ -139,7 +142,10 @@ impl WriteSet {
 
     /// Record a balance write.
     pub fn write_balance(&mut self, address: Address, balance: U256) {
-        self.write(EvmStateKey::Balance(address), EvmStateValue::Balance(balance));
+        self.write(
+            EvmStateKey::Balance(address),
+            EvmStateValue::Balance(balance),
+        );
     }
 
     /// Record a nonce write.
@@ -154,7 +160,10 @@ impl WriteSet {
 
     /// Record a code hash write.
     pub fn write_code_hash(&mut self, address: Address, hash: B256) {
-        self.write(EvmStateKey::CodeHash(address), EvmStateValue::CodeHash(hash));
+        self.write(
+            EvmStateKey::CodeHash(address),
+            EvmStateValue::CodeHash(hash),
+        );
     }
 
     /// Record a storage write.
@@ -318,4 +327,3 @@ mod tests {
         assert_eq!(writes.len(), 3);
     }
 }
-

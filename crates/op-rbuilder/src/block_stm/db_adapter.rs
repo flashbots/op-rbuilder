@@ -18,11 +18,11 @@ use crate::block_stm::{
 };
 use alloy_primitives::{Address, B256, U256};
 use derive_more::Debug;
-use revm::{Database, DatabaseRef, bytecode::Bytecode};
-use revm::database_interface::DBErrorMarker;
-use revm::state::AccountInfo;
-use std::{collections::HashMap};
-use std::sync::Mutex;
+use revm::{
+    Database, DatabaseRef, bytecode::Bytecode, database_interface::DBErrorMarker,
+    state::AccountInfo,
+};
+use std::{collections::HashMap, sync::Mutex};
 use tracing::instrument;
 
 /// Error type for versioned database operations.
@@ -127,16 +127,26 @@ impl<'a, BaseDB> VersionedDatabase<'a, BaseDB> {
 
     /// Record a read from MVHashMap.
     fn record_versioned_read(&self, key: EvmStateKey, version: Version, value: EvmStateValue) {
-        self.captured_reads.lock().unwrap().capture_read(key, version, value);
+        self.captured_reads
+            .lock()
+            .unwrap()
+            .capture_read(key, version, value);
     }
 
     /// Record a read from base state.
     fn record_base_read(&self, key: EvmStateKey, value: EvmStateValue) {
-        self.captured_reads.lock().unwrap().capture_base_read(key, value);
+        self.captured_reads
+            .lock()
+            .unwrap()
+            .capture_base_read(key, value);
     }
 
     /// Record a resolved balance read (balance with deltas applied).
-    fn record_resolved_balance(&self, address: Address, resolved: crate::block_stm::types::ResolvedBalance) {
+    fn record_resolved_balance(
+        &self,
+        address: Address,
+        resolved: crate::block_stm::types::ResolvedBalance,
+    ) {
         self.captured_reads
             .lock()
             .unwrap()
@@ -166,13 +176,16 @@ impl<'a, BaseDB> VersionedDatabase<'a, BaseDB> {
         }
 
         // Resolve deltas
-        match self.mv_hashmap.resolve_balance(address, self.txn_idx, base_value, base_version) {
+        match self
+            .mv_hashmap
+            .resolve_balance(address, self.txn_idx, base_value, base_version)
+        {
             Ok(resolved) => {
                 let final_value = resolved.resolved_value;
 
                 // Record the resolved balance read (tracks all contributors)
                 self.record_resolved_balance(address, resolved);
-                
+
                 Ok(final_value)
             }
             Err(aborted_txn_idx) => {
@@ -243,19 +256,27 @@ where
         // Check for aborts
         if let ReadResult::Aborted { txn_idx } = &balance_result {
             self.mark_aborted(*txn_idx);
-            return Err(VersionedDbError::ReadAborted { aborted_txn_idx: *txn_idx });
+            return Err(VersionedDbError::ReadAborted {
+                aborted_txn_idx: *txn_idx,
+            });
         }
         if let ReadResult::Aborted { txn_idx } = &nonce_result {
             self.mark_aborted(*txn_idx);
-            return Err(VersionedDbError::ReadAborted { aborted_txn_idx: *txn_idx });
+            return Err(VersionedDbError::ReadAborted {
+                aborted_txn_idx: *txn_idx,
+            });
         }
         if let ReadResult::Aborted { txn_idx } = &code_hash_result {
             self.mark_aborted(*txn_idx);
-            return Err(VersionedDbError::ReadAborted { aborted_txn_idx: *txn_idx });
+            return Err(VersionedDbError::ReadAborted {
+                aborted_txn_idx: *txn_idx,
+            });
         }
 
         // Read base account if needed
-        let base_account = self.base_db.basic_ref(address)
+        let base_account = self
+            .base_db
+            .basic_ref(address)
             .map_err(|e| VersionedDbError::BaseDbError(e.to_string()))?;
 
         let base_info = base_account.unwrap_or_default();
@@ -263,16 +284,23 @@ where
         // Merge MVHashMap values with base state
         // For balance, we also need to consider pending deltas (fee increments)
         let balance = match &balance_result {
-            ReadResult::Value { value: EvmStateValue::Balance(b), version } => {
+            ReadResult::Value {
+                value: EvmStateValue::Balance(b),
+                version,
+            } => {
                 // Got a direct write from MVHashMap - now resolve any pending deltas
-                self.record_versioned_read(balance_key.clone(), *version, EvmStateValue::Balance(*b));
+                self.record_versioned_read(
+                    balance_key.clone(),
+                    *version,
+                    EvmStateValue::Balance(*b),
+                );
                 // Resolve with deltas (if any)
                 self.resolve_balance_with_deltas(address, *b, Some(*version))?
             }
             _ => {
                 // No direct write, use base state - but still check for deltas
                 let base_balance = base_info.balance;
-                
+
                 // Check if there are pending deltas
                 if self.mv_hashmap.has_pending_deltas(&address, self.txn_idx) {
                     // Resolve with deltas - this will record the resolved balance read
@@ -286,7 +314,10 @@ where
         };
 
         let nonce = match &nonce_result {
-            ReadResult::Value { value: EvmStateValue::Nonce(n), version } => {
+            ReadResult::Value {
+                value: EvmStateValue::Nonce(n),
+                version,
+            } => {
                 self.record_versioned_read(nonce_key, *version, EvmStateValue::Nonce(*n));
                 *n
             }
@@ -297,7 +328,10 @@ where
         };
 
         let code_hash = match &code_hash_result {
-            ReadResult::Value { value: EvmStateValue::CodeHash(h), version } => {
+            ReadResult::Value {
+                value: EvmStateValue::CodeHash(h),
+                version,
+            } => {
                 self.record_versioned_read(code_hash_key, *version, EvmStateValue::CodeHash(*h));
                 *h
             }
@@ -330,7 +364,10 @@ where
         let key = EvmStateKey::Storage(address, slot);
 
         match self.mv_hashmap.read(self.txn_idx, &key) {
-            ReadResult::Value { value: EvmStateValue::Storage(v), version } => {
+            ReadResult::Value {
+                value: EvmStateValue::Storage(v),
+                version,
+            } => {
                 self.record_versioned_read(key, version, EvmStateValue::Storage(v));
                 Ok(v)
             }
@@ -340,12 +377,16 @@ where
             }
             ReadResult::NotFound => {
                 // Read from base state
-                let value = self.base_db.storage_ref(address, slot)
+                let value = self
+                    .base_db
+                    .storage_ref(address, slot)
                     .map_err(|e| VersionedDbError::BaseDbError(e.to_string()))?;
                 self.record_base_read(key, EvmStateValue::Storage(value));
                 Ok(value)
             }
-            ReadResult::Aborted { txn_idx: aborted_txn_idx } => {
+            ReadResult::Aborted {
+                txn_idx: aborted_txn_idx,
+            } => {
                 self.mark_aborted(aborted_txn_idx);
                 Err(VersionedDbError::ReadAborted { aborted_txn_idx })
             }
@@ -355,14 +396,16 @@ where
     /// Read a block hash.
     /// Block hashes are immutable within a block, so we don't track them as dependencies.
     fn block_hash_ref(&self, number: u64) -> Result<B256, VersionedDbError> {
-        self.base_db.block_hash_ref(number)
+        self.base_db
+            .block_hash_ref(number)
             .map_err(|e| VersionedDbError::BaseDbError(e.to_string()))
     }
 
     /// Read contract code by hash.
     fn code_by_hash_ref(&self, code_hash: B256) -> Result<Bytecode, VersionedDbError> {
         // Code is usually immutable, read directly from base
-        self.base_db.code_by_hash_ref(code_hash)
+        self.base_db
+            .code_by_hash_ref(code_hash)
             .map_err(|e| VersionedDbError::BaseDbError(e.to_string()))
     }
 }
@@ -387,12 +430,15 @@ mod tests {
         }
 
         fn with_account(mut self, address: Address, balance: U256, nonce: u64) -> Self {
-            self.accounts.insert(address, AccountInfo {
-                balance,
-                nonce,
-                code_hash: B256::ZERO,
-                code: None,
-            });
+            self.accounts.insert(
+                address,
+                AccountInfo {
+                    balance,
+                    nonce,
+                    code_hash: B256::ZERO,
+                    code: None,
+                },
+            );
             self
         }
 
@@ -414,7 +460,11 @@ mod tests {
         }
 
         fn storage_ref(&self, address: Address, index: U256) -> Result<U256, Self::Error> {
-            Ok(self.storage.get(&(address, index)).copied().unwrap_or(U256::ZERO))
+            Ok(self
+                .storage
+                .get(&(address, index))
+                .copied()
+                .unwrap_or(U256::ZERO))
         }
 
         fn block_hash_ref(&self, _number: u64) -> Result<B256, Self::Error> {
@@ -426,8 +476,7 @@ mod tests {
     fn test_read_from_base_state() {
         let mv = MVHashMap::new(10);
         let addr = Address::from([1u8; 20]);
-        let mut base = MockBaseDb::new()
-            .with_account(addr, U256::from(1000), 5);
+        let mut base = MockBaseDb::new().with_account(addr, U256::from(1000), 5);
 
         let db = VersionedDatabase::new(0, 0, &mv, &mut base);
 
@@ -444,13 +493,17 @@ mod tests {
     fn test_read_from_mvhashmap() {
         let mv = MVHashMap::new(10);
         let addr = Address::from([1u8; 20]);
-        
+
         // Tx0 writes a balance
-        mv.write(0, 0, EvmStateKey::Balance(addr), EvmStateValue::Balance(U256::from(2000)));
+        mv.write(
+            0,
+            0,
+            EvmStateKey::Balance(addr),
+            EvmStateValue::Balance(U256::from(2000)),
+        );
         mv.write(0, 0, EvmStateKey::Nonce(addr), EvmStateValue::Nonce(10));
 
-        let mut base = MockBaseDb::new()
-            .with_account(addr, U256::from(1000), 5);
+        let mut base = MockBaseDb::new().with_account(addr, U256::from(1000), 5);
 
         // Tx1 reads - should see tx0's writes
         let db = VersionedDatabase::new(1, 0, &mv, &mut base);
@@ -465,12 +518,16 @@ mod tests {
         let mv = MVHashMap::new(10);
         let addr = Address::from([1u8; 20]);
         let slot = U256::from(42);
-        
-        // Tx0 writes to storage
-        mv.write(0, 0, EvmStateKey::Storage(addr, slot), EvmStateValue::Storage(U256::from(999)));
 
-        let mut base = MockBaseDb::new()
-            .with_storage(addr, slot, U256::from(100));
+        // Tx0 writes to storage
+        mv.write(
+            0,
+            0,
+            EvmStateKey::Storage(addr, slot),
+            EvmStateValue::Storage(U256::from(999)),
+        );
+
+        let mut base = MockBaseDb::new().with_storage(addr, slot, U256::from(100));
 
         // Tx1 should see tx0's write
         let db = VersionedDatabase::new(1, 0, &mv, &mut base);
@@ -487,9 +544,14 @@ mod tests {
     fn test_aborted_read_detection() {
         let mv = MVHashMap::new(10);
         let addr = Address::from([1u8; 20]);
-        
+
         // Tx0 writes and is marked as aborted
-        mv.write(0, 0, EvmStateKey::Balance(addr), EvmStateValue::Balance(U256::from(2000)));
+        mv.write(
+            0,
+            0,
+            EvmStateKey::Balance(addr),
+            EvmStateValue::Balance(U256::from(2000)),
+        );
         mv.mark_aborted(0);
 
         let mut base = MockBaseDb::new();
@@ -497,9 +559,8 @@ mod tests {
         // Tx1 tries to read - should get abort error
         let db = VersionedDatabase::new(1, 0, &mv, &mut base);
         let result = db.basic_ref(addr);
-        
+
         assert!(result.is_err());
         assert!(db.was_aborted().is_some());
     }
 }
-

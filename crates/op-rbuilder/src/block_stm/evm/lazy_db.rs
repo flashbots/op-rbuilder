@@ -6,12 +6,8 @@
 //! that don't conflict with transaction execution.
 
 use alloy_primitives::{Address, B256, U256, map::HashMap};
-use revm::{
-    bytecode::Bytecode,
-    state::AccountInfo,
-    Database, DatabaseRef,
-};
 use auto_impl::auto_impl;
+use revm::{Database, DatabaseRef, bytecode::Bytecode, state::AccountInfo};
 
 /// Trait for databases that support lazy balance increments.
 ///
@@ -153,4 +149,3 @@ impl<DB: DatabaseRef> DatabaseRef for LazyDatabaseWrapper<DB> {
         self.inner.block_hash_ref(number)
     }
 }
-

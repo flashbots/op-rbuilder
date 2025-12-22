@@ -19,9 +19,8 @@ use crate::block_stm::{
     types::{Task, TxnIndex},
     view::{LatestView, WriteSet},
 };
-use std::sync::Arc;
-use std::thread;
-use tracing::{instrument, Span};
+use std::{sync::Arc, thread};
+use tracing::{Span, instrument};
 
 /// Configuration for the Block-STM executor.
 #[derive(Debug, Clone)]
@@ -137,50 +136,52 @@ impl BlockStmExecutor {
         // Use scoped threads so we can borrow transactions and base_db
         // Reference to exec_fn for sharing across threads
         let exec_fn_ref = &exec_fn;
-        
+
         thread::scope(|s| {
             // Spawn worker threads
             let num_threads = self.config.num_threads.min(num_txns);
-            
+
             for thread_id in 0..num_threads {
                 let mv_hashmap = Arc::clone(&mv_hashmap);
                 let scheduler = Arc::clone(&scheduler);
                 let parent_span = parent_span.clone();
-                
+
                 s.spawn(move || {
                     // Create worker span as child of parent
                     let _worker_span = tracing::info_span!(
                         parent: &parent_span,
                         "block_stm_worker",
                         thread_id = thread_id
-                    ).entered();
+                    )
+                    .entered();
 
                     scheduler.worker_start();
 
                     loop {
                         let task = scheduler.next_task();
-                        
+
                         match task {
-                            Task::Execute { txn_idx, incarnation } => {
+                            Task::Execute {
+                                txn_idx,
+                                incarnation,
+                            } => {
                                 let _tx_span = tracing::info_span!(
                                     "block_stm_tx_execute",
                                     txn_idx = txn_idx,
                                     incarnation = incarnation
-                                ).entered();
+                                )
+                                .entered();
 
                                 scheduler.start_execution(txn_idx, incarnation);
 
                                 // Create the view for this transaction
-                                let view = LatestView::new(
-                                    txn_idx,
-                                    incarnation,
-                                    &mv_hashmap,
-                                    base_db,
-                                );
+                                let view =
+                                    LatestView::new(txn_idx, incarnation, &mv_hashmap, base_db);
 
                                 // Execute the transaction
                                 let tx = &transactions[txn_idx as usize];
-                                let (reads, writes, gas_used, success) = exec_fn_ref(txn_idx, tx, &view);
+                                let (reads, writes, gas_used, success) =
+                                    exec_fn_ref(txn_idx, tx, &view);
 
                                 // Notify scheduler of completion
                                 scheduler.finish_execution(
@@ -302,7 +303,7 @@ mod tests {
     #[test]
     fn test_executor_multiple_independent_transactions() {
         let executor = BlockStmExecutor::new(BlockStmConfig::with_threads(4));
-        
+
         // 10 transactions that don't conflict (each writes to different key)
         let transactions: Vec<MockTransaction> = (0..10)
             .map(|i| MockTransaction {
@@ -311,7 +312,7 @@ mod tests {
                 gas: 21000,
             })
             .collect();
-        
+
         let db = MockDb;
 
         let result = executor.execute(&transactions, &db, |_, tx, view| {
@@ -326,7 +327,7 @@ mod tests {
         assert_eq!(result.stats.total_commits, 10);
         // No conflicts, so no aborts
         assert_eq!(result.stats.total_aborts, 0);
-        
+
         // All should succeed
         for r in &result.results {
             assert!(r.success);
@@ -337,13 +338,13 @@ mod tests {
     #[test]
     fn test_executor_dependent_transactions() {
         let executor = BlockStmExecutor::new(BlockStmConfig::with_threads(2));
-        
+
         // tx0 writes to key 1
         // tx1 reads key 1, writes to key 2
         // This creates a dependency: tx1 depends on tx0
         let key1 = test_key(1);
         let key2 = test_key(2);
-        
+
         let transactions = vec![
             MockTransaction {
                 reads: vec![],
@@ -356,7 +357,7 @@ mod tests {
                 gas: 21000,
             },
         ];
-        
+
         let db = MockDb;
 
         let result = executor.execute(&transactions, &db, |_txn_idx, tx, view| {
@@ -384,7 +385,7 @@ mod tests {
 
         assert_eq!(result.results.len(), 2);
         assert_eq!(result.stats.total_commits, 2);
-        
+
         // Both should succeed
         assert!(result.results[0].success);
         assert!(result.results[1].success);
@@ -393,7 +394,7 @@ mod tests {
     #[test]
     fn test_executor_with_many_threads() {
         let executor = BlockStmExecutor::new(BlockStmConfig::with_threads(8));
-        
+
         // 100 independent transactions
         let transactions: Vec<MockTransaction> = (0..100)
             .map(|i| MockTransaction {
@@ -402,7 +403,7 @@ mod tests {
                 gas: 21000,
             })
             .collect();
-        
+
         let db = MockDb;
 
         let result = executor.execute(&transactions, &db, |_, tx, view| {
@@ -417,4 +418,3 @@ mod tests {
         assert_eq!(result.stats.total_commits, 100);
     }
 }
-

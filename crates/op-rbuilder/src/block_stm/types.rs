@@ -5,7 +5,7 @@
 //! - EVM state key abstraction
 //! - Read/write tracking types
 
-use alloy_primitives::{Address, Bytes, B256, U256};
+use alloy_primitives::{Address, B256, Bytes, U256};
 use std::fmt;
 
 /// Index of a transaction within a block (0-based).
@@ -25,7 +25,10 @@ pub struct Version {
 
 impl Version {
     pub fn new(txn_idx: TxnIndex, incarnation: Incarnation) -> Self {
-        Self { txn_idx, incarnation }
+        Self {
+            txn_idx,
+            incarnation,
+        }
     }
 }
 
@@ -209,7 +212,10 @@ impl ExecutionStatus {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Task {
     /// Execute transaction at given index with given incarnation
-    Execute { txn_idx: TxnIndex, incarnation: Incarnation },
+    Execute {
+        txn_idx: TxnIndex,
+        incarnation: Incarnation,
+    },
     /// Validate transaction at given index
     Validate { txn_idx: TxnIndex },
     /// No more tasks available (workers should check for completion)
@@ -252,4 +258,3 @@ mod tests {
         assert_eq!(ExecutionStatus::Committed.incarnation(), None);
     }
 }
-

@@ -264,7 +264,7 @@ where
         let db = StateProviderDatabase::new(&state_provider);
         let metrics = ctx.metrics.clone();
         let parallel_threads = ctx.parallel_threads;
-        
+
         if ctx.attributes().no_tx_pool {
             // No mempool transactions - use db directly
             let state = State::builder()

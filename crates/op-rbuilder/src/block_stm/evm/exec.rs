@@ -5,24 +5,25 @@
 
 use crate::block_stm::evm::handler::LazyOpContextTr;
 
-use super::custom_evm::OpLazyEvmInner;
-use super::handler::LazyRevmHandler;
-use op_revm::{transaction::OpTransactionError, OpHaltReason};
+use super::{custom_evm::OpLazyEvmInner, handler::LazyRevmHandler};
+use op_revm::{OpHaltReason, transaction::OpTransactionError};
 use revm::{
-    context::{result::ExecResultAndState, ContextSetters},
+    DatabaseCommit, ExecuteCommitEvm, ExecuteEvm,
+    context::{ContextSetters, result::ExecResultAndState},
     context_interface::{
-        result::{EVMError, ExecutionResult},
         ContextTr, Database, JournalTr,
+        result::{EVMError, ExecutionResult},
     },
     handler::{
-        instructions::EthInstructions, system_call::SystemCallEvm, EthFrame, Handler,
-        PrecompileProvider, SystemCallTx,
+        EthFrame, Handler, PrecompileProvider, SystemCallTx, instructions::EthInstructions,
+        system_call::SystemCallEvm,
     },
-    inspector::{InspectCommitEvm, InspectEvm, InspectSystemCallEvm, Inspector, InspectorHandler, JournalExt},
-    interpreter::{interpreter::EthInterpreter, InterpreterResult},
+    inspector::{
+        InspectCommitEvm, InspectEvm, InspectSystemCallEvm, Inspector, InspectorHandler, JournalExt,
+    },
+    interpreter::{InterpreterResult, interpreter::EthInterpreter},
     primitives::{Address, Bytes},
     state::EvmState,
-    DatabaseCommit, ExecuteCommitEvm, ExecuteEvm,
 };
 
 /// Type alias for the error type of the OpLazyEvmInner.
@@ -149,4 +150,3 @@ where
         h.inspect_run_system_call(self)
     }
 }
-

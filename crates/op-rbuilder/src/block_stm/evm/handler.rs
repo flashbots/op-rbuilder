@@ -4,19 +4,29 @@
 //! customization of the execution process.
 
 use op_revm::{
-    L1BlockInfo, OpHaltReason, OpSpecId, constants::{BASE_FEE_RECIPIENT, L1_FEE_RECIPIENT, OPERATOR_FEE_RECIPIENT}, handler::IsTxError, transaction::{OpTransactionError, OpTxTr, deposit::DEPOSIT_TRANSACTION_TYPE}
+    L1BlockInfo, OpHaltReason, OpSpecId,
+    constants::{BASE_FEE_RECIPIENT, L1_FEE_RECIPIENT, OPERATOR_FEE_RECIPIENT},
+    handler::IsTxError,
+    transaction::{OpTransactionError, OpTxTr, deposit::DEPOSIT_TRANSACTION_TYPE},
 };
 use revm::{
     context::{LocalContextTr, journaled_state::JournalCheckpoint, result::InvalidTransaction},
     context_interface::{
-        Block, Cfg, ContextTr, JournalTr, Transaction, context::ContextError, result::{ExecutionResult, FromStringError}
+        Block, Cfg, ContextTr, JournalTr, Transaction,
+        context::ContextError,
+        result::{ExecutionResult, FromStringError},
     },
     handler::{
-        EthFrame, EvmTr, FrameResult, Handler, MainnetHandler, evm::FrameTr, handler::EvmTrError, post_execution::{self, reimburse_caller}, pre_execution::{calculate_caller_fee, validate_account_nonce_and_code_with_components}
+        EthFrame, EvmTr, FrameResult, Handler, MainnetHandler,
+        evm::FrameTr,
+        handler::EvmTrError,
+        post_execution::{self, reimburse_caller},
+        pre_execution::{calculate_caller_fee, validate_account_nonce_and_code_with_components},
     },
     inspector::{Inspector, InspectorEvmTr, InspectorHandler},
     interpreter::{Gas, interpreter::EthInterpreter, interpreter_action::FrameInit},
-    primitives::{U256, hardfork::SpecId}, state::EvmState,
+    primitives::{U256, hardfork::SpecId},
+    state::EvmState,
 };
 use std::boxed::Box;
 
@@ -51,23 +61,23 @@ impl<EVM, ERROR, FRAME> Default for LazyRevmHandler<EVM, ERROR, FRAME> {
 /// Type alias for Optimism context
 pub trait LazyOpContextTr:
     ContextTr<
-    Journal: JournalTr<State = EvmState>,
-    Tx: OpTxTr,
-    Cfg: Cfg<Spec = OpSpecId>,
-    Chain = L1BlockInfo,
-    Db: LazyDatabase,
->
-{
-}
-
-impl<T> LazyOpContextTr for T where
-    T: ContextTr<
         Journal: JournalTr<State = EvmState>,
         Tx: OpTxTr,
         Cfg: Cfg<Spec = OpSpecId>,
         Chain = L1BlockInfo,
         Db: LazyDatabase,
     >
+{
+}
+
+impl<T> LazyOpContextTr for T where
+    T: ContextTr<
+            Journal: JournalTr<State = EvmState>,
+            Tx: OpTxTr,
+            Cfg: Cfg<Spec = OpSpecId>,
+            Chain = L1BlockInfo,
+            Db: LazyDatabase,
+        >
 {
 }
 
@@ -311,27 +321,29 @@ where
         let spec = ctx.cfg().spec();
         let (block, tx, cfg, journal, l1_block_info, _) = ctx.all_mut();
         // mainnet reward beneficiary
-{        
+        {
+            let basefee = block.basefee() as u128;
+            let effective_gas_price = tx.effective_gas_price(basefee);
+
+            // Transfer fee to coinbase/beneficiary.
+            // EIP-1559 discard basefee for coinbase transfer. Basefee amount of gas is discarded.
+            let coinbase_gas_price = if cfg.spec().into_eth_spec().is_enabled_in(SpecId::LONDON) {
+                effective_gas_price.saturating_sub(basefee)
+            } else {
+                effective_gas_price
+            };
+
+            journal.db_mut().lazily_increment_balance(
+                block.beneficiary(),
+                U256::from(coinbase_gas_price * frame_result.gas().used() as u128),
+            );
+
+            // reward beneficiary
+            // journal
+            //     .load_account_mut(block.beneficiary())?
+            //     .incr_balance(U256::from(coinbase_gas_price * frame_result.gas().used() as u128));
+        }
         let basefee = block.basefee() as u128;
-        let effective_gas_price = tx.effective_gas_price(basefee);
-    
-        // Transfer fee to coinbase/beneficiary.
-        // EIP-1559 discard basefee for coinbase transfer. Basefee amount of gas is discarded.
-        let coinbase_gas_price = if cfg.spec().into_eth_spec().is_enabled_in(SpecId::LONDON) {
-            effective_gas_price.saturating_sub(basefee)
-        } else {
-            effective_gas_price
-        };
-    
-        journal.db_mut().lazily_increment_balance(block.beneficiary(), U256::from(coinbase_gas_price * frame_result.gas().used() as u128));
-
-        // reward beneficiary
-        // journal
-        //     .load_account_mut(block.beneficiary())?
-        //     .incr_balance(U256::from(coinbase_gas_price * frame_result.gas().used() as u128));
-    }
-    let basefee = block.basefee() as u128;
-
 
         let Some(enveloped_tx) = &enveloped else {
             return Err(ERROR::from_string(
@@ -461,12 +473,11 @@ where
 impl<EVM, ERROR> InspectorHandler for LazyRevmHandler<EVM, ERROR, EthFrame<EthInterpreter>>
 where
     EVM: InspectorEvmTr<
-        Context: LazyOpContextTr,
-        Frame = EthFrame<EthInterpreter>,
-        Inspector: Inspector<<<Self as Handler>::Evm as EvmTr>::Context, EthInterpreter>,
-    >,
+            Context: LazyOpContextTr,
+            Frame = EthFrame<EthInterpreter>,
+            Inspector: Inspector<<<Self as Handler>::Evm as EvmTr>::Context, EthInterpreter>,
+        >,
     ERROR: EvmTrError<EVM> + From<OpTransactionError> + FromStringError + IsTxError,
 {
     type IT = EthInterpreter;
 }
-
