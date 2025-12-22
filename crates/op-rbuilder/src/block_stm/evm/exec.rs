@@ -3,6 +3,8 @@
 //! This mirrors the reference `op_revm` exec implementation but allows
 //! customization of the execution process.
 
+use crate::block_stm::evm::handler::LazyOpContextTr;
+
 use super::custom_evm::OpLazyEvmInner;
 use super::handler::LazyRevmHandler;
 use op_revm::{api::exec::OpContextTr, transaction::OpTransactionError, OpHaltReason};
@@ -29,7 +31,7 @@ pub type OpError<CTX> = EVMError<<<CTX as ContextTr>::Db as Database>::Error, Op
 impl<CTX, INSP, PRECOMPILE> ExecuteEvm
     for OpLazyEvmInner<CTX, INSP, EthInstructions<EthInterpreter, CTX>, PRECOMPILE>
 where
-    CTX: OpContextTr + ContextSetters,
+    CTX: LazyOpContextTr + ContextSetters,
     PRECOMPILE: PrecompileProvider<CTX, Output = InterpreterResult>,
 {
     type Tx = <CTX as ContextTr>::Tx;
@@ -66,7 +68,7 @@ where
 impl<CTX, INSP, PRECOMPILE> ExecuteCommitEvm
     for OpLazyEvmInner<CTX, INSP, EthInstructions<EthInterpreter, CTX>, PRECOMPILE>
 where
-    CTX: OpContextTr<Db: DatabaseCommit> + ContextSetters,
+    CTX: LazyOpContextTr<Db: DatabaseCommit> + ContextSetters,
     PRECOMPILE: PrecompileProvider<CTX, Output = InterpreterResult>,
 {
     fn commit(&mut self, state: Self::State) {
@@ -77,7 +79,7 @@ where
 impl<CTX, INSP, PRECOMPILE> InspectEvm
     for OpLazyEvmInner<CTX, INSP, EthInstructions<EthInterpreter, CTX>, PRECOMPILE>
 where
-    CTX: OpContextTr<Journal: JournalExt> + ContextSetters,
+    CTX: LazyOpContextTr<Journal: JournalExt> + ContextSetters,
     INSP: Inspector<CTX, EthInterpreter>,
     PRECOMPILE: PrecompileProvider<CTX, Output = InterpreterResult>,
 {
@@ -97,7 +99,7 @@ where
 impl<CTX, INSP, PRECOMPILE> InspectCommitEvm
     for OpLazyEvmInner<CTX, INSP, EthInstructions<EthInterpreter, CTX>, PRECOMPILE>
 where
-    CTX: OpContextTr<Journal: JournalExt, Db: DatabaseCommit> + ContextSetters,
+    CTX: LazyOpContextTr<Journal: JournalExt, Db: DatabaseCommit> + ContextSetters,
     INSP: Inspector<CTX, EthInterpreter>,
     PRECOMPILE: PrecompileProvider<CTX, Output = InterpreterResult>,
 {
@@ -106,7 +108,7 @@ where
 impl<CTX, INSP, PRECOMPILE> SystemCallEvm
     for OpLazyEvmInner<CTX, INSP, EthInstructions<EthInterpreter, CTX>, PRECOMPILE>
 where
-    CTX: OpContextTr<Tx: SystemCallTx> + ContextSetters,
+    CTX: LazyOpContextTr<Tx: SystemCallTx> + ContextSetters,
     PRECOMPILE: PrecompileProvider<CTX, Output = InterpreterResult>,
 {
     fn system_call_one_with_caller(
@@ -128,7 +130,7 @@ where
 impl<CTX, INSP, PRECOMPILE> InspectSystemCallEvm
     for OpLazyEvmInner<CTX, INSP, EthInstructions<EthInterpreter, CTX>, PRECOMPILE>
 where
-    CTX: OpContextTr<Journal: JournalExt, Tx: SystemCallTx> + ContextSetters,
+    CTX: LazyOpContextTr<Journal: JournalExt, Tx: SystemCallTx> + ContextSetters,
     INSP: Inspector<CTX, EthInterpreter>,
     PRECOMPILE: PrecompileProvider<CTX, Output = InterpreterResult>,
 {

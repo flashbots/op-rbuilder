@@ -2,7 +2,7 @@ pub use alloy_evm::op::{spec, spec_by_timestamp_after_bedrock};
 
 use alloy_evm::{Database, Evm, EvmEnv, EvmFactory};
 use alloy_op_evm::OpEvm;
-use alloy_primitives::{Address, Bytes};
+use alloy_primitives::{Address, Bytes, U256};
 use core::ops::{Deref, DerefMut};
 use op_revm::{
     DefaultOp, OpBuilder, OpContext, OpHaltReason, OpSpecId, OpTransaction, OpTransactionError,
@@ -32,13 +32,13 @@ pub use custom_evm::OpLazyEvmInner;
 ///
 /// This uses our custom EVM implementation that allows overriding parts of the execution process.
 #[allow(missing_debug_implementations)] // missing revm::OpContext Debug impl
-pub struct OpLazyEvm<DB: Database, I, P> {
+pub struct OpLazyEvm<DB: Database + LazyDatabase, I, P> {
     inner: OpLazyEvmInner<OpContext<DB>, I, EthInstructions<EthInterpreter, OpContext<DB>>, P>,
     inspect: bool,
 }
 
 
-impl<DB: Database, I, P> OpLazyEvm<DB, I, P> {
+impl<DB: Database + LazyDatabase, I, P> OpLazyEvm<DB, I, P> {
     /// Creates a new OP EVM instance.
     ///
     /// The `inspect` argument determines whether the configured [`Inspector`] should be
@@ -61,7 +61,7 @@ impl<DB: Database, I, P> OpLazyEvm<DB, I, P> {
     }
 }
 
-impl<DB: Database, I, P> Deref for OpLazyEvm<DB, I, P> {
+impl<DB: Database + LazyDatabase, I, P> Deref for OpLazyEvm<DB, I, P> {
     type Target = OpContext<DB>;
 
     #[inline]
@@ -70,7 +70,7 @@ impl<DB: Database, I, P> Deref for OpLazyEvm<DB, I, P> {
     }
 }
 
-impl<DB: Database, I, P> DerefMut for OpLazyEvm<DB, I, P> {
+impl<DB: Database + LazyDatabase, I, P> DerefMut for OpLazyEvm<DB, I, P> {
     #[inline]
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.inner.0.ctx
@@ -79,7 +79,7 @@ impl<DB: Database, I, P> DerefMut for OpLazyEvm<DB, I, P> {
 
 impl<DB, I, P> Evm for OpLazyEvm<DB, I, P>
 where
-    DB: Database,
+    DB: Database + LazyDatabase,
     I: Inspector<OpContext<DB>>,
     P: PrecompileProvider<OpContext<DB>, Output = InterpreterResult>,
 {
@@ -147,14 +147,18 @@ where
     }
 }
 
+trait LazyDatabase {
+    fn lazily_increment_balance(&self, address: Address, amount: U256);
+}
+
 /// Factory producing [`OpLazyEvm`]s.
 #[derive(Debug, Default, Clone, Copy)]
 #[non_exhaustive]
 pub struct OpLazyEvmFactory;
 
 impl EvmFactory for OpLazyEvmFactory {
-    type Evm<DB: Database, I: Inspector<OpContext<DB>>> = OpLazyEvm<DB, I, Self::Precompiles>;
-    type Context<DB: Database> = OpContext<DB>;
+    type Evm<DB: Database + LazyDatabase, I: Inspector<OpContext<DB>>> = OpLazyEvm<DB, I, Self::Precompiles>;
+    type Context<DB: Database + LazyDatabase> = OpContext<DB>;
     type Tx = OpTransaction<TxEnv>;
     type Error<DBError: core::error::Error + Send + Sync + 'static> =
         EVMError<DBError, OpTransactionError>;
@@ -163,7 +167,7 @@ impl EvmFactory for OpLazyEvmFactory {
     type BlockEnv = BlockEnv;
     type Precompiles = PrecompilesMap;
 
-    fn create_evm<DB: Database>(
+    fn create_evm<DB: Database + LazyDatabase>(
         &self,
         db: DB,
         input: EvmEnv<OpSpecId>,
@@ -182,7 +186,7 @@ impl EvmFactory for OpLazyEvmFactory {
         OpLazyEvm::new(OpLazyEvmInner(base_evm.0), false)
     }
 
-    fn create_evm_with_inspector<DB: Database, I: Inspector<Self::Context<DB>>>(
+    fn create_evm_with_inspector<DB: Database + LazyDatabase, I: Inspector<Self::Context<DB>>>(
         &self,
         db: DB,
         input: EvmEnv<OpSpecId>,
