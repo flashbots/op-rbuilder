@@ -772,8 +772,22 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpLazyEvmFactory> 
             num_candidates = num_candidates,
         );
 
+        // Extract transaction senders for nonce dependency tracking
+        let tx_senders: Vec<Address> = candidate_txs
+            .iter()
+            .map(|tx| tx.clone().into_consensus().signer())
+            .collect();
+
         // Initialize Block-STM components
-        let scheduler = Arc::new(Scheduler::new(num_candidates));
+        let scheduler = Arc::new(Scheduler::new(
+            num_candidates,
+            tx_senders,
+            info.cumulative_gas_used,
+            info.cumulative_da_bytes_used,
+            block_gas_limit,
+            block_da_limit,
+            self.da_config.max_da_tx_size(),
+        ));
         let mv_hashmap = Arc::new(MVHashMap::new(num_candidates));
 
         // Shared code cache for contracts deployed within this block
@@ -885,6 +899,7 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpLazyEvmFactory> 
                                         0,
                                         false,
                                         &mv_hashmap,
+                                        0, // tx_da_size
                                     );
                                     continue;
                                 }
@@ -936,6 +951,7 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpLazyEvmFactory> 
                                             0,
                                             false,
                                             &mv_hashmap,
+                                            tx_da_size,
                                         );
                                         continue;
                                     }
@@ -960,6 +976,7 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpLazyEvmFactory> 
                                         0,
                                         false,
                                         &mv_hashmap,
+                                        tx_da_size,
                                     );
                                     continue;
                                 }
@@ -989,6 +1006,7 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpLazyEvmFactory> 
                                         gas_used,
                                         false,
                                         &mv_hashmap,
+                                        tx_da_size,
                                     );
                                     continue;
                                 }
@@ -1108,6 +1126,7 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpLazyEvmFactory> 
                                     gas_used,
                                     success,
                                     &mv_hashmap,
+                                    tx_da_size,
                                 );
 
                                 trace!(
@@ -1151,33 +1170,16 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpLazyEvmFactory> 
         let results = results.into_iter().take(committed_idx).collect::<Vec<_>>();
 
         // Process committed transactions in order
+        // Only commit transactions that Block-STM marked as Committed
+        // (LimitExceeded transactions are excluded by the scheduler)
         for (txn_idx, result_opt) in results.into_iter().enumerate() {
-            if let Some(tx_result) = result_opt {
-                // Check if transaction would exceed limits before committing
-                // This replicates the sequential execution's pre-execution check
-                if let Err(_result) = info_guard.is_tx_over_limits(
-                    tx_result.tx_da_size,
-                    block_gas_limit,
-                    self.da_config.max_da_tx_size(),
-                    block_da_limit,
-                    tx_result.tx.gas_limit(),
-                    info_guard.da_footprint_scalar,
-                    _block_da_footprint_limit,
-                ) {
-                    // Transaction would exceed limits - skip committing this transaction
-                    // Continue checking remaining transactions as smaller ones might still fit
-                    trace!(
-                        txn_idx = txn_idx,
-                        tx_hash = ?tx_result.tx.tx_hash(),
-                        cumulative_gas = info_guard.cumulative_gas_used,
-                        cumulative_da = info_guard.cumulative_da_bytes_used,
-                        tx_da_size = tx_result.tx_da_size,
-                        block_da_limit = ?block_da_limit,
-                        "Skipping transaction that exceeds limits"
-                    );
-                    continue; // Skip this transaction, continue with others
-                }
+            // Check if transaction was committed (race-free check using committed_gas vector)
+            // This avoids the race between compare_exchange and status update
+            if !scheduler.is_committed(txn_idx as u32) {
+                continue;
+            }
 
+            if let Some(tx_result) = result_opt {
                 // Update cumulative gas before building receipt
                 info_guard.cumulative_gas_used += tx_result.gas_used;
                 info_guard.cumulative_da_bytes_used += tx_result.tx_da_size;

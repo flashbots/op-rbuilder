@@ -18,6 +18,7 @@ use crate::block_stm::{
     types::{ExecutionStatus, Incarnation, Task, TxnIndex},
     view::WriteSet,
 };
+use alloy_primitives::Address;
 use parking_lot::{Condvar, Mutex, RwLock};
 use std::{
     collections::{HashSet, VecDeque},
@@ -40,6 +41,8 @@ struct TxnState {
     gas_used: u64,
     /// Whether the latest execution was successful
     success: bool,
+    /// DA size of the transaction (for limit checking)
+    tx_da_size: u64,
 }
 
 impl TxnState {
@@ -51,6 +54,7 @@ impl TxnState {
             writes: None,
             gas_used: 0,
             success: false,
+            tx_da_size: 0,
         }
     }
 }
@@ -72,8 +76,25 @@ pub struct SchedulerStats {
 pub struct Scheduler {
     /// Number of transactions in the block
     num_txns: usize,
+    /// Transaction senders (for handling nonce dependencies)
+    tx_senders: Vec<Address>,
     /// Per-transaction state
     txn_states: Vec<RwLock<TxnState>>,
+    /// Initial gas used (from builder tx, etc.)
+    initial_gas_used: u64,
+    /// Initial DA bytes used (from builder tx, etc.)
+    initial_da_used: u64,
+    /// Block gas limit
+    block_gas_limit: u64,
+    /// Block DA limit (None means no limit)
+    block_da_limit: Option<u64>,
+    /// Per-transaction DA limit (None means no limit)
+    tx_da_limit: Option<u64>,
+    /// Committed gas values per transaction (written before commit_idx advances)
+    /// This ensures race-free reading of gas values when checking limits
+    committed_gas: Vec<std::sync::atomic::AtomicU64>,
+    /// Committed DA values per transaction (written before commit_idx advances)
+    committed_da: Vec<std::sync::atomic::AtomicU64>,
     /// Queue of transactions ready for execution
     execution_queue: Mutex<VecDeque<TxnIndex>>,
     /// Set of transactions that need validation
@@ -94,10 +115,32 @@ pub struct Scheduler {
 
 impl Scheduler {
     /// Create a new scheduler for a block with the given number of transactions.
-    pub fn new(num_txns: usize) -> Self {
+    pub fn new(
+        num_txns: usize,
+        tx_senders: Vec<Address>,
+        initial_gas_used: u64,
+        initial_da_used: u64,
+        block_gas_limit: u64,
+        block_da_limit: Option<u64>,
+        tx_da_limit: Option<u64>,
+    ) -> Self {
+        assert_eq!(
+            tx_senders.len(),
+            num_txns,
+            "tx_senders length must match num_txns"
+        );
+
         // Initialize all transactions as pending
         let txn_states: Vec<_> = (0..num_txns)
             .map(|_| RwLock::new(TxnState::new()))
+            .collect();
+
+        // Initialize committed gas/da vectors (written before commit_idx advances)
+        let committed_gas: Vec<_> = (0..num_txns)
+            .map(|_| std::sync::atomic::AtomicU64::new(0))
+            .collect();
+        let committed_da: Vec<_> = (0..num_txns)
+            .map(|_| std::sync::atomic::AtomicU64::new(0))
             .collect();
 
         // Queue all transactions for initial execution
@@ -105,7 +148,15 @@ impl Scheduler {
 
         Self {
             num_txns,
+            tx_senders,
             txn_states,
+            initial_gas_used,
+            initial_da_used,
+            block_gas_limit,
+            block_da_limit,
+            tx_da_limit,
+            committed_gas,
+            committed_da,
             execution_queue: Mutex::new(execution_queue),
             validation_queue: Mutex::new(HashSet::new()),
             commit_idx: AtomicUsize::new(0),
@@ -210,6 +261,7 @@ impl Scheduler {
         gas_used: u64,
         success: bool,
         mv_hashmap: &MVHashMap,
+        tx_da_size: u64,
     ) {
         // Separate regular writes and balance deltas
         let (regular_writes, balance_deltas) = writes.into_parts();
@@ -229,6 +281,7 @@ impl Scheduler {
             state.writes = None; // Already applied to MVHashMap
             state.gas_used = gas_used;
             state.success = success;
+            state.tx_da_size = tx_da_size;
         }
 
         // Try to commit if this is the next transaction to commit
@@ -273,6 +326,35 @@ impl Scheduler {
         self.notify_work();
     }
 
+    /// Recursively mark a transaction and its same-sender dependents as LimitExceeded.
+    ///
+    /// Different-sender dependents are aborted for retry.
+    fn mark_limit_exceeded_recursive(&self, txn_idx: TxnIndex, mv_hashmap: &MVHashMap) {
+        let sender = self.tx_senders[txn_idx as usize];
+
+        // Clean up MVHashMap
+        mv_hashmap.delete_writes(txn_idx);
+        let dependents = mv_hashmap.mark_aborted(txn_idx);
+
+        // Mark as LimitExceeded
+        {
+            let mut state = self.txn_states[txn_idx as usize].write();
+            state.status = ExecutionStatus::LimitExceeded;
+        }
+
+        // Cascade: same sender → LimitExceeded, different sender → abort for retry
+        for dep_idx in dependents {
+            if dep_idx > txn_idx {
+                let dep_sender = self.tx_senders[dep_idx as usize];
+                if dep_sender == sender {
+                    self.mark_limit_exceeded_recursive(dep_idx, mv_hashmap);
+                } else {
+                    self.abort(dep_idx, mv_hashmap);
+                }
+            }
+        }
+    }
+
     /// Try to commit transactions in order.
     ///
     /// Uses compare_exchange on commit_idx to ensure exactly one thread
@@ -295,6 +377,83 @@ impl Scheduler {
                     // Validate the transaction
                     if self.validate_transaction(commit_idx as TxnIndex, &state, mv_hashmap) {
                         drop(state);
+
+                        // Check if this transaction would exceed block limits
+                        // Sum from committed_gas/committed_da vectors which are written BEFORE
+                        // commit_idx advances, ensuring race-free reading
+                        let mut cumulative_gas = self.initial_gas_used;
+                        let mut cumulative_da = self.initial_da_used;
+
+                        for i in 0..commit_idx {
+                            // Read from atomic vectors - these are written before commit_idx advances
+                            // LimitExceeded transactions have 0 in these vectors
+                            cumulative_gas += self.committed_gas[i].load(Ordering::SeqCst);
+                            cumulative_da += self.committed_da[i].load(Ordering::SeqCst);
+                        }
+
+                        // Check if current transaction would exceed limits
+                        let state = self.txn_states[commit_idx].read();
+                        let tx_gas = state.gas_used;
+                        let tx_da = state.tx_da_size;
+                        let would_exceed_gas = cumulative_gas + tx_gas > self.block_gas_limit;
+                        let would_exceed_tx_da =
+                            self.tx_da_limit.map_or(false, |limit| tx_da > limit);
+                        let would_exceed_block_da = self
+                            .block_da_limit
+                            .map_or(false, |limit| cumulative_da + tx_da > limit);
+
+                        if would_exceed_gas || would_exceed_tx_da || would_exceed_block_da {
+                            // Transaction exceeds limits - mark as LimitExceeded and cascade
+                            let current_sender = self.tx_senders[commit_idx];
+                            drop(state);
+
+                            // Clean up MVHashMap (like abort does)
+                            mv_hashmap.delete_writes(commit_idx as TxnIndex);
+                            let dependents = mv_hashmap.mark_aborted(commit_idx as TxnIndex);
+
+                            // Mark this transaction as LimitExceeded
+                            {
+                                let mut state = self.txn_states[commit_idx].write();
+                                state.status = ExecutionStatus::LimitExceeded;
+                            }
+
+                            // Handle dependents:
+                            // - Same sender: Mark LimitExceeded (nonce dependency, permanent)
+                            // - Different sender: Abort for retry (data dependency only)
+                            for dep_idx in dependents {
+                                if dep_idx > commit_idx as TxnIndex {
+                                    let dep_sender = self.tx_senders[dep_idx as usize];
+                                    if dep_sender == current_sender {
+                                        self.mark_limit_exceeded_recursive(dep_idx, mv_hashmap);
+                                    } else {
+                                        self.abort(dep_idx, mv_hashmap);
+                                    }
+                                }
+                            }
+
+                            // Write 0 to committed vectors BEFORE advancing commit_idx
+                            // (LimitExceeded transactions don't count toward cumulative limits)
+                            self.committed_gas[commit_idx].store(0, Ordering::SeqCst);
+                            self.committed_da[commit_idx].store(0, Ordering::SeqCst);
+
+                            // Advance commit_idx past this transaction
+                            // If compare_exchange fails, another thread already handled this transaction
+                            let _ = self.commit_idx.compare_exchange(
+                                commit_idx,
+                                commit_idx + 1,
+                                Ordering::SeqCst,
+                                Ordering::SeqCst,
+                            );
+                            // Continue regardless - either we advanced or another thread did
+                            continue;
+                        }
+
+                        drop(state);
+
+                        // Write gas/da to committed vectors BEFORE advancing commit_idx
+                        // This ensures any thread reading [0, new_commit_idx) sees correct values
+                        self.committed_gas[commit_idx].store(tx_gas, Ordering::SeqCst);
+                        self.committed_da[commit_idx].store(tx_da, Ordering::SeqCst);
 
                         // Atomically claim this commit slot using compare_exchange.
                         // Only the thread that successfully advances commit_idx is
@@ -447,6 +606,20 @@ impl Scheduler {
         self.txn_states[txn_idx as usize].read().status
     }
 
+    /// Check if a transaction was committed (race-free using committed_gas vector).
+    /// Returns true if the transaction contributed gas to the block (committed, not LimitExceeded).
+    /// This is race-free because committed_gas is written BEFORE commit_idx advances.
+    pub fn is_committed(&self, txn_idx: TxnIndex) -> bool {
+        let idx = txn_idx as usize;
+        if idx >= self.num_txns {
+            return false;
+        }
+        // committed_gas > 0 means committed (LimitExceeded has 0)
+        // But also check commit_idx to ensure we're looking at processed transactions
+        idx < self.commit_idx.load(Ordering::SeqCst)
+            && self.committed_gas[idx].load(Ordering::SeqCst) > 0
+    }
+
     /// Get the gas used by a committed transaction.
     pub fn get_gas_used(&self, txn_idx: TxnIndex) -> u64 {
         self.txn_states[txn_idx as usize].read().gas_used
@@ -464,7 +637,7 @@ mod tests {
 
     #[test]
     fn test_scheduler_initial_state() {
-        let scheduler = Scheduler::new(5);
+        let scheduler = Scheduler::new(5, vec![Address::ZERO; 5], 0, 0, u64::MAX, None, None);
 
         assert_eq!(scheduler.num_txns(), 5);
         assert!(!scheduler.is_done());
@@ -482,7 +655,7 @@ mod tests {
 
     #[test]
     fn test_scheduler_task_ordering() {
-        let scheduler = Scheduler::new(3);
+        let scheduler = Scheduler::new(3, vec![Address::ZERO; 3], 0, 0, u64::MAX, None, None);
 
         // Should get transactions in order
         assert!(matches!(
@@ -504,7 +677,7 @@ mod tests {
 
     #[test]
     fn test_scheduler_execution_flow() {
-        let scheduler = Scheduler::new(2);
+        let scheduler = Scheduler::new(2, vec![Address::ZERO; 2], 0, 0, u64::MAX, None, None);
         let mv = MVHashMap::new(2);
 
         // Execute tx0
@@ -520,7 +693,7 @@ mod tests {
 
         let reads = CapturedReads::new();
         let writes = WriteSet::new();
-        scheduler.finish_execution(0, 0, reads, writes, 21000, true, &mv);
+        scheduler.finish_execution(0, 0, reads, writes, 21000, true, &mv, 100);
 
         // tx0 should now be committed
         assert!(matches!(
@@ -541,7 +714,7 @@ mod tests {
 
         let reads = CapturedReads::new();
         let writes = WriteSet::new();
-        scheduler.finish_execution(1, 0, reads, writes, 21000, true, &mv);
+        scheduler.finish_execution(1, 0, reads, writes, 21000, true, &mv, 100);
 
         // tx1 should now be committed
         assert!(matches!(
@@ -555,7 +728,7 @@ mod tests {
 
     #[test]
     fn test_scheduler_abort_reschedules() {
-        let scheduler = Scheduler::new(3);
+        let scheduler = Scheduler::new(3, vec![Address::ZERO; 3], 0, 0, u64::MAX, None, None);
         let mv = MVHashMap::new(3);
 
         // Get all initial tasks
@@ -580,7 +753,7 @@ mod tests {
 
     #[test]
     fn test_scheduler_stats() {
-        let scheduler = Scheduler::new(2);
+        let scheduler = Scheduler::new(2, vec![Address::ZERO; 2], 0, 0, u64::MAX, None, None);
         let mv = MVHashMap::new(2);
 
         // Execute both transactions
@@ -593,6 +766,7 @@ mod tests {
             21000,
             true,
             &mv,
+            100,
         );
 
         scheduler.start_execution(1, 0);
@@ -604,6 +778,7 @@ mod tests {
             21000,
             true,
             &mv,
+            100,
         );
 
         let stats = scheduler.get_stats();

@@ -19,6 +19,7 @@ use crate::block_stm::{
     types::{Task, TxnIndex},
     view::{LatestView, WriteSet},
 };
+use alloy_primitives::Address;
 use std::{sync::Arc, thread};
 use tracing::{Span, instrument};
 
@@ -128,7 +129,17 @@ impl BlockStmExecutor {
 
         // Initialize shared state
         let mv_hashmap = Arc::new(MVHashMap::new(num_txns));
-        let scheduler = Arc::new(Scheduler::new(num_txns));
+        // Executor doesn't have sender info or limits, use defaults
+        let tx_senders = vec![Address::ZERO; num_txns];
+        let scheduler = Arc::new(Scheduler::new(
+            num_txns,
+            tx_senders,
+            0,
+            0,
+            u64::MAX,
+            None,
+            None,
+        ));
 
         // Capture parent span for cross-thread propagation
         let parent_span = Span::current();
@@ -192,6 +203,7 @@ impl BlockStmExecutor {
                                     gas_used,
                                     success,
                                     &mv_hashmap,
+                                    0, // tx_da_size not available in generic executor
                                 );
                             }
                             Task::Validate { txn_idx: _ } => {

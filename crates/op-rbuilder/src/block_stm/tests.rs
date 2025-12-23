@@ -607,7 +607,15 @@ fn test_balance_delta_parallel_accumulation_no_conflicts() {
     let num_txns = 100;
     let coinbase = Address::from([0xCB; 20]);
     let mv = MVHashMap::new(num_txns);
-    let scheduler = Scheduler::new(num_txns);
+    let scheduler = Scheduler::new(
+        num_txns,
+        vec![Address::ZERO; num_txns],
+        0,
+        0,
+        u64::MAX,
+        None,
+        None,
+    );
 
     // Each transaction adds a fee delta - NO reads of coinbase balance
     for i in 0..num_txns {
@@ -621,7 +629,7 @@ fn test_balance_delta_parallel_accumulation_no_conflicts() {
         // No reads captured - just delta writes
         let reads = CapturedReads::new();
 
-        scheduler.finish_execution(txn_idx, 0, reads, writes, 21000, true, &mv);
+        scheduler.finish_execution(txn_idx, 0, reads, writes, 21000, true, &mv, 100);
     }
 
     // All transactions should commit with NO aborts
@@ -711,7 +719,7 @@ fn test_balance_delta_mixed_read_and_delta_writes() {
 
     let coinbase = Address::from([0xCB; 20]);
     let mv = MVHashMap::new(10);
-    let scheduler = Scheduler::new(10);
+    let scheduler = Scheduler::new(10, vec![Address::ZERO; 10], 0, 0, u64::MAX, None, None);
 
     // Tx0-4: Just write deltas (no reads)
     for i in 0..5 {
@@ -721,7 +729,7 @@ fn test_balance_delta_mixed_read_and_delta_writes() {
         writes.add_balance_delta(coinbase, U256::from(100));
 
         let reads = CapturedReads::new();
-        scheduler.finish_execution(i, 0, reads, writes, 21000, true, &mv);
+        scheduler.finish_execution(i, 0, reads, writes, 21000, true, &mv, 100);
     }
 
     // Tx5: Reads the balance (triggers resolution)
@@ -734,7 +742,7 @@ fn test_balance_delta_mixed_read_and_delta_writes() {
     reads.capture_resolved_balance(coinbase, resolved.clone());
 
     let writes = WriteSet::new();
-    scheduler.finish_execution(5, 0, reads, writes, 21000, true, &mv);
+    scheduler.finish_execution(5, 0, reads, writes, 21000, true, &mv, 100);
 
     // Tx6-9: More delta writes after the reader
     for i in 6..10 {
@@ -744,7 +752,7 @@ fn test_balance_delta_mixed_read_and_delta_writes() {
         writes.add_balance_delta(coinbase, U256::from(50));
 
         let reads = CapturedReads::new();
-        scheduler.finish_execution(i, 0, reads, writes, 21000, true, &mv);
+        scheduler.finish_execution(i, 0, reads, writes, 21000, true, &mv, 100);
     }
 
     // All should commit
@@ -769,7 +777,15 @@ fn test_balance_delta_stress_parallel() {
     let num_txns = 100;
     let coinbase = Address::from([0xCB; 20]);
     let mv = Arc::new(MVHashMap::new(num_txns));
-    let scheduler = Arc::new(Scheduler::new(num_txns));
+    let scheduler = Arc::new(Scheduler::new(
+        num_txns,
+        vec![Address::ZERO; num_txns],
+        0,
+        0,
+        u64::MAX,
+        None,
+        None,
+    ));
 
     let num_threads = 4;
     let mut handles = Vec::new();
@@ -816,6 +832,7 @@ fn test_balance_delta_stress_parallel() {
                             21000,
                             true,
                             &mv,
+                            100,
                         );
                     }
                     crate::block_stm::types::Task::Done => break,
@@ -853,14 +870,14 @@ fn test_balance_delta_contributor_reexecution_invalidates_reader() {
 
     let coinbase = Address::from([0xCB; 20]);
     let mv = MVHashMap::new(10);
-    let scheduler = Scheduler::new(10);
+    let scheduler = Scheduler::new(10, vec![Address::ZERO; 10], 0, 0, u64::MAX, None, None);
 
     // Tx0: Writes delta +100
     scheduler.start_execution(0, 0);
     let mut writes0 = WriteSet::new();
     writes0.add_balance_delta(coinbase, U256::from(100));
     let reads0 = CapturedReads::new();
-    scheduler.finish_execution(0, 0, reads0, writes0, 21000, true, &mv);
+    scheduler.finish_execution(0, 0, reads0, writes0, 21000, true, &mv, 100);
 
     // Tx1: Reads and resolves balance
     scheduler.start_execution(1, 0);
@@ -872,7 +889,7 @@ fn test_balance_delta_contributor_reexecution_invalidates_reader() {
     let mut reads1 = CapturedReads::new();
     reads1.capture_resolved_balance(coinbase, resolved);
     let writes1 = WriteSet::new();
-    scheduler.finish_execution(1, 0, reads1, writes1, 21000, true, &mv);
+    scheduler.finish_execution(1, 0, reads1, writes1, 21000, true, &mv, 100);
 
     // Now abort Tx0 and re-execute with different delta
     scheduler.abort(0, &mv);
@@ -882,7 +899,7 @@ fn test_balance_delta_contributor_reexecution_invalidates_reader() {
     let mut writes0_new = WriteSet::new();
     writes0_new.add_balance_delta(coinbase, U256::from(200));
     let reads0_new = CapturedReads::new();
-    scheduler.finish_execution(0, 1, reads0_new, writes0_new, 21000, true, &mv);
+    scheduler.finish_execution(0, 1, reads0_new, writes0_new, 21000, true, &mv, 100);
 
     // Check that Tx1 was marked for re-execution
     let tx1_status = scheduler.get_status(1);

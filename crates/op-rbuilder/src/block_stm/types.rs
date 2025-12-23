@@ -194,6 +194,8 @@ pub enum ExecutionStatus {
     Aborted(Incarnation),
     /// Transaction has been committed (finalized)
     Committed,
+    /// Transaction exceeded block limits and won't be included
+    LimitExceeded,
 }
 
 impl ExecutionStatus {
@@ -203,7 +205,9 @@ impl ExecutionStatus {
             ExecutionStatus::Executing(inc)
             | ExecutionStatus::Executed(inc)
             | ExecutionStatus::Aborted(inc) => Some(*inc),
-            ExecutionStatus::PendingScheduling | ExecutionStatus::Committed => None,
+            ExecutionStatus::PendingScheduling
+            | ExecutionStatus::Committed
+            | ExecutionStatus::LimitExceeded => None,
         }
     }
 }
