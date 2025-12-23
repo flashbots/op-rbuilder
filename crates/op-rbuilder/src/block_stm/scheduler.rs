@@ -397,10 +397,10 @@ impl Scheduler {
                         let tx_da = state.tx_da_size;
                         let would_exceed_gas = cumulative_gas + tx_gas > self.block_gas_limit;
                         let would_exceed_tx_da =
-                            self.tx_da_limit.map_or(false, |limit| tx_da > limit);
+                            self.tx_da_limit.is_some_and(|limit| tx_da > limit);
                         let would_exceed_block_da = self
                             .block_da_limit
-                            .map_or(false, |limit| cumulative_da + tx_da > limit);
+                            .is_some_and(|limit| cumulative_da + tx_da > limit);
 
                         if would_exceed_gas || would_exceed_tx_da || would_exceed_block_da {
                             // Transaction exceeds limits - mark as LimitExceeded and cascade
