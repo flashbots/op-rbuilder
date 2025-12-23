@@ -19,10 +19,11 @@ use crate::block_stm::{
     view::WriteSet,
 };
 use alloy_primitives::Address;
-use parking_lot::{Condvar, Mutex, RwLock};
+use dashmap::DashSet;
+use parking_lot::{Mutex, RwLock};
 use std::{
-    collections::{HashSet, VecDeque},
-    sync::atomic::{AtomicUsize, Ordering},
+    collections::VecDeque,
+    sync::atomic::{AtomicBool, AtomicUsize, Ordering},
 };
 use tracing::instrument;
 
@@ -95,20 +96,16 @@ pub struct Scheduler {
     committed_gas: Vec<std::sync::atomic::AtomicU64>,
     /// Committed DA values per transaction (written before commit_idx advances)
     committed_da: Vec<std::sync::atomic::AtomicU64>,
-    /// Queue of transactions ready for execution
+    /// Queue of transactions ready for execution (Mutex needed for FIFO ordering)
     execution_queue: Mutex<VecDeque<TxnIndex>>,
-    /// Set of transactions that need validation
-    validation_queue: Mutex<HashSet<TxnIndex>>,
+    /// Set of transactions that need validation (lock-free)
+    validation_queue: DashSet<TxnIndex>,
     /// Index of the next transaction to commit (commits must be in order)
     commit_idx: AtomicUsize,
-    /// Condition variable for waking up workers
-    work_available: Condvar,
-    /// Lock for condition variable
-    work_lock: Mutex<()>,
     /// Number of active workers
     active_workers: AtomicUsize,
-    /// Whether execution is complete
-    done: RwLock<bool>,
+    /// Whether execution is complete (lock-free)
+    done: AtomicBool,
     /// Execution statistics
     stats: Mutex<SchedulerStats>,
 }
@@ -158,12 +155,10 @@ impl Scheduler {
             committed_gas,
             committed_da,
             execution_queue: Mutex::new(execution_queue),
-            validation_queue: Mutex::new(HashSet::new()),
+            validation_queue: DashSet::new(),
             commit_idx: AtomicUsize::new(0),
-            work_available: Condvar::new(),
-            work_lock: Mutex::new(()),
             active_workers: AtomicUsize::new(0),
-            done: RwLock::new(false),
+            done: AtomicBool::new(false),
             stats: Mutex::new(SchedulerStats::default()),
         }
     }
@@ -184,22 +179,18 @@ impl Scheduler {
 
     /// Register a worker finishing work.
     pub fn worker_done(&self) {
-        let prev = self.active_workers.fetch_sub(1, Ordering::SeqCst);
-        if prev == 1 {
-            // Last worker, wake up anyone waiting
-            self.work_available.notify_all();
-        }
+        self.active_workers.fetch_sub(1, Ordering::SeqCst);
     }
 
     /// Check if all work is done.
     pub fn is_done(&self) -> bool {
-        *self.done.read()
+        self.done.load(Ordering::SeqCst)
     }
 
     /// Get the next task for a worker.
     pub fn next_task(&self) -> Task {
         // Check if we're done
-        if *self.done.read() {
+        if self.done.load(Ordering::SeqCst) {
             return Task::Done;
         }
 
@@ -213,9 +204,10 @@ impl Scheduler {
             };
         }
 
-        // Try to get a transaction to validate
-        if let Some(&txn_idx) = self.validation_queue.lock().iter().next() {
-            self.validation_queue.lock().remove(&txn_idx);
+        // Try to get a transaction to validate (lock-free iteration)
+        // Pop one item from the DashSet
+        if let Some(txn_idx) = self.validation_queue.iter().next().map(|r| *r) {
+            self.validation_queue.remove(&txn_idx);
             return Task::Validate { txn_idx };
         }
 
@@ -224,23 +216,17 @@ impl Scheduler {
     }
 
     /// Wait for work to become available.
+    /// Uses a simple spin-wait with yield to avoid Condvar deadlock potential.
     pub fn wait_for_work(&self) {
-        let mut lock = self.work_lock.lock();
-        // Check one more time if there's work or we're done
+        // Quick check if there's work or we're done
         if !self.execution_queue.lock().is_empty()
-            || !self.validation_queue.lock().is_empty()
-            || *self.done.read()
+            || !self.validation_queue.is_empty()
+            || self.done.load(Ordering::SeqCst)
         {
             return;
         }
-        // Wait with timeout to avoid deadlocks
-        self.work_available
-            .wait_for(&mut lock, std::time::Duration::from_millis(10));
-    }
-
-    /// Notify that work is available.
-    fn notify_work(&self) {
-        self.work_available.notify_all();
+        // Yield to other threads and return - caller will retry
+        std::thread::yield_now();
     }
 
     /// Mark a transaction as starting execution.
@@ -322,8 +308,7 @@ impl Scheduler {
                 self.abort(dep_idx, mv_hashmap);
             }
         }
-
-        self.notify_work();
+        // Workers will pick up new work via spin-wait
     }
 
     /// Recursively mark a transaction and its same-sender dependents as LimitExceeded.
@@ -364,8 +349,7 @@ impl Scheduler {
             let commit_idx = self.commit_idx.load(Ordering::SeqCst);
             if commit_idx >= self.num_txns {
                 // All transactions committed
-                *self.done.write() = true;
-                self.notify_work();
+                self.done.store(true, Ordering::SeqCst);
                 return;
             }
 
@@ -387,7 +371,9 @@ impl Scheduler {
                         for i in 0..commit_idx {
                             // Read from atomic vectors - these are written before commit_idx advances
                             // LimitExceeded transactions have 0 in these vectors
-                            cumulative_gas += self.committed_gas[i].load(Ordering::SeqCst);
+                            // Committed transactions store gas+1, so subtract 1 (saturating to handle 0)
+                            let stored_gas = self.committed_gas[i].load(Ordering::SeqCst);
+                            cumulative_gas += stored_gas.saturating_sub(1);
                             cumulative_da += self.committed_da[i].load(Ordering::SeqCst);
                         }
 
@@ -452,7 +438,8 @@ impl Scheduler {
 
                         // Write gas/da to committed vectors BEFORE advancing commit_idx
                         // This ensures any thread reading [0, new_commit_idx) sees correct values
-                        self.committed_gas[commit_idx].store(tx_gas, Ordering::SeqCst);
+                        // We store gas+1 so that 0-gas transactions are distinguishable from LimitExceeded (0)
+                        self.committed_gas[commit_idx].store(tx_gas.saturating_add(1), Ordering::SeqCst);
                         self.committed_da[commit_idx].store(tx_da, Ordering::SeqCst);
 
                         // Atomically claim this commit slot using compare_exchange.
@@ -606,16 +593,20 @@ impl Scheduler {
         self.txn_states[txn_idx as usize].read().status
     }
 
-    /// Check if a transaction was committed (race-free using committed_gas vector).
-    /// Returns true if the transaction contributed gas to the block (committed, not LimitExceeded).
-    /// This is race-free because committed_gas is written BEFORE commit_idx advances.
+    /// Check if a transaction was committed (race-free using committed vectors).
+    /// Returns true if the transaction was committed (not LimitExceeded).
+    /// This is race-free because committed vectors are written BEFORE commit_idx advances.
+    /// 
+    /// We use a sentinel value approach: committed_gas stores gas+1 so that 0-gas txs
+    /// are distinguishable from LimitExceeded (which stores 0).
     pub fn is_committed(&self, txn_idx: TxnIndex) -> bool {
         let idx = txn_idx as usize;
         if idx >= self.num_txns {
             return false;
         }
-        // committed_gas > 0 means committed (LimitExceeded has 0)
-        // But also check commit_idx to ensure we're looking at processed transactions
+        // Check if this transaction has been processed (idx < commit_idx)
+        // AND was committed (committed_gas > 0, where 0 means LimitExceeded)
+        // Note: We store gas+1 for committed txs so 0-gas txs work correctly
         idx < self.commit_idx.load(Ordering::SeqCst)
             && self.committed_gas[idx].load(Ordering::SeqCst) > 0
     }

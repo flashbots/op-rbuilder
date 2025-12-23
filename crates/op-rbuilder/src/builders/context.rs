@@ -830,6 +830,7 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpLazyEvmFactory> 
                 let worker_parent_span = worker_parent_span.clone();
 
                 s.spawn(move || {
+                    debug!("Spawning worker thread {}", worker_id);
                     // Create worker span as child of parent (linked to build_flashblock)
                     let _worker_span = tracing::info_span!(
                         parent: &worker_parent_span,
@@ -843,8 +844,10 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpLazyEvmFactory> 
                     loop {
                         // Check for cancellation
                         if cancelled.is_cancelled() {
+                            debug!("Worker thread {} is cancelled", worker_id);
                             break;
                         }
+                        debug!("Worker thread {} is running", worker_id);
 
                         // Get next task from Block-STM scheduler
                         let task = scheduler.next_task();
@@ -1141,7 +1144,18 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpLazyEvmFactory> 
                                 // Validation handled in scheduler's try_commit
                             }
                             Task::NoTask => {
-                                if scheduler.is_done() {
+                                let is_done = scheduler.is_done();
+                                let commit_idx = scheduler.get_commit_idx();
+                                debug!(
+                                    "Worker {} got NoTask, is_done={}, commit_idx={}/{}",
+                                    worker_id, is_done, commit_idx, num_candidates
+                                );
+                                if is_done {
+                                    break;
+                                }
+                                // Check cancellation before waiting to avoid getting stuck
+                                if cancelled.is_cancelled() {
+                                    debug!("Worker {} cancelled while waiting for work", worker_id);
                                     break;
                                 }
                                 scheduler.wait_for_work();
@@ -1177,6 +1191,13 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpLazyEvmFactory> 
             // This avoids the race between compare_exchange and status update
             if !scheduler.is_committed(txn_idx as u32) {
                 continue;
+            }
+
+            if self.cancel.is_cancelled() {
+                *info = std::mem::take(&mut *info_guard);
+                drop(info_guard);
+                debug!("Cancellation detected, returning");
+                return Ok(Some(()));
             }
 
             if let Some(tx_result) = result_opt {
