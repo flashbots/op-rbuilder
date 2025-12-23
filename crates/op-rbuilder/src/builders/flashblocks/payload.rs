@@ -712,6 +712,68 @@ where
                 target_da_footprint_for_batch,
             )
             .wrap_err("failed to execute best transactions")?;
+            // #region agent log
+            use std::io::Write;
+            if let Ok(mut f) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open("/home/meyer9/op-rbuilder/.cursor/debug.log")
+            {
+                // Log cache state info
+                let cache_accounts: Vec<_> = state
+                    .cache
+                    .accounts
+                    .iter()
+                    .map(|(addr, acc)| {
+                        let code_len = acc
+                            .account
+                            .as_ref()
+                            .and_then(|a| a.info.code.as_ref())
+                            .map(|c| c.len())
+                            .unwrap_or(0);
+                        let code_hash = acc
+                            .account
+                            .as_ref()
+                            .map(|a| format!("{}", a.info.code_hash))
+                            .unwrap_or_default();
+                        format!("{}:code_len={},code_hash={}", addr, code_len, code_hash)
+                    })
+                    .collect();
+                let cache_contracts: Vec<_> = state
+                    .cache
+                    .contracts
+                    .iter()
+                    .map(|(hash, code)| format!("{}:len={}", hash, code.len()))
+                    .collect();
+
+                // Log transition_state if present
+                let transition_state_info = if let Some(ref ts) = state.transition_state {
+                    let transitions: Vec<_> = ts
+                        .transitions
+                        .iter()
+                        .map(|(addr, trans)| format!("{}:status={:?}", addr, trans.status))
+                        .collect();
+                    format!("Some({}transitions)", transitions.len())
+                } else {
+                    "None".to_string()
+                };
+
+                let _ = writeln!(
+                    f,
+                    r#"{{"hypothesisId":"D","location":"payload.rs:after_sequential","message":"State after sequential execution","data":{{"mode":"sequential","flashblock_index":{},"cache_accounts_count":{},"cache_contracts_count":{},"transition_state":"{}","cache_accounts":{:?},"cache_contracts":{:?},"timestamp":{}}}}}"#,
+                    flashblock_index,
+                    state.cache.accounts.len(),
+                    state.cache.contracts.len(),
+                    transition_state_info,
+                    cache_accounts,
+                    cache_contracts,
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_millis()
+                );
+            }
+            // #endregion
         }
         // Extract last transactions
         let new_transactions = info.executed_transactions[info.extra.last_flashblock_index..]

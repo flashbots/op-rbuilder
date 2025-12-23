@@ -17,13 +17,22 @@ use crate::block_stm::{
     view::WriteSet,
 };
 use alloy_primitives::{Address, B256, U256};
+use dashmap::DashMap;
 use derive_more::Debug;
 use revm::{
     Database, DatabaseRef, bytecode::Bytecode, database_interface::DBErrorMarker,
     state::AccountInfo,
 };
-use std::{collections::HashMap, sync::Mutex};
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+};
 use tracing::instrument;
+
+/// Shared cache for contract bytecode.
+/// Maps code_hash -> bytecode for contracts deployed within the same block.
+/// This is thread-safe and shared across all parallel transactions.
+pub type SharedCodeCache = Arc<DashMap<B256, Bytecode>>;
 
 /// Error type for versioned database operations.
 #[derive(Debug, Clone)]
@@ -70,6 +79,9 @@ pub struct VersionedDatabase<'a, BaseDB> {
     mv_hashmap: &'a MVHashMap,
     /// The base database for reads not in MVHashMap
     base_db: &'a BaseDB,
+    /// Shared cache for contract bytecode deployed within this block
+    #[debug(skip)]
+    code_cache: SharedCodeCache,
     /// Captured reads for dependency tracking
     captured_reads: Mutex<CapturedReads>,
     /// Local write buffer (applied to MVHashMap after execution)
@@ -87,12 +99,14 @@ impl<'a, BaseDB> VersionedDatabase<'a, BaseDB> {
         incarnation: Incarnation,
         mv_hashmap: &'a MVHashMap,
         base_db: &'a BaseDB,
+        code_cache: SharedCodeCache,
     ) -> Self {
         Self {
             txn_idx,
             incarnation,
             mv_hashmap,
             base_db,
+            code_cache,
             captured_reads: Mutex::new(CapturedReads::new()),
             writes: Mutex::new(WriteSet::new()),
             account_cache: Mutex::new(HashMap::new()),
@@ -342,11 +356,21 @@ where
             }
         };
 
+        // If code_hash came from MVHashMap (new contract deployed in this block),
+        // look up the bytecode from the shared cache instead of using base_info.code
+        let code = if matches!(&code_hash_result, ReadResult::Value { .. }) {
+            // Code hash is from MVHashMap - check shared cache
+            self.code_cache.get(&code_hash).map(|c| c.clone())
+        } else {
+            // Code hash is from base - use base code
+            base_info.code.clone()
+        };
+
         let account_info = AccountInfo {
             balance,
             nonce,
             code_hash,
-            code: base_info.code.clone(),
+            code,
         };
 
         // Cache the result
@@ -403,8 +427,16 @@ where
     }
 
     /// Read contract code by hash.
+    ///
+    /// First checks the shared code cache for contracts deployed within this block,
+    /// then falls back to the base database.
     fn code_by_hash_ref(&self, code_hash: B256) -> Result<Bytecode, VersionedDbError> {
-        // Code is usually immutable, read directly from base
+        // First check the shared code cache for contracts deployed within this block
+        if let Some(code) = self.code_cache.get(&code_hash) {
+            return Ok(code.clone());
+        }
+
+        // Fall back to base database
         self.base_db
             .code_by_hash_ref(code_hash)
             .map_err(|e| VersionedDbError::BaseDbError(e.to_string()))
@@ -473,13 +505,18 @@ mod tests {
         }
     }
 
+    fn new_code_cache() -> SharedCodeCache {
+        Arc::new(DashMap::new())
+    }
+
     #[test]
     fn test_read_from_base_state() {
         let mv = MVHashMap::new(10);
         let addr = Address::from([1u8; 20]);
         let mut base = MockBaseDb::new().with_account(addr, U256::from(1000), 5);
+        let code_cache = new_code_cache();
 
-        let db = VersionedDatabase::new(0, 0, &mv, &mut base);
+        let db = VersionedDatabase::new(0, 0, &mv, &mut base, code_cache);
 
         let info = db.basic_ref(addr).unwrap().unwrap();
         assert_eq!(info.balance, U256::from(1000));
@@ -505,9 +542,10 @@ mod tests {
         mv.write(0, 0, EvmStateKey::Nonce(addr), EvmStateValue::Nonce(10));
 
         let mut base = MockBaseDb::new().with_account(addr, U256::from(1000), 5);
+        let code_cache = new_code_cache();
 
         // Tx1 reads - should see tx0's writes
-        let db = VersionedDatabase::new(1, 0, &mv, &mut base);
+        let db = VersionedDatabase::new(1, 0, &mv, &mut base, code_cache);
 
         let info = db.basic_ref(addr).unwrap().unwrap();
         assert_eq!(info.balance, U256::from(2000)); // From MVHashMap
@@ -529,14 +567,15 @@ mod tests {
         );
 
         let mut base = MockBaseDb::new().with_storage(addr, slot, U256::from(100));
+        let code_cache = new_code_cache();
 
         // Tx1 should see tx0's write
-        let db = VersionedDatabase::new(1, 0, &mv, &mut base);
+        let db = VersionedDatabase::new(1, 0, &mv, &mut base, code_cache.clone());
         let value = db.storage_ref(addr, slot).unwrap();
         assert_eq!(value, U256::from(999));
 
         // Tx0 should see base state (can't see own writes)
-        let db0 = VersionedDatabase::new(0, 0, &mv, &mut base);
+        let db0 = VersionedDatabase::new(0, 0, &mv, &mut base, code_cache);
         let value0 = db0.storage_ref(addr, slot).unwrap();
         assert_eq!(value0, U256::from(100));
     }
@@ -556,12 +595,32 @@ mod tests {
         mv.mark_aborted(0);
 
         let mut base = MockBaseDb::new();
+        let code_cache = new_code_cache();
 
         // Tx1 tries to read - should get abort error
-        let db = VersionedDatabase::new(1, 0, &mv, &mut base);
+        let db = VersionedDatabase::new(1, 0, &mv, &mut base, code_cache);
         let result = db.basic_ref(addr);
 
         assert!(result.is_err());
         assert!(db.was_aborted().is_some());
+    }
+
+    #[test]
+    fn test_code_cache_lookup() {
+        let mv = MVHashMap::new(10);
+        let mut base = MockBaseDb::new();
+        let code_cache = new_code_cache();
+
+        // Add bytecode to the shared cache
+        let code_hash = B256::from([0x42u8; 32]);
+        let bytecode =
+            Bytecode::new_raw(alloy_primitives::Bytes::from(vec![0x60, 0x00, 0x60, 0x00]));
+        code_cache.insert(code_hash, bytecode.clone());
+
+        let db = VersionedDatabase::new(0, 0, &mv, &mut base, code_cache);
+
+        // Should find the code in the cache
+        let result = db.code_by_hash_ref(code_hash).unwrap();
+        assert_eq!(result.len(), bytecode.len());
     }
 }

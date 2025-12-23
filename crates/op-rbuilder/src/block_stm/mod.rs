@@ -32,7 +32,7 @@ mod tests;
 
 // Re-export commonly used types
 pub use captured_reads::CapturedReads;
-pub use db_adapter::{VersionedDatabase, VersionedDbError};
+pub use db_adapter::{SharedCodeCache, VersionedDatabase, VersionedDbError};
 pub use executor::BlockStmExecutor;
 pub use mv_hashmap::MVHashMap;
 pub use scheduler::Scheduler;

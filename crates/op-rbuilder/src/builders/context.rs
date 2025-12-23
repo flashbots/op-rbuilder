@@ -776,6 +776,10 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpLazyEvmFactory> 
         let scheduler = Arc::new(Scheduler::new(num_candidates));
         let mv_hashmap = Arc::new(MVHashMap::new(num_candidates));
 
+        // Shared code cache for contracts deployed within this block
+        // This allows later transactions to see bytecode from contracts deployed by earlier txs
+        let code_cache = crate::block_stm::SharedCodeCache::default();
+
         // Store execution results per transaction (for deferred commit)
         let execution_results: Arc<Mutex<Vec<Option<TxExecutionResult>>>> =
             Arc::new(Mutex::new(vec![None; num_candidates]));
@@ -798,6 +802,7 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpLazyEvmFactory> 
             for worker_id in 0..num_threads {
                 let scheduler = Arc::clone(&scheduler);
                 let mv_hashmap = Arc::clone(&mv_hashmap);
+                let code_cache = Arc::clone(&code_cache);
                 let execution_results = Arc::clone(&execution_results);
                 let _shared_info = Arc::clone(&shared_info);
                 let shared_best_txs = Arc::clone(&shared_best_txs);
@@ -891,6 +896,7 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpLazyEvmFactory> 
                                     incarnation,
                                     &mv_hashmap,
                                     base_db,
+                                    Arc::clone(&code_cache),
                                 );
 
                                 // Create State wrapper for EVM execution
@@ -1014,8 +1020,14 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpLazyEvmFactory> 
 
                                         // Only write code hash if it changed
                                         if original_code_hash != Some(account.info.code_hash) {
-                                            write_set
-                                                .write_code_hash(*addr, account.info.code_hash);
+                                            write_set.write_code_hash(*addr, account.info.code_hash);
+
+                                            // Store bytecode in shared cache for lookup by later transactions
+                                            // This is critical: when a contract is deployed, its bytecode must be
+                                            // accessible to subsequent transactions via code_by_hash_ref()
+                                            if let Some(ref code) = account.info.code {
+                                                code_cache.insert(account.info.code_hash, code.clone());
+                                            }
                                         }
 
                                         // Storage slots already have is_changed() check
@@ -1179,10 +1191,18 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpLazyEvmFactory> 
                     let _ = db.load_cache_account(*address);
                 }
 
-                let resolved_state = tx_result
+                let mut resolved_state = tx_result
                     .state
                     .resolve_state(db)
                     .map_err(|e| PayloadBuilderError::Other(e.to_string().into()))?;
+
+                // Populate code field from shared cache for newly deployed contracts
+                // Without this, account.info.code is None and won't be stored in State.cache.contracts
+                for (_addr, account) in resolved_state.iter_mut() {
+                    if let Some(code) = code_cache.get(&account.info.code_hash) {
+                        account.info.code = Some(code.clone());
+                    }
+                }
 
                 // Commit resolved state to actual DB
                 db.commit(resolved_state);
