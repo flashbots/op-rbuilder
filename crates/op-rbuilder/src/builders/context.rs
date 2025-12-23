@@ -1020,13 +1020,15 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpLazyEvmFactory> 
 
                                         // Only write code hash if it changed
                                         if original_code_hash != Some(account.info.code_hash) {
-                                            write_set.write_code_hash(*addr, account.info.code_hash);
+                                            write_set
+                                                .write_code_hash(*addr, account.info.code_hash);
 
                                             // Store bytecode in shared cache for lookup by later transactions
                                             // This is critical: when a contract is deployed, its bytecode must be
                                             // accessible to subsequent transactions via code_by_hash_ref()
                                             if let Some(ref code) = account.info.code {
-                                                code_cache.insert(account.info.code_hash, code.clone());
+                                                code_cache
+                                                    .insert(account.info.code_hash, code.clone());
                                             }
                                         }
 
@@ -1151,6 +1153,33 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpLazyEvmFactory> 
         // Process committed transactions in order
         for (txn_idx, result_opt) in results.into_iter().enumerate() {
             if let Some(tx_result) = result_opt {
+                // Check if transaction would exceed limits before committing
+                // This replicates the sequential execution's pre-execution check
+                // In parallel execution, we can't mark as invalid (already executed), so we just stop committing
+                if let Err(_result) = info_guard.is_tx_over_limits(
+                    tx_result.tx_da_size,
+                    block_gas_limit,
+                    self.da_config.max_da_tx_size(),
+                    block_da_limit,
+                    tx_result.tx.gas_limit(),
+                    info_guard.da_footprint_scalar,
+                    _block_da_footprint_limit,
+                ) {
+                    // Transaction would exceed limits - stop committing further transactions
+                    // Unlike sequential, we don't mark_invalid since tx was already executed
+                    // The transaction remains valid for future blocks
+                    trace!(
+                        txn_idx = txn_idx,
+                        tx_hash = ?tx_result.tx.tx_hash(),
+                        cumulative_gas = info_guard.cumulative_gas_used,
+                        cumulative_da = info_guard.cumulative_da_bytes_used,
+                        tx_da_size = tx_result.tx_da_size,
+                        block_da_limit = ?block_da_limit,
+                        "Stopping commit: transaction exceeds DA limits"
+                    );
+                    break; // Stop committing further transactions
+                }
+
                 // Update cumulative gas before building receipt
                 info_guard.cumulative_gas_used += tx_result.gas_used;
                 info_guard.cumulative_da_bytes_used += tx_result.tx_da_size;
