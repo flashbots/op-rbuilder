@@ -1155,7 +1155,6 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpLazyEvmFactory> 
             if let Some(tx_result) = result_opt {
                 // Check if transaction would exceed limits before committing
                 // This replicates the sequential execution's pre-execution check
-                // In parallel execution, we can't mark as invalid (already executed), so we just stop committing
                 if let Err(_result) = info_guard.is_tx_over_limits(
                     tx_result.tx_da_size,
                     block_gas_limit,
@@ -1165,9 +1164,8 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpLazyEvmFactory> 
                     info_guard.da_footprint_scalar,
                     _block_da_footprint_limit,
                 ) {
-                    // Transaction would exceed limits - stop committing further transactions
-                    // Unlike sequential, we don't mark_invalid since tx was already executed
-                    // The transaction remains valid for future blocks
+                    // Transaction would exceed limits - skip committing this transaction
+                    // Continue checking remaining transactions as smaller ones might still fit
                     trace!(
                         txn_idx = txn_idx,
                         tx_hash = ?tx_result.tx.tx_hash(),
@@ -1175,9 +1173,9 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpLazyEvmFactory> 
                         cumulative_da = info_guard.cumulative_da_bytes_used,
                         tx_da_size = tx_result.tx_da_size,
                         block_da_limit = ?block_da_limit,
-                        "Stopping commit: transaction exceeds DA limits"
+                        "Skipping transaction that exceeds limits"
                     );
-                    break; // Stop committing further transactions
+                    continue; // Skip this transaction, continue with others
                 }
 
                 // Update cumulative gas before building receipt
