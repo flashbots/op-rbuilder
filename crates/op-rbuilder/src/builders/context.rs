@@ -38,7 +38,7 @@ use reth_revm::{State, context::Block};
 use reth_transaction_pool::{BestTransactionsAttributes, PoolTransaction};
 use revm::{
     DatabaseCommit, DatabaseRef,
-    context::result::ResultAndState,
+    context::result::{EVMError, ResultAndState},
     interpreter::as_u64_saturated,
     primitives::HashMap,
     state::{Account, EvmState},
@@ -46,16 +46,16 @@ use revm::{
 use std::{
     collections::hash_map::Entry,
     sync::{Arc, Mutex},
-    thread,
+    thread::{self, sleep},
     time::Instant,
 };
 use tokio_util::sync::CancellationToken;
-use tracing::{Span, debug, info, trace};
+use tracing::{Span, debug, info, trace, warn};
 
 use crate::{
     block_stm::{
-        MVHashMap, VersionedDatabase, evm::OpLazyEvmFactory, scheduler::Scheduler, types::Task,
-        view::WriteSet,
+        EvmStateKey, EvmStateValue, MVHashMap, Scheduler, Version, VersionedDatabase,
+        VersionedDbError, evm::OpLazyEvmFactory, mv_hashmap::WriteSet, scheduler::Task,
     },
     gas_limiter::AddressGasLimiter,
     metrics::OpRBuilderMetrics,
@@ -736,11 +736,6 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpLazyEvmFactory> 
         let base_fee = self.base_fee();
         let tx_da_limit = self.da_config.max_da_tx_size();
 
-        let block_attr = BlockConditionalAttributes {
-            number: self.block_number(),
-            timestamp: self.attributes().timestamp(),
-        };
-
         // Collect candidate transactions from the iterator.
         let mut candidate_txs = Vec::new();
         while let Some(tx) = best_txs.next(()) {
@@ -772,22 +767,8 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpLazyEvmFactory> 
             num_candidates = num_candidates,
         );
 
-        // Extract transaction senders for nonce dependency tracking
-        let tx_senders: Vec<Address> = candidate_txs
-            .iter()
-            .map(|tx| tx.clone().into_consensus().signer())
-            .collect();
-
         // Initialize Block-STM components
-        let scheduler = Arc::new(Scheduler::new(
-            num_candidates,
-            tx_senders,
-            info.cumulative_gas_used,
-            info.cumulative_da_bytes_used,
-            block_gas_limit,
-            block_da_limit,
-            self.da_config.max_da_tx_size(),
-        ));
+        let scheduler = Arc::new(Scheduler::new(num_candidates));
         let mv_hashmap = Arc::new(MVHashMap::new(num_candidates));
 
         // Shared code cache for contracts deployed within this block
@@ -822,9 +803,9 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpLazyEvmFactory> 
                 let shared_best_txs = Arc::clone(&shared_best_txs);
                 let metrics = Arc::clone(&metrics);
                 let candidate_txs = &candidate_txs;
-                let address_gas_limiter = &self.address_gas_limiter;
-                let max_gas_per_txn = self.max_gas_per_txn;
-                let cancelled = &self.cancel;
+                // let address_gas_limiter = &self.address_gas_limiter;
+                // let max_gas_per_txn = self.max_gas_per_txn;
+                // let cancelled = &self.cancel;
                 let evm_env = &self.evm_env;
                 let base_db = db_ref; // Shared reference for reads
                 let worker_parent_span = worker_parent_span.clone();
@@ -839,334 +820,250 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpLazyEvmFactory> 
                     )
                     .entered();
 
-                    scheduler.worker_start();
+                    let mut task = None;
 
-                    loop {
-                        // Check for cancellation
-                        if cancelled.is_cancelled() {
-                            debug!("Worker thread {} is cancelled", worker_id);
-                            break;
-                        }
-                        debug!("Worker thread {} is running", worker_id);
-
-                        // Get next task from Block-STM scheduler
-                        let task = scheduler.next_task();
-
-                        match task {
-                            Task::Execute {
+                    while !scheduler.done() {
+                        info!("Worker thread {} not done", worker_id);
+                        task = if let Some(Task::Execute { version }) = task {
+                            let Version {
                                 txn_idx,
                                 incarnation,
-                            } => {
-                                let _tx_span = tracing::info_span!(
-                                    "block_stm_tx_execute",
-                                    txn_idx = txn_idx,
-                                    incarnation = incarnation
-                                )
-                                .entered();
+                            } = version;
+                            info!("Worker thread {} got task {:?}", worker_id, task);
+                            let _tx_span = tracing::info_span!(
+                                "block_stm_tx_execute",
+                                txn_idx = txn_idx,
+                                incarnation = incarnation
+                            )
+                            .entered();
 
-                                scheduler.start_execution(txn_idx, incarnation);
+                            metrics
+                                .num_txs_considered
+                                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
-                                metrics
-                                    .num_txs_considered
-                                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            let pool_tx = &candidate_txs[txn_idx as usize];
+                            let tx_da_size = pool_tx.estimated_da_size();
+                            let tx = pool_tx.clone().into_consensus();
 
-                                let pool_tx = &candidate_txs[txn_idx as usize];
-                                let tx_da_size = pool_tx.estimated_da_size();
-                                let reverted_hashes = pool_tx.reverted_hashes().clone();
-                                let conditional = pool_tx.conditional().cloned();
-                                let tx = pool_tx.clone().into_consensus();
-                                let tx_hash = tx.tx_hash();
+                            // Routes reads through MVHashMap, falls back to base state
+                            let versioned_db = VersionedDatabase::new(
+                                txn_idx,
+                                &mv_hashmap,
+                                base_db,
+                                Arc::clone(&code_cache),
+                            );
 
-                                let is_bundle_tx = reverted_hashes.is_some();
-                                let exclude_reverting_txs =
-                                    is_bundle_tx && !reverted_hashes.unwrap().contains(&tx_hash);
+                            // Create State wrapper for EVM execution
+                            let tx_state = State::builder().with_database(versioned_db).build();
 
-                                // Pre-execution checks (no DB access)
-                                let skip_tx = if let Some(conditional) = conditional {
-                                    !conditional.matches_block_attributes(&block_attr)
-                                } else {
-                                    false
-                                } || tx.is_eip4844()
-                                    || tx.is_deposit();
+                            // Wrap State with LazyDatabaseWrapper to support lazy balance increments
+                            let mut lazy_state =
+                                crate::block_stm::evm::LazyDatabaseWrapper::new(tx_state);
 
-                                if skip_tx {
+                            // Execute transaction with versioned state
+                            let exec_result = {
+                                let lazy_factory = crate::block_stm::evm::OpLazyEvmFactory;
+                                let mut evm =
+                                    lazy_factory.create_evm(&mut lazy_state, evm_env.clone());
+                                evm.transact(&tx)
+                            };
+
+                            let exec_result = match exec_result {
+                                Ok(res) => res,
+                                Err(EVMError::Database(VersionedDbError::ReadAborted {
+                                    aborted_txn_idx,
+                                })) => {
+                                    let _is_aborted =
+                                        scheduler.add_dependency(txn_idx, aborted_txn_idx);
+                                    // TODO: diff from paper - this can be retried immediately if not aborted
+                                    continue;
+                                }
+                                Err(error) => {
+                                    warn!("Worker thread {} got error {:?}", worker_id, error);
                                     shared_best_txs
                                         .lock()
                                         .unwrap()
                                         .mark_invalid(tx.signer(), tx.nonce());
-                                    scheduler.finish_execution(
-                                        txn_idx,
-                                        incarnation,
-                                        crate::block_stm::CapturedReads::new(),
-                                        WriteSet::new(),
-                                        0,
-                                        false,
-                                        &mv_hashmap,
-                                        0, // tx_da_size
-                                    );
                                     continue;
                                 }
+                            };
 
-                                // Create versioned database for this transaction
-                                // Routes reads through MVHashMap, falls back to base state
-                                let versioned_db = VersionedDatabase::new(
-                                    txn_idx,
-                                    incarnation,
-                                    &mv_hashmap,
-                                    base_db,
-                                    Arc::clone(&code_cache),
-                                );
+                            let ResultAndState { result, state } = exec_result;
+                            let gas_used = result.gas_used();
 
-                                // Create State wrapper for EVM execution
-                                let tx_state = State::builder().with_database(versioned_db).build();
+                            // Build write set from state changes
+                            let mut write_set: WriteSet = WriteSet::new();
+                            let db_mut = lazy_state.inner_mut();
+                            let read_set = db_mut.database.take_read_set();
+                            let captured_reads = db_mut.database.take_captured_reads();
 
-                                // Wrap State with LazyDatabaseWrapper to support lazy balance increments
-                                let mut lazy_state =
-                                    crate::block_stm::evm::LazyDatabaseWrapper::new(tx_state);
+                            // Add writes only for values that actually changed
+                            for (addr, account) in state.iter() {
+                                debug!("Account touched: {}", addr);
+                                if account.is_touched() {
+                                    // Get original values from captured reads (if available)
+                                    let original_balance =
+                                        captured_reads.get(&EvmStateKey::Balance(*addr));
+                                    let original_nonce =
+                                        captured_reads.get(&EvmStateKey::Nonce(*addr));
+                                    let original_code_hash =
+                                        captured_reads.get(&EvmStateKey::CodeHash(*addr));
 
-                                // Execute transaction with versioned state
-                                let exec_result = {
-                                    let lazy_factory = crate::block_stm::evm::OpLazyEvmFactory;
-                                    let mut evm =
-                                        lazy_factory.create_evm(&mut lazy_state, evm_env.clone());
-                                    evm.transact(&tx)
-                                };
-
-                                let exec_result = match exec_result {
-                                    Ok(res) => res,
-                                    Err(err) => {
-                                        if let Some(err) = err.as_invalid_tx_err()
-                                            && !err.is_nonce_too_low()
-                                        {
-                                            shared_best_txs
-                                                .lock()
-                                                .unwrap()
-                                                .mark_invalid(tx.signer(), tx.nonce());
-                                        }
-                                        // Get captured reads even on failure
-                                        let captured_reads =
-                                            lazy_state.inner().database.take_captured_reads();
-                                        scheduler.finish_execution(
-                                            txn_idx,
-                                            incarnation,
-                                            captured_reads,
-                                            WriteSet::new(),
-                                            0,
-                                            false,
-                                            &mv_hashmap,
-                                            tx_da_size,
-                                        );
-                                        continue;
+                                    // Only write balance if it changed
+                                    if original_balance
+                                        != Some(&EvmStateValue::Balance(account.info.balance))
+                                    {
+                                        write_set.insert((
+                                            EvmStateKey::Balance(*addr),
+                                            EvmStateValue::Balance(account.info.balance),
+                                        ));
                                     }
-                                };
 
-                                // Check if we read from an aborted transaction
-                                if let Some(aborted_txn) = lazy_state.inner().database.was_aborted()
-                                {
-                                    trace!(
-                                        worker_id = worker_id,
-                                        txn_idx = txn_idx,
-                                        aborted_txn = aborted_txn,
-                                        "Read from aborted transaction, will re-execute"
-                                    );
-                                    let captured_reads =
-                                        lazy_state.inner().database.take_captured_reads();
-                                    scheduler.finish_execution(
-                                        txn_idx,
-                                        incarnation,
-                                        captured_reads,
-                                        WriteSet::new(),
-                                        0,
-                                        false,
-                                        &mv_hashmap,
-                                        tx_da_size,
-                                    );
-                                    continue;
-                                }
+                                    // Only write nonce if it changed
+                                    if original_nonce
+                                        != Some(&EvmStateValue::Nonce(account.info.nonce))
+                                    {
+                                        write_set.insert((
+                                            EvmStateKey::Nonce(*addr),
+                                            EvmStateValue::Nonce(account.info.nonce),
+                                        ));
+                                    }
 
-                                let ResultAndState { result, state } = exec_result;
-                                let gas_used = result.gas_used();
+                                    // Only write code hash if it changed
+                                    if original_code_hash
+                                        != Some(&EvmStateValue::CodeHash(account.info.code_hash))
+                                    {
+                                        write_set.insert((
+                                            EvmStateKey::CodeHash(*addr),
+                                            EvmStateValue::CodeHash(account.info.code_hash),
+                                        ));
 
-                                // Post-execution checks
-                                let should_skip = address_gas_limiter
-                                    .consume_gas(tx.signer(), gas_used)
-                                    .is_err()
-                                    || (!result.is_success() && exclude_reverting_txs)
-                                    || max_gas_per_txn.map(|max| gas_used > max).unwrap_or(false);
-
-                                if should_skip {
-                                    shared_best_txs
-                                        .lock()
-                                        .unwrap()
-                                        .mark_invalid(tx.signer(), tx.nonce());
-                                    let captured_reads =
-                                        lazy_state.inner().database.take_captured_reads();
-                                    scheduler.finish_execution(
-                                        txn_idx,
-                                        incarnation,
-                                        captured_reads,
-                                        WriteSet::new(),
-                                        gas_used,
-                                        false,
-                                        &mv_hashmap,
-                                        tx_da_size,
-                                    );
-                                    continue;
-                                }
-
-                                // Build write set from state changes
-                                let mut write_set: WriteSet = WriteSet::new();
-                                let captured_reads =
-                                    lazy_state.inner().database.take_captured_reads();
-
-                                // Add writes only for values that actually changed
-                                for (addr, account) in state.iter() {
-                                    debug!("Account touched: {}", addr);
-                                    if account.is_touched() {
-                                        // Get original values from captured reads (if available)
-                                        let original_balance = captured_reads.get_balance(*addr);
-                                        let original_nonce = captured_reads.get_nonce(*addr);
-                                        let original_code_hash =
-                                            captured_reads.get_code_hash(*addr);
-
-                                        // Only write balance if it changed
-                                        if original_balance != Some(account.info.balance) {
-                                            write_set.write_balance(*addr, account.info.balance);
+                                        // Store bytecode in shared cache for lookup by later transactions
+                                        // This is critical: when a contract is deployed, its bytecode must be
+                                        // accessible to subsequent transactions via code_by_hash_ref()
+                                        if let Some(ref code) = account.info.code {
+                                            code_cache.insert(account.info.code_hash, code.clone());
                                         }
+                                    }
 
-                                        // Only write nonce if it changed
-                                        if original_nonce != Some(account.info.nonce) {
-                                            write_set.write_nonce(*addr, account.info.nonce);
-                                        }
-
-                                        // Only write code hash if it changed
-                                        if original_code_hash != Some(account.info.code_hash) {
-                                            write_set
-                                                .write_code_hash(*addr, account.info.code_hash);
-
-                                            // Store bytecode in shared cache for lookup by later transactions
-                                            // This is critical: when a contract is deployed, its bytecode must be
-                                            // accessible to subsequent transactions via code_by_hash_ref()
-                                            if let Some(ref code) = account.info.code {
-                                                code_cache
-                                                    .insert(account.info.code_hash, code.clone());
-                                            }
-                                        }
-
-                                        // Storage slots already have is_changed() check
-                                        for (slot, value) in account.storage.iter() {
-                                            if value.is_changed() {
-                                                write_set.write_storage(
-                                                    *addr,
-                                                    *slot,
-                                                    value.present_value,
-                                                );
-                                            }
+                                    // Storage slots already have is_changed() check
+                                    for (slot, value) in account.storage.iter() {
+                                        if value.is_changed() {
+                                            write_set.insert((
+                                                EvmStateKey::Storage(*addr, *slot),
+                                                EvmStateValue::Storage(value.present_value),
+                                            ));
                                         }
                                     }
                                 }
+                            }
 
-                                let (_, pending_balance_increments) = lazy_state.into_inner();
+                            let (_, pending_balance_increments) = lazy_state.into_inner();
 
-                                // Add pending balance increments as deltas (commutative fee accumulation)
-                                // These are tracked separately to allow parallel accumulation
-                                for (addr, delta) in pending_balance_increments.iter() {
-                                    write_set.add_balance_delta(*addr, *delta);
-                                }
+                            // // Add pending balance increments as deltas (commutative fee accumulation)
+                            // // These are tracked separately to allow parallel accumulation
+                            // for (addr, delta) in pending_balance_increments.iter() {
+                            //     write_set.add_balance_delta(*addr, *delta);
+                            // }
 
-                                // Get captured reads for validation
+                            // Get captured reads for validation
 
-                                // Store execution result for commit phase
-                                let miner_fee = tx
-                                    .effective_tip_per_gas(base_fee)
-                                    .expect("fee is always valid");
+                            // Store execution result for commit phase
+                            let miner_fee = tx
+                                .effective_tip_per_gas(base_fee)
+                                .expect("fee is always valid");
 
-                                // Extract success and logs from result
-                                let success = result.is_success();
-                                let logs = result.into_logs();
+                            // Extract success and logs from result
+                            let success = result.is_success();
+                            let logs = result.into_logs();
 
-                                {
-                                    let mut results = execution_results.lock().unwrap();
-                                    results[txn_idx as usize] = Some(TxExecutionResult {
-                                        tx,
-                                        state: StateWithIncrements {
-                                            loaded_state: state,
-                                            pending_balance_increments,
-                                        },
-                                        success,
-                                        logs,
-                                        gas_used,
-                                        tx_da_size,
-                                        miner_fee,
-                                    });
-                                }
-
-                                // Update metrics
-                                metrics
-                                    .num_txs_simulated
-                                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-
-                                if success {
-                                    metrics
-                                        .num_txs_simulated_success
-                                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                                } else {
-                                    metrics
-                                        .num_txs_simulated_fail
-                                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                                    metrics.reverted_gas_used.fetch_add(
-                                        gas_used as i32,
-                                        std::sync::atomic::Ordering::Relaxed,
-                                    );
-                                }
-
-                                // Report to scheduler
-                                scheduler.finish_execution(
-                                    txn_idx,
-                                    incarnation,
-                                    captured_reads,
-                                    write_set,
-                                    gas_used,
+                            {
+                                let mut results = execution_results.lock().unwrap();
+                                results[txn_idx as usize] = Some(TxExecutionResult {
+                                    tx,
+                                    state: StateWithIncrements {
+                                        loaded_state: state,
+                                        pending_balance_increments,
+                                    },
                                     success,
-                                    &mv_hashmap,
+                                    logs,
+                                    gas_used,
                                     tx_da_size,
-                                );
+                                    miner_fee,
+                                });
+                            }
 
-                                trace!(
-                                    worker_id = worker_id,
-                                    txn_idx = txn_idx,
-                                    gas_used = gas_used,
-                                    success = success,
-                                    "Transaction execution complete"
+                            // Update metrics
+                            metrics
+                                .num_txs_simulated
+                                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
+                            if success {
+                                metrics
+                                    .num_txs_simulated_success
+                                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            } else {
+                                metrics
+                                    .num_txs_simulated_fail
+                                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                                metrics.reverted_gas_used.fetch_add(
+                                    gas_used as i32,
+                                    std::sync::atomic::Ordering::Relaxed,
                                 );
                             }
-                            Task::Validate { txn_idx: _ } => {
-                                // Validation handled in scheduler's try_commit
+
+                            let wrote_new_path = mv_hashmap.record(version, &read_set, &write_set);
+
+                            let next_task =
+                                scheduler.finish_execution(txn_idx, incarnation, wrote_new_path);
+                            trace!(
+                                worker_id = worker_id,
+                                txn_idx = txn_idx,
+                                gas_used = gas_used,
+                                success = success,
+                                "Transaction execution complete"
+                            );
+
+                            next_task
+                        } else {
+                            task
+                        };
+                        task = if let Some(Task::Validate {
+                            version:
+                                Version {
+                                    txn_idx,
+                                    incarnation,
+                                },
+                        }) = task
+                        {
+                            info!("Worker thread {} got task {:?}", worker_id, task);
+                            let _tx_span = tracing::info_span!(
+                                "block_stm_tx_validate",
+                                txn_idx = txn_idx,
+                                incarnation = incarnation
+                            )
+                            .entered();
+                            let read_set_valid = mv_hashmap.validate_read_set(txn_idx);
+                            info!("read set valid: {}", read_set_valid);
+                            let aborted = !read_set_valid
+                                && scheduler.try_validation_abort(txn_idx, incarnation);
+                            info!("aborted: {}", aborted);
+                            if aborted {
+                                mv_hashmap.convert_writes_to_estimates(txn_idx);
                             }
-                            Task::NoTask => {
-                                let is_done = scheduler.is_done();
-                                let commit_idx = scheduler.get_commit_idx();
-                                debug!(
-                                    "Worker {} got NoTask, is_done={}, commit_idx={}/{}",
-                                    worker_id, is_done, commit_idx, num_candidates
-                                );
-                                if is_done {
-                                    break;
-                                }
-                                // Check cancellation before waiting to avoid getting stuck
-                                if cancelled.is_cancelled() {
-                                    debug!("Worker {} cancelled while waiting for work", worker_id);
-                                    break;
-                                }
-                                scheduler.wait_for_work();
+                            scheduler.finish_validation(txn_idx, aborted)
+                        } else {
+                            task
+                        };
+                        if task.is_none() {
+                            // Get next task from Block-STM scheduler
+                            task = scheduler.next_task();
+                            if task.is_none() {
+                                std::thread::sleep(std::time::Duration::from_millis(100));
                             }
-                            Task::Done => {
-                                break;
-                            }
+                            info!("Worker thread {} got task {:?}", worker_id, task);
                         }
                     }
-
-                    scheduler.worker_done();
                 });
             }
         });
@@ -1179,27 +1076,11 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpLazyEvmFactory> 
 
         let mut info_guard = shared_info.lock().unwrap();
 
-        // only save up to committed_idx
-        let committed_idx = scheduler.get_commit_idx();
-        let results = results.into_iter().take(committed_idx).collect::<Vec<_>>();
-
         // Process committed transactions in order
         // Only commit transactions that Block-STM marked as Committed
         // (LimitExceeded transactions are excluded by the scheduler)
+        let mut applied_count = 0;
         for (txn_idx, result_opt) in results.into_iter().enumerate() {
-            // Check if transaction was committed (race-free check using committed_gas vector)
-            // This avoids the race between compare_exchange and status update
-            if !scheduler.is_committed(txn_idx as u32) {
-                continue;
-            }
-
-            if self.cancel.is_cancelled() {
-                *info = std::mem::take(&mut *info_guard);
-                drop(info_guard);
-                debug!("Cancellation detected, returning");
-                return Ok(Some(()));
-            }
-
             if let Some(tx_result) = result_opt {
                 // Update cumulative gas before building receipt
                 info_guard.cumulative_gas_used += tx_result.gas_used;
@@ -1263,6 +1144,7 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpLazyEvmFactory> 
                     .executed_transactions
                     .push(tx_result.tx.into_inner());
 
+                applied_count += 1;
                 trace!(
                     txn_idx = txn_idx,
                     cumulative_gas = info_guard.cumulative_gas_used,
@@ -1271,19 +1153,15 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpLazyEvmFactory> 
             }
         }
 
+        info!(
+            target: "payload_builder",
+            "Block-STM commit phase complete: applied {} of {} candidates",
+            applied_count, num_candidates
+        );
+
         // Restore info
         *info = std::mem::take(&mut *info_guard);
         drop(info_guard);
-
-        // Get scheduler stats
-        let sched_stats = scheduler.get_stats();
-        debug!(
-            target: "payload_builder",
-            total_executions = sched_stats.total_executions,
-            total_aborts = sched_stats.total_aborts,
-            total_commits = sched_stats.total_commits,
-            "Block-STM scheduler stats"
-        );
 
         // Read metrics from atomics
         let num_txs_considered = metrics

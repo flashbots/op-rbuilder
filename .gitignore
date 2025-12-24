@@ -14,3 +14,5 @@ genesis.json
 .code
 .idea
 .vscode
+.docs-cache
+*.log
