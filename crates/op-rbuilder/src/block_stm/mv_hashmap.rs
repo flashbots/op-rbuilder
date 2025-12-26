@@ -21,6 +21,17 @@ pub type WriteSet = HashSet<(EvmStateKey, EvmStateValue)>;
 
 pub type ReadSet = HashSet<(EvmStateKey, Option<Version>)>;
 
+/// Validation result with conflict details.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ValidationResult {
+    Valid,
+    Conflict {
+        key: EvmStateKey,
+        expected_version: Option<Version>,
+        actual_version: Option<Version>,
+    },
+}
+
 #[derive(Eq, PartialEq, Debug, Hash, Clone)]
 pub enum MVHashMapValue {
     // This is a write of an executed tx that was performed.
@@ -162,6 +173,44 @@ impl MVHashMap {
         true
     }
 
+    /// Validate read set and return detailed conflict information if validation fails.
+    pub fn validate_read_set_detailed(&self, txn_idx: TxnIndex) -> ValidationResult {
+        let prior_reads = self.last_read_set[txn_idx as usize].read();
+        for (location, version) in prior_reads.iter() {
+            let cur_read = self.read(location, txn_idx);
+            match cur_read {
+                ReadResult::Aborted {
+                    txn_idx: aborted_txn,
+                } => {
+                    return ValidationResult::Conflict {
+                        key: location.clone(),
+                        expected_version: *version,
+                        actual_version: Some(Version::new(aborted_txn, 0)),
+                    };
+                }
+                ReadResult::NotFound if version.is_some() => {
+                    return ValidationResult::Conflict {
+                        key: location.clone(),
+                        expected_version: *version,
+                        actual_version: None,
+                    };
+                }
+                ReadResult::Value {
+                    version: read_version,
+                    ..
+                } if Some(read_version) != *version => {
+                    return ValidationResult::Conflict {
+                        key: location.clone(),
+                        expected_version: *version,
+                        actual_version: Some(read_version),
+                    };
+                }
+                _ => continue,
+            }
+        }
+        ValidationResult::Valid
+    }
+
     pub fn convert_writes_to_estimates(&self, txn_idx: TxnIndex) {
         let prev_locations = self.last_written_locations[txn_idx as usize].read();
         for location in prev_locations.iter() {
@@ -189,5 +238,373 @@ impl MVHashMap {
             }
         }
         snapshot
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy_primitives::{Address, U256};
+    use std::{sync::Arc, thread};
+
+    fn make_storage_key(slot: u64) -> EvmStateKey {
+        EvmStateKey::Storage(Address::ZERO, U256::from(slot))
+    }
+
+    fn make_storage_value(val: u64) -> EvmStateValue {
+        EvmStateValue::Storage(U256::from(val))
+    }
+
+    #[test]
+    fn test_basic_write_and_read() {
+        let mv = MVHashMap::new(3);
+        let key = make_storage_key(0);
+        let value = make_storage_value(100);
+
+        let mut write_set = WriteSet::new();
+        write_set.insert((key.clone(), value.clone()));
+
+        mv.apply_write_set(0, 0, &write_set);
+
+        // Transaction 1 should see tx 0's write
+        match mv.read(&key, 1) {
+            ReadResult::Value {
+                value: v,
+                version: ver,
+            } => {
+                assert_eq!(v, value);
+                assert_eq!(ver.txn_idx, 0);
+            }
+            _ => panic!("Expected Value result"),
+        }
+
+        // Transaction 0 should not see its own write
+        assert!(matches!(mv.read(&key, 0), ReadResult::NotFound));
+    }
+
+    #[test]
+    fn test_read_highest_lower_version() {
+        let mv = MVHashMap::new(5);
+        let key = make_storage_key(0);
+
+        // Tx 0 writes value 100
+        let mut ws0 = WriteSet::new();
+        ws0.insert((key.clone(), make_storage_value(100)));
+        mv.apply_write_set(0, 0, &ws0);
+
+        // Tx 2 writes value 200
+        let mut ws2 = WriteSet::new();
+        ws2.insert((key.clone(), make_storage_value(200)));
+        mv.apply_write_set(2, 0, &ws2);
+
+        // Tx 4 should see tx 2's write (highest < 4)
+        match mv.read(&key, 4) {
+            ReadResult::Value { value, version } => {
+                assert_eq!(value, make_storage_value(200));
+                assert_eq!(version.txn_idx, 2);
+            }
+            _ => panic!("Expected Value result"),
+        }
+
+        // Tx 1 should see tx 0's write
+        match mv.read(&key, 1) {
+            ReadResult::Value { value, version } => {
+                assert_eq!(value, make_storage_value(100));
+                assert_eq!(version.txn_idx, 0);
+            }
+            _ => panic!("Expected Value result"),
+        }
+    }
+
+    #[test]
+    fn test_convert_to_estimate() {
+        let mv = MVHashMap::new(3);
+        let key = make_storage_key(0);
+
+        let mut write_set = WriteSet::new();
+        write_set.insert((key.clone(), make_storage_value(100)));
+
+        let read_set = ReadSet::new();
+        mv.record(Version::new(0, 0), &read_set, &write_set);
+
+        // Convert tx 0's writes to estimates (simulating abort)
+        mv.convert_writes_to_estimates(0);
+
+        // Tx 1 should now see Aborted
+        match mv.read(&key, 1) {
+            ReadResult::Aborted { txn_idx } => assert_eq!(txn_idx, 0),
+            _ => panic!("Expected Aborted result"),
+        }
+    }
+
+    #[test]
+    fn test_validation_detects_changed_version() {
+        let mv = MVHashMap::new(3);
+        let key = make_storage_key(0);
+
+        // Tx 0 writes
+        let mut ws0 = WriteSet::new();
+        ws0.insert((key.clone(), make_storage_value(100)));
+        mv.record(Version::new(0, 0), &ReadSet::new(), &ws0);
+
+        // Tx 1 reads from tx 0's write
+        let mut rs1 = ReadSet::new();
+        rs1.insert((key.clone(), Some(Version::new(0, 0))));
+        mv.record(Version::new(1, 0), &rs1, &WriteSet::new());
+
+        // Validation should pass
+        assert!(mv.validate_read_set(1));
+
+        // Now tx 0 re-executes with incarnation 1 and writes different value
+        let mut ws0_new = WriteSet::new();
+        ws0_new.insert((key.clone(), make_storage_value(200)));
+        mv.record(Version::new(0, 1), &ReadSet::new(), &ws0_new);
+
+        // Tx 1's validation should fail (version changed from (0,0) to (0,1))
+        assert!(!mv.validate_read_set(1));
+    }
+
+    #[test]
+    fn test_validation_detects_aborted_dependency() {
+        let mv = MVHashMap::new(3);
+        let key = make_storage_key(0);
+
+        // Tx 0 writes
+        let mut ws0 = WriteSet::new();
+        ws0.insert((key.clone(), make_storage_value(100)));
+        mv.record(Version::new(0, 0), &ReadSet::new(), &ws0);
+
+        // Tx 1 reads from tx 0
+        let mut rs1 = ReadSet::new();
+        rs1.insert((key.clone(), Some(Version::new(0, 0))));
+        mv.record(Version::new(1, 0), &rs1, &WriteSet::new());
+
+        // Convert tx 0 to estimate (abort)
+        mv.convert_writes_to_estimates(0);
+
+        // Tx 1's validation should fail
+        assert!(!mv.validate_read_set(1));
+    }
+
+    #[test]
+    fn test_into_snapshot() {
+        let mv = MVHashMap::new(3);
+
+        // Each tx writes to a different slot
+        for i in 0..3 {
+            let mut ws = WriteSet::new();
+            ws.insert((make_storage_key(i), make_storage_value(i * 100)));
+            mv.record(Version::new(i as u32, 0), &ReadSet::new(), &ws);
+        }
+
+        let snapshot = mv.into_snapshot();
+        assert_eq!(snapshot.len(), 3);
+        assert_eq!(
+            snapshot.get(&make_storage_key(0)),
+            Some(&make_storage_value(0))
+        );
+        assert_eq!(
+            snapshot.get(&make_storage_key(1)),
+            Some(&make_storage_value(100))
+        );
+        assert_eq!(
+            snapshot.get(&make_storage_key(2)),
+            Some(&make_storage_value(200))
+        );
+    }
+
+    // ==================== STRESS TESTS ====================
+
+    #[test]
+    fn stress_test_non_conflicting_writes() {
+        // Many transactions each writing to disjoint keys
+        let num_txns = 100;
+        let mv = Arc::new(MVHashMap::new(num_txns));
+
+        // Each transaction writes to its own unique slot
+        let handles: Vec<_> = (0..num_txns)
+            .map(|i| {
+                let mv = Arc::clone(&mv);
+                thread::spawn(move || {
+                    let mut ws = WriteSet::new();
+                    ws.insert((make_storage_key(i as u64), make_storage_value(i as u64)));
+                    mv.record(Version::new(i as u32, 0), &ReadSet::new(), &ws);
+                })
+            })
+            .collect();
+
+        for h in handles {
+            h.join().unwrap();
+        }
+
+        // All validations should pass (no conflicts)
+        for i in 0..num_txns {
+            assert!(
+                mv.validate_read_set(i as u32),
+                "Validation failed for tx {}",
+                i
+            );
+        }
+    }
+
+    #[test]
+    fn stress_test_all_conflicting_writes() {
+        // Many transactions all writing to the SAME key
+        let num_txns = 50;
+        let mv = Arc::new(MVHashMap::new(num_txns));
+        let shared_key = make_storage_key(0);
+
+        // All transactions write to the same slot
+        let handles: Vec<_> = (0..num_txns)
+            .map(|i| {
+                let mv = Arc::clone(&mv);
+                let key = shared_key.clone();
+                thread::spawn(move || {
+                    let mut ws = WriteSet::new();
+                    ws.insert((key, make_storage_value(i as u64)));
+                    mv.record(Version::new(i as u32, 0), &ReadSet::new(), &ws);
+                })
+            })
+            .collect();
+
+        for h in handles {
+            h.join().unwrap();
+        }
+
+        // Higher transactions should see lower transactions' writes
+        for i in 1..num_txns {
+            match mv.read(&shared_key, i as u32) {
+                ReadResult::Value { version, .. } => {
+                    assert!(
+                        version.txn_idx < i as u32,
+                        "Tx {} should read from lower tx, got {}",
+                        i,
+                        version.txn_idx
+                    );
+                }
+                _ => panic!("Expected Value for tx {}", i),
+            }
+        }
+    }
+
+    #[test]
+    fn stress_test_concurrent_reads_and_writes() {
+        let num_txns = 100;
+        let mv = Arc::new(MVHashMap::new(num_txns));
+
+        // First, write all values
+        for i in 0..num_txns {
+            let mut ws = WriteSet::new();
+            ws.insert((make_storage_key(i as u64), make_storage_value(i as u64)));
+            mv.record(Version::new(i as u32, 0), &ReadSet::new(), &ws);
+        }
+
+        // Concurrent reads from multiple threads
+        let handles: Vec<_> = (0..10)
+            .map(|thread_id| {
+                let mv = Arc::clone(&mv);
+                thread::spawn(move || {
+                    for i in 0..num_txns {
+                        let key = make_storage_key(i as u64);
+                        // Read from a higher tx index to see the write
+                        let result = mv.read(&key, (i + 1) as u32);
+                        assert!(
+                            matches!(result, ReadResult::Value { .. }),
+                            "Thread {} failed to read key {} from tx {}",
+                            thread_id,
+                            i,
+                            i + 1
+                        );
+                    }
+                })
+            })
+            .collect();
+
+        for h in handles {
+            h.join().unwrap();
+        }
+    }
+
+    #[test]
+    fn stress_test_mixed_read_write_patterns() {
+        use rand::prelude::*;
+
+        let num_txns = 50;
+        let num_keys = 10;
+        let mv = Arc::new(MVHashMap::new(num_txns));
+
+        // Each transaction writes to a random subset of keys
+        let handles: Vec<_> = (0..num_txns)
+            .map(|i| {
+                let mv = Arc::clone(&mv);
+                thread::spawn(move || {
+                    let mut rng = rand::rng();
+                    let mut ws = WriteSet::new();
+
+                    // Write to 1-3 random keys
+                    let num_writes = rng.random_range(1..=3);
+                    for _ in 0..num_writes {
+                        let key_idx = rng.random_range(0..num_keys);
+                        ws.insert((make_storage_key(key_idx), make_storage_value(i as u64)));
+                    }
+
+                    mv.record(Version::new(i as u32, 0), &ReadSet::new(), &ws);
+                })
+            })
+            .collect();
+
+        for h in handles {
+            h.join().unwrap();
+        }
+
+        // Verify the map is in consistent state
+        for key_idx in 0..num_keys {
+            let key = make_storage_key(key_idx);
+            let result = mv.read(&key, num_txns as u32);
+            // Either found or not found is valid
+            assert!(matches!(
+                result,
+                ReadResult::Value { .. } | ReadResult::NotFound
+            ));
+        }
+    }
+
+    #[test]
+    fn stress_test_validation_after_reexecution() {
+        // Simulate re-execution scenario with increasing incarnations
+        let num_txns = 20;
+        let mv = MVHashMap::new(num_txns);
+        let shared_key = make_storage_key(0);
+
+        // All txs write to same key initially
+        for i in 0..num_txns {
+            let mut ws = WriteSet::new();
+            ws.insert((shared_key.clone(), make_storage_value(i as u64)));
+            mv.record(Version::new(i as u32, 0), &ReadSet::new(), &ws);
+        }
+
+        // Tx 5 reads from tx 4
+        let mut rs5 = ReadSet::new();
+        rs5.insert((shared_key.clone(), Some(Version::new(4, 0))));
+        *mv.last_read_set[5].write() = rs5;
+
+        // Validation should pass
+        assert!(mv.validate_read_set(5));
+
+        // Now tx 4 re-executes with incarnation 1
+        let mut ws4 = WriteSet::new();
+        ws4.insert((shared_key.clone(), make_storage_value(400)));
+        mv.record(Version::new(4, 1), &ReadSet::new(), &ws4);
+
+        // Tx 5's validation should fail (dependency changed)
+        assert!(!mv.validate_read_set(5));
+
+        // Update tx 5's read set to reflect new version
+        let mut rs5_updated = ReadSet::new();
+        rs5_updated.insert((shared_key.clone(), Some(Version::new(4, 1))));
+        *mv.last_read_set[5].write() = rs5_updated;
+
+        // Now validation should pass
+        assert!(mv.validate_read_set(5));
     }
 }

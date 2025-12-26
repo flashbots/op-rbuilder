@@ -420,7 +420,7 @@ impl<Txs: PayloadTxsBounds + Send> OpBuilder<'_, Txs> {
                 .transaction_pool_fetch_gauge
                 .set(transaction_pool_fetch_time);
 
-            let ctx = ctx.clone().into_lazy_evm();
+            // let ctx = ctx.clone().into_lazy_evm();
             if ctx
                 .execute_best_transactions_parallel(
                     &mut info,

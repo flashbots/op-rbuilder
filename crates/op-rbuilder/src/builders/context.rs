@@ -34,7 +34,7 @@ use reth_optimism_txpool::{
 use reth_payload_builder::PayloadId;
 use reth_primitives::SealedHeader;
 use reth_primitives_traits::{InMemorySize, Recovered, SignedTransaction};
-use reth_revm::{State, context::Block};
+use reth_revm::{State, context::Block, db::WrapDatabaseRef};
 use reth_transaction_pool::{BestTransactionsAttributes, PoolTransaction};
 use revm::{
     DatabaseCommit, DatabaseRef,
@@ -46,7 +46,7 @@ use revm::{
 use std::{
     collections::hash_map::Entry,
     sync::{Arc, Mutex},
-    thread::{self, sleep},
+    thread,
     time::Instant,
 };
 use tokio_util::sync::CancellationToken;
@@ -54,8 +54,9 @@ use tracing::{Span, debug, info, trace, warn};
 
 use crate::{
     block_stm::{
-        EvmStateKey, EvmStateValue, MVHashMap, Scheduler, Version, VersionedDatabase,
-        VersionedDbError, evm::OpLazyEvmFactory, mv_hashmap::WriteSet, scheduler::Task,
+        EvmStateKey, EvmStateValue, ExecutionStatus, MVHashMap, Scheduler, ValidationResult,
+        Version, VersionedDatabase, VersionedDbError, evm::OpLazyEvmFactory,
+        mv_hashmap::WriteSet, scheduler::Task,
     },
     gas_limiter::AddressGasLimiter,
     metrics::OpRBuilderMetrics,
@@ -706,7 +707,7 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpEvmFactory> {
     }
 }
 
-impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpLazyEvmFactory> {
+impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpEvmFactory> {
     /// Executes the given best transactions in parallel using Block-STM.
     ///
     /// This implementation uses Block-STM for true parallel execution:
@@ -805,7 +806,7 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpLazyEvmFactory> 
                 let candidate_txs = &candidate_txs;
                 // let address_gas_limiter = &self.address_gas_limiter;
                 // let max_gas_per_txn = self.max_gas_per_txn;
-                // let cancelled = &self.cancel;
+                let cancel = &self.cancel;
                 let evm_env = &self.evm_env;
                 let base_db = db_ref; // Shared reference for reads
                 let worker_parent_span = worker_parent_span.clone();
@@ -822,14 +823,12 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpLazyEvmFactory> 
 
                     let mut task = None;
 
-                    while !scheduler.done() {
-                        info!("Worker thread {} not done", worker_id);
+                    while !scheduler.done() && !cancel.is_cancelled() {
                         task = if let Some(Task::Execute { version }) = task {
                             let Version {
                                 txn_idx,
                                 incarnation,
                             } = version;
-                            info!("Worker thread {} got task {:?}", worker_id, task);
                             let _tx_span = tracing::info_span!(
                                 "block_stm_tx_execute",
                                 txn_idx = txn_idx,
@@ -854,17 +853,17 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpLazyEvmFactory> 
                             );
 
                             // Create State wrapper for EVM execution
-                            let tx_state = State::builder().with_database(versioned_db).build();
+                            let mut tx_state = State::builder().with_database(versioned_db).build();
 
-                            // Wrap State with LazyDatabaseWrapper to support lazy balance increments
-                            let mut lazy_state =
-                                crate::block_stm::evm::LazyDatabaseWrapper::new(tx_state);
+                            // // Wrap State with LazyDatabaseWrapper to support lazy balance increments
+                            // let mut lazy_state =
+                            //     crate::block_stm::evm::LazyDatabaseWrapper::new(tx_state);
 
                             // Execute transaction with versioned state
                             let exec_result = {
-                                let lazy_factory = crate::block_stm::evm::OpLazyEvmFactory;
+                                // let lazy_factory = crate::block_stm::evm::OpLazyEvmFactory;
                                 let mut evm =
-                                    lazy_factory.create_evm(&mut lazy_state, evm_env.clone());
+                                    self.evm_config.evm_with_env(&mut tx_state, evm_env.clone());
                                 evm.transact(&tx)
                             };
 
@@ -880,10 +879,6 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpLazyEvmFactory> 
                                 }
                                 Err(error) => {
                                     warn!("Worker thread {} got error {:?}", worker_id, error);
-                                    shared_best_txs
-                                        .lock()
-                                        .unwrap()
-                                        .mark_invalid(tx.signer(), tx.nonce());
                                     continue;
                                 }
                             };
@@ -893,9 +888,9 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpLazyEvmFactory> 
 
                             // Build write set from state changes
                             let mut write_set: WriteSet = WriteSet::new();
-                            let db_mut = lazy_state.inner_mut();
-                            let read_set = db_mut.database.take_read_set();
-                            let captured_reads = db_mut.database.take_captured_reads();
+                            let db_mut = &mut tx_state.database;
+                            let read_set = db_mut.take_read_set();
+                            let captured_reads = db_mut.take_captured_reads();
 
                             // Add writes only for values that actually changed
                             for (addr, account) in state.iter() {
@@ -958,7 +953,6 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpLazyEvmFactory> 
                                 }
                             }
 
-                            let (_, pending_balance_increments) = lazy_state.into_inner();
 
                             // // Add pending balance increments as deltas (commutative fee accumulation)
                             // // These are tracked separately to allow parallel accumulation
@@ -983,7 +977,7 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpLazyEvmFactory> 
                                     tx,
                                     state: StateWithIncrements {
                                         loaded_state: state,
-                                        pending_balance_increments,
+                                        pending_balance_increments: Default::default(),
                                     },
                                     success,
                                     logs,
@@ -1036,19 +1030,37 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpLazyEvmFactory> 
                                 },
                         }) = task
                         {
-                            info!("Worker thread {} got task {:?}", worker_id, task);
                             let _tx_span = tracing::info_span!(
                                 "block_stm_tx_validate",
                                 txn_idx = txn_idx,
                                 incarnation = incarnation
                             )
                             .entered();
-                            let read_set_valid = mv_hashmap.validate_read_set(txn_idx);
-                            info!("read set valid: {}", read_set_valid);
+                            
+                            let validation_result = mv_hashmap.validate_read_set_detailed(txn_idx);
+                            let read_set_valid = matches!(validation_result, ValidationResult::Valid);
+                            
                             let aborted = !read_set_valid
                                 && scheduler.try_validation_abort(txn_idx, incarnation);
-                            info!("aborted: {}", aborted);
+                            
                             if aborted {
+                                // Log conflict details at warn level
+                                if let ValidationResult::Conflict {
+                                    key,
+                                    expected_version,
+                                    actual_version,
+                                } = validation_result
+                                {
+                                    warn!(
+                                        worker_id = worker_id,
+                                        txn_idx = txn_idx,
+                                        incarnation = incarnation,
+                                        key = %key,
+                                        expected_version = ?expected_version,
+                                        actual_version = ?actual_version,
+                                        "Block-STM conflict detected: transaction aborted due to stale read"
+                                    );
+                                }
                                 mv_hashmap.convert_writes_to_estimates(txn_idx);
                             }
                             scheduler.finish_validation(txn_idx, aborted)
@@ -1061,12 +1073,18 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpLazyEvmFactory> 
                             if task.is_none() {
                                 std::thread::sleep(std::time::Duration::from_millis(100));
                             }
-                            info!("Worker thread {} got task {:?}", worker_id, task);
                         }
                     }
                 });
             }
         });
+
+        // Calculate the safe commit point: longest prefix of fully validated transactions.
+        // A transaction with status `Executed` has been both executed AND validated
+        // (if validation failed, it would be re-executing with status ReadyToExecute/Executing).
+        let safe_commit_point = (0..scheduler.num_txns())
+            .take_while(|&i| scheduler.get_status(i as u32) == ExecutionStatus::Executed)
+            .count();
 
         // Commit phase: apply results in order
         let results = Arc::try_unwrap(execution_results)
@@ -1076,11 +1094,10 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpLazyEvmFactory> 
 
         let mut info_guard = shared_info.lock().unwrap();
 
-        // Process committed transactions in order
-        // Only commit transactions that Block-STM marked as Committed
-        // (LimitExceeded transactions are excluded by the scheduler)
+        // Process committed transactions in order up to the safe commit point.
+        // When cancelled, only transactions [0..safe_commit_point] are guaranteed valid.
         let mut applied_count = 0;
-        for (txn_idx, result_opt) in results.into_iter().enumerate() {
+        for (txn_idx, result_opt) in results.into_iter().take(safe_commit_point).enumerate() {
             if let Some(tx_result) = result_opt {
                 // Update cumulative gas before building receipt
                 info_guard.cumulative_gas_used += tx_result.gas_used;
@@ -1155,8 +1172,8 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpLazyEvmFactory> 
 
         info!(
             target: "payload_builder",
-            "Block-STM commit phase complete: applied {} of {} candidates",
-            applied_count, num_candidates
+            "Block-STM commit phase complete: applied {} of {} candidates (safe_commit_point={})",
+            applied_count, num_candidates, safe_commit_point
         );
 
         // Restore info

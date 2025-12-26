@@ -691,7 +691,7 @@ where
 
         // Use parallel execution only when parallel_threads > 1
         if ctx.parallel_threads > 1 {
-            let ctx = ctx.clone().into_lazy_evm();
+            // let ctx = ctx.clone().into_lazy_evm();
             ctx.execute_best_transactions_parallel(
                 info,
                 state,
