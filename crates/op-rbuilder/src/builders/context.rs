@@ -54,9 +54,9 @@ use tracing::{Span, debug, info, trace, warn};
 
 use crate::{
     block_stm::{
-        EvmStateKey, EvmStateValue, ExecutionStatus, MVHashMap, Scheduler, ValidationResult,
-        Version, VersionedDatabase, VersionedDbError, evm::OpLazyEvmFactory,
-        mv_hashmap::WriteSet, scheduler::Task,
+        EvmStateKey, EvmStateValue, ExecutionStatus, MVHashMap, Scheduler, Task, ValidationResult,
+        Version, VersionedDatabase, VersionedDbError, evm::OpLazyEvmFactory, executor::Executor,
+        mv_hashmap::WriteSet,
     },
     gas_limiter::AddressGasLimiter,
     metrics::OpRBuilderMetrics,
@@ -768,533 +768,108 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpEvmFactory> {
             num_candidates = num_candidates,
         );
 
-        // Initialize Block-STM components
-        let scheduler = Arc::new(Scheduler::new(num_candidates));
-        let mv_hashmap = Arc::new(MVHashMap::new(num_candidates));
-
-        // Shared code cache for contracts deployed within this block
-        // This allows later transactions to see bytecode from contracts deployed by earlier txs
-        let code_cache = crate::block_stm::SharedCodeCache::default();
-
-        // Store execution results per transaction (for deferred commit)
-        let execution_results: Arc<Mutex<Vec<Option<TxExecutionResult>>>> =
-            Arc::new(Mutex::new(vec![None; num_candidates]));
-
-        // Shared state (info still needs mutex for cumulative values, best_txs for mark_invalid)
-        let shared_info = Arc::new(Mutex::new(std::mem::take(info)));
-        let shared_best_txs = Arc::new(Mutex::new(best_txs));
-        let metrics = Arc::new(ParallelExecutionMetrics::new());
-
         // Shared reference to database for reads (workers only need DatabaseRef)
         let db_ref: &State<DB> = &*db;
 
         // Capture current span for cross-thread propagation
         let worker_parent_span = Span::current();
+        let (results, shared_code_cache) = {
+            let mut executor = Executor::new(num_threads, candidate_txs, &mut *db);
 
-        // Spawn worker threads using Block-STM scheduler
-        thread::scope(|s| {
-            let num_threads = num_threads.min(num_candidates);
+            // Spawn worker threads using Block-STM scheduler
+            thread::scope(|s| {
+                executor.execute_transactions_parallel(
+                    self.base_fee(),
+                    self.cancel.clone(),
+                    |tx, state| {
+                        // Create EVM with VersionedDatabase
+                        let mut evm = self.evm_config.evm_with_env(state, self.evm_env.clone());
 
-            for worker_id in 0..num_threads {
-                let scheduler = Arc::clone(&scheduler);
-                let mv_hashmap = Arc::clone(&mv_hashmap);
-                let code_cache = Arc::clone(&code_cache);
-                let execution_results = Arc::clone(&execution_results);
-                let _shared_info = Arc::clone(&shared_info);
-                let shared_best_txs = Arc::clone(&shared_best_txs);
-                let metrics = Arc::clone(&metrics);
-                let candidate_txs = &candidate_txs;
-                // let address_gas_limiter = &self.address_gas_limiter;
-                // let max_gas_per_txn = self.max_gas_per_txn;
-                let cancel = &self.cancel;
-                let evm_env = &self.evm_env;
-                let base_db = db_ref; // Shared reference for reads
-                let worker_parent_span = worker_parent_span.clone();
+                        // Execute transaction
+                        evm.transact(&tx)
+                    },
+                );
+            });
 
-                s.spawn(move || {
-                    debug!("Spawning worker thread {}", worker_id);
-                    // Create worker span as child of parent (linked to build_flashblock)
-                    let _worker_span = tracing::info_span!(
-                        parent: &worker_parent_span,
-                        "block_stm_worker",
-                        worker_id = worker_id
-                    )
-                    .entered();
-
-                    let mut task = None;
-
-                    while !scheduler.done() && !cancel.is_cancelled() {
-                        task = if let Some(Task::Execute { version }) = task {
-                            let Version {
-                                txn_idx,
-                                incarnation,
-                            } = version;
-                            let _tx_span = tracing::info_span!(
-                                "block_stm_tx_execute",
-                                txn_idx = txn_idx,
-                                incarnation = incarnation
-                            )
-                            .entered();
-
-                            metrics
-                                .num_txs_considered
-                                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-
-                            let pool_tx = &candidate_txs[txn_idx as usize];
-                            let tx_da_size = pool_tx.estimated_da_size();
-                            let tx = pool_tx.clone().into_consensus();
-
-                            // Routes reads through MVHashMap, falls back to base state
-                            let versioned_db = VersionedDatabase::new(
-                                txn_idx,
-                                &mv_hashmap,
-                                base_db,
-                                Arc::clone(&code_cache),
-                            );
-
-                            // Create State wrapper for EVM execution
-                            let mut tx_state = State::builder().with_database(versioned_db).build();
-
-                            // // Wrap State with LazyDatabaseWrapper to support lazy balance increments
-                            // let mut lazy_state =
-                            //     crate::block_stm::evm::LazyDatabaseWrapper::new(tx_state);
-
-                            // Execute transaction with versioned state
-                            let exec_result = {
-                                // let lazy_factory = crate::block_stm::evm::OpLazyEvmFactory;
-                                let mut evm =
-                                    self.evm_config.evm_with_env(&mut tx_state, evm_env.clone());
-                                evm.transact(&tx)
-                            };
-
-                            let exec_result = match exec_result {
-                                Ok(res) => res,
-                                Err(EVMError::Database(VersionedDbError::ReadAborted {
-                                    aborted_txn_idx,
-                                })) => {
-                                    let _is_aborted =
-                                        scheduler.add_dependency(txn_idx, aborted_txn_idx);
-                                    // TODO: diff from paper - this can be retried immediately if not aborted
-                                    continue;
-                                }
-                                Err(error) => {
-                                    warn!("Worker thread {} got error {:?}", worker_id, error);
-                                    continue;
-                                }
-                            };
-
-                            let ResultAndState { result, state } = exec_result;
-                            let gas_used = result.gas_used();
-
-                            // Build write set from state changes
-                            let mut write_set: WriteSet = WriteSet::new();
-                            let db_mut = &mut tx_state.database;
-                            let read_set = db_mut.take_read_set();
-                            let captured_reads = db_mut.take_captured_reads();
-
-                            // Add writes only for values that actually changed
-                            for (addr, account) in state.iter() {
-                                debug!("Account touched: {}", addr);
-                                if account.is_touched() {
-                                    // Get original values from captured reads (if available)
-                                    let original_balance =
-                                        captured_reads.get(&EvmStateKey::Balance(*addr));
-                                    let original_nonce =
-                                        captured_reads.get(&EvmStateKey::Nonce(*addr));
-                                    let original_code_hash =
-                                        captured_reads.get(&EvmStateKey::CodeHash(*addr));
-
-                                    // Only write balance if it changed
-                                    if original_balance
-                                        != Some(&EvmStateValue::Balance(account.info.balance))
-                                    {
-                                        write_set.insert((
-                                            EvmStateKey::Balance(*addr),
-                                            EvmStateValue::Balance(account.info.balance),
-                                        ));
-                                    }
-
-                                    // Only write nonce if it changed
-                                    if original_nonce
-                                        != Some(&EvmStateValue::Nonce(account.info.nonce))
-                                    {
-                                        write_set.insert((
-                                            EvmStateKey::Nonce(*addr),
-                                            EvmStateValue::Nonce(account.info.nonce),
-                                        ));
-                                    }
-
-                                    // Only write code hash if it changed
-                                    if original_code_hash
-                                        != Some(&EvmStateValue::CodeHash(account.info.code_hash))
-                                    {
-                                        write_set.insert((
-                                            EvmStateKey::CodeHash(*addr),
-                                            EvmStateValue::CodeHash(account.info.code_hash),
-                                        ));
-
-                                        // Store bytecode in shared cache for lookup by later transactions
-                                        // This is critical: when a contract is deployed, its bytecode must be
-                                        // accessible to subsequent transactions via code_by_hash_ref()
-                                        if let Some(ref code) = account.info.code {
-                                            code_cache.insert(account.info.code_hash, code.clone());
-                                        }
-                                    }
-
-                                    // Storage slots already have is_changed() check
-                                    for (slot, value) in account.storage.iter() {
-                                        if value.is_changed() {
-                                            write_set.insert((
-                                                EvmStateKey::Storage(*addr, *slot),
-                                                EvmStateValue::Storage(value.present_value),
-                                            ));
-                                        }
-                                    }
-                                }
-                            }
-
-
-                            // // Add pending balance increments as deltas (commutative fee accumulation)
-                            // // These are tracked separately to allow parallel accumulation
-                            // for (addr, delta) in pending_balance_increments.iter() {
-                            //     write_set.add_balance_delta(*addr, *delta);
-                            // }
-
-                            // Get captured reads for validation
-
-                            // Store execution result for commit phase
-                            let miner_fee = tx
-                                .effective_tip_per_gas(base_fee)
-                                .expect("fee is always valid");
-
-                            // Extract success and logs from result
-                            let success = result.is_success();
-                            let logs = result.into_logs();
-
-                            {
-                                let mut results = execution_results.lock().unwrap();
-                                results[txn_idx as usize] = Some(TxExecutionResult {
-                                    tx,
-                                    state: StateWithIncrements {
-                                        loaded_state: state,
-                                        pending_balance_increments: Default::default(),
-                                    },
-                                    success,
-                                    logs,
-                                    gas_used,
-                                    tx_da_size,
-                                    miner_fee,
-                                });
-                            }
-
-                            // Update metrics
-                            metrics
-                                .num_txs_simulated
-                                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-
-                            if success {
-                                metrics
-                                    .num_txs_simulated_success
-                                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                            } else {
-                                metrics
-                                    .num_txs_simulated_fail
-                                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                                metrics.reverted_gas_used.fetch_add(
-                                    gas_used as i32,
-                                    std::sync::atomic::Ordering::Relaxed,
-                                );
-                            }
-
-                            let wrote_new_path = mv_hashmap.record(version, &read_set, &write_set);
-
-                            let next_task =
-                                scheduler.finish_execution(txn_idx, incarnation, wrote_new_path);
-                            trace!(
-                                worker_id = worker_id,
-                                txn_idx = txn_idx,
-                                gas_used = gas_used,
-                                success = success,
-                                "Transaction execution complete"
-                            );
-
-                            next_task
-                        } else {
-                            task
-                        };
-                        task = if let Some(Task::Validate {
-                            version:
-                                Version {
-                                    txn_idx,
-                                    incarnation,
-                                },
-                        }) = task
-                        {
-                            let _tx_span = tracing::info_span!(
-                                "block_stm_tx_validate",
-                                txn_idx = txn_idx,
-                                incarnation = incarnation
-                            )
-                            .entered();
-                            
-                            let validation_result = mv_hashmap.validate_read_set_detailed(txn_idx);
-                            let read_set_valid = matches!(validation_result, ValidationResult::Valid);
-                            
-                            let aborted = !read_set_valid
-                                && scheduler.try_validation_abort(txn_idx, incarnation);
-                            
-                            if aborted {
-                                // Log conflict details at warn level
-                                if let ValidationResult::Conflict {
-                                    key,
-                                    expected_version,
-                                    actual_version,
-                                } = validation_result
-                                {
-                                    warn!(
-                                        worker_id = worker_id,
-                                        txn_idx = txn_idx,
-                                        incarnation = incarnation,
-                                        key = %key,
-                                        expected_version = ?expected_version,
-                                        actual_version = ?actual_version,
-                                        "Block-STM conflict detected: transaction aborted due to stale read"
-                                    );
-                                }
-                                mv_hashmap.convert_writes_to_estimates(txn_idx);
-                            }
-                            scheduler.finish_validation(txn_idx, aborted)
-                        } else {
-                            task
-                        };
-                        if task.is_none() {
-                            // Get next task from Block-STM scheduler
-                            task = scheduler.next_task();
-                            if task.is_none() {
-                                std::thread::sleep(std::time::Duration::from_millis(100));
-                            }
-                        }
-                    }
-                });
-            }
-        });
-
-        // Calculate the safe commit point: longest prefix of fully validated transactions.
-        // A transaction with status `Executed` has been both executed AND validated
-        // (if validation failed, it would be re-executing with status ReadyToExecute/Executing).
-        let safe_commit_point = (0..scheduler.num_txns())
-            .take_while(|&i| scheduler.get_status(i as u32) == ExecutionStatus::Executed)
-            .count();
-
-        // Commit phase: apply results in order
-        let results = Arc::try_unwrap(execution_results)
-            .map_err(|_| PayloadBuilderError::Other("Failed to unwrap execution results".into()))?
-            .into_inner()
-            .unwrap();
-
-        let mut info_guard = shared_info.lock().unwrap();
-
+            executor.try_into_committed_results()?
+        };
         // Process committed transactions in order up to the safe commit point.
         // When cancelled, only transactions [0..safe_commit_point] are guaranteed valid.
         let mut applied_count = 0;
-        for (txn_idx, result_opt) in results.into_iter().take(safe_commit_point).enumerate() {
-            if let Some(tx_result) = result_opt {
-                // Update cumulative gas before building receipt
-                info_guard.cumulative_gas_used += tx_result.gas_used;
-                info_guard.cumulative_da_bytes_used += tx_result.tx_da_size;
-                info_guard.total_fees +=
-                    U256::from(tx_result.miner_fee) * U256::from(tx_result.gas_used);
+        let num_results = results.len();
+        for tx_result in results {
+            // Update cumulative gas before building receipt
+            info.cumulative_gas_used += tx_result.gas_used;
+            info.cumulative_da_bytes_used += tx_result.tx_da_size;
+            info.total_fees += U256::from(tx_result.miner_fee) * U256::from(tx_result.gas_used);
 
-                // Build receipt with correct cumulative gas
-                let receipt = alloy_consensus::Receipt {
-                    status: Eip658Value::Eip658(tx_result.success),
-                    cumulative_gas_used: info_guard.cumulative_gas_used,
-                    logs: tx_result.logs,
-                };
+            // Build receipt with correct cumulative gas
+            let receipt = alloy_consensus::Receipt {
+                status: Eip658Value::Eip658(tx_result.success),
+                cumulative_gas_used: info.cumulative_gas_used,
+                logs: tx_result.logs,
+            };
 
-                // Build OpReceipt based on transaction type
-                let op_receipt = match tx_result.tx.tx_type() {
-                    OpTxType::Legacy => OpReceipt::Legacy(receipt),
-                    OpTxType::Eip2930 => OpReceipt::Eip2930(receipt),
-                    OpTxType::Eip1559 => OpReceipt::Eip1559(receipt),
-                    OpTxType::Eip7702 => OpReceipt::Eip7702(receipt),
-                    OpTxType::Deposit => {
-                        // Deposits shouldn't come from the pool, but handle gracefully
-                        OpReceipt::Deposit(OpDepositReceipt {
-                            inner: receipt,
-                            deposit_nonce: None,
-                            deposit_receipt_version: None,
-                        })
-                    }
-                };
-                info_guard.receipts.push(op_receipt);
-
-                // Load accounts into cache before committing
-                // (State requires accounts to be in cache before applying changes)
-                // Note: LazyEvmState has both loaded_state and pending_balance_increments
-                for address in tx_result.state.loaded_state.keys() {
-                    let _ = db.load_cache_account(*address);
+            // Build OpReceipt based on transaction type
+            let op_receipt = match tx_result.tx.tx_type() {
+                OpTxType::Legacy => OpReceipt::Legacy(receipt),
+                OpTxType::Eip2930 => OpReceipt::Eip2930(receipt),
+                OpTxType::Eip1559 => OpReceipt::Eip1559(receipt),
+                OpTxType::Eip7702 => OpReceipt::Eip7702(receipt),
+                OpTxType::Deposit => {
+                    // Deposits shouldn't come from the pool, but handle gracefully
+                    OpReceipt::Deposit(OpDepositReceipt {
+                        inner: receipt,
+                        deposit_nonce: None,
+                        deposit_receipt_version: None,
+                    })
                 }
-                for address in tx_result.state.pending_balance_increments.keys() {
-                    let _ = db.load_cache_account(*address);
-                }
+            };
+            info.receipts.push(op_receipt);
 
-                let mut resolved_state = tx_result
-                    .state
-                    .resolve_state(db)
-                    .map_err(|e| PayloadBuilderError::Other(e.to_string().into()))?;
-
-                // Populate code field from shared cache for newly deployed contracts
-                // Without this, account.info.code is None and won't be stored in State.cache.contracts
-                for (_addr, account) in resolved_state.iter_mut() {
-                    if let Some(code) = code_cache.get(&account.info.code_hash) {
-                        account.info.code = Some(code.clone());
-                    }
-                }
-
-                // Commit resolved state to actual DB
-                db.commit(resolved_state);
-
-                // Record transaction
-                info_guard.executed_senders.push(tx_result.tx.signer());
-                info_guard
-                    .executed_transactions
-                    .push(tx_result.tx.into_inner());
-
-                applied_count += 1;
-                trace!(
-                    txn_idx = txn_idx,
-                    cumulative_gas = info_guard.cumulative_gas_used,
-                    "Committed transaction"
-                );
+            // Load accounts into cache before committing
+            // (State requires accounts to be in cache before applying changes)
+            // Note: LazyEvmState has both loaded_state and pending_balance_increments
+            for address in tx_result.state.loaded_state.keys() {
+                let _ = db.load_cache_account(*address);
             }
+            for address in tx_result.state.pending_balance_increments.keys() {
+                let _ = db.load_cache_account(*address);
+            }
+
+            let mut resolved_state = tx_result
+                .state
+                .resolve_state(db)
+                .map_err(|e| PayloadBuilderError::Other(e.to_string().into()))?;
+
+            // Populate code field from shared cache for newly deployed contracts
+            // Without this, account.info.code is None and won't be stored in State.cache.contracts
+            for (_addr, account) in resolved_state.iter_mut() {
+                if let Some(code) = shared_code_cache.get(&account.info.code_hash) {
+                    account.info.code = Some(code.clone());
+                }
+            }
+
+            // Commit resolved state to actual DB
+            db.commit(resolved_state);
+
+            // Record transaction
+            info.executed_senders.push(tx_result.tx.signer());
+            info.executed_transactions.push(tx_result.tx.into_inner());
+
+            applied_count += 1;
+            trace!(
+                cumulative_gas = info.cumulative_gas_used,
+                "Committed transaction"
+            );
         }
 
         info!(
             target: "payload_builder",
             "Block-STM commit phase complete: applied {} of {} candidates (safe_commit_point={})",
-            applied_count, num_candidates, safe_commit_point
-        );
-
-        // Restore info
-        *info = std::mem::take(&mut *info_guard);
-        drop(info_guard);
-
-        // Read metrics from atomics
-        let num_txs_considered = metrics
-            .num_txs_considered
-            .load(std::sync::atomic::Ordering::Relaxed);
-        let num_txs_simulated = metrics
-            .num_txs_simulated
-            .load(std::sync::atomic::Ordering::Relaxed);
-        let num_txs_simulated_success = metrics
-            .num_txs_simulated_success
-            .load(std::sync::atomic::Ordering::Relaxed);
-        let num_txs_simulated_fail = metrics
-            .num_txs_simulated_fail
-            .load(std::sync::atomic::Ordering::Relaxed);
-        let num_bundles_reverted = metrics
-            .num_bundles_reverted
-            .load(std::sync::atomic::Ordering::Relaxed);
-        let reverted_gas_used = metrics
-            .reverted_gas_used
-            .load(std::sync::atomic::Ordering::Relaxed);
-
-        if self.cancel.is_cancelled() {
-            debug!("Cancellation detected, returning");
-            return Ok(Some(()));
-        }
-
-        let payload_transaction_simulation_time = execute_txs_start_time.elapsed();
-        self.metrics.set_payload_builder_metrics(
-            payload_transaction_simulation_time,
-            num_txs_considered as i32,
-            num_txs_simulated as i32,
-            num_txs_simulated_success as i32,
-            num_txs_simulated_fail as i32,
-            num_bundles_reverted as i32,
-            reverted_gas_used,
-        );
-
-        debug!(
-            target: "payload_builder",
-            message = "Completed executing best transactions (Block-STM)",
-            txs_executed = num_txs_considered,
-            txs_applied = num_txs_simulated_success,
-            txs_rejected = num_txs_simulated_fail,
-            bundles_reverted = num_bundles_reverted,
+            applied_count, num_candidates, num_results
         );
 
         Ok(None)
-    }
-}
-
-#[derive(Clone)]
-struct StateWithIncrements {
-    loaded_state: EvmState,
-    pending_balance_increments: HashMap<Address, U256>,
-}
-
-impl StateWithIncrements {
-    fn resolve_state<DB: Database>(self, db: &mut DB) -> Result<EvmState, DB::Error> {
-        let mut state = self.loaded_state;
-        for (addr, delta) in self.pending_balance_increments.iter() {
-            match state.entry(*addr) {
-                Entry::Occupied(mut entry) => {
-                    entry.get_mut().info.balance = entry.get().info.balance.saturating_add(*delta);
-                }
-                Entry::Vacant(entry) => {
-                    let mut account = db.basic(*addr)?.unwrap_or_default();
-                    account.balance = account.balance.saturating_add(*delta);
-                    let mut account: Account = account.into();
-                    account.mark_touch();
-                    entry.insert(account);
-                }
-            }
-        }
-        Ok(state)
-    }
-}
-
-/// Result of executing a single transaction in parallel.
-/// Stored for deferred commit during the commit phase.
-#[derive(Clone)]
-struct TxExecutionResult {
-    /// The transaction that was executed
-    tx: Recovered<op_alloy_consensus::OpTxEnvelope>,
-    /// State changes from execution (using alloy's HashMap for compatibility)
-    state: StateWithIncrements,
-    /// Whether execution succeeded
-    success: bool,
-    /// Logs from execution (needed for receipt building)
-    logs: Vec<alloy_primitives::Log>,
-    /// Gas used
-    gas_used: u64,
-    /// DA size
-    tx_da_size: u64,
-    /// Miner fee per gas
-    miner_fee: u128,
-}
-
-/// Atomic metrics counters for parallel execution.
-struct ParallelExecutionMetrics {
-    num_txs_considered: std::sync::atomic::AtomicUsize,
-    num_txs_simulated: std::sync::atomic::AtomicUsize,
-    num_txs_simulated_success: std::sync::atomic::AtomicUsize,
-    num_txs_simulated_fail: std::sync::atomic::AtomicUsize,
-    num_bundles_reverted: std::sync::atomic::AtomicUsize,
-    reverted_gas_used: std::sync::atomic::AtomicI32,
-}
-
-impl ParallelExecutionMetrics {
-    fn new() -> Self {
-        Self {
-            num_txs_considered: std::sync::atomic::AtomicUsize::new(0),
-            num_txs_simulated: std::sync::atomic::AtomicUsize::new(0),
-            num_txs_simulated_success: std::sync::atomic::AtomicUsize::new(0),
-            num_txs_simulated_fail: std::sync::atomic::AtomicUsize::new(0),
-            num_bundles_reverted: std::sync::atomic::AtomicUsize::new(0),
-            reverted_gas_used: std::sync::atomic::AtomicI32::new(0),
-        }
     }
 }

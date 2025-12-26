@@ -18,16 +18,17 @@
 //! - [`scheduler`]: Transaction scheduling and abort management
 //! - [`executor`]: Main parallel execution orchestrator
 
-pub mod captured_reads;
 pub mod db_adapter;
 pub mod evm;
+pub mod executor;
 pub mod mv_hashmap;
 pub mod scheduler;
 pub mod types;
 
 // Re-export commonly used types
-pub use captured_reads::CapturedReads;
 pub use db_adapter::{SharedCodeCache, VersionedDatabase, VersionedDbError};
 pub use mv_hashmap::{MVHashMap, ValidationResult};
-pub use scheduler::{ExecutionStatus, Scheduler, Task};
-pub use types::{EvmStateKey, EvmStateValue, Incarnation, ReadResult, TxnIndex, Version};
+pub use scheduler::Scheduler;
+pub use types::{
+    EvmStateKey, EvmStateValue, ExecutionStatus, Incarnation, ReadResult, Task, TxnIndex, Version,
+};

@@ -1,25 +1,10 @@
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use crate::block_stm::{
-    Version,
+    ExecutionStatus, Task, Version,
     types::{Incarnation, TxnIndex},
 };
 use std::{collections::HashSet, sync::Mutex};
-
-/// Status of a transaction in the scheduler.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ExecutionStatus {
-    ReadyToExecute,
-    Executing,
-    Executed,
-    Aborting,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Task {
-    Validate { version: Version },
-    Execute { version: Version },
-}
 
 pub struct Scheduler {
     execution_idx: AtomicUsize,

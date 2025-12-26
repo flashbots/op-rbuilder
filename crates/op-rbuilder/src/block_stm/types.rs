@@ -16,6 +16,21 @@ pub type TxnIndex = u32;
 /// Starts at 0 for the first execution.
 pub type Incarnation = u32;
 
+/// Status of a transaction in the scheduler.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExecutionStatus {
+    ReadyToExecute,
+    Executing,
+    Executed,
+    Aborting,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Task {
+    Validate { version: Version },
+    Execute { version: Version },
+}
+
 /// A version uniquely identifies a specific execution of a transaction.
 /// Consists of (transaction index, incarnation number).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
