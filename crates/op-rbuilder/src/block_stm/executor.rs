@@ -18,7 +18,7 @@ use revm::{
     state::{Account, EvmState},
 };
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, trace, warn};
+use tracing::{debug, warn, Span};
 
 use crate::{
     block_stm::{
@@ -125,12 +125,6 @@ impl<
             txn_idx,
             incarnation,
         } = version;
-        let _tx_span = tracing::info_span!(
-            "block_stm_tx_execute",
-            txn_idx = txn_idx,
-            incarnation = incarnation
-        )
-        .entered();
 
         let pool_tx = &self.transactions[txn_idx as usize];
         let tx_da_size = pool_tx.estimated_da_size();
@@ -228,6 +222,16 @@ impl<
 
                 // Extract success and logs from result
                 let success = result.is_success();
+
+                if !success {
+                    warn!(
+                        target: "block_stm",
+                        txn_idx = txn_idx,
+                        incarnation = incarnation,
+                        result = ?result,
+                        "Transaction reverted"
+                    );
+                }
                 let logs = result.into_logs();
 
                 let miner_fee = tx
@@ -257,6 +261,14 @@ impl<
                 }
                 let db_mut = &mut tx_state.database;
 
+                warn!(
+                    target: "block_stm",
+                    txn_idx = txn_idx,
+                    incarnation = incarnation,
+                    aborted_txn_idx = aborted_txn_idx,
+                    "Read aborted for transaction"
+                );
+
                 let read_set = db_mut.take_read_set();
                 (
                     read_set,
@@ -275,10 +287,18 @@ impl<
                     },
                 )
             }
-            Err(_) => {
+            Err(err) => {
                 let db_mut = &mut tx_state.database;
 
                 let read_set = db_mut.take_read_set();
+
+                warn!(
+                    target: "block_stm",
+                    txn_idx = txn_idx,
+                    incarnation = incarnation,
+                    error = %err,
+                    "Error executing transaction"
+                );
                 (
                     read_set,
                     Default::default(),
@@ -315,6 +335,7 @@ impl<
         base_fee: u64,
         cancellation_token: CancellationToken,
         execute_tx: ExecuteTxFn,
+        parent_span: Span,
     ) {
         let num_candidates = self.transactions.len();
         let num_threads = self.num_threads.min(num_candidates);
@@ -328,19 +349,46 @@ impl<
                 let this = Arc::clone(&this);
                 let cancellation_token = Arc::clone(&cancellation_token);
                 let execute_tx = Arc::clone(&execute_tx);
+                let worker_span = tracing::info_span!(
+                    parent: &parent_span,
+                    "block_stm_worker",
+                    worker_id = worker_id
+                );
                 s.spawn(move || {
+                    let _worker_guard = worker_span.entered();
                     debug!("Spawning worker thread {}", worker_id);
 
                     let mut task = None;
 
-                    while !this.scheduler.done() && !cancellation_token.is_cancelled() {
-                        task = if let Some(Task::Execute { version }) = task {
-                            let (read_set, write_set, exec_result) = this.execute_single_tx(version, base_fee, &execute_tx);
+                    while !this.scheduler.done() {
+                        let is_cancelled = cancellation_token.is_cancelled();
 
+                        // Finish validation tasks only if cancelled.
+                        if is_cancelled && !matches!(task, Some(Task::Validate { version })) {
+                            break;
+                        }
+                        task = if let Some(Task::Execute { version }) = task {
                             let Version {
                                 txn_idx,
                                 incarnation,
                             } = version;
+                            
+                            let tx_execute_span = tracing::info_span!(
+                                parent: Span::current(),
+                                "block_stm_tx_execute",
+                                txn_idx = txn_idx,
+                                incarnation = incarnation
+                            );
+                            let _tx_execute_guard = tx_execute_span.entered();
+                            
+                            debug!(
+                                worker_id = worker_id,
+                                txn_idx = txn_idx,
+                                incarnation = incarnation,
+                                "Starting execution task"
+                            );
+                            
+                            let (read_set, write_set, exec_result) = this.execute_single_tx(version, base_fee, &execute_tx);
 
                             {
                                 let mut results = this.execution_results.lock().unwrap();
@@ -352,10 +400,12 @@ impl<
                             let next_task = this
                                 .scheduler
                                 .finish_execution(txn_idx, incarnation, wrote_new_path);
-                            trace!(
+                            debug!(
                                 worker_id = worker_id,
                                 txn_idx = txn_idx,
-                                "Transaction execution complete"
+                                incarnation = incarnation,
+                                wrote_new_path = wrote_new_path,
+                                "Finished execution task"
                             );
                             next_task
                         } else {
@@ -369,12 +419,20 @@ impl<
                                 },
                         }) = task
                         {
-                            let _tx_span = tracing::info_span!(
+                            let tx_validate_span = tracing::info_span!(
+                                parent: Span::current(),
                                 "block_stm_tx_validate",
                                 txn_idx = txn_idx,
                                 incarnation = incarnation
-                            )
-                            .entered();
+                            );
+                            let _tx_validate_guard = tx_validate_span.entered();
+                            
+                            debug!(
+                                worker_id = worker_id,
+                                txn_idx = txn_idx,
+                                incarnation = incarnation,
+                                "Starting validation task"
+                            );
 
                             let validation_result = this.mv_hashmap.validate_read_set_detailed(txn_idx);
                             let read_set_valid = matches!(validation_result, ValidationResult::Valid);
@@ -402,7 +460,17 @@ impl<
                                 }
                                 this.mv_hashmap.convert_writes_to_estimates(txn_idx);
                             }
-                            this.scheduler.finish_validation(txn_idx, aborted)
+                            
+                            let next_task = this.scheduler.finish_validation(txn_idx, aborted);
+                            debug!(
+                                worker_id = worker_id,
+                                txn_idx = txn_idx,
+                                incarnation = incarnation,
+                                aborted = aborted,
+                                read_set_valid = read_set_valid,
+                                "Finished validation task"
+                            );
+                            next_task
                         } else {
                             task
                         };
@@ -410,23 +478,44 @@ impl<
                             // Get next task from Block-STM scheduler
                             task = this.scheduler.next_task();
                             if task.is_none() {
-                                std::thread::sleep(std::time::Duration::from_millis(100));
+                                std::thread::yield_now();
                             }
                         }
                     }
+                    
+                    debug!(
+                        worker_id = worker_id,
+                        scheduler_done = this.scheduler.done(),
+                        cancelled = cancellation_token.is_cancelled(),
+                        "Worker thread exiting"
+                    );
                 });
             }
         });
+        
+        debug!(
+            "All worker threads completed. Scheduler done: {}, Execution idx: {}, Validation idx: {}",
+            this.scheduler.done(),
+            this.scheduler.execution_idx(),
+            this.scheduler.validation_idx()
+        );
     }
 
     pub fn try_into_committed_results(
         self,
     ) -> Result<(Vec<TxExecutionResult>, SharedCodeCache), PayloadBuilderError> {
         // Calculate the safe commit point: longest prefix of fully validated transactions.
-        // A transaction with status `Executed` has been both executed AND validated
-        // (if validation failed, it would be re-executing with status ReadyToExecute/Executing).
+        // A transaction is safe to commit only if:
+        // 1. It has ExecutionStatus::Executed (not Aborting/ReadyToExecute/Executing)
+        // 2. Validation has passed this transaction (validation_idx > i)
+        // Note: validation_idx indicates how far validation has progressed, not just how far
+        // execution has progressed.
+        let validation_idx = self.scheduler.validation_idx();
         let safe_commit_point = (0..self.scheduler.num_txns())
-            .take_while(|&i| self.scheduler.get_status(i as u32) == ExecutionStatus::Executed)
+            .take_while(|&i| {
+                self.scheduler.get_status(i as u32) == ExecutionStatus::Executed
+                    && validation_idx > i
+            })
             .count();
 
         // Commit phase: apply results in order

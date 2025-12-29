@@ -771,8 +771,8 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpEvmFactory> {
         // Shared reference to database for reads (workers only need DatabaseRef)
         let db_ref: &State<DB> = &*db;
 
-        // Capture current span for cross-thread propagation
-        let worker_parent_span = Span::current();
+        // Capture current span for cross-thread propagation (execute_txs span)
+        let execute_txs_span = Span::current();
         let (results, shared_code_cache) = {
             let mut executor = Executor::new(num_threads, candidate_txs, &mut *db);
 
@@ -788,6 +788,7 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpEvmFactory> {
                         // Execute transaction
                         evm.transact(&tx)
                     },
+                    execute_txs_span.clone(),
                 );
             });
 

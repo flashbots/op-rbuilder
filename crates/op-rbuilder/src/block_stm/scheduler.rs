@@ -55,6 +55,16 @@ impl Scheduler {
         self.num_txns as usize
     }
 
+    /// Get the current validation index (how far validation has progressed).
+    pub fn validation_idx(&self) -> usize {
+        self.validation_idx.load(Ordering::SeqCst)
+    }
+
+    /// Get the current execution index (how far execution has progressed).
+    pub fn execution_idx(&self) -> usize {
+        self.execution_idx.load(Ordering::SeqCst)
+    }
+
     fn decrease_validation_idx(&self, target_idx: usize) {
         // set to min of target_idx and current validation_idx
         self.validation_idx.fetch_min(target_idx, Ordering::SeqCst);
