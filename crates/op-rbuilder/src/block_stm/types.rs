@@ -86,8 +86,11 @@ impl fmt::Display for EvmStateKey {
 /// Encapsulates all possible value types that can be stored.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Display)]
 pub enum EvmStateValue {
-    /// Balance value (U256)
+    /// Balance value (U256) - absolute value
     Balance(U256),
+    /// Balance increment (U256) - delta to add, used for fee payments.
+    /// Distinct from Balance to prevent accidentally overwriting balance with a delta.
+    BalanceIncrement(U256),
     /// Nonce value (u64)
     Nonce(u64),
     /// Code hash

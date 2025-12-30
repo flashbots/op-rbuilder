@@ -607,4 +607,120 @@ mod tests {
         // Now validation should pass
         assert!(mv.validate_read_set(5));
     }
+
+    // ==================== BALANCE INCREMENT TESTS ====================
+
+    fn make_balance_key(addr_byte: u8) -> EvmStateKey {
+        EvmStateKey::Balance(Address::repeat_byte(addr_byte))
+    }
+
+    fn make_balance_value(val: u64) -> EvmStateValue {
+        EvmStateValue::Balance(U256::from(val))
+    }
+
+    fn make_balance_increment(val: u64) -> EvmStateValue {
+        EvmStateValue::BalanceIncrement(U256::from(val))
+    }
+
+    #[test]
+    fn test_balance_increment_recorded_as_write() {
+        let mv = MVHashMap::new(3);
+        let key = make_balance_key(1);
+
+        // Tx 0 writes a balance increment (fee payment)
+        let mut write_set = WriteSet::new();
+        write_set.insert((key.clone(), make_balance_increment(100)));
+
+        mv.apply_write_set(0, 0, &write_set);
+
+        // Tx 1 should see the balance increment write
+        match mv.read(&key, 1) {
+            ReadResult::Value { value, version } => {
+                assert_eq!(value, make_balance_increment(100));
+                assert_eq!(version.txn_idx, 0);
+            }
+            _ => panic!("Expected Value result with BalanceIncrement"),
+        }
+    }
+
+    #[test]
+    fn test_balance_read_conflicts_with_increment_write() {
+        let mv = MVHashMap::new(3);
+        let key = make_balance_key(1);
+
+        // Tx 0 writes an absolute balance value
+        let mut ws0 = WriteSet::new();
+        ws0.insert((key.clone(), make_balance_value(1000)));
+        mv.record(Version::new(0, 0), &ReadSet::new(), &ws0);
+
+        // Tx 1 reads the balance (sees tx 0's write)
+        let mut rs1 = ReadSet::new();
+        rs1.insert((key.clone(), Some(Version::new(0, 0))));
+        mv.record(Version::new(1, 0), &rs1, &WriteSet::new());
+
+        // Validation should pass initially
+        assert!(mv.validate_read_set(1));
+
+        // Now tx 0 re-executes and writes a balance increment instead
+        let mut ws0_new = WriteSet::new();
+        ws0_new.insert((key.clone(), make_balance_increment(50)));
+        mv.record(Version::new(0, 1), &ReadSet::new(), &ws0_new);
+
+        // Tx 1's validation should fail (version changed from (0,0) to (0,1))
+        assert!(!mv.validate_read_set(1));
+    }
+
+    #[test]
+    fn test_parallel_balance_increments_no_read_conflict() {
+        // Multiple transactions writing balance increments to the same address
+        // without reading. Since Block-STM doesn't validate writes against writes,
+        // these should all be valid as long as no transaction reads the balance.
+        let mv = MVHashMap::new(4);
+        let key = make_balance_key(1);
+
+        // All transactions write balance increments (blind writes)
+        for i in 0..4 {
+            let mut ws = WriteSet::new();
+            ws.insert((key.clone(), make_balance_increment((i + 1) * 100)));
+            // Empty read set - no reads of this balance
+            mv.record(Version::new(i as u32, 0), &ReadSet::new(), &ws);
+        }
+
+        // All validations should pass (no reads to conflict with)
+        for i in 0..4 {
+            assert!(
+                mv.validate_read_set(i as u32),
+                "Tx {} should validate (blind write)",
+                i
+            );
+        }
+    }
+
+    #[test]
+    fn test_balance_increment_after_balance_read_causes_conflict() {
+        let mv = MVHashMap::new(3);
+        let key = make_balance_key(1);
+
+        // Tx 0 writes a balance value
+        let mut ws0 = WriteSet::new();
+        ws0.insert((key.clone(), make_balance_value(1000)));
+        mv.record(Version::new(0, 0), &ReadSet::new(), &ws0);
+
+        // Tx 2 reads the balance from base state (NotFound, since tx 0 hasn't been seen yet)
+        // Then tx 1 writes a balance increment
+        let mut rs2 = ReadSet::new();
+        rs2.insert((key.clone(), Some(Version::new(0, 0))));
+        mv.record(Version::new(2, 0), &rs2, &WriteSet::new());
+
+        // Initially tx 2 validation passes
+        assert!(mv.validate_read_set(2));
+
+        // Tx 1 writes a balance increment
+        let mut ws1 = WriteSet::new();
+        ws1.insert((key.clone(), make_balance_increment(50)));
+        mv.record(Version::new(1, 0), &ReadSet::new(), &ws1);
+
+        // Tx 2's validation should now fail because tx 1's write changed the value
+        assert!(!mv.validate_read_set(2));
+    }
 }

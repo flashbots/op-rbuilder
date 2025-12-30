@@ -75,6 +75,18 @@ impl<DB> LazyDatabase for LazyDatabaseWrapper<DB> {
     }
 }
 
+/// Implementation of LazyDatabase for reth_revm::State that forwards to the inner database.
+/// This allows State<LazyDatabaseWrapper<...>> to be used with OpLazyEvmFactory.
+impl<DB: LazyDatabase> LazyDatabase for reth_revm::State<DB> {
+    fn lazily_increment_balance(&mut self, address: Address, amount: U256) {
+        self.database.lazily_increment_balance(address, amount);
+    }
+
+    fn pending_increments(&mut self) -> HashMap<Address, U256> {
+        self.database.pending_increments()
+    }
+}
+
 impl<DB: Database> Database for LazyDatabaseWrapper<DB> {
     type Error = DB::Error;
 
@@ -147,5 +159,153 @@ impl<DB: DatabaseRef> DatabaseRef for LazyDatabaseWrapper<DB> {
 
     fn block_hash_ref(&self, number: u64) -> Result<B256, Self::Error> {
         self.inner.block_hash_ref(number)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::convert::Infallible;
+
+    /// Mock database for testing that returns configurable account info
+    #[derive(Debug, Default)]
+    struct MockDb {
+        accounts: HashMap<Address, AccountInfo>,
+    }
+
+    impl MockDb {
+        fn with_account(mut self, addr: Address, balance: U256, nonce: u64) -> Self {
+            self.accounts.insert(
+                addr,
+                AccountInfo {
+                    balance,
+                    nonce,
+                    code_hash: B256::ZERO,
+                    code: None,
+                },
+            );
+            self
+        }
+    }
+
+    impl Database for MockDb {
+        type Error = Infallible;
+
+        fn basic(&mut self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
+            Ok(self.accounts.get(&address).cloned())
+        }
+
+        fn code_by_hash(&mut self, _code_hash: B256) -> Result<Bytecode, Self::Error> {
+            Ok(Bytecode::default())
+        }
+
+        fn storage(&mut self, _address: Address, _slot: U256) -> Result<U256, Self::Error> {
+            Ok(U256::ZERO)
+        }
+
+        fn block_hash(&mut self, _number: u64) -> Result<B256, Self::Error> {
+            Ok(B256::ZERO)
+        }
+    }
+
+    #[test]
+    fn test_lazy_increment_accumulates() {
+        let db = MockDb::default();
+        let mut lazy_db = LazyDatabaseWrapper::new(db);
+        let addr = Address::repeat_byte(1);
+
+        // Increment once
+        lazy_db.lazily_increment_balance(addr, U256::from(100));
+        assert_eq!(
+            lazy_db.pending_increments().get(&addr),
+            Some(&U256::from(100))
+        );
+
+        // Increment again - should accumulate
+        lazy_db.lazily_increment_balance(addr, U256::from(50));
+        assert_eq!(
+            lazy_db.pending_increments().get(&addr),
+            Some(&U256::from(150))
+        );
+    }
+
+    #[test]
+    fn test_lazy_increment_zero_is_ignored() {
+        let db = MockDb::default();
+        let mut lazy_db = LazyDatabaseWrapper::new(db);
+        let addr = Address::repeat_byte(1);
+
+        // Zero increment should be ignored
+        lazy_db.lazily_increment_balance(addr, U256::ZERO);
+        assert!(lazy_db.pending_increments().is_empty());
+    }
+
+    #[test]
+    fn test_lazy_increment_multiple_addresses() {
+        let db = MockDb::default();
+        let mut lazy_db = LazyDatabaseWrapper::new(db);
+        let addr1 = Address::repeat_byte(1);
+        let addr2 = Address::repeat_byte(2);
+
+        lazy_db.lazily_increment_balance(addr1, U256::from(100));
+        lazy_db.lazily_increment_balance(addr2, U256::from(200));
+
+        let increments = lazy_db.pending_increments();
+        assert_eq!(increments.get(&addr1), Some(&U256::from(100)));
+        assert_eq!(increments.get(&addr2), Some(&U256::from(200)));
+    }
+
+    #[test]
+    fn test_basic_applies_pending_increment_to_existing_account() {
+        let addr = Address::repeat_byte(1);
+        let db = MockDb::default().with_account(addr, U256::from(1000), 5);
+        let mut lazy_db = LazyDatabaseWrapper::new(db);
+
+        // Add pending increment
+        lazy_db.lazily_increment_balance(addr, U256::from(250));
+
+        // Read account - should have increment applied
+        let account = lazy_db.basic(addr).unwrap().unwrap();
+        assert_eq!(account.balance, U256::from(1250)); // 1000 + 250
+        assert_eq!(account.nonce, 5); // nonce unchanged
+    }
+
+    #[test]
+    fn test_basic_creates_account_for_nonexistent_with_increment() {
+        let db = MockDb::default();
+        let mut lazy_db = LazyDatabaseWrapper::new(db);
+        let addr = Address::repeat_byte(1);
+
+        // Add pending increment for non-existent account
+        lazy_db.lazily_increment_balance(addr, U256::from(500));
+
+        // Read account - should create new account with just the increment
+        let account = lazy_db.basic(addr).unwrap().unwrap();
+        assert_eq!(account.balance, U256::from(500));
+        assert_eq!(account.nonce, 0);
+        assert_eq!(account.code_hash, B256::ZERO);
+    }
+
+    #[test]
+    fn test_basic_returns_none_for_nonexistent_without_increment() {
+        let db = MockDb::default();
+        let mut lazy_db = LazyDatabaseWrapper::new(db);
+        let addr = Address::repeat_byte(1);
+
+        // No increment, account doesn't exist
+        let account = lazy_db.basic(addr).unwrap();
+        assert!(account.is_none());
+    }
+
+    #[test]
+    fn test_into_inner_returns_pending_increments() {
+        let db = MockDb::default();
+        let mut lazy_db = LazyDatabaseWrapper::new(db);
+        let addr = Address::repeat_byte(1);
+
+        lazy_db.lazily_increment_balance(addr, U256::from(100));
+
+        let (_inner_db, increments) = lazy_db.into_inner();
+        assert_eq!(increments.get(&addr), Some(&U256::from(100)));
     }
 }

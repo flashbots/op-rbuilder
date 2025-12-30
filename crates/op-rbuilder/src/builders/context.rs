@@ -7,7 +7,7 @@ use alloy_op_evm::{
 use alloy_primitives::{Address, B256, BlockHash, Bytes, U256};
 use alloy_rpc_types_eth::Withdrawals;
 use core::fmt::Debug;
-use op_alloy_consensus::{OpDepositReceipt, OpTxType};
+use op_alloy_consensus::OpDepositReceipt;
 use op_revm::OpSpecId;
 use reth::payload::PayloadBuilderAttributes;
 use reth_basic_payload_builder::PayloadConfig;
@@ -56,7 +56,9 @@ use tracing::{Span, debug, info, trace, warn};
 use crate::{
     block_stm::{
         EvmStateKey, EvmStateValue, ExecutionStatus, MVHashMap, Scheduler, Task, ValidationResult,
-        Version, VersionedDatabase, VersionedDbError, evm::OpLazyEvmFactory, executor::Executor,
+        Version, VersionedDatabase, VersionedDbError,
+        evm::{LazyDatabaseWrapper, OpLazyEvmFactory},
+        executor::Executor,
         mv_hashmap::WriteSet,
     },
     gas_limiter::AddressGasLimiter,
@@ -796,9 +798,6 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpEvmFactory> {
         DB: Database + DatabaseRef + Send + Sync,
     {
         let num_threads = self.parallel_threads;
-
-        let execute_txs_start_time = Instant::now();
-        let base_fee = self.base_fee();
         let tx_da_limit = self.da_config.max_da_tx_size();
 
         // Collect candidate transactions from the iterator.
@@ -832,29 +831,25 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpEvmFactory> {
             num_candidates = num_candidates,
         );
 
-        // Shared reference to database for reads (workers only need DatabaseRef)
-        let db_ref: &State<DB> = &*db;
-
         // Capture current span for cross-thread propagation (execute_txs span)
         let execute_txs_span = Span::current();
         let (results, shared_code_cache) = {
             let mut executor = Executor::new(num_threads, candidate_txs, &mut *db);
 
             // Spawn worker threads using Block-STM scheduler
-            thread::scope(|s| {
-                executor.execute_transactions_parallel(
-                    self.base_fee(),
-                    self.cancel.clone(),
-                    |tx, state| {
-                        // Create EVM with VersionedDatabase
-                        let mut evm = self.evm_config.evm_with_env(state, self.evm_env.clone());
+            executor.execute_transactions_parallel(
+                self.base_fee(),
+                self.cancel.clone(),
+                |tx, state| {
+                    // Create lazy EVM with balance increment support for parallel execution
+                    let lazy_factory = OpLazyEvmFactory;
+                    let mut evm = lazy_factory.create_evm(state, self.evm_env.clone());
 
-                        // Execute transaction
-                        evm.transact(&tx)
-                    },
-                    execute_txs_span.clone(),
-                );
-            });
+                    // Execute transaction
+                    evm.transact(&tx)
+                },
+                execute_txs_span.clone(),
+            );
 
             executor.try_into_committed_results()?
         };

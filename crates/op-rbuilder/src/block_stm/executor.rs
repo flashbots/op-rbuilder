@@ -24,6 +24,7 @@ use crate::{
     block_stm::{
         EvmStateKey, EvmStateValue, ExecutionStatus, MVHashMap, Scheduler, SharedCodeCache, Task,
         ValidationResult, Version, VersionedDatabase, VersionedDbError,
+        evm::{LazyDatabase, LazyDatabaseWrapper},
         mv_hashmap::{ReadSet, WriteSet},
     },
     tx::FBPoolTransaction,
@@ -101,10 +102,10 @@ impl<
         }
     }
 
-    pub     fn execute_single_tx<
+    pub fn execute_single_tx<
         ExecuteTxFn: (Fn(
                 &Recovered<op_alloy_consensus::OpTxEnvelope>,
-                &mut State<VersionedDatabase<'_, DB>>,
+                &mut State<LazyDatabaseWrapper<VersionedDatabase<'_, DB>>>,
             ) -> Result<
                 ResultAndState<OpHaltReason>,
                 EVMError<VersionedDbError, OpTransactionError>,
@@ -136,20 +137,38 @@ impl<
                 Arc::clone(&self.shared_code_cache),
             );
 
+            // Wrap with LazyDatabaseWrapper to track balance increments (fee payments)
+            let lazy_db = LazyDatabaseWrapper::new(versioned_db);
+
             // Create State wrapper for EVM execution
-            let mut tx_state = State::builder().with_database(versioned_db).build();
+            let mut tx_state = State::builder().with_database(lazy_db).build();
 
             // Execute transaction with versioned state
             match execute_tx(&tx, &mut tx_state) {
             Ok(result) => {
                 let ResultAndState { result, state } = result;
-                let gas_used = result.gas_used();
 
                 // Build write set from state changes
                 let mut write_set = WriteSet::new();
-                let db_mut = &mut tx_state.database;
-                let read_set = db_mut.take_read_set();
-                let captured_reads = db_mut.take_captured_reads();
+
+                // Extract pending balance increments from LazyDatabaseWrapper
+                let pending_balance_increments = tx_state.database.pending_increments();
+
+                // Get read set and captured reads from inner VersionedDatabase
+                let versioned_db = tx_state.database.inner_mut();
+                let read_set = versioned_db.take_read_set();
+                let captured_reads = versioned_db.take_captured_reads();
+
+                // Add balance increments to write set using BalanceIncrement variant.
+                // This ensures conflict detection: if another transaction reads these balances,
+                // validation will detect the dependency. Block-STM doesn't validate writes
+                // against writes, so parallel increments (blind writes) don't conflict.
+                for (addr, delta) in &pending_balance_increments {
+                    write_set.insert((
+                        EvmStateKey::Balance(*addr),
+                        EvmStateValue::BalanceIncrement(*delta),
+                    ));
+                }
 
                 // Add writes only for values that actually changed
                 for (addr, account) in state.iter() {
@@ -206,14 +225,6 @@ impl<
                     }
                 }
 
-                // // Add pending balance increments as deltas (commutative fee accumulation)
-                // // These are tracked separately to allow parallel accumulation
-                // for (addr, delta) in pending_balance_increments.iter() {
-                //     write_set.add_balance_delta(*addr, *delta);
-                // }
-
-                // Get captured reads for validation
-
                 // Extract success and logs from result
                 let success = result.is_success();
 
@@ -226,7 +237,6 @@ impl<
                         "Transaction reverted"
                     );
                 }
-                let logs = result.clone().into_logs();
 
                 let miner_fee = tx
                     .effective_tip_per_gas(base_fee)
@@ -239,11 +249,12 @@ impl<
                         tx,
                         state: StateWithIncrements {
                             loaded_state: state,
-                            pending_balance_increments: Default::default(),
+                            // Pass pending increments to resolve_state for application
+                            pending_balance_increments,
                         },
                         result: Some(result),
                         tx_da_size,
-                        miner_fee: miner_fee,
+                        miner_fee,
                     },
                 );
             }
@@ -254,8 +265,6 @@ impl<
                     // Retry execution in the loop
                     continue;
                 }
-                
-                let db_mut = &mut tx_state.database;
 
                 warn!(
                     target: "block_stm",
@@ -265,7 +274,7 @@ impl<
                     "Read aborted for transaction"
                 );
 
-                let read_set = db_mut.take_read_set();
+                let read_set = tx_state.database.inner_mut().take_read_set();
                 return (
                     read_set,
                     Default::default(),
@@ -282,10 +291,6 @@ impl<
                 );
             }
             Err(err) => {
-                let db_mut = &mut tx_state.database;
-
-                let read_set = db_mut.take_read_set();
-
                 warn!(
                     target: "block_stm",
                     txn_idx = txn_idx,
@@ -293,6 +298,8 @@ impl<
                     error = %err,
                     "Error executing transaction"
                 );
+
+                let read_set = tx_state.database.inner_mut().take_read_set();
                 return (
                     read_set,
                     Default::default(),
@@ -315,7 +322,7 @@ impl<
     pub fn execute_transactions_parallel<
         ExecuteTxFn: (Fn(
                 &Recovered<op_alloy_consensus::OpTxEnvelope>,
-                &mut State<VersionedDatabase<'_, DB>>,
+                &mut State<LazyDatabaseWrapper<VersionedDatabase<'_, DB>>>,
             ) -> Result<
                 ResultAndState<OpHaltReason>,
                 EVMError<VersionedDbError, OpTransactionError>,
