@@ -13,7 +13,7 @@ use reth_primitives::Recovered;
 use reth_revm::State;
 use revm::{
     Database, DatabaseRef,
-    context::result::{EVMError, ResultAndState},
+    context::result::{EVMError, ExecutionResult, ResultAndState},
     primitives::HashMap,
     state::{Account, EvmState},
 };
@@ -37,12 +37,7 @@ pub struct TxExecutionResult {
     pub tx: Recovered<op_alloy_consensus::OpTxEnvelope>,
     /// State changes from execution (using alloy's HashMap for compatibility)
     pub state: StateWithIncrements,
-    /// Whether execution succeeded
-    pub success: bool,
-    /// Logs from execution (needed for receipt building)
-    pub logs: Vec<alloy_primitives::Log>,
-    /// Gas used
-    pub gas_used: u64,
+    pub result: Option<ExecutionResult<OpHaltReason>>,
     /// DA size
     pub tx_da_size: u64,
     pub miner_fee: u128,
@@ -231,7 +226,7 @@ impl<
                         "Transaction reverted"
                     );
                 }
-                let logs = result.into_logs();
+                let logs = result.clone().into_logs();
 
                 let miner_fee = tx
                     .effective_tip_per_gas(base_fee)
@@ -246,9 +241,7 @@ impl<
                             loaded_state: state,
                             pending_balance_increments: Default::default(),
                         },
-                        success,
-                        logs,
-                        gas_used,
+                        result: Some(result),
                         tx_da_size,
                         miner_fee: miner_fee,
                     },
@@ -282,9 +275,7 @@ impl<
                             loaded_state: EvmState::default(),
                             pending_balance_increments: Default::default(),
                         },
-                        success: false,
-                        logs: vec![],
-                        gas_used: 0,
+                        result: None,
                         tx_da_size: 0,
                         miner_fee: 0,
                     },
@@ -311,9 +302,7 @@ impl<
                             loaded_state: EvmState::default(),
                             pending_balance_increments: Default::default(),
                         },
-                        success: false,
-                        logs: vec![],
-                        gas_used: 0,
+                        result: None,
                         tx_da_size: 0,
                         miner_fee: 0,
                     },
@@ -367,8 +356,15 @@ impl<
 
                         // Finish validation tasks only if cancelled.
                         if is_cancelled && !matches!(task, Some(Task::Validate { .. })) {
-                            break;
+                            // first, see if we can get a validation task:
+                            task = this.scheduler.next_validation_task();
+
+                            // if we still don't have a task, we're done.
+                            if task.is_none() {
+                                break;
+                            }
                         }
+
                         task = if let Some(Task::Execute { version }) = task {
                             let Version {
                                 txn_idx,

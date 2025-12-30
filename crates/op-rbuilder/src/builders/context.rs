@@ -4,7 +4,7 @@ use alloy_evm::Database;
 use alloy_op_evm::{
     OpBlockExecutorFactory, OpEvmFactory, block::receipt_builder::OpReceiptBuilder,
 };
-use alloy_primitives::{Address, BlockHash, Bytes, U256};
+use alloy_primitives::{Address, B256, BlockHash, Bytes, U256};
 use alloy_rpc_types_eth::Withdrawals;
 use core::fmt::Debug;
 use op_alloy_consensus::{OpDepositReceipt, OpTxType};
@@ -40,11 +40,12 @@ use revm::{
     DatabaseCommit, DatabaseRef,
     context::result::{EVMError, ResultAndState},
     interpreter::as_u64_saturated,
-    primitives::HashMap,
-    state::{Account, EvmState},
+    primitives::{HashMap, StorageKey, StorageValue},
+    state::{Account, AccountInfo, Bytecode, EvmState},
 };
 use std::{
     collections::hash_map::Entry,
+    convert::Infallible,
     sync::{Arc, Mutex},
     thread,
     time::Instant,
@@ -707,7 +708,70 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpEvmFactory> {
     }
 }
 
+#[derive(Debug)]
+struct MockDB;
+
+impl revm::Database for MockDB {
+    type Error = Infallible;
+
+    /// Gets basic account information.
+    fn basic(&mut self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
+        unreachable!()
+    }
+
+    /// Gets account code by its hash.
+    fn code_by_hash(&mut self, code_hash: B256) -> Result<Bytecode, Self::Error> {
+        unreachable!()
+    }
+
+    /// Gets storage value of address at index.
+    fn storage(
+        &mut self,
+        address: Address,
+        index: StorageKey,
+    ) -> Result<StorageValue, Self::Error> {
+        unreachable!()
+    }
+
+    /// Gets block hash by block number.
+    fn block_hash(&mut self, number: u64) -> Result<B256, Self::Error> {
+        unreachable!()
+    }
+}
+
 impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpEvmFactory> {
+    /// Constructs a receipt for the given transaction.
+    pub fn build_receipt_parallel<E: Evm>(
+        &self,
+        ctx: ReceiptBuilderCtx<'_, OpTransactionSigned, E>,
+        deposit_nonce: Option<u64>,
+    ) -> OpReceipt {
+        let receipt_builder = self.evm_config.block_executor_factory().receipt_builder();
+        match receipt_builder.build_receipt(ctx) {
+            Ok(receipt) => receipt,
+            Err(ctx) => {
+                let receipt = alloy_consensus::Receipt {
+                    // Success flag was added in `EIP-658: Embedding transaction status code
+                    // in receipts`.
+                    status: Eip658Value::Eip658(ctx.result.is_success()),
+                    cumulative_gas_used: ctx.cumulative_gas_used,
+                    logs: ctx.result.into_logs(),
+                };
+
+                receipt_builder.build_deposit_receipt(OpDepositReceipt {
+                    inner: receipt,
+                    deposit_nonce,
+                    // The deposit receipt version was introduced in Canyon to indicate an
+                    // update to how receipt hashes should be computed
+                    // when set. The state transition process ensures
+                    // this is only set for post-Canyon deposit
+                    // transactions.
+                    deposit_receipt_version: self.is_canyon_active().then_some(1),
+                })
+            }
+        }
+    }
+
     /// Executes the given best transactions in parallel using Block-STM.
     ///
     /// This implementation uses Block-STM for true parallel execution:
@@ -799,34 +863,14 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpEvmFactory> {
         let mut applied_count = 0;
         let num_results = results.len();
         for tx_result in results {
+            let Some(result) = tx_result.result else {
+                continue;
+            };
             // Update cumulative gas before building receipt
-            info.cumulative_gas_used += tx_result.gas_used;
+            let gas_used = result.gas_used();
+            info.cumulative_gas_used += gas_used;
             info.cumulative_da_bytes_used += tx_result.tx_da_size;
-            info.total_fees += U256::from(tx_result.miner_fee) * U256::from(tx_result.gas_used);
-
-            // Build receipt with correct cumulative gas
-            let receipt = alloy_consensus::Receipt {
-                status: Eip658Value::Eip658(tx_result.success),
-                cumulative_gas_used: info.cumulative_gas_used,
-                logs: tx_result.logs,
-            };
-
-            // Build OpReceipt based on transaction type
-            let op_receipt = match tx_result.tx.tx_type() {
-                OpTxType::Legacy => OpReceipt::Legacy(receipt),
-                OpTxType::Eip2930 => OpReceipt::Eip2930(receipt),
-                OpTxType::Eip1559 => OpReceipt::Eip1559(receipt),
-                OpTxType::Eip7702 => OpReceipt::Eip7702(receipt),
-                OpTxType::Deposit => {
-                    // Deposits shouldn't come from the pool, but handle gracefully
-                    OpReceipt::Deposit(OpDepositReceipt {
-                        inner: receipt,
-                        deposit_nonce: None,
-                        deposit_receipt_version: None,
-                    })
-                }
-            };
-            info.receipts.push(op_receipt);
+            info.total_fees += U256::from(tx_result.miner_fee) * U256::from(gas_used);
 
             // Load accounts into cache before committing
             // (State requires accounts to be in cache before applying changes)
@@ -842,6 +886,23 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpEvmFactory> {
                 .state
                 .resolve_state(db)
                 .map_err(|e| PayloadBuilderError::Other(e.to_string().into()))?;
+
+            let mut mock_db = MockDB;
+            let evm = self
+                .evm_config
+                .evm_with_env(&mut mock_db, self.evm_env.clone());
+
+            // Build OpReceipt based on transaction type
+            info.receipts.push(self.build_receipt_parallel(
+                ReceiptBuilderCtx {
+                    tx: &tx_result.tx,
+                    evm: &evm,
+                    result: result,
+                    state: &resolved_state,
+                    cumulative_gas_used: info.cumulative_gas_used,
+                },
+                None,
+            ));
 
             // Populate code field from shared cache for newly deployed contracts
             // Without this, account.info.code is None and won't be stored in State.cache.contracts

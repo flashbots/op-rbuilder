@@ -140,6 +140,15 @@ impl Scheduler {
         None
     }
 
+    pub fn next_validation_task(&self) -> Option<Task> {
+        if let Some((txn_idx, incarnation)) = self.next_version_to_validate() {
+            return Some(Task::Validate {
+                version: Version::new(txn_idx, incarnation),
+            });
+        }
+        None
+    }
+
     pub fn add_dependency(&self, txn_idx: TxnIndex, dependency: TxnIndex) -> bool {
         {
             let mut dependencies = self.txn_dependency[txn_idx as usize].lock().unwrap();
