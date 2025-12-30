@@ -106,7 +106,7 @@ impl<
         }
     }
 
-    pub fn execute_single_tx<
+    pub     fn execute_single_tx<
         ExecuteTxFn: (Fn(
                 &Recovered<op_alloy_consensus::OpTxEnvelope>,
                 &mut State<VersionedDatabase<'_, DB>>,
@@ -130,23 +130,22 @@ impl<
         let tx_da_size = pool_tx.estimated_da_size();
         let tx = pool_tx.clone().into_consensus();
 
-        // Routes reads through MVHashMap, falls back to base state
-        let versioned_db = VersionedDatabase::new(
-            txn_idx,
-            &self.mv_hashmap,
-            &self.base_db,
-            Arc::clone(&self.shared_code_cache),
-        );
+        // Retry loop: if we hit a read abort but the dependency is already satisfied,
+        // we retry immediately instead of blocking. This avoids recursive calls.
+        loop {
+            // Routes reads through MVHashMap, falls back to base state
+            let versioned_db = VersionedDatabase::new(
+                txn_idx,
+                &self.mv_hashmap,
+                &self.base_db,
+                Arc::clone(&self.shared_code_cache),
+            );
 
-        // Create State wrapper for EVM execution
-        let mut tx_state = State::builder().with_database(versioned_db).build();
+            // Create State wrapper for EVM execution
+            let mut tx_state = State::builder().with_database(versioned_db).build();
 
-        // // Wrap State with LazyDatabaseWrapper to support lazy balance increments
-        // let mut lazy_state =
-        //     crate::block_stm::evm::LazyDatabaseWrapper::new(tx_state);
-
-        // Execute transaction with versioned state
-        let (read_set, write_set, exec_result) = match execute_tx(&tx, &mut tx_state) {
+            // Execute transaction with versioned state
+            match execute_tx(&tx, &mut tx_state) {
             Ok(result) => {
                 let ResultAndState { result, state } = result;
                 let gas_used = result.gas_used();
@@ -238,7 +237,7 @@ impl<
                     .effective_tip_per_gas(base_fee)
                     .expect("fee is always valid");
 
-                (
+                return (
                     read_set,
                     write_set,
                     TxExecutionResult {
@@ -253,12 +252,16 @@ impl<
                         tx_da_size,
                         miner_fee: miner_fee,
                     },
-                )
+                );
             }
             Err(EVMError::Database(VersionedDbError::ReadAborted { aborted_txn_idx })) => {
+                // Try to add dependency. If it returns false, the dependency is already
+                // satisfied (already executed), so we can retry immediately.
                 if !self.scheduler.add_dependency(txn_idx, aborted_txn_idx) {
-                    return self.execute_single_tx(version, base_fee, execute_tx);
+                    // Retry execution in the loop
+                    continue;
                 }
+                
                 let db_mut = &mut tx_state.database;
 
                 warn!(
@@ -270,7 +273,7 @@ impl<
                 );
 
                 let read_set = db_mut.take_read_set();
-                (
+                return (
                     read_set,
                     Default::default(),
                     TxExecutionResult {
@@ -285,7 +288,7 @@ impl<
                         tx_da_size: 0,
                         miner_fee: 0,
                     },
-                )
+                );
             }
             Err(err) => {
                 let db_mut = &mut tx_state.database;
@@ -299,7 +302,7 @@ impl<
                     error = %err,
                     "Error executing transaction"
                 );
-                (
+                return (
                     read_set,
                     Default::default(),
                     TxExecutionResult {
@@ -314,11 +317,10 @@ impl<
                         tx_da_size: 0,
                         miner_fee: 0,
                     },
-                )
+                );
             }
-        };
-
-        (read_set, write_set, exec_result)
+            }; // End match
+        } // End loop
     }
 
     pub fn execute_transactions_parallel<
@@ -364,7 +366,7 @@ impl<
                         let is_cancelled = cancellation_token.is_cancelled();
 
                         // Finish validation tasks only if cancelled.
-                        if is_cancelled && !matches!(task, Some(Task::Validate { version })) {
+                        if is_cancelled && !matches!(task, Some(Task::Validate { .. })) {
                             break;
                         }
                         task = if let Some(Task::Execute { version }) = task {
