@@ -18,7 +18,7 @@ use revm::{
     state::{Account, EvmState},
 };
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, warn, Span};
+use tracing::{Span, debug, warn};
 
 use crate::{
     block_stm::{
@@ -145,176 +145,185 @@ impl<
 
             // Execute transaction with versioned state
             match execute_tx(&tx, &mut tx_state) {
-            Ok(result) => {
-                let ResultAndState { result, state } = result;
+                Ok(result) => {
+                    let ResultAndState { result, state } = result;
 
-                // Build write set from state changes
-                let mut write_set = WriteSet::new();
+                    // Build write set from state changes
+                    let mut write_set = WriteSet::new();
 
-                // Extract pending balance increments from LazyDatabaseWrapper
-                let pending_balance_increments = tx_state.database.pending_increments();
+                    // Extract pending balance increments from LazyDatabaseWrapper
+                    let pending_balance_increments = tx_state.database.pending_increments();
 
-                // Get read set and captured reads from inner VersionedDatabase
-                let versioned_db = tx_state.database.inner_mut();
-                let read_set = versioned_db.take_read_set();
-                let captured_reads = versioned_db.take_captured_reads();
+                    // Get read set and captured reads from inner VersionedDatabase
+                    let versioned_db = tx_state.database.inner_mut();
+                    let read_set = versioned_db.take_read_set();
+                    let captured_reads = versioned_db.take_captured_reads();
 
-                // Add balance increments to write set using BalanceIncrement variant.
-                // This ensures conflict detection: if another transaction reads these balances,
-                // validation will detect the dependency. Block-STM doesn't validate writes
-                // against writes, so parallel increments (blind writes) don't conflict.
-                for (addr, delta) in &pending_balance_increments {
-                    write_set.insert((
-                        EvmStateKey::Balance(*addr),
-                        EvmStateValue::BalanceIncrement(*delta),
-                    ));
-                }
+                    // Add balance increments to write set using BalanceIncrement variant.
+                    // This ensures conflict detection: if another transaction reads these balances,
+                    // validation will detect the dependency. Block-STM doesn't validate writes
+                    // against writes, so parallel increments (blind writes) don't conflict.
+                    for (addr, delta) in &pending_balance_increments {
+                        write_set.insert((
+                            EvmStateKey::Balance(*addr),
+                            EvmStateValue::BalanceIncrement(*delta),
+                        ));
+                    }
 
-                // Add writes only for values that actually changed
-                for (addr, account) in state.iter() {
-                    debug!("Account touched: {}", addr);
-                    if account.is_touched() {
-                        // Get original values from captured reads (if available)
-                        let original_balance = captured_reads.get(&EvmStateKey::Balance(*addr));
-                        let original_nonce = captured_reads.get(&EvmStateKey::Nonce(*addr));
-                        let original_code_hash = captured_reads.get(&EvmStateKey::CodeHash(*addr));
+                    // Add writes only for values that actually changed
+                    for (addr, account) in state.iter() {
+                        debug!("Account touched: {}", addr);
+                        if account.is_touched() {
+                            // Get original values from captured reads (if available)
+                            let original_balance = captured_reads.get(&EvmStateKey::Balance(*addr));
+                            let original_nonce = captured_reads.get(&EvmStateKey::Nonce(*addr));
+                            let original_code_hash =
+                                captured_reads.get(&EvmStateKey::CodeHash(*addr));
 
-                        // Only write balance if it changed
-                        if original_balance != Some(&EvmStateValue::Balance(account.info.balance)) {
-                            write_set.insert((
-                                EvmStateKey::Balance(*addr),
-                                EvmStateValue::Balance(account.info.balance),
-                            ));
-                        }
-
-                        // Only write nonce if it changed
-                        if original_nonce != Some(&EvmStateValue::Nonce(account.info.nonce)) {
-                            write_set.insert((
-                                EvmStateKey::Nonce(*addr),
-                                EvmStateValue::Nonce(account.info.nonce),
-                            ));
-                        }
-
-                        // Only write code hash if it changed
-                        if original_code_hash
-                            != Some(&EvmStateValue::CodeHash(account.info.code_hash))
-                        {
-                            write_set.insert((
-                                EvmStateKey::CodeHash(*addr),
-                                EvmStateValue::CodeHash(account.info.code_hash),
-                            ));
-
-                            // Store bytecode in shared cache for lookup by later transactions
-                            // This is critical: when a contract is deployed, its bytecode must be
-                            // accessible to subsequent transactions via code_by_hash_ref()
-                            if let Some(ref code) = account.info.code {
-                                self.shared_code_cache
-                                    .insert(account.info.code_hash, code.clone());
-                            }
-                        }
-
-                        // Storage slots already have is_changed() check
-                        for (slot, value) in account.storage.iter() {
-                            if value.is_changed() {
+                            // Only write balance if it changed
+                            if original_balance
+                                != Some(&EvmStateValue::Balance(account.info.balance))
+                            {
                                 write_set.insert((
-                                    EvmStateKey::Storage(*addr, *slot),
-                                    EvmStateValue::Storage(value.present_value),
+                                    EvmStateKey::Balance(*addr),
+                                    EvmStateValue::Balance(account.info.balance),
                                 ));
+                            }
+
+                            // Only write nonce if it changed
+                            if original_nonce != Some(&EvmStateValue::Nonce(account.info.nonce)) {
+                                write_set.insert((
+                                    EvmStateKey::Nonce(*addr),
+                                    EvmStateValue::Nonce(account.info.nonce),
+                                ));
+                            }
+
+                            // Only write code hash if it changed
+                            if original_code_hash
+                                != Some(&EvmStateValue::CodeHash(account.info.code_hash))
+                            {
+                                write_set.insert((
+                                    EvmStateKey::CodeHash(*addr),
+                                    EvmStateValue::CodeHash(account.info.code_hash),
+                                ));
+
+                                // Store bytecode in shared cache for lookup by later transactions
+                                // This is critical: when a contract is deployed, its bytecode must be
+                                // accessible to subsequent transactions via code_by_hash_ref()
+                                if let Some(ref code) = account.info.code {
+                                    self.shared_code_cache
+                                        .insert(account.info.code_hash, code.clone());
+                                }
+                            }
+
+                            // Storage slots already have is_changed() check
+                            for (slot, value) in account.storage.iter() {
+                                if value.is_changed() {
+                                    write_set.insert((
+                                        EvmStateKey::Storage(*addr, *slot),
+                                        EvmStateValue::Storage(value.present_value),
+                                    ));
+                                }
                             }
                         }
                     }
+
+                    // Extract success and logs from result
+                    let success = result.is_success();
+
+                    if !success {
+                        warn!(
+                            target: "block_stm",
+                            txn_idx = txn_idx,
+                            incarnation = incarnation,
+                            result = ?result,
+                            "Transaction reverted"
+                        );
+                    }
+
+                    let miner_fee = tx
+                        .effective_tip_per_gas(base_fee)
+                        .expect("fee is always valid");
+
+                    return (
+                        read_set,
+                        write_set,
+                        TxExecutionResult {
+                            tx,
+                            state: StateWithIncrements {
+                                loaded_state: state,
+                                // Pass pending increments to resolve_state for application
+                                pending_balance_increments,
+                            },
+                            result: Some(result),
+                            tx_da_size,
+                            miner_fee,
+                        },
+                    );
                 }
+                Err(EVMError::Database(VersionedDbError::ReadAborted { aborted_txn_idx })) => {
+                    // Try to add dependency. If it returns false, the dependency is already
+                    // satisfied (already executed), so we can retry immediately.
+                    if !self.scheduler.add_dependency(txn_idx, aborted_txn_idx) {
+                        // Retry execution in the loop
+                        continue;
+                    }
 
-                // Extract success and logs from result
-                let success = result.is_success();
-
-                if !success {
                     warn!(
                         target: "block_stm",
                         txn_idx = txn_idx,
                         incarnation = incarnation,
-                        result = ?result,
-                        "Transaction reverted"
+                        aborted_txn_idx = aborted_txn_idx,
+                        "Read aborted for transaction"
+                    );
+
+                    let read_set = tx_state.database.inner_mut().take_read_set();
+                    return (
+                        read_set,
+                        Default::default(),
+                        TxExecutionResult {
+                            tx,
+                            state: StateWithIncrements {
+                                loaded_state: EvmState::default(),
+                                pending_balance_increments: Default::default(),
+                            },
+                            result: None,
+                            tx_da_size: 0,
+                            miner_fee: 0,
+                        },
                     );
                 }
+                Err(err) => {
+                    // The transaction errored in speculative execution, however we cannot assume
+                    // that it will always error in a re-execution. For example, it could have hit a
+                    // nonce error due to stale reads, but in re-execution the nonce could be valid.
 
-                let miner_fee = tx
-                    .effective_tip_per_gas(base_fee)
-                    .expect("fee is always valid");
+                    // We store an error here, but if the transaction is re-executed later, the new result
+                    // will overwrite this one.
+                    warn!(
+                        target: "block_stm",
+                        txn_idx = txn_idx,
+                        incarnation = incarnation,
+                        error = %err,
+                        "Error executing transaction"
+                    );
 
-                return (
-                    read_set,
-                    write_set,
-                    TxExecutionResult {
-                        tx,
-                        state: StateWithIncrements {
-                            loaded_state: state,
-                            // Pass pending increments to resolve_state for application
-                            pending_balance_increments,
+                    let read_set = tx_state.database.inner_mut().take_read_set();
+                    return (
+                        read_set,
+                        Default::default(),
+                        TxExecutionResult {
+                            tx,
+                            state: StateWithIncrements {
+                                loaded_state: EvmState::default(),
+                                pending_balance_increments: Default::default(),
+                            },
+                            result: None,
+                            tx_da_size: 0,
+                            miner_fee: 0,
                         },
-                        result: Some(result),
-                        tx_da_size,
-                        miner_fee,
-                    },
-                );
-            }
-            Err(EVMError::Database(VersionedDbError::ReadAborted { aborted_txn_idx })) => {
-                // Try to add dependency. If it returns false, the dependency is already
-                // satisfied (already executed), so we can retry immediately.
-                if !self.scheduler.add_dependency(txn_idx, aborted_txn_idx) {
-                    // Retry execution in the loop
-                    continue;
+                    );
                 }
-
-                warn!(
-                    target: "block_stm",
-                    txn_idx = txn_idx,
-                    incarnation = incarnation,
-                    aborted_txn_idx = aborted_txn_idx,
-                    "Read aborted for transaction"
-                );
-
-                let read_set = tx_state.database.inner_mut().take_read_set();
-                return (
-                    read_set,
-                    Default::default(),
-                    TxExecutionResult {
-                        tx,
-                        state: StateWithIncrements {
-                            loaded_state: EvmState::default(),
-                            pending_balance_increments: Default::default(),
-                        },
-                        result: None,
-                        tx_da_size: 0,
-                        miner_fee: 0,
-                    },
-                );
-            }
-            Err(err) => {
-                warn!(
-                    target: "block_stm",
-                    txn_idx = txn_idx,
-                    incarnation = incarnation,
-                    error = %err,
-                    "Error executing transaction"
-                );
-
-                let read_set = tx_state.database.inner_mut().take_read_set();
-                return (
-                    read_set,
-                    Default::default(),
-                    TxExecutionResult {
-                        tx,
-                        state: StateWithIncrements {
-                            loaded_state: EvmState::default(),
-                            pending_balance_increments: Default::default(),
-                        },
-                        result: None,
-                        tx_da_size: 0,
-                        miner_fee: 0,
-                    },
-                );
-            }
             }; // End match
         } // End loop
     }
@@ -377,7 +386,7 @@ impl<
                                 txn_idx,
                                 incarnation,
                             } = version;
-                            
+
                             let tx_execute_span = tracing::info_span!(
                                 parent: Span::current(),
                                 "block_stm_tx_execute",
@@ -385,14 +394,14 @@ impl<
                                 incarnation = incarnation
                             );
                             let _tx_execute_guard = tx_execute_span.entered();
-                            
+
                             debug!(
                                 worker_id = worker_id,
                                 txn_idx = txn_idx,
                                 incarnation = incarnation,
                                 "Starting execution task"
                             );
-                            
+
                             let (read_set, write_set, exec_result) = this.execute_single_tx(version, base_fee, &execute_tx);
 
                             {
@@ -431,7 +440,7 @@ impl<
                                 incarnation = incarnation
                             );
                             let _tx_validate_guard = tx_validate_span.entered();
-                            
+
                             debug!(
                                 worker_id = worker_id,
                                 txn_idx = txn_idx,
@@ -465,7 +474,7 @@ impl<
                                 }
                                 this.mv_hashmap.convert_writes_to_estimates(txn_idx);
                             }
-                            
+
                             let next_task = this.scheduler.finish_validation(txn_idx, aborted);
                             debug!(
                                 worker_id = worker_id,
@@ -487,7 +496,7 @@ impl<
                             }
                         }
                     }
-                    
+
                     debug!(
                         worker_id = worker_id,
                         scheduler_done = this.scheduler.done(),
@@ -497,7 +506,7 @@ impl<
                 });
             }
         });
-        
+
         debug!(
             "All worker threads completed. Scheduler done: {}, Execution idx: {}, Validation idx: {}",
             this.scheduler.done(),

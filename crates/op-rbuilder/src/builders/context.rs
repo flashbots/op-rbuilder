@@ -1,9 +1,7 @@
 use alloy_consensus::{Eip658Value, Transaction, conditional::BlockConditionalAttributes};
 use alloy_eips::{Encodable2718, Typed2718};
 use alloy_evm::Database;
-use alloy_op_evm::{
-    OpBlockExecutorFactory, OpEvmFactory, block::receipt_builder::OpReceiptBuilder,
-};
+use alloy_op_evm::{OpEvmFactory, block::receipt_builder::OpReceiptBuilder};
 use alloy_primitives::{Address, B256, BlockHash, Bytes, U256};
 use alloy_rpc_types_eth::Withdrawals;
 use core::fmt::Debug;
@@ -33,34 +31,22 @@ use reth_optimism_txpool::{
 };
 use reth_payload_builder::PayloadId;
 use reth_primitives::SealedHeader;
-use reth_primitives_traits::{InMemorySize, Recovered, SignedTransaction};
-use reth_revm::{State, context::Block, db::WrapDatabaseRef};
+use reth_primitives_traits::{InMemorySize, SignedTransaction};
+use reth_revm::{State, context::Block};
 use reth_transaction_pool::{BestTransactionsAttributes, PoolTransaction};
 use revm::{
     DatabaseCommit, DatabaseRef,
-    context::result::{EVMError, ResultAndState},
+    context::result::ResultAndState,
     interpreter::as_u64_saturated,
-    primitives::{HashMap, StorageKey, StorageValue},
-    state::{Account, AccountInfo, Bytecode, EvmState},
+    primitives::{StorageKey, StorageValue},
+    state::{AccountInfo, Bytecode},
 };
-use std::{
-    collections::hash_map::Entry,
-    convert::Infallible,
-    sync::{Arc, Mutex},
-    thread,
-    time::Instant,
-};
+use std::{convert::Infallible, sync::Arc, time::Instant};
 use tokio_util::sync::CancellationToken;
-use tracing::{Span, debug, info, trace, warn};
+use tracing::{Span, debug, info, trace};
 
 use crate::{
-    block_stm::{
-        EvmStateKey, EvmStateValue, ExecutionStatus, MVHashMap, Scheduler, Task, ValidationResult,
-        Version, VersionedDatabase, VersionedDbError,
-        evm::{LazyDatabaseWrapper, OpLazyEvmFactory},
-        executor::Executor,
-        mv_hashmap::WriteSet,
-    },
+    block_stm::{evm::OpLazyEvmFactory, executor::Executor},
     gas_limiter::AddressGasLimiter,
     metrics::OpRBuilderMetrics,
     primitives::reth::{ExecutionInfo, TxnExecutionResult},
@@ -108,52 +94,6 @@ pub struct OpPayloadBuilderCtx<ExtraCtx: Debug + Default = (), EvmFactory = OpEv
 impl<ExtraCtx: Debug + Default, EF> OpPayloadBuilderCtx<ExtraCtx, EF> {
     pub(super) fn with_cancel(self, cancel: CancellationToken) -> Self {
         Self { cancel, ..self }
-    }
-
-    pub(super) fn into_lazy_evm(self) -> OpPayloadBuilderCtx<ExtraCtx, OpLazyEvmFactory> {
-        let OpPayloadBuilderCtx {
-            evm_config,
-            da_config,
-            gas_limit_config,
-            chain_spec,
-            config,
-            evm_env,
-            block_env_attributes,
-            cancel,
-            builder_signer,
-            metrics,
-            extra_ctx,
-            max_gas_per_txn,
-            address_gas_limiter,
-            resource_metering,
-            parallel_threads,
-        } = self;
-
-        OpPayloadBuilderCtx {
-            da_config,
-            gas_limit_config,
-            chain_spec: chain_spec.clone(),
-            config,
-            evm_env,
-            block_env_attributes,
-            cancel,
-            builder_signer,
-            metrics,
-            extra_ctx,
-            max_gas_per_txn,
-            address_gas_limiter,
-            resource_metering,
-            parallel_threads,
-            evm_config: OpEvmConfig {
-                block_assembler: evm_config.block_assembler.clone(),
-                executor_factory: OpBlockExecutorFactory::new(
-                    *evm_config.executor_factory.receipt_builder(),
-                    chain_spec,
-                    OpLazyEvmFactory,
-                ),
-                _pd: Default::default(),
-            },
-        }
     }
 
     pub(super) fn with_extra_ctx(self, extra_ctx: ExtraCtx) -> Self {
@@ -717,26 +657,26 @@ impl revm::Database for MockDB {
     type Error = Infallible;
 
     /// Gets basic account information.
-    fn basic(&mut self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
+    fn basic(&mut self, _address: Address) -> Result<Option<AccountInfo>, Self::Error> {
         unreachable!()
     }
 
     /// Gets account code by its hash.
-    fn code_by_hash(&mut self, code_hash: B256) -> Result<Bytecode, Self::Error> {
+    fn code_by_hash(&mut self, _code_hash: B256) -> Result<Bytecode, Self::Error> {
         unreachable!()
     }
 
     /// Gets storage value of address at index.
     fn storage(
         &mut self,
-        address: Address,
-        index: StorageKey,
+        _address: Address,
+        _index: StorageKey,
     ) -> Result<StorageValue, Self::Error> {
         unreachable!()
     }
 
     /// Gets block hash by block number.
-    fn block_hash(&mut self, number: u64) -> Result<B256, Self::Error> {
+    fn block_hash(&mut self, _number: u64) -> Result<B256, Self::Error> {
         unreachable!()
     }
 }
