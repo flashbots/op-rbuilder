@@ -420,8 +420,8 @@ where
             return Ok(());
         }
         // We adjust our flashblocks timings based on time_drift if dynamic adjustment enable
-        let (flashblocks_per_block, first_flashblock_offset) =
-            self.calculate_flashblocks(timestamp);
+        let (flashblocks_per_block, first_flashblock_offset, flashblocks_deadline) =
+            self.calculate_flashblocks_timing(timestamp);
         info!(
             target: "payload_builder",
             message = "Performed flashblocks timing derivation",
@@ -479,11 +479,19 @@ where
         ));
         let interval = self.config.specific.interval;
         let (tx, mut rx) = mpsc::channel((self.config.flashblocks_per_block() + 1) as usize);
+        let build_at_interval_end = self.config.specific.flashblocks_build_at_interval_end;
 
         tokio::spawn({
             let block_cancel = block_cancel.clone();
 
             async move {
+                // If NOT building at interval end, send immediate signal to build first
+                // flashblock right away (preserves current default behavior).
+                // Otherwise, wait for first_flashblock_offset before first build.
+                if !build_at_interval_end && tx.send(fb_cancel.clone()).await.is_err() {
+                    return;
+                }
+
                 let mut timer = tokio::time::interval_at(
                     tokio::time::Instant::now()
                         .checked_add(first_flashblock_offset)
@@ -491,6 +499,13 @@ where
                     interval,
                 );
 
+                // Set deadline to ensure the last flashblock will be built before the leeway time
+                let deadline_sleep = async {
+                    tokio::time::sleep(flashblocks_deadline).await;
+                };
+                tokio::pin!(deadline_sleep);
+
+                // Stop building flashblocks after the deadline
                 loop {
                     tokio::select! {
                         _ = timer.tick() => {
@@ -498,14 +513,29 @@ where
                             fb_cancel.cancel();
                             fb_cancel = block_cancel.child_token();
                             // this will tick at first_flashblock_offset,
-                            // starting the second flashblock
+                            // starting the next flashblock
                             if tx.send(fb_cancel.clone()).await.is_err() {
                                 // receiver channel was dropped, return.
                                 // this will only happen if the `build_payload` function returns,
                                 // due to payload building error or the main cancellation token being
                                 // cancelled.
+                                error!(
+                                    target: "payload_builder",
+                                    "Did not trigger next flashblock build due to payload building error or block building being cancelled",
+                                );
                                 return;
                             }
+                        }
+                        _ = &mut deadline_sleep => {
+                            // cancel current payload building job
+                            fb_cancel.cancel();
+                            if tx.send(block_cancel.child_token()).await.is_err() {
+                                error!(
+                                    target: "payload_builder",
+                                    "Did not trigger next flashblock build due to payload building error or block building being cancelled",
+                                );
+                            }
+                            return;
                         }
                         _ = block_cancel.cancelled() => {
                             return;
@@ -517,6 +547,25 @@ where
 
         // Process flashblocks in a blocking loop
         loop {
+            // Wait for signal before building flashblock.
+            // If build_at_interval_end is false, an immediate signal is sent so we don't wait.
+            // If build_at_interval_end is true, we wait for the timer tick (first_flashblock_offset).
+            tokio::select! {
+                Some(new_fb_cancel) = rx.recv() => {
+                    ctx = ctx.with_cancel(new_fb_cancel);
+                },
+                _ = block_cancel.cancelled() => {
+                    self.record_flashblocks_metrics(
+                        &ctx,
+                        &info,
+                        flashblocks_per_block,
+                        &span,
+                        "Payload building complete, cancelled before first flashblock",
+                    );
+                    return Ok(());
+                }
+            }
+
             let fb_span = if span.is_none() {
                 tracing::Span::none()
             } else {
@@ -539,7 +588,7 @@ where
                 return Ok(());
             }
 
-            // build first flashblock immediately
+            // Build flashblock after receiving signal
             let next_flashblocks_ctx = match self
                 .build_next_flashblock(
                     &ctx,
@@ -576,21 +625,7 @@ where
                 }
             };
 
-            tokio::select! {
-                Some(fb_cancel) = rx.recv() => {
-                    ctx = ctx.with_cancel(fb_cancel).with_extra_ctx(next_flashblocks_ctx);
-                },
-                _ = block_cancel.cancelled() => {
-                    self.record_flashblocks_metrics(
-                        &ctx,
-                        &info,
-                        flashblocks_per_block,
-                        &span,
-                        "Payload building complete, channel closed or job cancelled",
-                    );
-                    return Ok(());
-                }
-            }
+            ctx = ctx.with_extra_ctx(next_flashblocks_ctx);
         }
     }
 
@@ -859,12 +894,13 @@ where
 
     /// Calculate number of flashblocks.
     /// If dynamic is enabled this function will take time drift into the account.
-    pub(super) fn calculate_flashblocks(&self, timestamp: u64) -> (u64, Duration) {
+    pub(super) fn calculate_flashblocks_timing(&self, timestamp: u64) -> (u64, Duration, Duration) {
         if self.config.specific.fixed {
             return (
                 self.config.flashblocks_per_block(),
-                // We adjust first FB to ensure that we have at least some time to make all FB in time
-                self.config.specific.interval - self.config.specific.leeway_time,
+                // Use full interval for first FB; leeway is applied at the end via target_time
+                self.config.specific.interval,
+                self.config.block_time - self.config.specific.leeway_time,
             );
         }
 
@@ -874,8 +910,7 @@ where
         // FCU(a) could arrive with `block_time - fb_time < delay`. In this case we could only produce 1 flashblock
         // FCU(a) could arrive with `delay < fb_time` - in this case we will shrink first flashblock
         // FCU(a) could arrive with `fb_time < delay < block_time - fb_time` - in this case we will issue less flashblocks
-        let target_time = std::time::SystemTime::UNIX_EPOCH + Duration::from_secs(timestamp)
-            - self.config.specific.leeway_time;
+        let target_time = std::time::SystemTime::UNIX_EPOCH + Duration::from_secs(timestamp);
         let now = std::time::SystemTime::now();
         let Ok(time_drift) = target_time.duration_since(now) else {
             error!(
@@ -887,6 +922,7 @@ where
             return (
                 self.config.flashblocks_per_block(),
                 self.config.specific.interval,
+                self.config.block_time - self.config.specific.leeway_time,
             );
         };
         self.metrics.flashblocks_time_drift.record(
@@ -907,7 +943,7 @@ where
         let interval = self.config.specific.interval.as_millis() as u64;
         let time_drift = time_drift.as_millis() as u64;
         let first_flashblock_offset = time_drift.rem(interval);
-        if first_flashblock_offset == 0 {
+        let (flashblocks_per_block, offset) = if first_flashblock_offset == 0 {
             // We have perfect division, so we use interval as first fb offset
             (time_drift.div(interval), Duration::from_millis(interval))
         } else {
@@ -916,7 +952,24 @@ where
                 time_drift.div(interval) + 1,
                 Duration::from_millis(first_flashblock_offset),
             )
-        }
+        };
+        // Apply send_offset_ms to the timer start time.
+        // Positive values = send later, negative values = send earlier.
+        let send_offset_ms = self.config.specific.flashblocks_send_offset_ms;
+        let deadline =
+            Duration::from_millis(time_drift).saturating_sub(self.config.specific.leeway_time);
+        let (adjusted_offset, adjusted_deadline) = if send_offset_ms >= 0 {
+            (
+                offset.saturating_add(Duration::from_millis(send_offset_ms.unsigned_abs())),
+                deadline.saturating_add(Duration::from_millis(send_offset_ms.unsigned_abs())),
+            )
+        } else {
+            (
+                offset.saturating_sub(Duration::from_millis(send_offset_ms.unsigned_abs())),
+                deadline.saturating_sub(Duration::from_millis(send_offset_ms.unsigned_abs())),
+            )
+        };
+        (flashblocks_per_block, adjusted_offset, adjusted_deadline)
     }
 }
 

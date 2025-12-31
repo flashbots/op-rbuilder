@@ -176,6 +176,24 @@ pub struct FlashblocksArgs {
     )]
     pub flashblocks_number_contract_use_permit: bool,
 
+    /// Build flashblock at the end of the flashblock interval
+    #[arg(
+        long = "flashblocks.build-at-interval-end",
+        env = "FLASHBLOCK_BUILD_AT_INTERVAL_END",
+        default_value = "false"
+    )]
+    pub flashblocks_build_at_interval_end: bool,
+
+    /// Offset in milliseconds for when to send flashblocks.
+    /// Positive values send late, negative values send early.
+    /// Example: -20 sends 20ms early, 20 sends 20ms late.
+    #[arg(
+        long = "flashblocks.send-offset-ms",
+        env = "FLASHBLOCK_SEND_OFFSET_MS",
+        default_value = "0"
+    )]
+    pub flashblocks_send_offset_ms: i64,
+
     /// Flashblocks p2p configuration
     #[command(flatten)]
     pub p2p: FlashblocksP2pArgs,
