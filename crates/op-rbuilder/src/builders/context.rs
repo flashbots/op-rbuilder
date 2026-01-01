@@ -990,6 +990,9 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpEvmFactory> {
             info.cumulative_da_bytes_used += tx_result.tx_da_size;
             info.total_fees += U256::from(tx_result.miner_fee) * U256::from(gas_used);
 
+            // Save pending balance increment addresses before moving state
+            let pending_balance_addrs: Vec<_> = tx_result.state.pending_balance_increments.keys().copied().collect();
+
             let mut resolved_state = tx_result
                 .state
                 .resolve_state(db)
@@ -999,9 +1002,9 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpEvmFactory> {
             for (address, _) in resolved_state.iter() {
                 let _ = db.load_cache_account(*address);
             }
-            for address in tx_result.state.pending_balance_increments.keys() {
-                if !resolved_state.contains_key(address) {
-                    let _ = db.load_cache_account(*address);
+            for address in pending_balance_addrs {
+                if !resolved_state.contains_key(&address) {
+                    let _ = db.load_cache_account(address);
                 }
             }
 
