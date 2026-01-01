@@ -635,6 +635,12 @@ where
         );
         let flashblock_build_start_time = Instant::now();
 
+        // Merge transitions from previous flashblock before building this one
+        // (skip for first flashblock)
+        if flashblock_index > 1 {
+            state.merge_transitions(reth_revm::db::states::bundle_state::BundleRetention::Reverts);
+        }
+
         let builder_txs =
             match self
                 .builder_tx

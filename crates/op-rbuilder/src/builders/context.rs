@@ -1092,9 +1092,6 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpEvmFactory> {
             applied_count, num_candidates, num_results
         );
 
-        // Merge transitions into bundle_state so subsequent flashblocks can see these changes
-        db.merge_transitions(BundleRetention::Reverts);
-
         Ok(None)
     }
 }
