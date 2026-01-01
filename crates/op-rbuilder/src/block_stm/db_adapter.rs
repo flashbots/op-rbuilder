@@ -89,6 +89,8 @@ pub struct VersionedDatabase<'a, BaseDB> {
     read_set: ReadSet,
     /// Captured reads for change tracking
     captured_reads: HashMap<EvmStateKey, EvmStateValue>,
+    /// Captured writes for block resources (gas, DA bytes)
+    pub captured_writes: HashMap<EvmStateKey, EvmStateValue>,
 }
 
 impl<'a, BaseDB> VersionedDatabase<'a, BaseDB> {
@@ -106,6 +108,7 @@ impl<'a, BaseDB> VersionedDatabase<'a, BaseDB> {
             code_cache,
             read_set: ReadSet::new(),
             captured_reads: HashMap::default(),
+            captured_writes: HashMap::default(),
         }
     }
 
@@ -126,6 +129,59 @@ impl<'a, BaseDB> VersionedDatabase<'a, BaseDB> {
     fn add_to_reads(&mut self, key: EvmStateKey, value: EvmStateValue, version: Option<Version>) {
         self.read_set.insert((key.clone(), version));
         self.captured_reads.insert(key, value);
+    }
+
+    /// Read a block resource value from MVHashMap.
+    /// Called BEFORE EVM execution to create dependency and enable early conflict detection.
+    pub fn read_block_resource(
+        &mut self,
+        resource_type: crate::block_stm::types::BlockResourceType,
+    ) -> Result<u64, VersionedDbError> {
+        use crate::block_stm::types::{EvmStateKey, EvmStateValue};
+
+        let key = EvmStateKey::BlockResourceUsed(resource_type);
+        match self.mv_hashmap.read(&key, self.txn_idx) {
+            ReadResult::Value {
+                value: EvmStateValue::BlockResourceUsed(val),
+                version,
+            } => {
+                self.add_to_reads(key, EvmStateValue::BlockResourceUsed(val), Some(version));
+                Ok(val)
+            }
+            ReadResult::NotFound => {
+                // Resource not written yet, defaults to 0
+                self.add_to_reads(key, EvmStateValue::BlockResourceUsed(0), None);
+                Ok(0)
+            }
+            ReadResult::Aborted { txn_idx } => {
+                Err(VersionedDbError::ReadAborted {
+                    aborted_txn_idx: txn_idx,
+                })
+            }
+            ReadResult::Value { value, version } => {
+                // Wrong value type - should never happen
+                Err(VersionedDbError::InvalidValue {
+                    key,
+                    value,
+                    version,
+                })
+            }
+        }
+    }
+
+    /// Write a block resource value.
+    /// This will be captured in the write set automatically.
+    pub fn write_block_resource(
+        &mut self,
+        resource_type: crate::block_stm::types::BlockResourceType,
+        value: u64,
+    ) -> Result<(), VersionedDbError> {
+        use crate::block_stm::types::{EvmStateKey, EvmStateValue};
+
+        let key = EvmStateKey::BlockResourceUsed(resource_type);
+        // Add to captured writes - will be added to write set when transaction completes
+        self.captured_writes.insert(key, EvmStateValue::BlockResourceUsed(value));
+        Ok(())
     }
 
     // /// Record a resolved balance read (balance with deltas applied).

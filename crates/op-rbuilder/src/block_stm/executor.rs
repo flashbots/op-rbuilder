@@ -1,5 +1,5 @@
 use std::{
-    collections::hash_map::Entry,
+    collections::{HashSet, hash_map::Entry},
     sync::{Arc, Mutex},
     thread,
 };
@@ -106,6 +106,9 @@ impl<
         ExecuteTxFn: (Fn(
                 &Recovered<op_alloy_consensus::OpTxEnvelope>,
                 &mut State<LazyDatabaseWrapper<VersionedDatabase<'_, DB>>>,
+                &HashSet<EvmStateKey>,              // NEW: conflicting keys
+                Option<&TxExecutionResult>,         // NEW: previous execution result
+                u64,                                 // NEW: tx_da_size
             ) -> Result<
                 ResultAndState<OpHaltReason>,
                 EVMError<VersionedDbError, OpTransactionError>,
@@ -143,8 +146,48 @@ impl<
             // Create State wrapper for EVM execution
             let mut tx_state = State::builder().with_database(lazy_db).build();
 
-            // Execute transaction with versioned state
-            match execute_tx(&tx, &mut tx_state) {
+            // Detect conflicting keys for re-executions (incarnation > 0)
+            // Conflicting keys are reads whose versions changed since the previous execution
+            let conflicting_keys: HashSet<EvmStateKey> = if incarnation > 0 {
+                let prev_read_set = self.mv_hashmap.get_last_read_set(txn_idx);
+
+                if !prev_read_set.is_empty() {
+                    use crate::block_stm::types::ReadResult;
+
+                    prev_read_set.iter()
+                        .filter_map(|(key, expected_version)| {
+                            // Check if this key's current version matches expected
+                            let current_read = self.mv_hashmap.read(key, txn_idx);
+                            match (expected_version, &current_read) {
+                                (Some(expected_ver), ReadResult::Value { version, .. })
+                                    if version != expected_ver => Some(key.clone()),
+                                (None, ReadResult::Value { .. }) => Some(key.clone()),
+                                (Some(_), ReadResult::NotFound) => Some(key.clone()),
+                                _ => None,
+                            }
+                        })
+                        .collect()
+                } else {
+                    HashSet::new()
+                }
+            } else {
+                HashSet::new()
+            };
+
+            // Get previous execution result if this is a re-execution
+            // We need to hold the lock guard to keep the reference alive
+            let results_guard = self.execution_results.lock().unwrap();
+            let previous_result = if incarnation > 0 {
+                results_guard[txn_idx as usize].as_ref()
+            } else {
+                None
+            };
+
+            // Execute transaction with versioned state, conflicting keys, previous result, and tx_da_size
+            let result = execute_tx(&tx, &mut tx_state, &conflicting_keys, previous_result, tx_da_size);
+            drop(results_guard); // Drop the lock before processing results
+
+            match result {
                 Ok(result) => {
                     let ResultAndState { result, state } = result;
 
@@ -158,6 +201,12 @@ impl<
                     let versioned_db = tx_state.database.inner_mut();
                     let read_set = versioned_db.take_read_set();
                     let captured_reads = versioned_db.take_captured_reads();
+
+                    // Add resource writes (gas, DA bytes) to write set
+                    // These are written via write_block_resource() during execution
+                    for (key, value) in std::mem::take(&mut versioned_db.captured_writes) {
+                        write_set.insert((key, value));
+                    }
 
                     // Add balance increments to write set using BalanceIncrement variant.
                     // This ensures conflict detection: if another transaction reads these balances,
@@ -332,6 +381,9 @@ impl<
         ExecuteTxFn: (Fn(
                 &Recovered<op_alloy_consensus::OpTxEnvelope>,
                 &mut State<LazyDatabaseWrapper<VersionedDatabase<'_, DB>>>,
+                &HashSet<EvmStateKey>,              // NEW: conflicting keys
+                Option<&TxExecutionResult>,         // NEW: previous execution result
+                u64,                                 // NEW: tx_da_size
             ) -> Result<
                 ResultAndState<OpHaltReason>,
                 EVMError<VersionedDbError, OpTransactionError>,

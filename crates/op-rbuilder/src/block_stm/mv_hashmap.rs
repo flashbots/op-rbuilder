@@ -124,6 +124,12 @@ impl MVHashMap {
         wrote_new_location
     }
 
+    /// Get the last read set for a transaction.
+    /// Used for conflict detection in re-executions.
+    pub fn get_last_read_set(&self, txn_idx: TxnIndex) -> ReadSet {
+        self.last_read_set[txn_idx as usize].read().clone()
+    }
+
     pub fn read(&self, location: &EvmStateKey, reader_idx: TxnIndex) -> ReadResult {
         let Some(version_map) = self.data.get(location) else {
             return ReadResult::NotFound;

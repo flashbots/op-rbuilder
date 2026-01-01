@@ -9,6 +9,26 @@ use alloy_primitives::{Address, B256, Bytes, U256};
 use derive_more::Display;
 use std::fmt;
 
+/// Types of block resources tracked during parallel execution.
+/// Resources are cumulative values that accumulate across transactions (e.g., gas usage).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum BlockResourceType {
+    /// Cumulative gas used by transactions
+    Gas,
+    /// Cumulative data availability bytes used by transactions
+    DABytes,
+    // Future: AccountCreates, etc.
+}
+
+impl fmt::Display for BlockResourceType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            BlockResourceType::Gas => write!(f, "Gas"),
+            BlockResourceType::DABytes => write!(f, "DABytes"),
+        }
+    }
+}
+
 /// Index of a transaction within a block (0-based).
 pub type TxnIndex = u32;
 
@@ -68,6 +88,8 @@ pub enum EvmStateKey {
     Code(Address),
     /// Storage slot: key is (address, slot)
     Storage(Address, U256),
+    /// Block resource usage tracking (e.g., cumulative gas)
+    BlockResourceUsed(BlockResourceType),
 }
 
 impl fmt::Display for EvmStateKey {
@@ -78,6 +100,9 @@ impl fmt::Display for EvmStateKey {
             EvmStateKey::CodeHash(addr) => write!(f, "CodeHash({})", addr),
             EvmStateKey::Code(addr) => write!(f, "Code({})", addr),
             EvmStateKey::Storage(addr, slot) => write!(f, "Storage({}, {})", addr, slot),
+            EvmStateKey::BlockResourceUsed(resource_type) => {
+                write!(f, "BlockResourceUsed({})", resource_type)
+            }
         }
     }
 }
@@ -99,6 +124,8 @@ pub enum EvmStateValue {
     Code(Bytes),
     /// Storage slot value
     Storage(U256),
+    /// Block resource usage (u64) - cumulative counter
+    BlockResourceUsed(u64),
 }
 
 /// Result of reading from the MVHashMap.

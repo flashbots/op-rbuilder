@@ -36,7 +36,7 @@ use reth_revm::{State, context::Block};
 use reth_transaction_pool::{BestTransactionsAttributes, PoolTransaction};
 use revm::{
     DatabaseCommit, DatabaseRef,
-    context::result::ResultAndState,
+    context::result::{EVMError, ResultAndState},
     interpreter::as_u64_saturated,
     primitives::{StorageKey, StorageValue},
     state::{AccountInfo, Bytecode},
@@ -46,7 +46,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{Span, debug, info, trace};
 
 use crate::{
-    block_stm::{evm::OpLazyEvmFactory, executor::Executor},
+    block_stm::{evm::OpLazyEvmFactory, executor::Executor, db_adapter::VersionedDbError},
     gas_limiter::AddressGasLimiter,
     metrics::OpRBuilderMetrics,
     primitives::reth::{ExecutionInfo, TxnExecutionResult},
@@ -771,6 +771,14 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpEvmFactory> {
             num_candidates = num_candidates,
         );
 
+        // Capture variables for closure
+        let max_gas_per_txn = self.max_gas_per_txn;
+        let address_gas_limiter = self.address_gas_limiter.clone();
+        let da_footprint_gas_scalar = info.da_footprint_scalar;
+        let block_da_footprint_limit = _block_da_footprint_limit;
+        let base_cumulative_gas = info.cumulative_gas_used;
+        let base_cumulative_da_bytes = info.cumulative_da_bytes_used;
+
         // Capture current span for cross-thread propagation (execute_txs span)
         let execute_txs_span = Span::current();
         let (results, shared_code_cache) = {
@@ -780,13 +788,119 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpEvmFactory> {
             executor.execute_transactions_parallel(
                 self.base_fee(),
                 self.cancel.clone(),
-                |tx, state| {
-                    // Create lazy EVM with balance increment support for parallel execution
-                    let lazy_factory = OpLazyEvmFactory;
-                    let mut evm = lazy_factory.create_evm(state, self.evm_env.clone());
+                |tx, state, conflicting_keys, previous_result, tx_da_size| {
+                    use crate::block_stm::types::{BlockResourceType, EvmStateKey};
 
-                    // Execute transaction
-                    evm.transact(&tx)
+                    // 1. Read BlockResourceUsed increments from other txs BEFORE execution to detect conflicts earlier
+                    // These are increments from other transactions within this flashblock (not the base from sequencer)
+                    let gas_increment = state.database.inner_mut()
+                        .read_block_resource(BlockResourceType::Gas)?;
+                    let da_increment = state.database.inner_mut()
+                        .read_block_resource(BlockResourceType::DABytes)?;
+
+                    // Calculate total cumulative values (base from sequencer + increments from other txs)
+                    let cumulative_gas = base_cumulative_gas.saturating_add(gas_increment);
+                    let cumulative_da_bytes = base_cumulative_da_bytes.saturating_add(da_increment);
+
+                    // 2. Check if we can skip EVM execution
+                    // Can skip if: conflicts are resource-only AND we have a previous result
+                    let conflicts_are_resource_only = !conflicting_keys.is_empty()
+                        && conflicting_keys.iter().all(|key| {
+                            matches!(key, EvmStateKey::BlockResourceUsed(_))
+                        });
+
+                    let can_skip_evm = conflicts_are_resource_only && previous_result.is_some();
+
+                    // 3. Execute or reuse
+                    let (result, evm_state) = if can_skip_evm {
+                        // Reuse previous result - extract just the loaded_state, not the full StateWithIncrements
+                        let prev = previous_result.unwrap();
+                        (prev.result.clone().unwrap(), prev.state.loaded_state.clone())
+                    } else {
+                        // Run EVM normally
+                        let lazy_factory = OpLazyEvmFactory;
+                        let mut evm = lazy_factory.create_evm(&mut *state, self.evm_env.clone());
+                        let ResultAndState { result, state: evm_state } = evm.transact(&tx)?;
+                        // evm is dropped here, releasing the borrow on state
+                        (result, evm_state)
+                    };
+
+                    // 5. Validate limits (pre-resource-write checks)
+                    // Check per-tx DA limit
+                    if tx_da_limit.is_some_and(|da_limit| tx_da_size > da_limit) {
+                        return Err(EVMError::Database(VersionedDbError::BaseDbError(
+                            format!("Transaction DA limit exceeded: {} > {}", tx_da_size, tx_da_limit.unwrap())
+                        )));
+                    }
+
+                    // Check block DA limit
+                    let total_da_bytes_used = cumulative_da_bytes.saturating_add(tx_da_size);
+                    trace!(
+                        target: "payload_builder",
+                        cumulative_da_bytes,
+                        tx_da_size,
+                        total_da_bytes_used,
+                        block_da_limit = ?block_da_limit,
+                        "Checking block DA limit"
+                    );
+                    if block_da_limit.is_some_and(|da_limit| total_da_bytes_used > da_limit) {
+                        return Err(EVMError::Database(VersionedDbError::BaseDbError(
+                            format!("Block DA limit exceeded: {} + {} > {}",
+                                cumulative_da_bytes, tx_da_size, block_da_limit.unwrap())
+                        )));
+                    }
+
+                    // Check DA footprint (post-Jovian)
+                    if let Some(da_footprint_gas_scalar) = da_footprint_gas_scalar {
+                        let tx_da_footprint = total_da_bytes_used.saturating_mul(da_footprint_gas_scalar as u64);
+                        if tx_da_footprint > block_da_footprint_limit.unwrap_or(block_gas_limit) {
+                            return Err(EVMError::Database(VersionedDbError::BaseDbError(
+                                format!("Block DA footprint limit exceeded: {} > {}",
+                                    tx_da_footprint, block_da_footprint_limit.unwrap_or(block_gas_limit))
+                            )));
+                        }
+                    }
+
+                    // 5. Validate gas limits and write updated BlockResourceUsed values
+                    let tx_gas_used = result.gas_used();
+
+                    // Check block gas limit
+                    if cumulative_gas + tx_gas_used > block_gas_limit {
+                        return Err(EVMError::Database(VersionedDbError::BaseDbError(
+                            format!("Gas limit exceeded: {} + {} > {}",
+                                cumulative_gas, tx_gas_used, block_gas_limit)
+                        )));
+                    }
+
+                    // Check max gas per transaction
+                    if let Some(max_gas) = max_gas_per_txn {
+                        if tx_gas_used > max_gas {
+                            return Err(EVMError::Database(VersionedDbError::BaseDbError(
+                                format!("Transaction gas limit exceeded: {} > {}", tx_gas_used, max_gas)
+                            )));
+                        }
+                    }
+
+                    // Check address gas limiter
+                    if address_gas_limiter.consume_gas(tx.signer(), tx_gas_used).is_err() {
+                        return Err(EVMError::Database(VersionedDbError::BaseDbError(
+                            format!("Address gas limit exceeded for {}", tx.signer())
+                        )));
+                    }
+
+                    // 6. Write updated BlockResourceUsed increments (not absolute values)
+                    // Each transaction writes its contribution as an increment from the base
+                    // The next transaction will read the sum of all previous increments
+                    state.database.inner_mut().write_block_resource(
+                        BlockResourceType::Gas,
+                        gas_increment + tx_gas_used
+                    )?;
+                    state.database.inner_mut().write_block_resource(
+                        BlockResourceType::DABytes,
+                        da_increment + tx_da_size
+                    )?;
+
+                    Ok(ResultAndState { result, state: evm_state })
                 },
                 execute_txs_span.clone(),
             );
