@@ -32,7 +32,7 @@ use reth_optimism_txpool::{
 use reth_payload_builder::PayloadId;
 use reth_primitives::SealedHeader;
 use reth_primitives_traits::{InMemorySize, SignedTransaction};
-use reth_revm::{State, context::Block, db::states::bundle_state::BundleRetention};
+use reth_revm::{State, context::Block};
 use reth_transaction_pool::{BestTransactionsAttributes, PoolTransaction};
 use revm::{
     DatabaseCommit, DatabaseRef,

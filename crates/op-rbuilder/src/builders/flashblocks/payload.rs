@@ -635,11 +635,27 @@ where
         );
         let flashblock_build_start_time = Instant::now();
 
+        // Debug: Log state before incremental merge
+        tracing::info!(
+            target: "payload_builder",
+            "BEFORE incremental merge (flashblock {}): bundle_state has {} accounts, {} contracts",
+            flashblock_index,
+            state.bundle_state.state.len(),
+            state.bundle_state.contracts.len()
+        );
+
         // Merge transitions from flashblock 1 before building flashblock 2
         // This makes flashblock 1's state visible to flashblock 2+
         // We only do this once to avoid interfering with the final merge
         if flashblock_index == 2 {
             state.merge_transitions(reth_revm::db::states::bundle_state::BundleRetention::Reverts);
+            tracing::info!(
+                target: "payload_builder",
+                "AFTER incremental merge (flashblock {}): bundle_state has {} accounts, {} contracts",
+                flashblock_index,
+                state.bundle_state.state.len(),
+                state.bundle_state.contracts.len()
+            );
         }
 
         let builder_txs =
@@ -1073,9 +1089,25 @@ where
 {
     // We use it to preserve state, so we run merge_transitions on transition state at most once
     let untouched_transition_state = state.transition_state.clone();
+
+    tracing::info!(
+        target: "payload_builder",
+        "build_block BEFORE final merge: bundle_state has {} accounts, {} contracts",
+        state.bundle_state.state.len(),
+        state.bundle_state.contracts.len()
+    );
+
     let state_merge_start_time = Instant::now();
     state.merge_transitions(BundleRetention::Reverts);
     let state_transition_merge_time = state_merge_start_time.elapsed();
+
+    tracing::info!(
+        target: "payload_builder",
+        "build_block AFTER final merge: bundle_state has {} accounts, {} contracts",
+        state.bundle_state.state.len(),
+        state.bundle_state.contracts.len()
+    );
+
     ctx.metrics
         .state_transition_merge_duration
         .record(state_transition_merge_time);
@@ -1285,6 +1317,13 @@ where
     // We clean bundle and place initial state transaction back
     state.take_bundle();
     state.transition_state = untouched_transition_state;
+
+    tracing::info!(
+        target: "payload_builder",
+        "build_block AFTER cleanup: bundle_state has {} accounts, {} contracts",
+        state.bundle_state.state.len(),
+        state.bundle_state.contracts.len()
+    );
 
     Ok((
         OpBuiltPayload::new(
