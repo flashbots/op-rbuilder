@@ -809,10 +809,23 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpEvmFactory> {
                             matches!(key, EvmStateKey::BlockResourceUsed(_))
                         });
 
-                    let can_skip_evm = conflicts_are_resource_only && previous_result.is_some();
+                    let can_skip_evm = conflicts_are_resource_only
+                        && previous_result.map(|r| r.result.is_some()).unwrap_or(false);
+
+                    if !conflicting_keys.is_empty() {
+                        trace!(
+                            target: "payload_builder",
+                            conflict_keys_count = conflicting_keys.len(),
+                            resource_only = conflicts_are_resource_only,
+                            has_previous = previous_result.is_some(),
+                            skip_evm = can_skip_evm,
+                            "Block-STM conflict check"
+                        );
+                    }
 
                     // 3. Execute or reuse
                     let (result, evm_state) = if can_skip_evm {
+                        trace!(target: "payload_builder", "Skipping EVM re-execution (resource-only conflict)");
                         // Reuse previous result - extract just the loaded_state, not the full StateWithIncrements
                         let prev = previous_result.unwrap();
                         (prev.result.clone().unwrap(), prev.state.loaded_state.clone())
