@@ -798,6 +798,12 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpEvmFactory> {
                     let da_increment = state.database.inner_mut()
                         .read_block_resource(BlockResourceType::DABytes)?;
 
+                    trace!(
+                        target: "payload_builder",
+                        "Read increments: gas_increment={}, da_increment={}, base_gas={}, base_da={}",
+                        gas_increment, da_increment, base_cumulative_gas, base_cumulative_da_bytes
+                    );
+
                     // Calculate total cumulative values (base from sequencer + increments from other txs)
                     let cumulative_gas = base_cumulative_gas.saturating_add(gas_increment);
                     let cumulative_da_bytes = base_cumulative_da_bytes.saturating_add(da_increment);
@@ -865,11 +871,19 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpEvmFactory> {
 
                     // Check DA footprint (post-Jovian)
                     if let Some(da_footprint_gas_scalar) = da_footprint_gas_scalar {
-                        let tx_da_footprint = total_da_bytes_used.saturating_mul(da_footprint_gas_scalar as u64);
-                        if tx_da_footprint > block_da_footprint_limit.unwrap_or(block_gas_limit) {
+                        let total_da_bytes_after = cumulative_da_bytes.saturating_add(tx_da_size);
+                        let da_footprint_after = total_da_bytes_after.saturating_mul(da_footprint_gas_scalar as u64);
+                        trace!(
+                            target: "payload_builder",
+                            "DA footprint check: total_da_bytes={}, scalar={}, footprint={}, limit={}",
+                            total_da_bytes_after, da_footprint_gas_scalar, da_footprint_after,
+                            block_da_footprint_limit.unwrap_or(block_gas_limit)
+                        );
+                        if da_footprint_after > block_da_footprint_limit.unwrap_or(block_gas_limit) {
                             return Err(EVMError::Database(VersionedDbError::BaseDbError(
-                                format!("Block DA footprint limit exceeded: {} > {}",
-                                    tx_da_footprint, block_da_footprint_limit.unwrap_or(block_gas_limit))
+                                format!("Block DA footprint limit exceeded: {} > {} (total_da_bytes={}, base={}, da_increment={}, tx_da={}, scalar={})",
+                                    da_footprint_after, block_da_footprint_limit.unwrap_or(block_gas_limit),
+                                    total_da_bytes_after, base_cumulative_da_bytes, da_increment, tx_da_size, da_footprint_gas_scalar)
                             )));
                         }
                     }
@@ -901,16 +915,25 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpEvmFactory> {
                         )));
                     }
 
-                    // 6. Write updated BlockResourceUsed increments (not absolute values)
-                    // Each transaction writes its contribution as an increment from the base
-                    // The next transaction will read the sum of all previous increments
+                    // 6. Write updated BlockResourceUsed cumulative values (EXCLUDING base from sequencer)
+                    // Write the cumulative of user transactions ONLY (gas_increment + this tx)
+                    // The base is added when reading for limit checks, preventing double-counting
+                    let new_gas_cumulative = gas_increment + tx_gas_used;
+                    let new_da_cumulative = da_increment + tx_da_size;
+
+                    trace!(
+                        target: "payload_builder",
+                        "Writing increments: new_gas={}, new_da={} (gas_increment={} + tx_gas={}, da_increment={} + tx_da={})",
+                        new_gas_cumulative, new_da_cumulative, gas_increment, tx_gas_used, da_increment, tx_da_size
+                    );
+
                     state.database.inner_mut().write_block_resource(
                         BlockResourceType::Gas,
-                        gas_increment + tx_gas_used
+                        new_gas_cumulative
                     )?;
                     state.database.inner_mut().write_block_resource(
                         BlockResourceType::DABytes,
-                        da_increment + tx_da_size
+                        new_da_cumulative
                     )?;
 
                     Ok(ResultAndState { result, state: evm_state })
