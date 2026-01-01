@@ -635,9 +635,10 @@ where
         );
         let flashblock_build_start_time = Instant::now();
 
-        // Merge transitions from previous flashblock before building this one
-        // (skip for first flashblock)
-        if flashblock_index > 1 {
+        // Merge transitions from flashblock 1 before building flashblock 2
+        // This makes flashblock 1's state visible to flashblock 2+
+        // We only do this once to avoid interfering with the final merge
+        if flashblock_index == 2 {
             state.merge_transitions(reth_revm::db::states::bundle_state::BundleRetention::Reverts);
         }
 
