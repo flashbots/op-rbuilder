@@ -531,10 +531,11 @@ async fn setup_flashtestation_contracts(
             .send()
             .await?;
         driver.build_new_block_with_current_timestamp(None).await?;
-        provider
+        let receipt = provider
             .get_transaction_receipt(*mock_quote_tx.tx_hash())
             .await?
             .expect("add mock quote not mined");
+        println!("add_mock_quote receipt: {:?}", receipt);
         // verify registered
         let registry_contract =
             FlashtestationRegistry::new(FLASHTESTATION_REGISTRY_ADDRESS, provider.clone());

@@ -998,6 +998,22 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpEvmFactory> {
             }
 
             // Commit resolved state to actual DB
+            trace!(
+                target: "payload_builder",
+                tx_hash = ?result.output().ok().and_then(|o| o.transaction_hash()),
+                num_accounts = resolved_state.len(),
+                "Committing transaction state"
+            );
+            for (addr, account) in resolved_state.iter() {
+                if !account.storage.is_empty() {
+                    trace!(
+                        target: "payload_builder",
+                        address = ?addr,
+                        num_storage_slots = account.storage.len(),
+                        "Account has storage changes"
+                    );
+                }
+            }
             db.commit(resolved_state);
 
             // Record transaction
