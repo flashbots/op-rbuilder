@@ -1093,8 +1093,8 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpEvmFactory> {
         );
 
         // Merge transitions into bundle_state so subsequent flashblocks can see these changes
-        // The final merge in payload.rs will merge any remaining transitions (likely empty after incremental merges)
-        db.merge_transitions(BundleRetention::Reverts);
+        // Use PlainState retention for incremental merges (final merge will handle reverts)
+        db.merge_transitions(BundleRetention::PlainState);
 
         Ok(None)
     }
