@@ -1024,12 +1024,17 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpEvmFactory> {
             let num_accounts_with_storage = resolved_state.iter()
                 .filter(|(_, acct)| !acct.storage.is_empty())
                 .count();
+
+            // Log ALL account addresses being committed for debugging
+            let all_addresses: Vec<_> = resolved_state.keys().copied().collect();
             trace!(
                 target: "payload_builder",
                 num_accounts = resolved_state.len(),
                 num_accounts_with_storage,
+                addresses = ?all_addresses,
                 "Committing transaction state"
             );
+
             if num_accounts_with_storage > 0 {
                 for (addr, account) in resolved_state.iter() {
                     if !account.storage.is_empty() {
