@@ -840,6 +840,29 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpEvmFactory> {
                         let lazy_factory = OpLazyEvmFactory;
                         let mut evm = lazy_factory.create_evm(&mut *state, self.evm_env.clone());
                         let ResultAndState { result, state: evm_state } = evm.transact(&tx)?;
+
+                        // Log storage changes in evm_state
+                        let num_accounts_with_storage = evm_state.iter()
+                            .filter(|(_, acct)| !acct.storage.is_empty())
+                            .count();
+                        if num_accounts_with_storage > 0 {
+                            trace!(
+                                target: "payload_builder",
+                                num_accounts_with_storage,
+                                "EVM execution complete with storage changes"
+                            );
+                            for (addr, account) in evm_state.iter() {
+                                if !account.storage.is_empty() {
+                                    trace!(
+                                        target: "payload_builder",
+                                        address = ?addr,
+                                        num_storage_slots = account.storage.len(),
+                                        "Account has storage in EVM state"
+                                    );
+                                }
+                            }
+                        }
+
                         // evm is dropped here, releasing the borrow on state
                         (result, evm_state)
                     };
@@ -998,20 +1021,31 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpEvmFactory> {
             }
 
             // Commit resolved state to actual DB
+            let num_accounts_with_storage = resolved_state.iter()
+                .filter(|(_, acct)| !acct.storage.is_empty())
+                .count();
             trace!(
                 target: "payload_builder",
-                tx_hash = ?result.output().ok().and_then(|o| o.transaction_hash()),
                 num_accounts = resolved_state.len(),
+                num_accounts_with_storage,
                 "Committing transaction state"
             );
-            for (addr, account) in resolved_state.iter() {
-                if !account.storage.is_empty() {
-                    trace!(
-                        target: "payload_builder",
-                        address = ?addr,
-                        num_storage_slots = account.storage.len(),
-                        "Account has storage changes"
-                    );
+            if num_accounts_with_storage > 0 {
+                for (addr, account) in resolved_state.iter() {
+                    if !account.storage.is_empty() {
+                        let num_changed = account.storage.iter()
+                            .filter(|(_, v)| v.is_changed())
+                            .count();
+                        trace!(
+                            target: "payload_builder",
+                            address = ?addr,
+                            num_storage_slots = account.storage.len(),
+                            num_changed_slots = num_changed,
+                            is_touched = account.is_touched(),
+                            is_selfdestructed = account.is_selfdestructed(),
+                            "Account has storage in resolved_state before commit"
+                        );
+                    }
                 }
             }
             db.commit(resolved_state);
