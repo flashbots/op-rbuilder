@@ -32,7 +32,7 @@ use reth_optimism_txpool::{
 use reth_payload_builder::PayloadId;
 use reth_primitives::SealedHeader;
 use reth_primitives_traits::{InMemorySize, SignedTransaction};
-use reth_revm::{State, context::Block};
+use reth_revm::{State, context::Block, db::states::bundle_state::BundleRetention};
 use reth_transaction_pool::{BestTransactionsAttributes, PoolTransaction};
 use revm::{
     DatabaseCommit, DatabaseRef,
@@ -613,6 +613,16 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpEvmFactory> {
             };
             info.receipts.push(self.build_receipt(ctx, None));
 
+            // Log state before commit (sequential mode)
+            trace!(
+                target: "payload_builder",
+                mode = "sequential",
+                txn_idx,
+                num_accounts = state.len(),
+                has_storage_count = state.iter().filter(|(_, a)| !a.storage.is_empty()).count(),
+                "SEQUENTIAL: Before commit"
+            );
+
             // commit changes
             evm.db_mut().commit(state);
 
@@ -980,20 +990,20 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpEvmFactory> {
             info.cumulative_da_bytes_used += tx_result.tx_da_size;
             info.total_fees += U256::from(tx_result.miner_fee) * U256::from(gas_used);
 
-            // Load accounts into cache before committing
-            // (State requires accounts to be in cache before applying changes)
-            // Note: LazyEvmState has both loaded_state and pending_balance_increments
-            for address in tx_result.state.loaded_state.keys() {
-                let _ = db.load_cache_account(*address);
-            }
-            for address in tx_result.state.pending_balance_increments.keys() {
-                let _ = db.load_cache_account(*address);
-            }
-
             let mut resolved_state = tx_result
                 .state
                 .resolve_state(db)
                 .map_err(|e| PayloadBuilderError::Other(e.to_string().into()))?;
+
+            // Load accounts into cache before committing
+            for (address, _) in resolved_state.iter() {
+                let _ = db.load_cache_account(*address);
+            }
+            for address in tx_result.state.pending_balance_increments.keys() {
+                if !resolved_state.contains_key(address) {
+                    let _ = db.load_cache_account(*address);
+                }
+            }
 
             let mut mock_db = MockDB;
             let evm = self
@@ -1027,12 +1037,19 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpEvmFactory> {
 
             // Log ALL account addresses being committed for debugging
             let all_addresses: Vec<_> = resolved_state.keys().copied().collect();
+            let tee_contract = Address::from([0x70, 0x0b, 0x6a, 0x60, 0xce, 0x7e, 0xaa, 0xea, 0x56, 0xf0, 0x65, 0x75, 0x3d, 0x8d, 0xcb, 0x96, 0x53, 0xdb, 0xad, 0x35]);
+            let has_tee = resolved_state.contains_key(&tee_contract);
+            let tee_has_storage = has_tee && !resolved_state.get(&tee_contract).unwrap().storage.is_empty();
             trace!(
                 target: "payload_builder",
+                mode = "parallel",
+                tx_hash = ?tx_result.tx.tx_hash(),
                 num_accounts = resolved_state.len(),
                 num_accounts_with_storage,
+                has_tee_contract = has_tee,
+                tee_has_storage,
                 addresses = ?all_addresses,
-                "Committing transaction state"
+                "PARALLEL: Before commit"
             );
 
             if num_accounts_with_storage > 0 {
@@ -1071,6 +1088,10 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpEvmFactory> {
             "Block-STM commit phase complete: applied {} of {} candidates (safe_commit_point={})",
             applied_count, num_candidates, num_results
         );
+
+        // Merge transitions into bundle_state so subsequent flashblocks can see these changes
+        // The final merge in payload.rs will merge any remaining transitions (likely empty after incremental merges)
+        db.merge_transitions(BundleRetention::Reverts);
 
         Ok(None)
     }
