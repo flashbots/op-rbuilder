@@ -640,6 +640,21 @@ where
         // ONLY for parallel (Block-STM) execution - sequential doesn't use transition_state
         if flashblock_index == 2 && ctx.parallel_threads > 1 {
             state.merge_transitions(reth_revm::db::states::bundle_state::BundleRetention::Reverts);
+
+            // After merge, populate bundle_state.contracts with bytecode for deployed contracts
+            // This fixes the issue where accounts have code_hash but contracts map is missing bytecode
+            use revm::DatabaseRef;
+            use alloy_consensus::constants::KECCAK_EMPTY;
+            for (_addr, account_info) in state.bundle_state.state.iter() {
+                if let Some(ref info) = account_info.info {
+                    if info.code_hash != KECCAK_EMPTY && !state.bundle_state.contracts.contains_key(&info.code_hash) {
+                        // Try to get bytecode from database
+                        if let Ok(code) = state.database.code_by_hash_ref(info.code_hash) {
+                            state.bundle_state.contracts.insert(info.code_hash, code);
+                        }
+                    }
+                }
+            }
         }
 
         let builder_txs =
@@ -1092,6 +1107,40 @@ where
         state.bundle_state.contracts.len()
     );
 
+    // Debug: Log detailed bundle_state contents for comparison
+    use std::fs::OpenOptions;
+    use std::io::Write;
+    let mode = if ctx.parallel_threads > 1 { "parallel" } else { "sequential" };
+    if let Ok(mut f) = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(format!("/tmp/bundle_state_{}.log", mode))
+    {
+        let _ = writeln!(f, "\n=== BUNDLE_STATE at ExecutionOutcome creation (mode: {}) ===", mode);
+        let _ = writeln!(f, "Total accounts: {}", state.bundle_state.state.len());
+        let _ = writeln!(f, "Total contracts: {}", state.bundle_state.contracts.len());
+
+        // Log all accounts
+        for (addr, account_info) in state.bundle_state.state.iter() {
+            let _ = writeln!(f, "\nAccount {:?}:", addr);
+            if let Some(ref info) = account_info.info {
+                let _ = writeln!(f, "  balance: {}", info.balance);
+                let _ = writeln!(f, "  nonce: {}", info.nonce);
+                let _ = writeln!(f, "  code_hash: {:?}", info.code_hash);
+            }
+            let _ = writeln!(f, "  storage slots: {}", account_info.storage.len());
+            for (slot, value) in account_info.storage.iter().take(5) {
+                let _ = writeln!(f, "    slot {:?}: {:?}", slot, value);
+            }
+        }
+
+        // Log all contracts
+        let _ = writeln!(f, "\nContracts in bundle_state.contracts:");
+        for (hash, bytecode) in state.bundle_state.contracts.iter() {
+            let _ = writeln!(f, "  code_hash {:?}: bytecode len {}", hash, bytecode.len());
+        }
+    }
+
     ctx.metrics
         .state_transition_merge_duration
         .record(state_transition_merge_time);
@@ -1299,12 +1348,18 @@ where
     };
 
     // We clean bundle and place initial state transaction back
+    // BUT preserve contracts AND state (storage) so they persist across flashblocks
+    let contracts_to_preserve = state.bundle_state.contracts.clone();
+    let state_to_preserve = state.bundle_state.state.clone();
     state.take_bundle();
+    state.bundle_state.contracts = contracts_to_preserve.clone();
+    state.bundle_state.state = state_to_preserve.clone();
     state.transition_state = untouched_transition_state;
 
     tracing::info!(
         target: "payload_builder",
-        "build_block AFTER cleanup: bundle_state has {} accounts, {} contracts",
+        "build_block AFTER cleanup (preserved {} contracts): bundle_state has {} accounts, {} contracts",
+        contracts_to_preserve.len(),
         state.bundle_state.state.len(),
         state.bundle_state.contracts.len()
     );
