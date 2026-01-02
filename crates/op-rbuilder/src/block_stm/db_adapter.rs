@@ -184,6 +184,59 @@ impl<'a, BaseDB> VersionedDatabase<'a, BaseDB> {
         Ok(())
     }
 
+    /// Read address gas usage from MVHashMap.
+    /// Called BEFORE EVM execution to create dependency and check gas limits.
+    pub fn read_address_gas_used(
+        &mut self,
+        address: Address,
+    ) -> Result<u64, VersionedDbError> {
+        use crate::block_stm::types::{EvmStateKey, EvmStateValue};
+
+        let key = EvmStateKey::AddressGasUsed(address);
+        match self.mv_hashmap.read(&key, self.txn_idx) {
+            ReadResult::Value {
+                value: EvmStateValue::AddressGasUsed(val),
+                version,
+            } => {
+                self.add_to_reads(key, EvmStateValue::AddressGasUsed(val), Some(version));
+                Ok(val)
+            }
+            ReadResult::NotFound => {
+                // No gas used yet for this address in this block
+                self.add_to_reads(key, EvmStateValue::AddressGasUsed(0), None);
+                Ok(0)
+            }
+            ReadResult::Aborted { txn_idx } => {
+                Err(VersionedDbError::ReadAborted {
+                    aborted_txn_idx: txn_idx,
+                })
+            }
+            ReadResult::Value { value, version } => {
+                // Wrong value type - should never happen
+                Err(VersionedDbError::InvalidValue {
+                    key,
+                    value,
+                    version,
+                })
+            }
+        }
+    }
+
+    /// Write address gas usage value.
+    /// This will be captured in the write set automatically.
+    pub fn write_address_gas_used(
+        &mut self,
+        address: Address,
+        value: u64,
+    ) -> Result<(), VersionedDbError> {
+        use crate::block_stm::types::{EvmStateKey, EvmStateValue};
+
+        let key = EvmStateKey::AddressGasUsed(address);
+        // Add to captured writes - will be added to write set when transaction completes
+        self.captured_writes.insert(key, EvmStateValue::AddressGasUsed(value));
+        Ok(())
+    }
+
     // /// Record a resolved balance read (balance with deltas applied).
     // fn record_resolved_balance(
     //     &self,

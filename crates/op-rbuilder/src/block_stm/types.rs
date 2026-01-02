@@ -90,6 +90,9 @@ pub enum EvmStateKey {
     Storage(Address, U256),
     /// Block resource usage tracking (e.g., cumulative gas)
     BlockResourceUsed(BlockResourceType),
+    /// Address-specific gas usage tracking within this block
+    /// Used to track cumulative gas per address for rate limiting in parallel execution
+    AddressGasUsed(Address),
 }
 
 impl fmt::Display for EvmStateKey {
@@ -103,6 +106,7 @@ impl fmt::Display for EvmStateKey {
             EvmStateKey::BlockResourceUsed(resource_type) => {
                 write!(f, "BlockResourceUsed({})", resource_type)
             }
+            EvmStateKey::AddressGasUsed(addr) => write!(f, "AddressGasUsed({})", addr),
         }
     }
 }
@@ -126,6 +130,8 @@ pub enum EvmStateValue {
     Storage(U256),
     /// Block resource usage (u64) - cumulative counter
     BlockResourceUsed(u64),
+    /// Address gas usage (u64) - cumulative counter per address in this block
+    AddressGasUsed(u64),
 }
 
 /// Result of reading from the MVHashMap.

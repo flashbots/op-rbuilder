@@ -46,6 +46,26 @@ impl AddressGasLimiter {
         }
     }
 
+    /// Check if there's enough gas for this address without consuming it.
+    /// This is used in parallel execution to check limits before committing.
+    ///
+    /// # Arguments
+    /// * `address` - The address to check
+    /// * `cumulative_gas` - Total gas already used by this address in the current block
+    /// * `additional_gas` - Additional gas requested by the current transaction
+    pub fn check_gas_available(
+        &self,
+        address: Address,
+        cumulative_gas: u64,
+        additional_gas: u64,
+    ) -> Result<(), GasLimitError> {
+        if let Some(inner) = &self.inner {
+            inner.check_gas_available(address, cumulative_gas, additional_gas)
+        } else {
+            Ok(())
+        }
+    }
+
     /// Should be called upon each new block. Refills buckets/Garbage collection
     pub fn refresh(&self, block_number: u64) {
         if let Some(inner) = self.inner.as_ref() {
@@ -98,6 +118,49 @@ impl AddressGasLimiterInner {
     fn consume_gas(&self, address: Address, gas_requested: u64) -> Result<(), GasLimitError> {
         let start = Instant::now();
         let result = self.consume_gas_inner(address, gas_requested);
+
+        self.metrics.record_gas_check(&result, start.elapsed());
+
+        result.map(|_| ())
+    }
+
+    /// Check if there's enough gas for this address without consuming it.
+    /// This is used in parallel execution to check limits before committing.
+    ///
+    /// # Arguments
+    /// * `address` - The address to check
+    /// * `cumulative_gas` - Total gas already used by this address in the current block
+    /// * `additional_gas` - Additional gas requested by the current transaction
+    fn check_gas_available(
+        &self,
+        address: Address,
+        cumulative_gas: u64,
+        additional_gas: u64,
+    ) -> Result<(), GasLimitError> {
+        let start = Instant::now();
+
+        // Get the bucket for this address (or create one with full capacity)
+        let bucket = self
+            .address_buckets
+            .get(&address)
+            .map(|entry| entry.value().clone())
+            .unwrap_or_else(|| TokenBucket::new(self.config.max_gas_per_address));
+
+        // Check if cumulative gas used in this block + additional gas would exceed available
+        // cumulative_gas = gas already used by this address in current block (from AddressGasUsed)
+        // bucket.available = gas remaining in token bucket (from start of block)
+        // We need to check if cumulative_gas + additional_gas <= bucket.available
+        let total_gas_needed = cumulative_gas.saturating_add(additional_gas);
+
+        let result = if total_gas_needed > bucket.available {
+            Err(GasLimitError::AddressLimitExceeded {
+                address,
+                requested: total_gas_needed,
+                available: bucket.available,
+            })
+        } else {
+            Ok(false)
+        };
 
         self.metrics.record_gas_check(&result, start.elapsed());
 

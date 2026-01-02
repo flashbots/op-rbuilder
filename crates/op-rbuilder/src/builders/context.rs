@@ -43,7 +43,7 @@ use revm::{
 };
 use std::{convert::Infallible, sync::Arc, time::Instant};
 use tokio_util::sync::CancellationToken;
-use tracing::{Span, debug, info, trace};
+use tracing::{Span, debug, info, trace, warn};
 
 use crate::{
     block_stm::{evm::OpLazyEvmFactory, executor::Executor, db_adapter::VersionedDbError},
@@ -837,10 +837,14 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpEvmFactory> {
                     let da_increment = state.database.inner_mut()
                         .read_block_resource(BlockResourceType::DABytes)?;
 
+                    // Read AddressGasUsed for this address to check rate limiting
+                    let address_gas_used = state.database.inner_mut()
+                        .read_address_gas_used(tx.signer())?;
+
                     trace!(
                         target: "payload_builder",
-                        "Read increments: gas_increment={}, da_increment={}, base_gas={}, base_da={}",
-                        gas_increment, da_increment, base_cumulative_gas, base_cumulative_da_bytes
+                        "Read increments: gas_increment={}, da_increment={}, base_gas={}, base_da={}, address_gas_used={}",
+                        gas_increment, da_increment, base_cumulative_gas, base_cumulative_da_bytes, address_gas_used
                     );
 
                     // Calculate total cumulative values (base from sequencer + increments from other txs)
@@ -849,9 +853,10 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpEvmFactory> {
 
                     // 2. Check if we can skip EVM execution
                     // Can skip if: conflicts are resource-only AND we have a previous result
+                    // Resource-only conflicts are: BlockResourceUsed and AddressGasUsed
                     let conflicts_are_resource_only = !conflicting_keys.is_empty()
                         && conflicting_keys.iter().all(|key| {
-                            matches!(key, EvmStateKey::BlockResourceUsed(_))
+                            matches!(key, EvmStateKey::BlockResourceUsed(_) | EvmStateKey::AddressGasUsed(_))
                         });
 
                     let can_skip_evm = conflicts_are_resource_only
@@ -981,10 +986,15 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpEvmFactory> {
                         }
                     }
 
-                    // Check address gas limiter
-                    if address_gas_limiter.consume_gas(tx.signer(), tx_gas_used).is_err() {
+                    // Check address gas limiter (non-mutating check)
+                    // We check against the cumulative gas for this address + current tx gas
+                    if address_gas_limiter
+                        .check_gas_available(tx.signer(), address_gas_used, tx_gas_used)
+                        .is_err()
+                    {
                         return Err(EVMError::Database(VersionedDbError::BaseDbError(
-                            format!("Address gas limit exceeded for {}", tx.signer())
+                            format!("Address gas limit exceeded for {} (cumulative={}, tx_gas={})",
+                                tx.signer(), address_gas_used, tx_gas_used)
                         )));
                     }
 
@@ -993,11 +1003,12 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpEvmFactory> {
                     // The base is added when reading for limit checks, preventing double-counting
                     let new_gas_cumulative = gas_increment + tx_gas_used;
                     let new_da_cumulative = da_increment + tx_da_size;
+                    let new_address_gas_cumulative = address_gas_used + tx_gas_used;
 
                     trace!(
                         target: "payload_builder",
-                        "Writing increments: new_gas={}, new_da={} (gas_increment={} + tx_gas={}, da_increment={} + tx_da={})",
-                        new_gas_cumulative, new_da_cumulative, gas_increment, tx_gas_used, da_increment, tx_da_size
+                        "Writing increments: new_gas={}, new_da={}, new_address_gas={} (gas_increment={} + tx_gas={}, da_increment={} + tx_da={}, address_gas={} + tx_gas={})",
+                        new_gas_cumulative, new_da_cumulative, new_address_gas_cumulative, gas_increment, tx_gas_used, da_increment, tx_da_size, address_gas_used, tx_gas_used
                     );
 
                     state.database.inner_mut().write_block_resource(
@@ -1007,6 +1018,10 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpEvmFactory> {
                     state.database.inner_mut().write_block_resource(
                         BlockResourceType::DABytes,
                         new_da_cumulative
+                    )?;
+                    state.database.inner_mut().write_address_gas_used(
+                        tx.signer(),
+                        new_address_gas_cumulative
                     )?;
 
                     Ok(ResultAndState { result, state: evm_state })
@@ -1135,6 +1150,20 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpEvmFactory> {
                 }
             }
             db.commit(resolved_state);
+
+            // Consume gas in address gas limiter now that the transaction is committed
+            // This updates the actual token bucket for rate limiting
+            if let Err(e) = self.address_gas_limiter.consume_gas(tx_result.tx.signer(), gas_used) {
+                // This should not happen since we already checked in the execution phase
+                // But log it for debugging
+                warn!(
+                    target: "payload_builder",
+                    error = ?e,
+                    address = ?tx_result.tx.signer(),
+                    gas_used = gas_used,
+                    "Failed to consume gas in address limiter after commit (should not happen)"
+                );
+            }
 
             // Record transaction
             info.executed_senders.push(tx_result.tx.signer());
