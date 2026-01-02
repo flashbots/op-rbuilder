@@ -394,7 +394,16 @@ where
                     value: EvmStateValue::CodeHash(value),
                     version,
                 } => {
-                    self.add_to_reads(code_hash_key, EvmStateValue::CodeHash(value), Some(version));
+                    self.add_to_reads(code_hash_key.clone(), EvmStateValue::CodeHash(value), Some(version));
+
+                    // Debug: Track CodeHash reads for mystery addresses
+                    let addr1 = alloy_primitives::Address::from([0xa1, 0x5b, 0xb6, 0x61, 0x38, 0x82, 0x4a, 0x1c, 0x71, 0x67, 0xf5, 0xe8, 0x5b, 0x95, 0x7d, 0x04, 0xdd, 0x34, 0xe4, 0x68]);
+                    let addr2 = alloy_primitives::Address::from([0x8c, 0xe3, 0x61, 0x60, 0x2b, 0x93, 0x56, 0x80, 0xe8, 0xde, 0xc2, 0x18, 0xb8, 0x20, 0xff, 0x50, 0x56, 0xbe, 0xb7, 0xaf]);
+                    if address == addr1 || address == addr2 {
+                        eprintln!("TX {}: Read CodeHash for mystery addr {:?}, hash={:?}, version={:?}",
+                            self.txn_idx, address, value, version);
+                    }
+
                     base_info.code_hash = value;
                     did_exist = true;
                 }
@@ -426,15 +435,31 @@ where
     }
 
     fn code_by_hash(&mut self, code_hash: B256) -> Result<Bytecode, VersionedDbError> {
+        eprintln!("TX {}: code_by_hash called for hash {:?}", self.txn_idx, code_hash);
+
         // First check the shared code cache for contracts deployed within this block
         if let Some(code) = self.code_cache.get(&code_hash) {
+            eprintln!("TX {}: Found code in cache for hash {:?}, len={}",
+                self.txn_idx, code_hash, code.len());
             return Ok(code.clone());
         }
 
+        eprintln!("TX {}: Code NOT in cache for hash {:?}, checking base_db",
+            self.txn_idx, code_hash);
+
         // Fall back to base database
-        self.base_db
+        let result = self.base_db
             .code_by_hash_ref(code_hash)
-            .map_err(|e| VersionedDbError::BaseDbError(e.to_string()))
+            .map_err(|e| VersionedDbError::BaseDbError(e.to_string()));
+
+        match &result {
+            Ok(code) => eprintln!("TX {}: Found code in base_db for hash {:?}, len={}",
+                self.txn_idx, code_hash, code.len()),
+            Err(e) => eprintln!("TX {}: Code NOT in base_db for hash {:?}, error: {:?}",
+                self.txn_idx, code_hash, e),
+        }
+
+        result
     }
 
     fn storage(&mut self, address: Address, slot: U256) -> Result<U256, VersionedDbError> {

@@ -84,20 +84,54 @@ Each Block-STM transaction execution should produce complete, up-to-date state d
 So if init tx state has 0 storage, it's not because of missing dependency resolution.
 It's because **the init transaction itself didn't write storage during execution**.
 
+## Latest Findings (2026-01-02)
+
+### CodeHash Dependency Tracking is Working
+
+Added logging confirms:
+1. Deploy transactions (TX 0) successfully add code to shared_code_cache
+2. Init transactions (TX 1) successfully read `CodeHash` from MVHashMap with proper version tracking
+3. Example: `TX 1: Read CodeHash for mystery addr 0xa15bb..., hash=0x4d6e..., version=(0, 0)`
+
+This means **dependency tracking via CodeHash is working correctly** - the user was right!
+
+### The Real Problem: Init Transactions Use Too Little Gas
+
+Init transactions complete "successfully" but use only **23000 gas**:
+- Expected: Several hundred thousand gas (to write ~7 storage slots)
+- Actual: 23000 gas (barely above the 21000 base cost)
+- Result: Success=true but 0 storage writes
+
+This suggests init transactions are:
+1. Finding the contract address (reads CodeHash successfully)
+2. Starting to execute
+3. Failing very early before actual contract execution
+4. Returning "success" but with no state changes
+
+### No code_by_hash Calls Observed
+
+Despite init transactions reading the CodeHash, there are NO `code_by_hash()` calls in the logs. This suggests:
+- Either the contract code isn't being accessed at all
+- Or the code lookup is happening through a different path
+
+### Hypothesis: Init Code vs Deployed Code Confusion
+
+The user mentioned "init code issue" - this might mean:
+- When deploying a contract, EVM executes the init code (constructor)
+- Init code returns the deployed bytecode
+- The deployed bytecode should be stored with the contract's code_hash
+- But maybe we're caching the wrong code (init code instead of deployed code)?
+
 ## Next Investigation Steps
 
-1. **Check if init transactions are failing**
-   - Add logging to see execution results for init txs
-   - Check if they're silently erroring
+1. **Check what code is being cached**
+   - Log the actual bytecode being added to shared_code_cache
+   - Verify it's the deployed code, not the init code
 
-2. **Verify contract code is accessible**
-   - Check shared_code_cache after deploy tx
-   - Verify init tx can read the deployed code
+2. **Check why init transactions use so little gas**
+   - Add logging to see why execution stops early
+   - Check if there's an error being swallowed
 
-3. **Check dependency tracking for code reads**
-   - Does VersionedDatabase track code_by_hash reads?
-   - Are code reads causing conflicts and re-execution?
-
-4. **Compare init tx execution between modes**
-   - Log the full execution flow for an init tx in both modes
-   - Identify where they diverge
+3. **Verify code lookup path**
+   - Trace how contract code is accessed during CALL/DELEGATECALL
+   - Confirm code_by_hash is the right path to instrument

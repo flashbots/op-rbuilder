@@ -129,6 +129,9 @@ impl<
         let tx_da_size = pool_tx.estimated_da_size();
         let tx = pool_tx.clone().into_consensus();
 
+        eprintln!("TX {}: Starting execution, to={:?}, hash={:?}",
+            txn_idx, tx.to(), tx.hash());
+
         // Retry loop: if we hit a read abort but the dependency is already satisfied,
         // we retry immediately instead of blocking. This avoids recursive calls.
         loop {
@@ -260,6 +263,8 @@ impl<
                                 // This is critical: when a contract is deployed, its bytecode must be
                                 // accessible to subsequent transactions via code_by_hash_ref()
                                 if let Some(ref code) = account.info.code {
+                                    eprintln!("TX {}: Adding code to shared_code_cache for addr {:?}, code_hash {:?}, code_len {}",
+                                        txn_idx, addr, account.info.code_hash, code.len());
                                     self.shared_code_cache
                                         .insert(account.info.code_hash, code.clone());
                                 }
@@ -279,6 +284,9 @@ impl<
 
                     // Extract success and logs from result
                     let success = result.is_success();
+
+                    eprintln!("TX {}: Execution completed, success={}, gas_used={:?}",
+                        txn_idx, success, result.gas_used());
 
                     if !success {
                         warn!(
