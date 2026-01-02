@@ -635,10 +635,10 @@ where
         );
         let flashblock_build_start_time = Instant::now();
 
-        // Merge transitions from flashblock 1 before building flashblock 2
-        // This makes flashblock 1's state visible to flashblock 2+
+        // Merge transitions from previous flashblocks before building this one
+        // This makes previous flashblocks' state visible to current flashblock
         // ONLY for parallel (Block-STM) execution - sequential doesn't use transition_state
-        if flashblock_index == 2 && ctx.parallel_threads > 1 {
+        if flashblock_index > 1 && ctx.parallel_threads > 1 {
             state.merge_transitions(reth_revm::db::states::bundle_state::BundleRetention::Reverts);
 
             // After merge, populate bundle_state.contracts with bytecode for deployed contracts
@@ -1347,19 +1347,20 @@ where
         metadata: serde_json::to_value(&metadata).unwrap_or_default(),
     };
 
-    // We clean bundle and place initial state transaction back
-    // BUT preserve contracts AND state (storage) so they persist across flashblocks
-    let contracts_to_preserve = state.bundle_state.contracts.clone();
-    let state_to_preserve = state.bundle_state.state.clone();
-    state.take_bundle();
-    state.bundle_state.contracts = contracts_to_preserve.clone();
-    state.bundle_state.state = state_to_preserve.clone();
+    // Clean bundle and place initial state transaction back
+    // For parallel mode: only clear bundle_state after the FINAL flashblock
+    // This allows bundle_state to accumulate across flashblocks (matching sequential behavior)
+    let is_parallel = ctx.parallel_threads > 1;
+    let is_final_flashblock = info.extra.last_flashblock_index >= info.executed_transactions.len();
+
+    if !is_parallel || is_final_flashblock {
+        state.take_bundle();
+    }
     state.transition_state = untouched_transition_state;
 
     tracing::info!(
         target: "payload_builder",
-        "build_block AFTER cleanup (preserved {} contracts): bundle_state has {} accounts, {} contracts",
-        contracts_to_preserve.len(),
+        "build_block AFTER cleanup: bundle_state has {} accounts, {} contracts",
         state.bundle_state.state.len(),
         state.bundle_state.contracts.len()
     );
