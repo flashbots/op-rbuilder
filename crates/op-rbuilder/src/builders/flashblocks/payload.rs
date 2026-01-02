@@ -635,29 +635,6 @@ where
         );
         let flashblock_build_start_time = Instant::now();
 
-        // Merge transitions from previous flashblocks before building this one
-        // This makes previous flashblocks' state visible to current flashblock
-        // ONLY for parallel (Block-STM) execution - sequential doesn't use transition_state
-        if flashblock_index > 1 && ctx.parallel_threads > 1 {
-            state.merge_transitions(reth_revm::db::states::bundle_state::BundleRetention::Reverts);
-
-            // After merge, populate bundle_state.contracts with bytecode for deployed contracts
-            // This fixes the issue where accounts have code_hash but contracts map is missing bytecode
-            use alloy_consensus::constants::KECCAK_EMPTY;
-            for (_addr, account_info) in state.bundle_state.state.iter() {
-                if let Some(ref info) = account_info.info {
-                    if info.code_hash != KECCAK_EMPTY
-                        && !state.bundle_state.contracts.contains_key(&info.code_hash)
-                    {
-                        // Try to get bytecode from database
-                        if let Ok(code) = state.database.code_by_hash_ref(info.code_hash) {
-                            state.bundle_state.contracts.insert(info.code_hash, code);
-                        }
-                    }
-                }
-            }
-        }
-
         let builder_txs =
             match self
                 .builder_tx
@@ -1025,21 +1002,11 @@ where
     P: StateRootProvider + HashedPostStateProvider + StorageRootProvider,
     ExtraCtx: std::fmt::Debug + Default,
 {
-    tracing::info!(
-        target: "payload_builder",
-        "build_block BEFORE final merge: bundle_state has {} accounts, {} contracts",
-        state.bundle_state.state.len(),
-        state.bundle_state.contracts.len()
-    );
-
-    // Only merge transitions on the final flashblock (or always in sequential mode)
-    // This allows bundle_state to accumulate across flashblocks in parallel mode
-    let is_parallel = ctx.parallel_threads > 1;
+    // We use it to preserve state, so we run merge_transitions on transition state at most once
+    let untouched_transition_state = state.transition_state.clone();
 
     let state_merge_start_time = Instant::now();
-    if !is_parallel || is_final_flashblock {
-        state.merge_transitions(BundleRetention::Reverts);
-    }
+    state.merge_transitions(BundleRetention::Reverts);
     let state_transition_merge_time = state_merge_start_time.elapsed();
 
     tracing::info!(
@@ -1255,28 +1222,9 @@ where
         metadata: serde_json::to_value(&metadata).unwrap_or_default(),
     };
 
-    // Clean bundle and place initial state transaction back
-    // For parallel mode: only clear bundle_state after the FINAL flashblock
-    // This allows bundle_state to accumulate across flashblocks (matching sequential behavior)
-    // Note: is_parallel and is_final_flashblock were calculated earlier in this function
-    if !is_parallel || is_final_flashblock {
-        state.take_bundle();
-    }
-
-    // CRITICAL FIX: Do NOT reset transition_state after merge_transitions!
-    // The merged state contains all changes from bundle_state and MUST persist to the database.
-    // Resetting here would lose all state changes, causing Block N+1 to see stale state.
-    // The original intent was to preserve state across flashblocks, but this line was
-    // incorrectly resetting AFTER the final merge, destroying the state entirely.
-    //
-    // state.transition_state = untouched_transition_state;  // ← REMOVED: This was destroying state!
-
-    tracing::info!(
-        target: "payload_builder",
-        "build_block AFTER cleanup: bundle_state has {} accounts, {} contracts",
-        state.bundle_state.state.len(),
-        state.bundle_state.contracts.len()
-    );
+    // We clean bundle and place initial state transaction back
+    state.take_bundle();
+    state.transition_state = untouched_transition_state;
 
     Ok((
         OpBuiltPayload::new(
