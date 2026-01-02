@@ -764,12 +764,25 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpEvmFactory> {
 
         // Collect candidate transactions from the iterator.
         // Also extract reverted_hashes for bundle revert protection before losing the wrapper type
+        //
+        // IMPORTANT: We cannot drain the entire iterator because when using `.without_updates()`,
+        // the iterator may block waiting for transaction pool updates. Instead, we collect up to
+        // a reasonable limit based on the block gas limit.
+        // See: https://github.com/paradigmxyz/reth/issues/17325
+        const MIN_TX_GAS: u64 = 21000; // Minimum gas for a transaction
+        let max_possible_txs = (block_gas_limit / MIN_TX_GAS).min(10000); // Cap at 10k transactions
+
         let mut candidate_txs = Vec::new();
         let mut tx_reverted_hashes = Vec::new();
         while let Some(tx) = best_txs.next(()) {
             let reverted_hashes = tx.reverted_hashes();
             tx_reverted_hashes.push(reverted_hashes);
             candidate_txs.push(tx);
+
+            // Stop collecting if we've reached the maximum possible transactions
+            if candidate_txs.len() >= max_possible_txs as usize {
+                break;
+            }
         }
 
         let num_candidates = candidate_txs.len();
