@@ -525,7 +525,19 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpEvmFactory> {
 
             let tx_simulation_start_time = Instant::now();
             let ResultAndState { result, state } = match evm.transact(&tx) {
-                Ok(res) => res,
+                Ok(res) => {
+                    // Debug: Check if this tx created the mystery contracts
+                    let addr1 = alloy_primitives::Address::from([0xa1, 0x5b, 0xb6, 0x61, 0x38, 0x82, 0x4a, 0x1c, 0x71, 0x67, 0xf5, 0xe8, 0x5b, 0x95, 0x7d, 0x04, 0xdd, 0x34, 0xe4, 0x68]);
+                    let addr2 = alloy_primitives::Address::from([0x8c, 0xe3, 0x61, 0x60, 0x2b, 0x93, 0x56, 0x80, 0xe8, 0xde, 0xc2, 0x18, 0xb8, 0x20, 0xff, 0x50, 0x56, 0xbe, 0xb7, 0xaf]);
+
+                    for (addr, account) in res.state.iter() {
+                        if addr == &addr1 || addr == &addr2 {
+                            eprintln!("SEQUENTIAL tx {:?}: Touched address {:?}, storage_slots={}, code_hash={:?}",
+                                tx.tx_hash(), addr, account.storage.len(), account.info.code_hash);
+                        }
+                    }
+                    res
+                },
                 Err(err) => {
                     if let Some(err) = err.as_invalid_tx_err() {
                         if err.is_nonce_too_low() {
@@ -850,6 +862,17 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpEvmFactory> {
                         let lazy_factory = OpLazyEvmFactory;
                         let mut evm = lazy_factory.create_evm(&mut *state, self.evm_env.clone());
                         let ResultAndState { result, state: evm_state } = evm.transact(&tx)?;
+
+                        // Debug: Check if this tx created the mystery contracts
+                        let addr1 = alloy_primitives::Address::from([0xa1, 0x5b, 0xb6, 0x61, 0x38, 0x82, 0x4a, 0x1c, 0x71, 0x67, 0xf5, 0xe8, 0x5b, 0x95, 0x7d, 0x04, 0xdd, 0x34, 0xe4, 0x68]);
+                        let addr2 = alloy_primitives::Address::from([0x8c, 0xe3, 0x61, 0x60, 0x2b, 0x93, 0x56, 0x80, 0xe8, 0xde, 0xc2, 0x18, 0xb8, 0x20, 0xff, 0x50, 0x56, 0xbe, 0xb7, 0xaf]);
+
+                        for (addr, account) in evm_state.iter() {
+                            if addr == &addr1 || addr == &addr2 {
+                                eprintln!("PARALLEL tx {:?}: Touched address {:?}, storage_slots={}, code_hash={:?}",
+                                    tx.tx_hash(), addr, account.storage.len(), account.info.code_hash);
+                            }
+                        }
 
                         // Log storage changes in evm_state
                         let num_accounts_with_storage = evm_state.iter()
