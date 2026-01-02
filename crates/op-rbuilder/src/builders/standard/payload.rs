@@ -30,7 +30,7 @@ use reth_revm::{
     State, database::StateProviderDatabase, db::states::bundle_state::BundleRetention,
 };
 use reth_transaction_pool::{
-    BestTransactionsAttributes, PoolTransaction, TransactionPool,
+    BestTransactions, BestTransactionsAttributes, PoolTransaction, TransactionPool,
 };
 use revm::DatabaseRef;
 use std::{sync::Arc, time::Instant};
@@ -101,12 +101,11 @@ impl<T: PoolTransaction> OpPayloadTransactions<T> for () {
         pool: Pool,
         attr: BestTransactionsAttributes,
     ) -> impl PayloadTransactions<Transaction = T> {
-        // NOTE: Removed `.without_updates()` call as it causes hangs when draining the iterator
-        // in parallel execution mode. The iterator blocks waiting for pool updates when fully drained.
-        // Flashblocks builder doesn't use `.without_updates()` and works fine.
-        // Original TODO referenced: https://github.com/paradigmxyz/reth/issues/17325
+        // TODO: once this issue is fixed we could remove without_updates and rely on regular impl
+        // https://github.com/paradigmxyz/reth/issues/17325
         BestPayloadTransactions::new(
             pool.best_transactions_with_attributes(attr)
+                .without_updates(),
         )
     }
 }
