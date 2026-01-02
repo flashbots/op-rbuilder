@@ -1356,7 +1356,14 @@ where
     if !is_parallel || is_final_flashblock {
         state.take_bundle();
     }
-    state.transition_state = untouched_transition_state;
+
+    // CRITICAL FIX: Do NOT reset transition_state after merge_transitions!
+    // The merged state contains all changes from bundle_state and MUST persist to the database.
+    // Resetting here would lose all state changes, causing Block N+1 to see stale state.
+    // The original intent was to preserve state across flashblocks, but this line was
+    // incorrectly resetting AFTER the final merge, destroying the state entirely.
+    //
+    // state.transition_state = untouched_transition_state;  // ← REMOVED: This was destroying state!
 
     tracing::info!(
         target: "payload_builder",
