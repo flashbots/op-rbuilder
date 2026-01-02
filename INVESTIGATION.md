@@ -122,16 +122,58 @@ The user mentioned "init code issue" - this might mean:
 - The deployed bytecode should be stored with the contract's code_hash
 - But maybe we're caching the wrong code (init code instead of deployed code)?
 
-## Next Investigation Steps
+## ROOT CAUSE FOUND AND FIXED! (db_adapter.rs:407)
 
-1. **Check what code is being cached**
-   - Log the actual bytecode being added to shared_code_cache
-   - Verify it's the deployed code, not the init code
+### The Bug
 
-2. **Check why init transactions use so little gas**
-   - Add logging to see why execution stops early
-   - Check if there's an error being swallowed
+In `db_adapter.rs` `basic()` function, when account info is partially in MVHashMap:
 
-3. **Verify code lookup path**
-   - Trace how contract code is accessed during CALL/DELEGATECALL
-   - Confirm code_by_hash is the right path to instrument
+**Lines 392-409** - CodeHash read from MVHashMap:
+```rust
+match code_hash_result {
+    ReadResult::Value { value: EvmStateValue::CodeHash(value), version } => {
+        base_info.code_hash = value;  // ✓ Updated code_hash
+        // ✗ MISSING: base_info.code not populated!
+        did_exist = true;
+    }
+}
+```
+
+Compare to **lines 287-318** - All values from MVHashMap:
+```rust
+Ok(Some(AccountInfo {
+    code_hash: h,
+    code: self.code_cache.get(&h).map(|c| c.clone()),  // ✓ Populates code!
+}))
+```
+
+### Why This Caused Silent Failure
+
+1. Init transaction calls deployed contract address
+2. `basic(address)` returns `AccountInfo { code_hash: <correct>, code: None }`
+3. EVM sees code_hash (contract exists) but code=None (can't execute)
+4. Treats as empty account call → succeeds with ~23k gas
+5. No contract execution → **0 storage writes**
+
+### The Fix (Line 411)
+
+```rust
+base_info.code_hash = value;
+base_info.code = self.code_cache.get(&value).map(|c| c.clone());  // Added!
+```
+
+### Impact
+
+Init transaction gas usage:
+- **Before**: 23,000 gas (failed silently)
+- **After**: 142,000 gas (contracts execute successfully!)
+
+### Remaining Issue: Storage Persistence Across Blocks
+
+The test still fails with "The tee key is not registered". Storage from contracts initialized in the first block doesn't persist to the second block. This is a separate issue related to how `bundle_state` is managed between blocks, not flashblocks.
+
+The test builds 2 blocks with 4 flashblocks each:
+- Block 1: Deploys and initializes contracts (now works!)
+- Block 2: Tries to use the contracts (storage missing)
+
+This is the original bundle_state persistence issue that needs investigation.
