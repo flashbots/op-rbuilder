@@ -635,27 +635,11 @@ where
         );
         let flashblock_build_start_time = Instant::now();
 
-        // Debug: Log state before incremental merge
-        tracing::info!(
-            target: "payload_builder",
-            "BEFORE incremental merge (flashblock {}): bundle_state has {} accounts, {} contracts",
-            flashblock_index,
-            state.bundle_state.state.len(),
-            state.bundle_state.contracts.len()
-        );
-
         // Merge transitions from flashblock 1 before building flashblock 2
         // This makes flashblock 1's state visible to flashblock 2+
-        // We only do this once to avoid interfering with the final merge
-        if flashblock_index == 2 {
+        // ONLY for parallel (Block-STM) execution - sequential doesn't use transition_state
+        if flashblock_index == 2 && ctx.parallel_threads > 1 {
             state.merge_transitions(reth_revm::db::states::bundle_state::BundleRetention::Reverts);
-            tracing::info!(
-                target: "payload_builder",
-                "AFTER incremental merge (flashblock {}): bundle_state has {} accounts, {} contracts",
-                flashblock_index,
-                state.bundle_state.state.len(),
-                state.bundle_state.contracts.len()
-            );
         }
 
         let builder_txs =
