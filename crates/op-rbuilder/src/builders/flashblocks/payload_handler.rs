@@ -246,6 +246,7 @@ where
         &builder_ctx,
         &mut info,
         true,
+        true, // is_final_flashblock - sync flashblock is standalone
     )
     .wrap_err("failed to build flashblock")?;
 

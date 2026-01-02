@@ -372,6 +372,7 @@ where
             &ctx,
             &mut info,
             !disable_state_root || ctx.attributes().no_tx_pool, // need to calculate state root for CL sync
+            true, // is_final_flashblock - fallback always has only one flashblock
         )?;
 
         self.payload_tx
@@ -643,7 +644,6 @@ where
 
             // After merge, populate bundle_state.contracts with bytecode for deployed contracts
             // This fixes the issue where accounts have code_hash but contracts map is missing bytecode
-            use revm::DatabaseRef;
             use alloy_consensus::constants::KECCAK_EMPTY;
             for (_addr, account_info) in state.bundle_state.state.iter() {
                 if let Some(ref info) = account_info.info {
@@ -734,68 +734,6 @@ where
                 target_da_footprint_for_batch,
             )
             .wrap_err("failed to execute best transactions")?;
-            // #region agent log
-            use std::io::Write;
-            if let Ok(mut f) = std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open("/home/meyer9/op-rbuilder/.cursor/debug.log")
-            {
-                // Log cache state info
-                let cache_accounts: Vec<_> = state
-                    .cache
-                    .accounts
-                    .iter()
-                    .map(|(addr, acc)| {
-                        let code_len = acc
-                            .account
-                            .as_ref()
-                            .and_then(|a| a.info.code.as_ref())
-                            .map(|c| c.len())
-                            .unwrap_or(0);
-                        let code_hash = acc
-                            .account
-                            .as_ref()
-                            .map(|a| format!("{}", a.info.code_hash))
-                            .unwrap_or_default();
-                        format!("{}:code_len={},code_hash={}", addr, code_len, code_hash)
-                    })
-                    .collect();
-                let cache_contracts: Vec<_> = state
-                    .cache
-                    .contracts
-                    .iter()
-                    .map(|(hash, code)| format!("{}:len={}", hash, code.len()))
-                    .collect();
-
-                // Log transition_state if present
-                let transition_state_info = if let Some(ref ts) = state.transition_state {
-                    let transitions: Vec<_> = ts
-                        .transitions
-                        .iter()
-                        .map(|(addr, trans)| format!("{}:status={:?}", addr, trans.status))
-                        .collect();
-                    format!("Some({}transitions)", transitions.len())
-                } else {
-                    "None".to_string()
-                };
-
-                let _ = writeln!(
-                    f,
-                    r#"{{"hypothesisId":"D","location":"payload.rs:after_sequential","message":"State after sequential execution","data":{{"mode":"sequential","flashblock_index":{},"cache_accounts_count":{},"cache_contracts_count":{},"transition_state":"{}","cache_accounts":{:?},"cache_contracts":{:?},"timestamp":{}}}}}"#,
-                    flashblock_index,
-                    state.cache.accounts.len(),
-                    state.cache.contracts.len(),
-                    transition_state_info,
-                    cache_accounts,
-                    cache_contracts,
-                    std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
-                        .as_millis()
-                );
-            }
-            // #endregion
         }
         // Extract last transactions
         let new_transactions = info.executed_transactions[info.extra.last_flashblock_index..]
@@ -839,6 +777,7 @@ where
             ctx,
             info,
             !ctx.extra_ctx.disable_state_root || ctx.attributes().no_tx_pool,
+            ctx.is_last_flashblock(), // is_final_flashblock
         );
         let total_block_built_duration = total_block_built_duration.elapsed();
         ctx.metrics
@@ -1080,15 +1019,13 @@ pub(super) fn build_block<DB, P, ExtraCtx>(
     ctx: &OpPayloadBuilderCtx<ExtraCtx>,
     info: &mut ExecutionInfo<FlashblocksExecutionInfo>,
     calculate_state_root: bool,
+    is_final_flashblock: bool,
 ) -> Result<(OpBuiltPayload, FlashblocksPayloadV1), PayloadBuilderError>
 where
     DB: Database<Error = ProviderError> + AsRef<P>,
     P: StateRootProvider + HashedPostStateProvider + StorageRootProvider,
     ExtraCtx: std::fmt::Debug + Default,
 {
-    // We use it to preserve state, so we run merge_transitions on transition state at most once
-    let untouched_transition_state = state.transition_state.clone();
-
     tracing::info!(
         target: "payload_builder",
         "build_block BEFORE final merge: bundle_state has {} accounts, {} contracts",
@@ -1096,8 +1033,14 @@ where
         state.bundle_state.contracts.len()
     );
 
+    // Only merge transitions on the final flashblock (or always in sequential mode)
+    // This allows bundle_state to accumulate across flashblocks in parallel mode
+    let is_parallel = ctx.parallel_threads > 1;
+
     let state_merge_start_time = Instant::now();
-    state.merge_transitions(BundleRetention::Reverts);
+    if !is_parallel || is_final_flashblock {
+        state.merge_transitions(BundleRetention::Reverts);
+    }
     let state_transition_merge_time = state_merge_start_time.elapsed();
 
     tracing::info!(
@@ -1106,40 +1049,6 @@ where
         state.bundle_state.state.len(),
         state.bundle_state.contracts.len()
     );
-
-    // Debug: Log detailed bundle_state contents for comparison
-    use std::fs::OpenOptions;
-    use std::io::Write;
-    let mode = if ctx.parallel_threads > 1 { "parallel" } else { "sequential" };
-    if let Ok(mut f) = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(format!("/tmp/bundle_state_{}.log", mode))
-    {
-        let _ = writeln!(f, "\n=== BUNDLE_STATE at ExecutionOutcome creation (mode: {}) ===", mode);
-        let _ = writeln!(f, "Total accounts: {}", state.bundle_state.state.len());
-        let _ = writeln!(f, "Total contracts: {}", state.bundle_state.contracts.len());
-
-        // Log all accounts
-        for (addr, account_info) in state.bundle_state.state.iter() {
-            let _ = writeln!(f, "\nAccount {:?}:", addr);
-            if let Some(ref info) = account_info.info {
-                let _ = writeln!(f, "  balance: {}", info.balance);
-                let _ = writeln!(f, "  nonce: {}", info.nonce);
-                let _ = writeln!(f, "  code_hash: {:?}", info.code_hash);
-            }
-            let _ = writeln!(f, "  storage slots: {}", account_info.storage.len());
-            for (slot, value) in account_info.storage.iter().take(5) {
-                let _ = writeln!(f, "    slot {:?}: {:?}", slot, value);
-            }
-        }
-
-        // Log all contracts
-        let _ = writeln!(f, "\nContracts in bundle_state.contracts:");
-        for (hash, bytecode) in state.bundle_state.contracts.iter() {
-            let _ = writeln!(f, "  code_hash {:?}: bytecode len {}", hash, bytecode.len());
-        }
-    }
 
     ctx.metrics
         .state_transition_merge_duration
@@ -1350,9 +1259,7 @@ where
     // Clean bundle and place initial state transaction back
     // For parallel mode: only clear bundle_state after the FINAL flashblock
     // This allows bundle_state to accumulate across flashblocks (matching sequential behavior)
-    let is_parallel = ctx.parallel_threads > 1;
-    let is_final_flashblock = info.extra.last_flashblock_index >= info.executed_transactions.len();
-
+    // Note: is_parallel and is_final_flashblock were calculated earlier in this function
     if !is_parallel || is_final_flashblock {
         state.take_bundle();
     }
