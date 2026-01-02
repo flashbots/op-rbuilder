@@ -405,6 +405,10 @@ where
                     }
 
                     base_info.code_hash = value;
+                    // CRITICAL: Also populate code from cache to match the new code_hash
+                    // Without this, AccountInfo has correct code_hash but code=None,
+                    // causing contract calls to fail silently
+                    base_info.code = self.code_cache.get(&value).map(|c| c.clone());
                     did_exist = true;
                 }
                 ReadResult::Value { value, version } => {
