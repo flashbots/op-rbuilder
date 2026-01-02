@@ -763,8 +763,12 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpEvmFactory> {
         let tx_da_limit = self.da_config.max_da_tx_size();
 
         // Collect candidate transactions from the iterator.
+        // Also extract reverted_hashes for bundle revert protection before losing the wrapper type
         let mut candidate_txs = Vec::new();
+        let mut tx_reverted_hashes = Vec::new();
         while let Some(tx) = best_txs.next(()) {
+            let reverted_hashes = tx.reverted_hashes();
+            tx_reverted_hashes.push(reverted_hashes);
             candidate_txs.push(tx);
         }
 
@@ -1003,10 +1007,31 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpEvmFactory> {
         // When cancelled, only transactions [0..safe_commit_point] are guaranteed valid.
         let mut applied_count = 0;
         let num_results = results.len();
-        for tx_result in results {
+        for (tx_idx, tx_result) in results.into_iter().enumerate() {
             let Some(result) = tx_result.result else {
                 continue;
             };
+
+            // Check if we should exclude reverting transactions (bundle revert protection)
+            // Same logic as sequential version in execute_best_transactions
+            let reverted_hashes = &tx_reverted_hashes[tx_idx];
+            let tx_hash = tx_result.tx.tx_hash();
+            let is_bundle_tx = reverted_hashes.is_some();
+            let exclude_reverting_txs =
+                is_bundle_tx && !reverted_hashes.as_ref().unwrap().contains(&tx_hash);
+
+            // If the transaction reverted and we should exclude reverting txs, skip it
+            if !result.is_success() && exclude_reverting_txs {
+                info!(
+                    target: "payload_builder",
+                    tx_hash = ?tx_hash,
+                    result = ?result,
+                    "skipping reverted bundle transaction (parallel mode)"
+                );
+                // Don't include this transaction in the block
+                continue;
+            }
+
             // Update cumulative gas before building receipt
             let gas_used = result.gas_used();
             info.cumulative_gas_used += gas_used;
