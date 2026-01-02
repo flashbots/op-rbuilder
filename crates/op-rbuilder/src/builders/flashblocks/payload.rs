@@ -372,7 +372,6 @@ where
             &ctx,
             &mut info,
             !disable_state_root || ctx.attributes().no_tx_pool, // need to calculate state root for CL sync
-            true, // is_final_flashblock - fallback always has only one flashblock
         )?;
 
         self.payload_tx
@@ -647,7 +646,9 @@ where
             use alloy_consensus::constants::KECCAK_EMPTY;
             for (_addr, account_info) in state.bundle_state.state.iter() {
                 if let Some(ref info) = account_info.info {
-                    if info.code_hash != KECCAK_EMPTY && !state.bundle_state.contracts.contains_key(&info.code_hash) {
+                    if info.code_hash != KECCAK_EMPTY
+                        && !state.bundle_state.contracts.contains_key(&info.code_hash)
+                    {
                         // Try to get bytecode from database
                         if let Ok(code) = state.database.code_by_hash_ref(info.code_hash) {
                             state.bundle_state.contracts.insert(info.code_hash, code);
@@ -777,7 +778,6 @@ where
             ctx,
             info,
             !ctx.extra_ctx.disable_state_root || ctx.attributes().no_tx_pool,
-            ctx.is_last_flashblock(), // is_final_flashblock
         );
         let total_block_built_duration = total_block_built_duration.elapsed();
         ctx.metrics
@@ -1019,7 +1019,6 @@ pub(super) fn build_block<DB, P, ExtraCtx>(
     ctx: &OpPayloadBuilderCtx<ExtraCtx>,
     info: &mut ExecutionInfo<FlashblocksExecutionInfo>,
     calculate_state_root: bool,
-    is_final_flashblock: bool,
 ) -> Result<(OpBuiltPayload, FlashblocksPayloadV1), PayloadBuilderError>
 where
     DB: Database<Error = ProviderError> + AsRef<P>,
