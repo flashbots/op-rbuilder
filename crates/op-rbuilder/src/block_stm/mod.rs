@@ -28,7 +28,7 @@ pub mod types;
 // Re-export commonly used types
 pub use db_adapter::{SharedCodeCache, VersionedDatabase, VersionedDbError};
 pub use mv_hashmap::{MVHashMap, ValidationResult};
-pub use scheduler::Scheduler;
+pub use scheduler::{Scheduler, TaskGuard};
 pub use types::{
     EvmStateKey, EvmStateValue, ExecutionStatus, Incarnation, ReadResult, Task, TxnIndex, Version,
 };

@@ -6,6 +6,27 @@ use crate::block_stm::{
 };
 use std::{collections::HashSet, sync::Mutex};
 
+/// RAII guard that tracks an active task.
+/// Increments num_active_tasks on creation, decrements on drop.
+pub struct TaskGuard<'a> {
+    scheduler: &'a Scheduler,
+}
+
+impl<'a> TaskGuard<'a> {
+    fn new(scheduler: &'a Scheduler) -> Self {
+        scheduler.num_active_tasks.fetch_add(1, Ordering::SeqCst);
+        Self { scheduler }
+    }
+}
+
+impl Drop for TaskGuard<'_> {
+    fn drop(&mut self) {
+        self.scheduler
+            .num_active_tasks
+            .fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
 pub struct Scheduler {
     execution_idx: AtomicUsize,
     validation_idx: AtomicUsize,
@@ -89,62 +110,79 @@ impl Scheduler {
             let mut status = self.txn_status[txn_idx as usize].lock().unwrap();
             if status.1 == ExecutionStatus::ReadyToExecute {
                 status.1 = ExecutionStatus::Executing;
+                return Some((txn_idx, status.0));
             }
-            return Some((txn_idx, status.0));
         }
-        self.num_active_tasks.fetch_sub(1, Ordering::SeqCst);
         None
     }
 
-    fn next_version_to_execute(&self) -> Option<(TxnIndex, Incarnation)> {
-        if self.execution_idx.load(Ordering::SeqCst) >= self.num_txns as usize {
-            self.check_done();
-            return None;
-        }
-        self.num_active_tasks.fetch_add(1, Ordering::SeqCst);
+    fn next_version_to_execute(&self) -> Option<((TxnIndex, Incarnation), TaskGuard)> {
         let idx_to_execute = self.execution_idx.fetch_add(1, Ordering::SeqCst);
-        return self.try_incarnate(idx_to_execute as TxnIndex);
-    }
 
-    fn next_version_to_validate(&self) -> Option<(TxnIndex, Incarnation)> {
-        if self.validation_idx.load(Ordering::SeqCst) >= self.num_txns as usize {
+        if idx_to_execute >= self.num_txns as usize {
             self.check_done();
             return None;
         }
-        self.num_active_tasks.fetch_add(1, Ordering::SeqCst);
+
+        let result = self.try_incarnate(idx_to_execute as TxnIndex);
+
+        // Only create guard if we successfully got a task to execute
+        result.map(|version| {
+            let guard = TaskGuard::new(self);
+            (version, guard)
+        })
+    }
+
+    fn next_version_to_validate(&self) -> Option<((TxnIndex, Incarnation), TaskGuard)> {
         let idx_to_validate = self.validation_idx.fetch_add(1, Ordering::SeqCst);
-        if idx_to_validate < self.num_txns as usize {
-            let (incarnation, status) = *self.txn_status[idx_to_validate as usize].lock().unwrap();
-            if status == ExecutionStatus::Executed {
-                return Some((idx_to_validate as TxnIndex, incarnation));
-            }
+
+        if idx_to_validate >= self.num_txns as usize {
+            self.check_done();
+            return None;
         }
-        self.num_active_tasks.fetch_sub(1, Ordering::SeqCst);
+
+        let (incarnation, status) = *self.txn_status[idx_to_validate as usize].lock().unwrap();
+        if status == ExecutionStatus::Executed {
+            // Only create guard if we successfully got a task to validate
+            let guard = TaskGuard::new(self);
+            return Some(((idx_to_validate as TxnIndex, incarnation), guard));
+        }
+
+        // No valid task to validate, don't create a guard
         None
     }
 
-    pub fn next_task(&self) -> Option<Task> {
+    pub fn next_task(&self) -> Option<(Task, TaskGuard)> {
         if self.validation_idx.load(Ordering::SeqCst) < self.execution_idx.load(Ordering::SeqCst) {
-            if let Some((txn_idx, incarnation)) = self.next_version_to_validate() {
-                return Some(Task::Validate {
-                    version: Version::new(txn_idx, incarnation),
-                });
+            if let Some(((txn_idx, incarnation), guard)) = self.next_version_to_validate() {
+                return Some((
+                    Task::Validate {
+                        version: Version::new(txn_idx, incarnation),
+                    },
+                    guard,
+                ));
             }
         } else {
-            if let Some((txn_idx, incarnation)) = self.next_version_to_execute() {
-                return Some(Task::Execute {
-                    version: Version::new(txn_idx, incarnation),
-                });
+            if let Some(((txn_idx, incarnation), guard)) = self.next_version_to_execute() {
+                return Some((
+                    Task::Execute {
+                        version: Version::new(txn_idx, incarnation),
+                    },
+                    guard,
+                ));
             }
         }
         None
     }
 
-    pub fn next_validation_task(&self) -> Option<Task> {
-        if let Some((txn_idx, incarnation)) = self.next_version_to_validate() {
-            return Some(Task::Validate {
-                version: Version::new(txn_idx, incarnation),
-            });
+    pub fn next_validation_task(&self) -> Option<(Task, TaskGuard)> {
+        if let Some(((txn_idx, incarnation), guard)) = self.next_version_to_validate() {
+            return Some((
+                Task::Validate {
+                    version: Version::new(txn_idx, incarnation),
+                },
+                guard,
+            ));
         }
         None
     }
@@ -159,7 +197,7 @@ impl Scheduler {
             self.txn_status[txn_idx as usize].lock().unwrap().1 = ExecutionStatus::Aborting;
             dependencies.insert(dependency);
         }
-        self.num_active_tasks.fetch_sub(1, Ordering::SeqCst);
+        // TaskGuard will be dropped by the executor, automatically decrementing num_active_tasks
         true
     }
 
@@ -179,16 +217,18 @@ impl Scheduler {
         }
     }
 
-    pub fn finish_execution(
-        &self,
+    pub fn finish_execution<'a>(
+        &'a self,
         txn_idx: TxnIndex,
         incarnation: Incarnation,
         wrote_new_path: bool,
-    ) -> Option<Task> {
+        guard: TaskGuard<'a>,
+    ) -> Option<(Task, TaskGuard<'a>)> {
         {
             let mut txn_status = self.txn_status[txn_idx as usize].lock().unwrap();
             txn_status.1 = ExecutionStatus::Executed;
         }
+
         let mut deps = HashSet::new();
         std::mem::swap(
             &mut *self.txn_dependency[txn_idx as usize].lock().unwrap(),
@@ -199,12 +239,18 @@ impl Scheduler {
             if wrote_new_path {
                 self.decrease_validation_idx(txn_idx as usize);
             } else {
-                return Some(Task::Validate {
-                    version: Version::new(txn_idx, incarnation),
-                });
+                // Reuse the same guard for the validation task
+                return Some((
+                    Task::Validate {
+                        version: Version::new(txn_idx, incarnation),
+                    },
+                    guard,
+                ));
             }
         }
-        self.num_active_tasks.fetch_sub(1, Ordering::SeqCst);
+        drop(guard);
+
+        // Guard is dropped here (or by caller), automatically decrementing num_active_tasks
         None
     }
 
@@ -217,20 +263,30 @@ impl Scheduler {
         false
     }
 
-    pub fn finish_validation(&self, txn_idx: TxnIndex, aborted: bool) -> Option<Task> {
+    pub fn finish_validation<'a>(
+        &'a self,
+        txn_idx: TxnIndex,
+        aborted: bool,
+        guard: TaskGuard<'a>,
+    ) -> Option<(Task, TaskGuard<'a>)> {
         if aborted {
             self.set_ready_status(txn_idx);
             self.decrease_validation_idx((txn_idx + 1) as usize);
             if self.execution_idx.load(Ordering::SeqCst) > txn_idx as usize {
                 let new_version = self.try_incarnate(txn_idx as TxnIndex);
                 if let Some(new_version) = new_version {
-                    return Some(Task::Execute {
-                        version: Version::new(new_version.0, new_version.1),
-                    });
+                    // Reuse the same guard for the re-execution task
+                    return Some((
+                        Task::Execute {
+                            version: Version::new(new_version.0, new_version.1),
+                        },
+                        guard,
+                    ));
                 }
             }
         }
-        self.num_active_tasks.fetch_sub(1, Ordering::SeqCst);
+        drop(guard);
+        // Guard is dropped here (or by caller), automatically decrementing num_active_tasks
         None
     }
 }
@@ -260,12 +316,15 @@ mod tests {
         let task = scheduler.next_task();
         assert!(matches!(
             task,
-            Some(Task::Execute {
-                version: Version {
-                    txn_idx: 0,
-                    incarnation: 0
-                }
-            })
+            Some((
+                Task::Execute {
+                    version: Version {
+                        txn_idx: 0,
+                        incarnation: 0
+                    }
+                },
+                _
+            ))
         ));
     }
 
@@ -279,8 +338,10 @@ mod tests {
     #[test]
     fn test_finish_execution_changes_status_to_executed() {
         let scheduler = Scheduler::new(3);
-        let _ = scheduler.next_task(); // Execute tx 0
-        scheduler.finish_execution(0, 0, false);
+        let Some((_, guard)) = scheduler.next_task() else {
+            panic!("Expected task")
+        };
+        scheduler.finish_execution(0, 0, false, guard);
         assert_eq!(scheduler.get_status(0), ExecutionStatus::Executed);
     }
 
@@ -290,23 +351,32 @@ mod tests {
 
         // Execute tx 0
         let task = scheduler.next_task();
-        assert!(matches!(task, Some(Task::Execute { .. })));
-        scheduler.finish_execution(0, 0, false);
+        assert!(matches!(task, Some((Task::Execute { .. }, _))));
+        let Some((_, guard)) = task else {
+            panic!("Expected task")
+        };
+        scheduler.finish_execution(0, 0, false, guard);
 
         // Next task should be validation (validation_idx=0 < execution_idx=1)
         let task = scheduler.next_task();
         assert!(matches!(
             task,
-            Some(Task::Validate {
-                version: Version {
-                    txn_idx: 0,
-                    incarnation: 0
-                }
-            })
+            Some((
+                Task::Validate {
+                    version: Version {
+                        txn_idx: 0,
+                        incarnation: 0
+                    }
+                },
+                _
+            ))
         ));
 
         // Finish validation (not aborted)
-        scheduler.finish_validation(0, false);
+        let Some((_, guard)) = task else {
+            panic!("Expected task")
+        };
+        scheduler.finish_validation(0, false, guard);
 
         // Status should still be Executed after successful validation
         assert_eq!(scheduler.get_status(0), ExecutionStatus::Executed);
@@ -317,12 +387,17 @@ mod tests {
         let scheduler = Scheduler::new(3);
 
         // Execute tx 0
-        let _ = scheduler.next_task();
-        scheduler.finish_execution(0, 0, false);
+        let Some((_, guard)) = scheduler.next_task() else {
+            panic!("Expected task")
+        };
+        scheduler.finish_execution(0, 0, false, guard);
 
         // Get validation task
         let task = scheduler.next_task();
-        assert!(matches!(task, Some(Task::Validate { .. })));
+        assert!(matches!(task, Some((Task::Validate { .. }, _))));
+        let Some((_, guard)) = task else {
+            panic!("Expected task")
+        };
 
         // Try to abort validation
         let aborted = scheduler.try_validation_abort(0, 0);
@@ -330,17 +405,20 @@ mod tests {
         assert_eq!(scheduler.get_status(0), ExecutionStatus::Aborting);
 
         // Finish validation with abort=true
-        let next_task = scheduler.finish_validation(0, true);
+        let next_task = scheduler.finish_validation(0, true, guard);
 
         // Should get re-execute task with incremented incarnation
         assert!(matches!(
             next_task,
-            Some(Task::Execute {
-                version: Version {
-                    txn_idx: 0,
-                    incarnation: 1
-                }
-            })
+            Some((
+                Task::Execute {
+                    version: Version {
+                        txn_idx: 0,
+                        incarnation: 1
+                    }
+                },
+                _
+            ))
         ));
     }
 
@@ -349,26 +427,30 @@ mod tests {
         // Get execute task
         let task = scheduler.next_task();
         assert!(
-            matches!(task, Some(Task::Execute { version }) if version.txn_idx == txn_idx),
-            "Expected Execute task for tx {}, got {:?}",
-            txn_idx,
-            task
+            matches!(task, Some((Task::Execute { version }, _)) if version.txn_idx == txn_idx),
+            "Expected Execute task for tx {}",
+            txn_idx
         );
+        let Some((_, guard)) = task else {
+            panic!("Expected task")
+        };
 
         // Finish execution
-        scheduler.finish_execution(txn_idx, 0, false);
+        scheduler.finish_execution(txn_idx, 0, false, guard);
 
         // Get validation task
         let task = scheduler.next_task();
         assert!(
-            matches!(task, Some(Task::Validate { version }) if version.txn_idx == txn_idx),
-            "Expected Validate task for tx {}, got {:?}",
-            txn_idx,
-            task
+            matches!(task, Some((Task::Validate { version }, _)) if version.txn_idx == txn_idx),
+            "Expected Validate task for tx {}",
+            txn_idx
         );
+        let Some((_, guard)) = task else {
+            panic!("Expected task")
+        };
 
         // Finish validation (success)
-        scheduler.finish_validation(txn_idx, false);
+        scheduler.finish_validation(txn_idx, false, guard);
     }
 
     #[test]
@@ -399,7 +481,7 @@ mod tests {
 
         // tx 3 starts executing but doesn't finish
         let task = scheduler.next_task();
-        assert!(matches!(task, Some(Task::Execute { version }) if version.txn_idx == 3));
+        assert!(matches!(task, Some((Task::Execute { version }, _)) if version.txn_idx == 3));
 
         // Safe commit point should be 3 (tx 0, 1, 2 are Executed and validated)
         let safe_commit_point = (0..scheduler.num_txns())
@@ -418,7 +500,7 @@ mod tests {
 
         // Start tx 1 but don't finish
         let task = scheduler.next_task();
-        assert!(matches!(task, Some(Task::Execute { version }) if version.txn_idx == 1));
+        assert!(matches!(task, Some((Task::Execute { version }, _)) if version.txn_idx == 1));
 
         // Safe commit point should be 1 (only tx 0 is Executed)
         let safe_commit_point = (0..scheduler.num_txns())
@@ -452,16 +534,22 @@ mod tests {
 
         // Execute tx 1
         let task = scheduler.next_task();
-        assert!(matches!(task, Some(Task::Execute { version }) if version.txn_idx == 1));
-        scheduler.finish_execution(1, 0, false);
+        assert!(matches!(task, Some((Task::Execute { version }, _)) if version.txn_idx == 1));
+        let Some((_, guard)) = task else {
+            panic!("Expected task")
+        };
+        scheduler.finish_execution(1, 0, false, guard);
 
         // Get validation task for tx 1
         let task = scheduler.next_task();
-        assert!(matches!(task, Some(Task::Validate { version }) if version.txn_idx == 1));
+        assert!(matches!(task, Some((Task::Validate { version }, _)) if version.txn_idx == 1));
+        let Some((_, guard)) = task else {
+            panic!("Expected task")
+        };
 
         // Abort tx 1 (simulating validation failure)
         scheduler.try_validation_abort(1, 0);
-        scheduler.finish_validation(1, true);
+        scheduler.finish_validation(1, true, guard);
 
         // tx 1 is now ReadyToExecute, not Executed
         // Safe commit point should be 1 (only tx 0)
@@ -483,11 +571,11 @@ mod tests {
             iterations += 1;
             let task = scheduler.next_task();
             match task {
-                Some(Task::Execute { version }) => {
-                    scheduler.finish_execution(version.txn_idx, version.incarnation, false);
+                Some((Task::Execute { version }, guard)) => {
+                    scheduler.finish_execution(version.txn_idx, version.incarnation, false, guard);
                 }
-                Some(Task::Validate { version }) => {
-                    scheduler.finish_validation(version.txn_idx, false);
+                Some((Task::Validate { version }, guard)) => {
+                    scheduler.finish_validation(version.txn_idx, false, guard);
                 }
                 None => {
                     // No task available, yield and retry
@@ -538,18 +626,19 @@ mod tests {
                         iterations += 1;
                         let task = scheduler.next_task();
                         match task {
-                            Some(Task::Execute { version }) => {
+                            Some((Task::Execute { version }, guard)) => {
                                 // Simulate execution
                                 scheduler.finish_execution(
                                     version.txn_idx,
                                     version.incarnation,
                                     false,
+                                    guard,
                                 );
                                 executed.push(version.txn_idx);
                             }
-                            Some(Task::Validate { version }) => {
+                            Some((Task::Validate { version }, guard)) => {
                                 // Simulate validation (always passes)
-                                scheduler.finish_validation(version.txn_idx, false);
+                                scheduler.finish_validation(version.txn_idx, false, guard);
                             }
                             None => {
                                 // No task available, yield and retry
@@ -591,7 +680,7 @@ mod tests {
                     let mut rng = rand::rng();
                     let mut iterations = 0;
                     let max_iterations = 2000;
-                    let mut pending_task: Option<Task> = None;
+                    let mut pending_task: Option<(Task, TaskGuard)> = None;
 
                     while !scheduler.done() && iterations < max_iterations {
                         iterations += 1;
@@ -600,35 +689,39 @@ mod tests {
                         let task = pending_task.take().or_else(|| scheduler.next_task());
 
                         match task {
-                            Some(Task::Execute { version }) => {
+                            Some((Task::Execute { version }, guard)) => {
                                 let next = scheduler.finish_execution(
                                     version.txn_idx,
                                     version.incarnation,
                                     false,
+                                    guard,
                                 );
-                                if let Some(Task::Validate { version: v }) = next {
+                                if let Some((Task::Validate { version: v }, guard)) = next {
                                     // Randomly abort 5% of validations
                                     if rng.random_ratio(1, 20) {
                                         let aborted = scheduler
                                             .try_validation_abort(v.txn_idx, v.incarnation);
                                         // Keep returned task (may be re-execute)
                                         pending_task =
-                                            scheduler.finish_validation(v.txn_idx, aborted);
+                                            scheduler.finish_validation(v.txn_idx, aborted, guard);
                                     } else {
-                                        scheduler.finish_validation(v.txn_idx, false);
+                                        scheduler.finish_validation(v.txn_idx, false, guard);
                                     }
                                 }
                             }
-                            Some(Task::Validate { version }) => {
+                            Some((Task::Validate { version }, guard)) => {
                                 // Randomly abort 5% of validations
                                 if rng.random_ratio(1, 20) {
                                     let aborted = scheduler
                                         .try_validation_abort(version.txn_idx, version.incarnation);
                                     // Keep returned task (may be re-execute)
-                                    pending_task =
-                                        scheduler.finish_validation(version.txn_idx, aborted);
+                                    pending_task = scheduler.finish_validation(
+                                        version.txn_idx,
+                                        aborted,
+                                        guard,
+                                    );
                                 } else {
-                                    scheduler.finish_validation(version.txn_idx, false);
+                                    scheduler.finish_validation(version.txn_idx, false, guard);
                                 }
                             }
                             None => {
@@ -664,7 +757,7 @@ mod tests {
         let mut execution_count = vec![0u32; num_txns];
         let mut iterations = 0;
         let max_iterations = 500;
-        let mut pending_task: Option<Task> = None;
+        let mut pending_task: Option<(Task, TaskGuard)> = None;
 
         while !scheduler.done() && iterations < max_iterations {
             iterations += 1;
@@ -673,7 +766,7 @@ mod tests {
             let task = pending_task.take().or_else(|| scheduler.next_task());
 
             match task {
-                Some(Task::Execute { version }) => {
+                Some((Task::Execute { version }, guard)) => {
                     execution_count[version.txn_idx as usize] += 1;
                     if iterations < 100 || iterations % 50 == 0 {
                         println!(
@@ -682,9 +775,13 @@ mod tests {
                         );
                     }
 
-                    let next =
-                        scheduler.finish_execution(version.txn_idx, version.incarnation, false);
-                    if let Some(Task::Validate { version: v }) = next {
+                    let next = scheduler.finish_execution(
+                        version.txn_idx,
+                        version.incarnation,
+                        false,
+                        guard,
+                    );
+                    if let Some((Task::Validate { version: v }, guard)) = next {
                         // Abort every 3rd transaction on first incarnation only
                         if v.txn_idx % 3 == 0 && v.incarnation == 0 {
                             let aborted = scheduler.try_validation_abort(v.txn_idx, v.incarnation);
@@ -696,19 +793,21 @@ mod tests {
                                 );
                             }
                             // finish_validation may return a re-execute task - keep it for next iteration
-                            pending_task = scheduler.finish_validation(v.txn_idx, aborted);
-                            if let Some(Task::Execute { version: next_v }) = pending_task {
+                            pending_task = scheduler.finish_validation(v.txn_idx, aborted, guard);
+                            if let Some((Task::Execute { version: next_v }, _)) =
+                                pending_task.as_ref()
+                            {
                                 println!(
                                     "Iter {}: finish_validation returned Execute tx={} inc={}",
                                     iterations, next_v.txn_idx, next_v.incarnation
                                 );
                             }
                         } else {
-                            scheduler.finish_validation(v.txn_idx, false);
+                            scheduler.finish_validation(v.txn_idx, false, guard);
                         }
                     }
                 }
-                Some(Task::Validate { version }) => {
+                Some((Task::Validate { version }, guard)) => {
                     if iterations < 100 || iterations % 50 == 0 {
                         println!(
                             "Iter {}: Validate tx={} inc={}",
@@ -728,15 +827,16 @@ mod tests {
                             );
                         }
                         // finish_validation may return a re-execute task - keep it for next iteration
-                        pending_task = scheduler.finish_validation(version.txn_idx, aborted);
-                        if let Some(Task::Execute { version: next_v }) = pending_task {
+                        pending_task = scheduler.finish_validation(version.txn_idx, aborted, guard);
+                        if let Some((Task::Execute { version: next_v }, _)) = pending_task.as_ref()
+                        {
                             println!(
                                 "Iter {}: finish_validation returned Execute tx={} inc={}",
                                 iterations, next_v.txn_idx, next_v.incarnation
                             );
                         }
                     } else {
-                        scheduler.finish_validation(version.txn_idx, false);
+                        scheduler.finish_validation(version.txn_idx, false, guard);
                     }
                 }
                 None => {
@@ -827,7 +927,7 @@ mod tests {
         F: FnMut(Version) -> bool,
     {
         let mut iterations = 0;
-        let mut pending_task: Option<Task> = None;
+        let mut pending_task: Option<(Task, TaskGuard)> = None;
 
         while !scheduler.done() && iterations < max_iterations {
             iterations += 1;
@@ -836,27 +936,31 @@ mod tests {
             let task = pending_task.take().or_else(|| scheduler.next_task());
 
             match task {
-                Some(Task::Execute { version }) => {
-                    let next =
-                        scheduler.finish_execution(version.txn_idx, version.incarnation, false);
-                    if let Some(Task::Validate { version: v }) = next {
+                Some((Task::Execute { version }, guard)) => {
+                    let next = scheduler.finish_execution(
+                        version.txn_idx,
+                        version.incarnation,
+                        false,
+                        guard,
+                    );
+                    if let Some((Task::Validate { version: v }, guard)) = next {
                         if should_abort(v) {
                             let aborted = scheduler.try_validation_abort(v.txn_idx, v.incarnation);
                             // Keep returned task (may be re-execute)
-                            pending_task = scheduler.finish_validation(v.txn_idx, aborted);
+                            pending_task = scheduler.finish_validation(v.txn_idx, aborted, guard);
                         } else {
-                            scheduler.finish_validation(v.txn_idx, false);
+                            scheduler.finish_validation(v.txn_idx, false, guard);
                         }
                     }
                 }
-                Some(Task::Validate { version }) => {
+                Some((Task::Validate { version }, guard)) => {
                     if should_abort(version) {
                         let aborted =
                             scheduler.try_validation_abort(version.txn_idx, version.incarnation);
                         // Keep returned task (may be re-execute)
-                        pending_task = scheduler.finish_validation(version.txn_idx, aborted);
+                        pending_task = scheduler.finish_validation(version.txn_idx, aborted, guard);
                     } else {
-                        scheduler.finish_validation(version.txn_idx, false);
+                        scheduler.finish_validation(version.txn_idx, false, guard);
                     }
                 }
                 None => {
@@ -881,17 +985,18 @@ mod tests {
                 iterations += 1;
                 let task = scheduler_clone.next_task();
                 match task {
-                    Some(Task::Execute { version }) => {
+                    Some((Task::Execute { version }, guard)) => {
                         // Small delay to simulate work
                         thread::yield_now();
                         scheduler_clone.finish_execution(
                             version.txn_idx,
                             version.incarnation,
                             false,
+                            guard,
                         );
                     }
-                    Some(Task::Validate { version }) => {
-                        scheduler_clone.finish_validation(version.txn_idx, false);
+                    Some((Task::Validate { version }, guard)) => {
+                        scheduler_clone.finish_validation(version.txn_idx, false, guard);
                     }
                     None => {
                         thread::yield_now();

@@ -18,7 +18,7 @@ use revm::{
     state::{Account, EvmState},
 };
 use tokio_util::sync::CancellationToken;
-use tracing::{Span, debug, warn};
+use tracing::{Span, warn};
 
 use crate::{
     block_stm::{
@@ -106,9 +106,9 @@ impl<
         ExecuteTxFn: (Fn(
                 &Recovered<op_alloy_consensus::OpTxEnvelope>,
                 &mut State<LazyDatabaseWrapper<VersionedDatabase<'_, DB>>>,
-                &HashSet<EvmStateKey>,              // NEW: conflicting keys
-                Option<&TxExecutionResult>,         // NEW: previous execution result
-                u64,                                 // NEW: tx_da_size
+                &HashSet<EvmStateKey>,
+                Option<&TxExecutionResult>,
+                u64,
             ) -> Result<
                 ResultAndState<OpHaltReason>,
                 EVMError<VersionedDbError, OpTransactionError>,
@@ -154,19 +154,25 @@ impl<
                 if !prev_read_set.is_empty() {
                     use crate::block_stm::types::ReadResult;
 
-                    prev_read_set.iter()
+                    let res = prev_read_set
+                        .iter()
                         .filter_map(|(key, expected_version)| {
                             // Check if this key's current version matches expected
                             let current_read = self.mv_hashmap.read(key, txn_idx);
                             match (expected_version, &current_read) {
                                 (Some(expected_ver), ReadResult::Value { version, .. })
-                                    if version != expected_ver => Some(key.clone()),
+                                    if version != expected_ver =>
+                                {
+                                    Some(key.clone())
+                                }
                                 (None, ReadResult::Value { .. }) => Some(key.clone()),
                                 (Some(_), ReadResult::NotFound) => Some(key.clone()),
                                 _ => None,
                             }
                         })
-                        .collect()
+                        .collect();
+
+                    res
                 } else {
                     HashSet::new()
                 }
@@ -176,16 +182,21 @@ impl<
 
             // Get previous execution result if this is a re-execution
             // We need to hold the lock guard to keep the reference alive
-            let results_guard = self.execution_results.lock().unwrap();
+            let results_guard = self.execution_results.lock().unwrap()[txn_idx as usize].clone();
             let previous_result = if incarnation > 0 {
-                results_guard[txn_idx as usize].as_ref()
+                results_guard.as_ref()
             } else {
                 None
             };
 
             // Execute transaction with versioned state, conflicting keys, previous result, and tx_da_size
-            let result = execute_tx(&tx, &mut tx_state, &conflicting_keys, previous_result, tx_da_size);
-            drop(results_guard); // Drop the lock before processing results
+            let result = execute_tx(
+                &tx,
+                &mut tx_state,
+                &conflicting_keys,
+                previous_result,
+                tx_da_size,
+            );
 
             match result {
                 Ok(result) => {
@@ -221,7 +232,6 @@ impl<
 
                     // Add writes only for values that actually changed
                     for (addr, account) in state.iter() {
-                        debug!("Account touched: {}", addr);
                         if account.is_touched() {
                             // Get original values from captured reads (if available)
                             let original_balance = captured_reads.get(&EvmStateKey::Balance(*addr));
@@ -381,9 +391,9 @@ impl<
         ExecuteTxFn: (Fn(
                 &Recovered<op_alloy_consensus::OpTxEnvelope>,
                 &mut State<LazyDatabaseWrapper<VersionedDatabase<'_, DB>>>,
-                &HashSet<EvmStateKey>,              // NEW: conflicting keys
-                Option<&TxExecutionResult>,         // NEW: previous execution result
-                u64,                                 // NEW: tx_da_size
+                &HashSet<EvmStateKey>,
+                Option<&TxExecutionResult>,
+                u64,
             ) -> Result<
                 ResultAndState<OpHaltReason>,
                 EVMError<VersionedDbError, OpTransactionError>,
@@ -415,7 +425,6 @@ impl<
                 );
                 s.spawn(move || {
                     let _worker_guard = worker_span.entered();
-                    debug!("Spawning worker thread {}", worker_id);
 
                     let mut task = None;
 
@@ -423,7 +432,7 @@ impl<
                         let is_cancelled = cancellation_token.is_cancelled();
 
                         // Finish validation tasks only if cancelled.
-                        if is_cancelled && !matches!(task, Some(Task::Validate { .. })) {
+                        if is_cancelled && !matches!(task, Some((Task::Validate { .. }, _))) {
                             // first, see if we can get a validation task:
                             task = this.scheduler.next_validation_task();
 
@@ -433,7 +442,7 @@ impl<
                             }
                         }
 
-                        task = if let Some(Task::Execute { version }) = task {
+                        task = if let Some((Task::Execute { version }, guard)) = task {
                             let Version {
                                 txn_idx,
                                 incarnation,
@@ -465,7 +474,7 @@ impl<
 
                             let next_task = this
                                 .scheduler
-                                .finish_execution(txn_idx, incarnation, wrote_new_path);
+                                .finish_execution(txn_idx, incarnation, wrote_new_path, guard);
                             debug!(
                                 worker_id = worker_id,
                                 txn_idx = txn_idx,
@@ -477,13 +486,13 @@ impl<
                         } else {
                             task
                         };
-                        task = if let Some(Task::Validate {
+                        task = if let Some((Task::Validate {
                             version:
                                 Version {
                                     txn_idx,
                                     incarnation,
                                 },
-                        }) = task
+                        }, guard)) = task
                         {
                             let tx_validate_span = tracing::info_span!(
                                 parent: Span::current(),
@@ -527,7 +536,7 @@ impl<
                                 this.mv_hashmap.convert_writes_to_estimates(txn_idx);
                             }
 
-                            let next_task = this.scheduler.finish_validation(txn_idx, aborted);
+                            let next_task = this.scheduler.finish_validation(txn_idx, aborted, guard);
                             debug!(
                                 worker_id = worker_id,
                                 txn_idx = txn_idx,

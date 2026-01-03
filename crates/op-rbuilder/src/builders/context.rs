@@ -46,7 +46,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{Span, debug, info, trace, warn};
 
 use crate::{
-    block_stm::{evm::OpLazyEvmFactory, executor::Executor, db_adapter::VersionedDbError},
+    block_stm::{db_adapter::VersionedDbError, evm::OpLazyEvmFactory, executor::Executor},
     gas_limiter::AddressGasLimiter,
     metrics::OpRBuilderMetrics,
     primitives::reth::{ExecutionInfo, TxnExecutionResult},
@@ -525,19 +525,7 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpEvmFactory> {
 
             let tx_simulation_start_time = Instant::now();
             let ResultAndState { result, state } = match evm.transact(&tx) {
-                Ok(res) => {
-                    // Debug: Check if this tx created the mystery contracts
-                    let addr1 = alloy_primitives::Address::from([0xa1, 0x5b, 0xb6, 0x61, 0x38, 0x82, 0x4a, 0x1c, 0x71, 0x67, 0xf5, 0xe8, 0x5b, 0x95, 0x7d, 0x04, 0xdd, 0x34, 0xe4, 0x68]);
-                    let addr2 = alloy_primitives::Address::from([0x8c, 0xe3, 0x61, 0x60, 0x2b, 0x93, 0x56, 0x80, 0xe8, 0xde, 0xc2, 0x18, 0xb8, 0x20, 0xff, 0x50, 0x56, 0xbe, 0xb7, 0xaf]);
-
-                    for (addr, account) in res.state.iter() {
-                        if addr == &addr1 || addr == &addr2 {
-                            eprintln!("SEQUENTIAL tx {:?}: Touched address {:?}, storage_slots={}, code_hash={:?}",
-                                tx.tx_hash(), addr, account.storage.len(), account.info.code_hash);
-                        }
-                    }
-                    res
-                },
+                Ok(res) => res,
                 Err(err) => {
                     if let Some(err) = err.as_invalid_tx_err() {
                         if err.is_nonce_too_low() {
@@ -1054,7 +1042,12 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpEvmFactory> {
             info.total_fees += U256::from(tx_result.miner_fee) * U256::from(gas_used);
 
             // Save pending balance increment addresses before moving state
-            let pending_balance_addrs: Vec<_> = tx_result.state.pending_balance_increments.keys().copied().collect();
+            let pending_balance_addrs: Vec<_> = tx_result
+                .state
+                .pending_balance_increments
+                .keys()
+                .copied()
+                .collect();
 
             let mut resolved_state = tx_result
                 .state
@@ -1097,31 +1090,26 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpEvmFactory> {
             }
 
             // Commit resolved state to actual DB
-            let num_accounts_with_storage = resolved_state.iter()
+            let num_accounts_with_storage = resolved_state
+                .iter()
                 .filter(|(_, acct)| !acct.storage.is_empty())
                 .count();
 
-            // Log ALL account addresses being committed for debugging
-            let all_addresses: Vec<_> = resolved_state.keys().copied().collect();
-            let tee_contract = Address::from([0x70, 0x0b, 0x6a, 0x60, 0xce, 0x7e, 0xaa, 0xea, 0x56, 0xf0, 0x65, 0x75, 0x3d, 0x8d, 0xcb, 0x96, 0x53, 0xdb, 0xad, 0x35]);
-            let has_tee = resolved_state.contains_key(&tee_contract);
-            let tee_has_storage = has_tee && !resolved_state.get(&tee_contract).unwrap().storage.is_empty();
             trace!(
                 target: "payload_builder",
                 mode = "parallel",
                 tx_hash = ?tx_result.tx.tx_hash(),
                 num_accounts = resolved_state.len(),
                 num_accounts_with_storage,
-                has_tee_contract = has_tee,
-                tee_has_storage,
-                addresses = ?all_addresses,
                 "PARALLEL: Before commit"
             );
 
             if num_accounts_with_storage > 0 {
                 for (addr, account) in resolved_state.iter() {
                     if !account.storage.is_empty() {
-                        let num_changed = account.storage.iter()
+                        let num_changed = account
+                            .storage
+                            .iter()
                             .filter(|(_, v)| v.is_changed())
                             .count();
                         trace!(
@@ -1140,7 +1128,10 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpEvmFactory> {
 
             // Consume gas in address gas limiter now that the transaction is committed
             // This updates the actual token bucket for rate limiting
-            if let Err(e) = self.address_gas_limiter.consume_gas(tx_result.tx.signer(), gas_used) {
+            if let Err(e) = self
+                .address_gas_limiter
+                .consume_gas(tx_result.tx.signer(), gas_used)
+            {
                 // This should not happen since we already checked in the execution phase
                 // But log it for debugging
                 warn!(
