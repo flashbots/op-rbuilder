@@ -190,7 +190,8 @@ pub struct FlashblocksArgs {
     #[arg(
         long = "flashblocks.send-offset-ms",
         env = "FLASHBLOCK_SEND_OFFSET_MS",
-        default_value = "0"
+        default_value = "0",
+        allow_hyphen_values = true
     )]
     pub flashblocks_send_offset_ms: i64,
 
