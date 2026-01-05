@@ -500,12 +500,17 @@ where
                 );
 
                 // Set deadline to ensure the last flashblock will be built before the leeway time
+                // Only apply deadline when build_at_interval_end is enabled
                 let deadline_sleep = async {
-                    tokio::time::sleep(flashblocks_deadline).await;
+                    if build_at_interval_end {
+                        tokio::time::sleep(flashblocks_deadline).await;
+                    } else {
+                        // Never resolve - deadline not applied
+                        std::future::pending::<()>().await;
+                    }
                 };
                 tokio::pin!(deadline_sleep);
 
-                // Stop building flashblocks after the deadline
                 loop {
                     tokio::select! {
                         _ = timer.tick() => {
@@ -527,14 +532,9 @@ where
                             }
                         }
                         _ = &mut deadline_sleep => {
-                            // cancel current payload building job
-                            fb_cancel.cancel();
-                            if tx.send(block_cancel.child_token()).await.is_err() {
-                                error!(
-                                    target: "payload_builder",
-                                    "Did not trigger next flashblock build due to payload building error or block building being cancelled",
-                                );
-                            }
+                            // Deadline reached (with leeway applied to end).
+                            // Don't send new token - current flashblock continues,
+                            // then main loop exits when channel closes.
                             return;
                         }
                         _ = block_cancel.cancelled() => {
@@ -910,7 +910,8 @@ where
         // FCU(a) could arrive with `block_time - fb_time < delay`. In this case we could only produce 1 flashblock
         // FCU(a) could arrive with `delay < fb_time` - in this case we will shrink first flashblock
         // FCU(a) could arrive with `fb_time < delay < block_time - fb_time` - in this case we will issue less flashblocks
-        let target_time = std::time::SystemTime::UNIX_EPOCH + Duration::from_secs(timestamp);
+        let target_time = std::time::SystemTime::UNIX_EPOCH + Duration::from_secs(timestamp)
+            - self.config.specific.leeway_time;
         let now = std::time::SystemTime::now();
         let Ok(time_drift) = target_time.duration_since(now) else {
             error!(
