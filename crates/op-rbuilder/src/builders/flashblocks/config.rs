@@ -42,6 +42,17 @@ pub struct FlashblocksConfig {
     /// whether to use permit signatures for the contract calls
     pub flashblocks_number_contract_use_permit: bool,
 
+    /// Build flashblock at the end of the flashblock interval
+    pub flashblocks_build_at_interval_end: bool,
+
+    /// Offset in milliseconds for when to send flashblocks.
+    /// Positive values send late, negative values send early.
+    pub flashblocks_send_offset_ms: i64,
+
+    /// Time in milliseconds to build the last flashblock early before the end of the slot.
+    /// This serves as a buffer time to account for the last flashblock being delayed.
+    pub flashblocks_end_buffer_ms: u64,
+
     /// Whether to enable the p2p node for flashblocks
     pub p2p_enabled: bool,
 
@@ -68,6 +79,9 @@ impl Default for FlashblocksConfig {
             disable_state_root: false,
             flashblocks_number_contract_address: None,
             flashblocks_number_contract_use_permit: false,
+            flashblocks_build_at_interval_end: false,
+            flashblocks_send_offset_ms: 0,
+            flashblocks_end_buffer_ms: 0,
             p2p_enabled: false,
             p2p_port: 9009,
             p2p_private_key_file: None,
@@ -108,6 +122,9 @@ impl TryFrom<OpRbuilderArgs> for FlashblocksConfig {
             disable_state_root,
             flashblocks_number_contract_address,
             flashblocks_number_contract_use_permit,
+            flashblocks_build_at_interval_end: args.flashblocks.flashblocks_build_at_interval_end,
+            flashblocks_send_offset_ms: args.flashblocks.flashblocks_send_offset_ms,
+            flashblocks_end_buffer_ms: args.flashblocks.flashblocks_end_buffer_ms,
             p2p_enabled: args.flashblocks.p2p.p2p_enabled,
             p2p_port: args.flashblocks.p2p.p2p_port,
             p2p_private_key_file: args.flashblocks.p2p.p2p_private_key_file,
