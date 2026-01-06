@@ -48,6 +48,7 @@ use reth_transaction_pool::{AllTransactionsEvents, TransactionPool};
 use std::{
     net::SocketAddr,
     sync::{Arc, LazyLock},
+    time::Instant,
 };
 use tokio::{net::TcpListener, sync::oneshot, task::JoinHandle};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
@@ -379,14 +380,22 @@ async fn spawn_attestation_provider() -> eyre::Result<AttestationServer> {
     Ok(service)
 }
 
+/// A flashblock payload with its receive timestamp
+#[derive(Debug, Clone)]
+pub struct TimestampedFlashblock {
+    pub payload: OpFlashblockPayload,
+    pub received_at: Instant,
+}
+
 /// A utility for listening to flashblocks WebSocket messages during tests.
 ///
 /// This provides a reusable way to capture and inspect flashblocks that are produced
 /// during test execution, eliminating the need for duplicate WebSocket listening code.
 pub struct FlashblocksListener {
-    pub flashblocks: Arc<Mutex<Vec<OpFlashblockPayload>>>,
+    pub flashblocks: Arc<Mutex<Vec<TimestampedFlashblock>>>,
     pub cancellation_token: CancellationToken,
     pub handle: JoinHandle<eyre::Result<()>>,
+    pub start_time: Instant,
 }
 
 impl FlashblocksListener {
@@ -396,6 +405,7 @@ impl FlashblocksListener {
     fn new(flashblocks_ws_url: String) -> Self {
         let flashblocks = Arc::new(Mutex::new(Vec::new()));
         let cancellation_token = CancellationToken::new();
+        let start_time = Instant::now();
 
         let flashblocks_clone = flashblocks.clone();
         let cancellation_token_clone = cancellation_token.clone();
@@ -410,8 +420,12 @@ impl FlashblocksListener {
                         break Ok(());
                     }
                     Some(Ok(Message::Text(text))) = read.next() => {
-                        let fb = serde_json::from_str(&text).unwrap();
-                        flashblocks_clone.lock().push(fb);
+                        let payload = serde_json::from_str(&text).unwrap();
+                        let timestamped = TimestampedFlashblock {
+                            payload,
+                            received_at: Instant::now(),
+                        };
+                        flashblocks_clone.lock().push(timestamped);
                     }
                 }
             }
@@ -421,12 +435,31 @@ impl FlashblocksListener {
             flashblocks,
             cancellation_token,
             handle,
+            start_time,
         }
     }
 
-    /// Get a snapshot of all received flashblocks
+    /// Get a snapshot of all received flashblocks (payloads only)
     pub fn get_flashblocks(&self) -> Vec<OpFlashblockPayload> {
+        self.flashblocks
+            .lock()
+            .iter()
+            .map(|tf| tf.payload.clone())
+            .collect()
+    }
+
+    /// Get a snapshot of all received flashblocks with timestamps
+    pub fn get_timestamped_flashblocks(&self) -> Vec<TimestampedFlashblock> {
         self.flashblocks.lock().clone()
+    }
+
+    /// Get the time elapsed since the listener was started for each flashblock
+    pub fn get_flashblock_timings(&self) -> Vec<Duration> {
+        self.flashblocks
+            .lock()
+            .iter()
+            .map(|tf| tf.received_at.duration_since(self.start_time))
+            .collect()
     }
 
     /// Find a flashblock by index
@@ -434,8 +467,8 @@ impl FlashblocksListener {
         self.flashblocks
             .lock()
             .iter()
-            .find(|fb| fb.index == index)
-            .cloned()
+            .find(|tf| tf.payload.index == index)
+            .map(|tf| tf.payload.clone())
     }
 
     /// Check if any flashblock contains the given transaction hash
@@ -443,16 +476,17 @@ impl FlashblocksListener {
         self.flashblocks
             .lock()
             .iter()
-            .any(|fb| fb.metadata.receipts.contains_key(tx_hash))
+            .any(|fb| fb.payload.metadata.receipts.contains_key(tx_hash))
     }
 
     /// Find which flashblock index contains the given transaction hash
     pub fn find_transaction_flashblock(&self, tx_hash: &B256) -> Option<u64> {
         self.flashblocks.lock().iter().find_map(|fb| {
-            fb.metadata
+            fb.payload
+                .metadata
                 .receipts
                 .contains_key(tx_hash)
-                .then_some(fb.index)
+                .then_some(fb.payload.index)
         })
     }
 
