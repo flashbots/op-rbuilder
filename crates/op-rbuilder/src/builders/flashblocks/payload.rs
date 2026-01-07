@@ -450,7 +450,7 @@ where
         }
         // We adjust our flashblocks timings based on time the fcu block building signal arrived
         let (flashblocks_per_block, first_flashblock_offset, flashblocks_deadline) =
-            if self.config.specific.flashblocks_build_at_interval_end {
+            if self.config.specific.build_at_interval_end {
                 let timing = self.calculate_flashblocks_timing(timestamp);
                 (
                     timing.flashblocks_per_block,
@@ -524,7 +524,7 @@ where
         ));
         let interval = self.config.specific.interval;
         let (tx, mut rx) = mpsc::channel((self.config.flashblocks_per_block() + 1) as usize);
-        let build_at_interval_end = self.config.specific.flashblocks_build_at_interval_end;
+        let build_at_interval_end = self.config.specific.build_at_interval_end;
 
         tokio::spawn({
             let block_cancel = block_cancel.clone();
@@ -1005,13 +1005,9 @@ where
     /// Calculate number of flashblocks and time until first flashblock and deadline for building flashblocks
     /// If dynamic is enabled this function will take time drift of FCU arrival into the account.
     pub(super) fn calculate_flashblocks_timing(&self, timestamp: u64) -> FlashblocksTiming {
-        let offset_delta = self
-            .config
-            .specific
-            .flashblocks_send_offset_ms
-            .unsigned_abs();
+        let offset_delta = self.config.specific.send_offset_ms.unsigned_abs();
         if self.config.specific.fixed {
-            let offset = if self.config.specific.flashblocks_send_offset_ms > 0 {
+            let offset = if self.config.specific.send_offset_ms > 0 {
                 self.config
                     .specific
                     .interval
@@ -1025,9 +1021,10 @@ where
             return FlashblocksTiming {
                 flashblocks_per_block: self.config.flashblocks_per_block(),
                 first_flashblock_offset: offset,
-                flashblocks_deadline: self.config.block_time.saturating_sub(Duration::from_millis(
-                    self.config.specific.flashblocks_end_buffer_ms,
-                )),
+                flashblocks_deadline: self
+                    .config
+                    .block_time
+                    .saturating_sub(Duration::from_millis(self.config.specific.end_buffer_ms)),
             };
         }
 
@@ -1095,7 +1092,10 @@ where
             return FlashblocksTiming {
                 flashblocks_per_block: self.config.flashblocks_per_block(),
                 first_flashblock_offset: self.config.specific.interval,
-                flashblocks_deadline: self.config.block_time - self.config.specific.leeway_time,
+                flashblocks_deadline: self
+                    .config
+                    .block_time
+                    .saturating_sub(Duration::from_millis(self.config.specific.end_buffer_ms)),
             };
         };
         self.metrics.flashblocks_time_drift.record(
@@ -1131,20 +1131,19 @@ where
         // Apply send_offset_ms to the timer start time.
         // Positive values = send later, negative values = send earlier.
         let deadline = Duration::from_millis(
-            remaining_time.saturating_sub(self.config.specific.flashblocks_end_buffer_ms),
+            remaining_time.saturating_sub(self.config.specific.end_buffer_ms),
         );
-        let (adjusted_offset, adjusted_deadline) =
-            if self.config.specific.flashblocks_send_offset_ms >= 0 {
-                (
-                    offset.saturating_add(Duration::from_millis(offset_delta)),
-                    deadline.saturating_add(Duration::from_millis(offset_delta)),
-                )
-            } else {
-                (
-                    offset.saturating_sub(Duration::from_millis(offset_delta)),
-                    deadline.saturating_sub(Duration::from_millis(offset_delta)),
-                )
-            };
+        let (adjusted_offset, adjusted_deadline) = if self.config.specific.send_offset_ms >= 0 {
+            (
+                offset.saturating_add(Duration::from_millis(offset_delta)),
+                deadline.saturating_add(Duration::from_millis(offset_delta)),
+            )
+        } else {
+            (
+                offset.saturating_sub(Duration::from_millis(offset_delta)),
+                deadline.saturating_sub(Duration::from_millis(offset_delta)),
+            )
+        };
         FlashblocksTiming {
             flashblocks_per_block,
             first_flashblock_offset: adjusted_offset,

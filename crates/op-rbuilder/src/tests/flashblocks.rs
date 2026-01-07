@@ -671,7 +671,7 @@ fn verify_user_tx_hashes(
         flashblocks_port: 1239,
         flashblocks_addr: "127.0.0.1".into(),
         flashblocks_block_time: 250,
-        flashblocks_leeway_time: 75,
+        flashblocks_end_buffer_ms: 50,
         flashblocks_fixed: false,
         flashblocks_build_at_interval_end: true,
         ..Default::default()
@@ -697,96 +697,11 @@ async fn build_at_interval_end_basic(rbuilder: LocalInstance) -> eyre::Result<()
 
     let flashblocks = flashblocks_listener.get_flashblocks();
     // With build_at_interval_end, the deadline_sleep controls when to stop
-    // Expected: ~4 flashblocks per block with leeway applied at the end
-    assert!(
-        flashblocks.len() >= 15 && flashblocks.len() <= 25,
-        "Expected 15-25 flashblocks, got {}",
-        flashblocks.len()
-    );
-
-    flashblocks_listener.stop().await
-}
-
-/// Test send_offset_ms with a positive value (send later)
-#[rb_test(flashblocks, args = OpRbuilderArgs {
-    chain_block_time: 1000,
-    flashblocks: FlashblocksArgs {
-        enabled: true,
-        flashblocks_port: 1239,
-        flashblocks_addr: "127.0.0.1".into(),
-        flashblocks_block_time: 250,
-        flashblocks_leeway_time: 75,
-        flashblocks_fixed: false,
-        flashblocks_send_offset_ms: 50, // Send 50ms later
-        ..Default::default()
-    },
-    ..Default::default()
-})]
-async fn send_offset_positive(rbuilder: LocalInstance) -> eyre::Result<()> {
-    let driver = rbuilder.driver().await?;
-    let flashblocks_listener = rbuilder.spawn_flashblocks_listener();
-
-    for _ in 0..5 {
-        for _ in 0..3 {
-            let _ = driver
-                .create_transaction()
-                .random_valid_transfer()
-                .send()
-                .await?;
-        }
-        let block = driver.build_new_block_with_current_timestamp(None).await?;
-        assert_eq!(block.transactions.len(), 6);
-        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-    }
-
-    let flashblocks = flashblocks_listener.get_flashblocks();
-    // With positive offset, flashblocks are sent later but count should be similar
-    assert!(
-        flashblocks.len() >= 15 && flashblocks.len() <= 25,
-        "Expected 15-25 flashblocks, got {}",
-        flashblocks.len()
-    );
-
-    flashblocks_listener.stop().await
-}
-
-/// Test send_offset_ms with a negative value (send earlier)
-#[rb_test(flashblocks, args = OpRbuilderArgs {
-    chain_block_time: 1000,
-    flashblocks: FlashblocksArgs {
-        enabled: true,
-        flashblocks_port: 1239,
-        flashblocks_addr: "127.0.0.1".into(),
-        flashblocks_block_time: 250,
-        flashblocks_leeway_time: 75,
-        flashblocks_fixed: false,
-        flashblocks_send_offset_ms: -50, // Send 50ms earlier
-        ..Default::default()
-    },
-    ..Default::default()
-})]
-async fn send_offset_negative(rbuilder: LocalInstance) -> eyre::Result<()> {
-    let driver = rbuilder.driver().await?;
-    let flashblocks_listener = rbuilder.spawn_flashblocks_listener();
-
-    for _ in 0..5 {
-        for _ in 0..3 {
-            let _ = driver
-                .create_transaction()
-                .random_valid_transfer()
-                .send()
-                .await?;
-        }
-        let block = driver.build_new_block_with_current_timestamp(None).await?;
-        assert_eq!(block.transactions.len(), 6);
-        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-    }
-
-    let flashblocks = flashblocks_listener.get_flashblocks();
-    // With negative offset, flashblocks are sent earlier but count should be similar
-    assert!(
-        flashblocks.len() >= 15 && flashblocks.len() <= 25,
-        "Expected 15-25 flashblocks, got {}",
+    // Expected: ~4 flashblocks per block with end_buffer_ms applied at the end
+    assert_eq!(
+        25,
+        flashblocks.len(),
+        "Expected 15 flashblocks, got {:#?}",
         flashblocks.len()
     );
 
@@ -801,7 +716,7 @@ async fn send_offset_negative(rbuilder: LocalInstance) -> eyre::Result<()> {
         flashblocks_port: 1239,
         flashblocks_addr: "127.0.0.1".into(),
         flashblocks_block_time: 250,
-        flashblocks_leeway_time: 75,
+        flashblocks_end_buffer_ms: 50,
         flashblocks_fixed: false,
         flashblocks_build_at_interval_end: true,
         flashblocks_send_offset_ms: -25, // Send 25ms earlier
@@ -828,9 +743,10 @@ async fn build_at_interval_end_with_offset(rbuilder: LocalInstance) -> eyre::Res
 
     let flashblocks = flashblocks_listener.get_flashblocks();
     // Combined flags should still produce reasonable flashblock count
-    assert!(
-        flashblocks.len() >= 15 && flashblocks.len() <= 25,
-        "Expected 15-25 flashblocks, got {}",
+    assert_eq!(
+        25,
+        flashblocks.len(),
+        "Expected 15 flashblocks, got {:#?}",
         flashblocks.len()
     );
 

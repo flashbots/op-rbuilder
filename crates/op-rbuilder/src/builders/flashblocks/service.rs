@@ -196,9 +196,9 @@ where
 
         if let Some(builder_signer) = signer
             && let Some(flashblocks_number_contract_address) =
-                self.0.specific.flashblocks_number_contract_address
+                self.0.specific.number_contract_address
         {
-            let use_permit = self.0.specific.flashblocks_number_contract_use_permit;
+            let use_permit = self.0.specific.number_contract_use_permit;
             self.spawn_payload_builder_service(
                 ctx,
                 pool,
