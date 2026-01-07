@@ -66,7 +66,7 @@ impl TxManager {
         attestation: Vec<u8>,
         extra_registration_data: Bytes,
     ) -> Result<(), TxManagerError> {
-        info!(target: "flashtestations", "funding TEE address at {}", self.tee_service_signer.address);
+        info!(target: "flashtestations", "registering TEE address at {}", self.tee_service_signer.address);
         let quote_bytes = Bytes::from(attestation);
         let wallet =
             PrivateKeySigner::from_bytes(&self.builder_signer.secret.secret_bytes().into())

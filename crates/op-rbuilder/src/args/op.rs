@@ -144,7 +144,7 @@ pub struct FlashblocksArgs {
     /// building time before calculating number of fbs.
     #[arg(
         long = "flashblocks.leeway-time",
-        default_value = "75",
+        default_value = "0",
         env = "FLASHBLOCK_LEEWAY_TIME"
     )]
     pub flashblocks_leeway_time: u64,
@@ -175,6 +175,35 @@ pub struct FlashblocksArgs {
         default_value = "false"
     )]
     pub flashblocks_number_contract_use_permit: bool,
+
+    /// Build flashblock at the end of the flashblock interval
+    #[arg(
+        long = "flashblocks.build-at-interval-end",
+        env = "FLASHBLOCK_BUILD_AT_INTERVAL_END",
+        default_value = "false"
+    )]
+    pub flashblocks_build_at_interval_end: bool,
+
+    /// Offset in milliseconds for when to send flashblocks.
+    /// Positive values send late, negative values send early.
+    /// Example: -20 sends 20ms early, 20 sends 20ms late.
+    #[arg(
+        long = "flashblocks.send-offset-ms",
+        env = "FLASHBLOCK_SEND_OFFSET_MS",
+        default_value = "0",
+        allow_hyphen_values = true
+    )]
+    pub flashblocks_send_offset_ms: i64,
+
+    /// Time in milliseconds to build the last flashblock early before the end of the slot
+    /// This serves as a buffer time to account for the last flashblock being delayed
+    /// at the end of the slot due to processing the final block
+    #[arg(
+        long = "flashblocks.end-buffer-ms",
+        env = "FLASHBLOCK_END_BUFFER_MS",
+        default_value = "0"
+    )]
+    pub flashblocks_end_buffer_ms: u64,
 
     /// Flashblocks p2p configuration
     #[command(flatten)]

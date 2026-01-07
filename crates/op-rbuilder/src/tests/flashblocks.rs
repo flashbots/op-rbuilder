@@ -660,3 +660,236 @@ fn verify_user_tx_hashes(
         );
     }
 }
+
+/// Test that build_at_interval_end causes flashblocks to be built after the interval
+/// instead of immediately. With this flag enabled, the first flashblock should be
+/// delayed by first_flashblock_offset.
+#[rb_test(flashblocks, args = OpRbuilderArgs {
+    chain_block_time: 1000,
+    flashblocks: FlashblocksArgs {
+        enabled: true,
+        flashblocks_port: 1239,
+        flashblocks_addr: "127.0.0.1".into(),
+        flashblocks_block_time: 250,
+        flashblocks_end_buffer_ms: 50,
+        flashblocks_fixed: false,
+        flashblocks_build_at_interval_end: true,
+        ..Default::default()
+    },
+    ..Default::default()
+})]
+async fn build_at_interval_end_basic(rbuilder: LocalInstance) -> eyre::Result<()> {
+    let driver = rbuilder.driver().await?;
+    let flashblocks_listener = rbuilder.spawn_flashblocks_listener();
+
+    for _ in 0..5 {
+        for _ in 0..3 {
+            let _ = driver
+                .create_transaction()
+                .random_valid_transfer()
+                .send()
+                .await?;
+        }
+        let block = driver.build_new_block_with_current_timestamp(None).await?;
+        assert_eq!(block.transactions.len(), 6); // 3 normal txn + deposit + 2 builder txn
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    }
+
+    let flashblocks = flashblocks_listener.get_flashblocks();
+    // With build_at_interval_end, the deadline_sleep controls when to stop
+    // Expected: ~4 flashblocks per block with end_buffer_ms applied at the end
+    assert_eq!(
+        25,
+        flashblocks.len(),
+        "Expected 15 flashblocks, got {:#?}",
+        flashblocks.len()
+    );
+
+    flashblocks_listener.stop().await
+}
+
+/// Test build_at_interval_end with send_offset_ms combined
+#[rb_test(flashblocks, args = OpRbuilderArgs {
+    chain_block_time: 1000,
+    flashblocks: FlashblocksArgs {
+        enabled: true,
+        flashblocks_port: 1239,
+        flashblocks_addr: "127.0.0.1".into(),
+        flashblocks_block_time: 250,
+        flashblocks_end_buffer_ms: 50,
+        flashblocks_fixed: false,
+        flashblocks_build_at_interval_end: true,
+        flashblocks_send_offset_ms: -25, // Send 25ms earlier
+        ..Default::default()
+    },
+    ..Default::default()
+})]
+async fn build_at_interval_end_with_offset(rbuilder: LocalInstance) -> eyre::Result<()> {
+    let driver: ChainDriver = rbuilder.driver().await?;
+    let flashblocks_listener = rbuilder.spawn_flashblocks_listener();
+
+    for _ in 0..5 {
+        for _ in 0..3 {
+            let _ = driver
+                .create_transaction()
+                .random_valid_transfer()
+                .send()
+                .await?;
+        }
+        let block = driver.build_new_block_with_current_timestamp(None).await?;
+        assert_eq!(block.transactions.len(), 6);
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    }
+
+    let flashblocks = flashblocks_listener.get_flashblocks();
+    // Combined flags should still produce reasonable flashblock count
+    assert_eq!(
+        25,
+        flashblocks.len(),
+        "Expected 15 flashblocks, got {:#?}",
+        flashblocks.len()
+    );
+
+    flashblocks_listener.stop().await
+}
+
+/// Test fixed mode with build_at_interval_end and end_buffer_ms
+/// This verifies that the deadline is correctly calculated with the buffer
+#[rb_test(flashblocks, args = OpRbuilderArgs {
+    chain_block_time: 1000,
+    flashblocks: FlashblocksArgs {
+        enabled: true,
+        flashblocks_port: 1239,
+        flashblocks_addr: "127.0.0.1".into(),
+        flashblocks_block_time: 250,
+        flashblocks_leeway_time: 0,
+        flashblocks_fixed: true,
+        flashblocks_build_at_interval_end: true,
+        flashblocks_end_buffer_ms: 100, // Stop building 100ms early
+        ..Default::default()
+    },
+    ..Default::default()
+})]
+async fn fixed_mode_with_end_buffer(rbuilder: LocalInstance) -> eyre::Result<()> {
+    let driver = rbuilder.driver().await?;
+    let flashblocks_listener = rbuilder.spawn_flashblocks_listener();
+
+    for _ in 0..3 {
+        for _ in 0..2 {
+            let _ = driver
+                .create_transaction()
+                .random_valid_transfer()
+                .send()
+                .await?;
+        }
+        let block = driver.build_new_block_with_current_timestamp(None).await?;
+        assert!(block.transactions.len() >= 4); // deposit + builder tx + user txs
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    }
+
+    let flashblocks = flashblocks_listener.get_flashblocks();
+    // With end_buffer_ms=100 and interval=250, we should get 4 + 1 (fallback) flashblocks per block
+    assert_eq!(
+        15,
+        flashblocks.len(),
+        "Expected 15 flashblocks with end_buffer, got {:#?}",
+        flashblocks.len()
+    );
+
+    flashblocks_listener.stop().await
+}
+
+/// Test dynamic mode with significant FCU delay (700ms into 1000ms block)
+/// Should produce fewer flashblocks due to less remaining time
+#[rb_test(flashblocks, args = OpRbuilderArgs {
+    chain_block_time: 1000,
+    flashblocks: FlashblocksArgs {
+        enabled: true,
+        flashblocks_port: 1239,
+        flashblocks_addr: "127.0.0.1".into(),
+        flashblocks_block_time: 200,
+        flashblocks_end_buffer_ms: 50,
+        flashblocks_build_at_interval_end: true,
+        ..Default::default()
+    },
+    ..Default::default()
+})]
+async fn dynamic_mode_late_fcu_reduces_flashblocks(rbuilder: LocalInstance) -> eyre::Result<()> {
+    let driver = rbuilder.driver().await?;
+    let flashblocks_listener = rbuilder.spawn_flashblocks_listener();
+
+    // Send a transaction
+    let _ = driver
+        .create_transaction()
+        .random_valid_transfer()
+        .send()
+        .await?;
+
+    // Build block with 700ms delay - only 300ms remaining for a 200ms interval
+    // Should produce only 2 flashblocks
+    let block = driver
+        .build_new_block_with_current_timestamp(Some(Duration::from_millis(700)))
+        .await?;
+
+    assert!(block.transactions.len() >= 2); // deposit + at least builder tx
+
+    let flashblocks = flashblocks_listener.get_flashblocks();
+
+    // With only ~300ms remaining and 200ms interval, we should get 2 + 1 (fallback) flashblocks
+    assert_eq!(
+        3,
+        flashblocks.len(),
+        "Expected 3 flashblocks with 700ms FCU delay, got {:#?}",
+        flashblocks.len()
+    );
+
+    flashblocks_listener.stop().await
+}
+
+/// Test with 0 end_buffer, build_at_interval_end, and negative offset
+/// Ensures all flashblocks are built when negative offset gives margin before deadline
+#[rb_test(flashblocks, args = OpRbuilderArgs {
+    chain_block_time: 1000,
+    flashblocks: FlashblocksArgs {
+        enabled: true,
+        flashblocks_port: 1239,
+        flashblocks_addr: "127.0.0.1".into(),
+        flashblocks_block_time: 250,
+        flashblocks_fixed: true,
+        flashblocks_build_at_interval_end: true,
+        flashblocks_send_offset_ms: -50, // Send 50ms earlier to ensure all FBs complete before deadline
+        ..Default::default()
+    },
+    ..Default::default()
+})]
+async fn build_at_interval_end_negative_offset(rbuilder: LocalInstance) -> eyre::Result<()> {
+    let driver = rbuilder.driver().await?;
+    let flashblocks_listener = rbuilder.spawn_flashblocks_listener();
+
+    for _ in 0..3 {
+        for _ in 0..2 {
+            let _ = driver
+                .create_transaction()
+                .random_valid_transfer()
+                .send()
+                .await?;
+        }
+        let block = driver.build_new_block_with_current_timestamp(None).await?;
+        assert!(block.transactions.len() >= 4); // deposit + builder tx + user txs
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    }
+
+    let flashblocks = flashblocks_listener.get_flashblocks();
+
+    // With 1000ms block time, 250ms interval, -50ms offset:
+    // First FB at 200ms, then 450, 700, 950ms. Deadline at 950ms.
+    // All 4 flashblocks + 1 fallback = 5 per block, 3 blocks = 15 total
+    assert_eq!(
+        15,
+        flashblocks.len(),
+        "Expected 15 flashblocks (5 per block * 3 blocks), got {}",
+        flashblocks.len()
+    );
+
+    flashblocks_listener.stop().await
+}
