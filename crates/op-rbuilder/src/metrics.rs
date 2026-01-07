@@ -265,7 +265,8 @@ pub struct VersionInfo {
 impl VersionInfo {
     /// This exposes op-rbuilder's version information over prometheus.
     pub fn register_version_metrics(&self) {
-        let labels: [(&str, &str); 8] = [
+        let labels: [(&str, &str); 9] = [
+            ("builder_flavor", "op-rbuilder"),
             ("version", self.version),
             ("build_timestamp", self.build_timestamp),
             ("cargo_features", self.cargo_features),
