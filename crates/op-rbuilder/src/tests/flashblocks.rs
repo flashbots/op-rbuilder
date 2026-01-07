@@ -9,8 +9,9 @@ use std::time::Duration;
 use crate::{
     args::{FlashblocksArgs, OpRbuilderArgs},
     tests::{
-        BlockTransactionsExt, BundleOpts, ChainDriver, FLASHBLOCKS_NUMBER_ADDRESS, LocalInstance,
-        TransactionBuilderExt, flashblocks_number_contract::FlashblocksNumber,
+        BlockTransactionsExt, BuilderTxValidation, BundleOpts, ChainDriver,
+        FLASHBLOCKS_NUMBER_ADDRESS, LocalInstance, TransactionBuilderExt,
+        flashblocks_number_contract::FlashblocksNumber,
     },
 };
 
@@ -43,6 +44,10 @@ async fn smoke_dynamic_base(rbuilder: LocalInstance) -> eyre::Result<()> {
         }
         let block = driver.build_new_block_with_current_timestamp(None).await?;
         assert_eq!(block.transactions.len(), 8, "Got: {:?}", block.transactions); // 5 normal txn + deposit + 2 builder txn
+
+        // Validate builder transactions using BuilderTxValidation
+        block.assert_builder_tx_count(2);
+
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     }
 
@@ -81,6 +86,10 @@ async fn smoke_dynamic_unichain(rbuilder: LocalInstance) -> eyre::Result<()> {
         }
         let block = driver.build_new_block_with_current_timestamp(None).await?;
         assert_eq!(block.transactions.len(), 8, "Got: {:?}", block.transactions); // 5 normal txn + deposit + 2 builder txn
+
+        // Validate builder transactions using BuilderTxValidation
+        block.assert_builder_tx_count(2);
+
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     }
 
@@ -119,6 +128,10 @@ async fn smoke_classic_unichain(rbuilder: LocalInstance) -> eyre::Result<()> {
         }
         let block = driver.build_new_block().await?;
         assert_eq!(block.transactions.len(), 8, "Got: {:?}", block.transactions); // 5 normal txn + deposit + 2 builder txn
+
+        // Validate builder transactions using BuilderTxValidation
+        block.assert_builder_tx_count(2);
+
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     }
 
@@ -157,6 +170,10 @@ async fn smoke_classic_base(rbuilder: LocalInstance) -> eyre::Result<()> {
         }
         let block = driver.build_new_block().await?;
         assert_eq!(block.transactions.len(), 8, "Got: {:?}", block.transactions); // 5 normal txn + deposit + 2 builder txn
+
+        // Validate builder transactions using BuilderTxValidation
+        block.assert_builder_tx_count(2);
+
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     }
 
