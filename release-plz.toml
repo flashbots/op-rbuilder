@@ -1,0 +1,32 @@
+[workspace]
+# Enable changelog generation
+changelog_config = "cliff.toml"
+# Create git tags on release
+git_tag_enable = true
+# Tag format: op-rbuilder/v0.2.14
+git_tag_name = "op-rbuilder/v{{ version }}"
+# Release name format
+git_release_name = "op-rbuilder/v{{ version }}"
+# Enable GitHub releases
+git_release_enable = true
+# Draft releases (existing workflow handles the actual release)
+git_release_draft = true
+# PR labels
+pr_labels = ["release"]
+
+[[package]]
+name = "op-rbuilder"
+# Main package to release
+changelog_include = ["p2p", "tdx-quote-provider"]
+
+[[package]]
+name = "p2p"
+# Don't publish to crates.io
+publish = false
+# Don't create separate releases
+release = false
+
+[[package]]
+name = "tdx-quote-provider"
+# Has its own release workflow
+release = false
