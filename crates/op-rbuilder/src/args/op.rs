@@ -8,6 +8,9 @@ use crate::{
     flashtestations::args::FlashtestationsArgs, gas_limiter::args::GasLimiterArgs,
     tx_signer::Signer,
 };
+
+#[cfg(feature = "rules")]
+use crate::rules::args::RulesArgs;
 use alloy_primitives::Address;
 use anyhow::{Result, anyhow};
 use clap::Parser;
@@ -66,6 +69,9 @@ pub struct OpRbuilderArgs {
     pub flashtestations: FlashtestationsArgs,
     #[command(flatten)]
     pub gas_limiter: GasLimiterArgs,
+    #[cfg(feature = "rules")]
+    #[command(flatten)]
+    pub rules: RulesArgs,
 }
 
 impl Default for OpRbuilderArgs {

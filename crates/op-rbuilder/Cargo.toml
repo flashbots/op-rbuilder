@@ -58,6 +58,7 @@ reth-rpc-api.workspace = true
 reth-rpc-eth-types.workspace = true
 reth-optimism-rpc.workspace = true
 reth-tasks.workspace = true
+reth-tracing.workspace = true
 reth-tracing-otlp = { workspace = true, optional = true }
 
 alloy-primitives.workspace = true
@@ -156,6 +157,7 @@ vergen-git2.workspace = true
 alloy-provider = { workspace = true, default-features = true, features = [
     "txpool-api",
 ] }
+serial_test = "3.0"
 tempfile = "3.8"
 macros = { path = "src/tests/framework/macros" }
 nanoid = { version = "0.4" }
@@ -205,6 +207,11 @@ interop = []
 telemetry = ["reth-tracing-otlp", "opentelemetry"]
 
 custom-engine-api = []
+
+# Enables rule-based transaction filtering (deny lists) and scoring (boost/nerf priority).
+# When enabled, transactions can be blocked at pool ingress and ordered during block building
+# based on configurable rules loaded from file or remote sources.
+rules = []
 
 [[bin]]
 name = "op-rbuilder"

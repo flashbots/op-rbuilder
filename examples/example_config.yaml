@@ -1,0 +1,8 @@
+# Example rules registry configuration
+# Run from the examples/ directory or adjust the path accordingly
+file:
+  - path: example_rules.yaml
+    name: "Default Rule registry"
+    enabled: true
+
+refresh_interval: 120

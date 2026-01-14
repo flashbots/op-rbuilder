@@ -89,6 +89,7 @@ reth-network-peers = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.
 reth-testing-utils = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
 reth-node-builder = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
 reth-rpc-eth-types = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
+reth-tracing = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
 reth-tracing-otlp = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
 reth-ipc = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
 

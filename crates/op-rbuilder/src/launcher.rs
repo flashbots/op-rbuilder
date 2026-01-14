@@ -1,6 +1,10 @@
 use eyre::Result;
 use reth_optimism_rpc::OpEthApiBuilder;
 
+#[cfg(feature = "rules")]
+use crate::pool::{CustomOpPoolBuilder, RuleBasedValidator};
+#[cfg(feature = "rules")]
+use crate::rules::new_shared_score_index;
 use crate::{
     args::*,
     builders::{BuilderConfig, BuilderMode, FlashblocksBuilder, PayloadBuilder, StandardBuilder},
@@ -17,9 +21,11 @@ use reth_cli_commands::launcher::Launcher;
 use reth_db::mdbx::DatabaseEnv;
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_cli::chainspec::OpChainSpecParser;
+#[cfg(not(feature = "rules"))]
+use reth_optimism_node::OpPoolBuilder;
 use reth_optimism_node::{
     OpNode,
-    node::{OpAddOns, OpAddOnsBuilder, OpEngineValidatorBuilder, OpPoolBuilder},
+    node::{OpAddOns, OpAddOnsBuilder, OpEngineValidatorBuilder},
 };
 use reth_transaction_pool::TransactionPool;
 use std::{marker::PhantomData, sync::Arc};
@@ -98,7 +104,7 @@ where
         builder: WithLaunchContext<NodeBuilder<Arc<DatabaseEnv>, OpChainSpec>>,
         builder_args: OpRbuilderArgs,
     ) -> Result<()> {
-        let builder_config = BuilderConfig::<B::Config>::try_from(builder_args.clone())
+        let mut builder_config = BuilderConfig::<B::Config>::try_from(builder_args.clone())
             .expect("Failed to convert rollup args to builder config");
 
         record_flag_gauge_metrics(&builder_args);
@@ -126,26 +132,123 @@ where
                 OpEngineApiBuilder::default();
             addons = addons.with_engine_api(engine_builder);
         }
+
+        // Initialize rules system if enabled
+        #[cfg(feature = "rules")]
+        let (rules_enabled, rule_fetcher, rule_refresh_interval_seconds, score_index) = if builder_args.rules.rules_enabled {
+            use crate::rules::RulesRegistryConfig;
+
+            tracing::info!("Rule based block building enabled");
+
+            // Create the shared score index for O(k) block building
+            let score_index = new_shared_score_index();
+
+            // Load registry configuration if provided
+            let (fetcher, refresh_interval) = if let Some(config_path) = &builder_args.rules.config_path {
+                tracing::info!(path = ?config_path, "Loading rules registry configuration");
+
+                match RulesRegistryConfig::load(config_path).await {
+                    Ok(config) => {
+                        if config.is_registry_config_empty() {
+                            tracing::warn!("Rules registry config is empty");
+                            (None, config.refresh_interval)
+                        } else {
+                            match config.build_fetcher() {
+                                Ok(f) => {
+                                    let interval = config.refresh_interval;
+                                    tracing::info!(
+                                        refresh_interval_secs = interval,
+                                        "Using refresh interval from config"
+                                    );
+                                    (Some(f), interval)
+                                }
+                                Err(e) => {
+                                    tracing::error!(error = %e, "Failed to build rule fetcher");
+                                    (None, config.refresh_interval)
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!(
+                            error = %e,
+                            path = ?config_path,
+                            "Failed to load rules registry config"
+                        );
+                        (None, 0)
+                    }
+                }
+            } else {
+                tracing::debug!("No rules registry config provided, using empty ruleset");
+                (None, 0)
+            };
+
+            // Fetch initial rules and update global state
+            if let Some(ref f) = fetcher {
+                f.refresh_global_ruleset().await;
+            }
+
+            (true, fetcher, refresh_interval, Some(score_index))
+        } else {
+            tracing::debug!("Rules system feature compiled in but disabled at runtime");
+            (false, None, 0, None)
+        };
+
+        // Clone score_index for use in different closures and set on config
+        #[cfg(feature = "rules")]
+        let score_index_for_validator = score_index.clone();
+        #[cfg(feature = "rules")]
+        let score_index_for_monitor = score_index.clone();
+        #[cfg(feature = "rules")]
+        {
+            builder_config.score_index = score_index;
+        }
+
+        // Build pool with conditional rules integration
+        #[cfg(feature = "rules")]
+        let pool_builder = {
+            let builder = CustomOpPoolBuilder::<FBPooledTransaction>::default()
+                .with_enable_tx_conditional(
+                    rollup_args.enable_tx_conditional || builder_args.enable_revert_protection,
+                )
+                .with_supervisor(
+                    rollup_args.supervisor_http.clone(),
+                    rollup_args.supervisor_safety_level,
+                );
+
+            // Integrate rule-aware validator with optional rule checks.
+            if rules_enabled {
+                tracing::info!("Integrating rules validator with transaction pool");
+            } else {
+                tracing::info!("Rules disabled at runtime, external validation only");
+            }
+
+            builder
+                .with_validator_wrapper(move |op_validator| {
+                    RuleBasedValidator::with_score_index(op_validator, score_index_for_validator)
+                })
+        };
+
+        #[cfg(not(feature = "rules"))]
+        let pool_builder = OpPoolBuilder::<FBPooledTransaction>::default()
+            .with_enable_tx_conditional(
+                // Revert protection uses the same internal pool logic as conditional transactions
+                // to garbage collect transactions out of the bundle range.
+                rollup_args.enable_tx_conditional || builder_args.enable_revert_protection,
+            )
+            .with_supervisor(
+                rollup_args.supervisor_http.clone(),
+                rollup_args.supervisor_safety_level,
+            );
+
+        let components = op_node
+            .components()
+            .pool(pool_builder)
+            .payload(B::new_service(builder_config)?);
+
         let handle = builder
             .with_types::<OpNode>()
-            .with_components(
-                op_node
-                    .components()
-                    .pool(
-                        OpPoolBuilder::<FBPooledTransaction>::default()
-                            .with_enable_tx_conditional(
-                                // Revert protection uses the same internal pool logic as conditional transactions
-                                // to garbage collect transactions out of the bundle range.
-                                rollup_args.enable_tx_conditional
-                                    || builder_args.enable_revert_protection,
-                            )
-                            .with_supervisor(
-                                rollup_args.supervisor_http.clone(),
-                                rollup_args.supervisor_safety_level,
-                            ),
-                    )
-                    .payload(B::new_service(builder_config)?),
-            )
+            .with_components(components)
             .with_add_ons(addons)
             .extend_rpc_modules(move |ctx| {
                 if builder_args.enable_revert_protection {
@@ -163,7 +266,6 @@ where
                     ctx.modules
                         .add_or_replace_configured(revert_protection_ext.into_rpc())?;
                 }
-
                 Ok(())
             })
             .on_node_started(move |ctx| {
@@ -171,9 +273,21 @@ where
                 if builder_args.log_pool_transactions {
                     tracing::info!("Logging pool transactions");
                     let listener = ctx.pool.all_transactions_event_listener();
-                    let task = monitor_tx_pool(listener, reverted_cache_copy);
+                    let task = monitor_tx_pool(
+                        listener,
+                        reverted_cache_copy,
+                        #[cfg(feature = "rules")]
+                        score_index_for_monitor,
+                    );
                     ctx.task_executor.spawn_critical("txlogging", task);
                 }
+
+                // Start auto-refresh if rules are enabled and fetcher is configured
+                #[cfg(feature = "rules")]
+                if let Some(fetcher) = rule_fetcher {
+                    fetcher.start_auto_refresh(rule_refresh_interval_seconds);
+                }
+
                 Ok(())
             })
             .launch()

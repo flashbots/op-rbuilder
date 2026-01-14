@@ -1,0 +1,45 @@
+version: 1
+
+aliases:
+  protocol_contracts:
+    - "0x430181cFC5767a55a411354DBceC766aa0E7eF7F"
+    - "0x1234567890123456789012345678901234567890"
+  
+  vip_users:
+    - "0x8AC58689490d304cD4382BBD4FdcCC8FA05508A9"
+    - "0x84f1D5e599c5F6d7b5529A193Bf004a36B6Fc266"
+  
+  blacklisted:
+    - "0x430181cFC5767a55a411354DBceC766aa0E7eF7F"
+
+rules:
+  # Deny rules - applied at ingress
+  deny:
+   - name: "Block Blacklisted Addresses"
+     description: "Prevent transactions from known malicious actors"
+     addresses:
+       - "0xe39365040252396A50fC272061603C96c628314A"
+     aliases:
+       - "blacklisted"
+   - name: "OFAC Compliance"
+     description: "Check against remote OFAC denylist"
+     remote_endpoint: 
+       endpoint: "https://denylist.example.com/check"
+       allow_fail: true
+       timeout: 200
+  
+  # Boost rules - applied at sorting (prioritize transactions)
+  boost:
+    - name: "VIP User Boost"
+      description: "Highest priority for VIP users"
+      type: from
+      aliases:
+        - "vip_users"
+      weight: 2000
+    
+    - name: "Penalize Low-Value Transactions"
+      description: "Deprioritize certain low-value operations"
+      type: selector
+      target:
+        - "0xa9059cbb"  # transfer
+      weight: -100

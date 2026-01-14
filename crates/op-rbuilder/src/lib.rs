@@ -13,5 +13,11 @@ pub mod tx_signer;
 
 #[cfg(test)]
 pub mod mock_tx;
+
+#[cfg(feature = "rules")]
+pub mod rules;
+
+#[cfg(feature = "rules")]
+pub mod pool;
 #[cfg(any(test, feature = "testing"))]
 pub mod tests;

@@ -1,4 +1,6 @@
 use super::{config::FlashblocksConfig, wspub::WebSocketPublisher};
+#[cfg(feature = "rules")]
+use crate::rules::BestTransactionsWithScores;
 use crate::{
     builders::{
         BuilderConfig,
@@ -39,7 +41,7 @@ use reth_provider::{
 use reth_revm::{
     State, database::StateProviderDatabase, db::states::bundle_state::BundleRetention,
 };
-use reth_transaction_pool::TransactionPool;
+use reth_transaction_pool::{BestTransactions, TransactionPool, ValidPoolTransaction};
 use reth_trie::{HashedPostState, updates::TrieUpdates};
 use revm::Database;
 use rollup_boost::{
@@ -55,18 +57,18 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, metadata::Level, span, warn};
 
-type NextBestFlashblocksTxs<Pool> = BestFlashblocksTxs<
-    <Pool as TransactionPool>::Transaction,
-    Box<
-        dyn reth_transaction_pool::BestTransactions<
-                Item = Arc<
-                    reth_transaction_pool::ValidPoolTransaction<
-                        <Pool as TransactionPool>::Transaction,
-                    >,
-                >,
-            >,
-    >,
+type PoolTransactionOf<P> = <P as TransactionPool>::Transaction;
+type BestPoolPayloadIter<P> = BestPayloadTransactions<
+    PoolTransactionOf<P>,
+    Box<dyn BestTransactions<Item = Arc<ValidPoolTransaction<PoolTransactionOf<P>>>>>,
 >;
+
+// When rules feature is enabled, we use BestTransactionsWithScores for O(k) block building.
+// This wraps the base iterator and provides score-ordered iteration when score index has entries.
+#[cfg(feature = "rules")]
+type FlashblockPayloadIter<P> = BestTransactionsWithScores<P, BestPoolPayloadIter<P>>;
+#[cfg(not(feature = "rules"))]
+type FlashblockPayloadIter<P> = BestPoolPayloadIter<P>;
 
 #[derive(Debug, Default, Clone)]
 pub(super) struct FlashblocksExecutionInfo {
@@ -222,6 +224,32 @@ where
     Client: ClientBounds,
     BuilderTx: BuilderTransactions<FlashblocksExtraCtx, FlashblocksExecutionInfo> + Send + Sync,
 {
+    /// Creates a payload iterator for block building.
+    ///
+    /// When the `rules` feature is enabled, this wraps the base iterator with
+    /// `BestTransactionsWithScores` for O(k) block building when the score index has entries.
+    fn create_payload_iter(
+        &self,
+        ctx: &OpPayloadBuilderCtx<FlashblocksExtraCtx>,
+    ) -> FlashblockPayloadIter<Pool> {
+        let base_iter: BestPoolPayloadIter<Pool> = BestPayloadTransactions::new(
+            self.pool
+                .best_transactions_with_attributes(ctx.best_transaction_attributes()),
+        );
+        #[cfg(feature = "rules")]
+        {
+            BestTransactionsWithScores::new(
+                self.pool.clone(),
+                base_iter,
+                self.config.score_index.as_ref(),
+            )
+        }
+        #[cfg(not(feature = "rules"))]
+        {
+            base_iter
+        }
+    }
+
     fn get_op_payload_builder_ctx(
         &self,
         config: reth_basic_payload_builder::PayloadConfig<
@@ -471,11 +499,9 @@ where
             .get_op_payload_builder_ctx(config, fb_cancel.clone(), extra_ctx)
             .map_err(|e| PayloadBuilderError::Other(e.into()))?;
 
-        // Create best_transaction iterator
-        let mut best_txs = BestFlashblocksTxs::new(BestPayloadTransactions::new(
-            self.pool
-                .best_transactions_with_attributes(ctx.best_transaction_attributes()),
-        ));
+        let payload_iter = self.create_payload_iter(&ctx);
+        let mut best_txs = BestFlashblocksTxs::new(payload_iter);
+
         let interval = self.config.specific.interval;
         let (tx, mut rx) = mpsc::channel((self.config.flashblocks_per_block() + 1) as usize);
 
@@ -595,15 +621,15 @@ where
 
     #[allow(clippy::too_many_arguments)]
     async fn build_next_flashblock<
-        DB: Database<Error = ProviderError> + std::fmt::Debug + AsRef<P>,
-        P: StateRootProvider + HashedPostStateProvider + StorageRootProvider,
+        DB: Database<Error = ProviderError> + std::fmt::Debug + AsRef<SP>,
+        SP: StateRootProvider + HashedPostStateProvider + StorageRootProvider,
     >(
         &self,
         ctx: &OpPayloadBuilderCtx<FlashblocksExtraCtx>,
         info: &mut ExecutionInfo<FlashblocksExecutionInfo>,
         state: &mut State<DB>,
         state_provider: impl reth::providers::StateProvider + Clone,
-        best_txs: &mut NextBestFlashblocksTxs<Pool>,
+        best_txs: &mut BestFlashblocksTxs<PoolTransactionOf<Pool>, FlashblockPayloadIter<Pool>>,
         block_cancel: &CancellationToken,
         best_payload: &BlockCell<OpBuiltPayload>,
         span: &tracing::Span,
@@ -664,13 +690,9 @@ where
         }
 
         let best_txs_start_time = Instant::now();
-        best_txs.refresh_iterator(
-            BestPayloadTransactions::new(
-                self.pool
-                    .best_transactions_with_attributes(ctx.best_transaction_attributes()),
-            ),
-            flashblock_index,
-        );
+        let payload_iter = self.create_payload_iter(ctx);
+        best_txs.refresh_iterator(payload_iter, ctx.flashblock_index());
+
         let transaction_pool_fetch_time = best_txs_start_time.elapsed();
         ctx.metrics
             .transaction_pool_fetch_duration

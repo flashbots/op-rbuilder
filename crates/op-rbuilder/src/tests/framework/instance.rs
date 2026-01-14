@@ -38,9 +38,11 @@ use reth::{
 use reth_node_builder::{NodeBuilder, NodeConfig};
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_cli::commands::Commands;
+#[cfg(not(feature = "rules"))]
+use reth_optimism_node::node::OpPoolBuilder;
 use reth_optimism_node::{
     OpNode,
-    node::{OpAddOns, OpAddOnsBuilder, OpEngineValidatorBuilder, OpPoolBuilder},
+    node::{OpAddOns, OpAddOnsBuilder, OpEngineValidatorBuilder},
 };
 use reth_optimism_rpc::OpEthApiBuilder;
 use reth_transaction_pool::{AllTransactionsEvents, TransactionPool};
@@ -53,6 +55,10 @@ use tokio::{net::TcpListener, sync::oneshot, task::JoinHandle};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 use tokio_util::sync::CancellationToken;
 
+#[cfg(feature = "rules")]
+use crate::pool::{CustomOpPoolBuilder, RuleBasedValidator};
+#[cfg(feature = "rules")]
+use crate::rules::new_shared_score_index;
 /// Represents a type that emulates a local in-process instance of the OP builder node.
 /// This node uses IPC as the communication channel for the RPC server Engine API.
 pub struct LocalInstance {
@@ -85,6 +91,11 @@ impl LocalInstance {
         args: OpRbuilderArgs,
         config: NodeConfig<OpChainSpec>,
     ) -> eyre::Result<Self> {
+        // Create score index for this test instance (rules feature only).
+        // Each test gets its own score index, preventing global state contamination.
+        #[cfg(feature = "rules")]
+        let score_index = new_shared_score_index();
+
         let mut args = args;
         let task_manager = task_manager();
         let op_node = OpNode::new(args.rollup_args.clone());
@@ -110,6 +121,9 @@ impl LocalInstance {
 
         let builder_config = BuilderConfig::<P::Config>::try_from(args.clone())
             .expect("Failed to convert rollup args to builder config");
+        // Set score index on builder config for O(k) block building
+        #[cfg(feature = "rules")]
+        let builder_config = builder_config.with_score_index(Some(score_index.clone()));
         let da_config = builder_config.da_config.clone();
         let gas_limit_config = builder_config.gas_limit_config.clone();
 
@@ -125,6 +139,23 @@ impl LocalInstance {
             .with_gas_limit_config(gas_limit_config)
             .build();
 
+        #[cfg(feature = "rules")]
+        let pool_builder = {
+            let rollup_args = &args.rollup_args;
+            let score_index_for_validator = Some(score_index.clone());
+            CustomOpPoolBuilder::<FBPooledTransaction>::default()
+                .with_enable_tx_conditional(
+                    rollup_args.enable_tx_conditional || args.enable_revert_protection,
+                )
+                .with_supervisor(
+                    rollup_args.supervisor_http.clone(),
+                    rollup_args.supervisor_safety_level,
+                )
+                .with_validator_wrapper(move |op_validator| {
+                    RuleBasedValidator::with_score_index(op_validator, score_index_for_validator)
+                })
+        };
+
         let node_builder = NodeBuilder::<_, OpChainSpec>::new(config.clone())
             .with_database(create_test_db(config.clone()))
             .with_launch_context(task_manager.executor())
@@ -132,7 +163,16 @@ impl LocalInstance {
             .with_components(
                 op_node
                     .components()
-                    .pool(pool_component(&args))
+                    .pool({
+                        #[cfg(not(feature = "rules"))]
+                        {
+                            pool_component(&args)
+                        }
+                        #[cfg(feature = "rules")]
+                        {
+                            pool_builder
+                        }
+                    })
                     .payload(P::new_service(builder_config)?),
             )
             .with_add_ons(addons)
@@ -357,7 +397,7 @@ fn chain_spec() -> Arc<OpChainSpec> {
 fn task_manager() -> TaskManager {
     TaskManager::new(tokio::runtime::Handle::current())
 }
-
+#[cfg(not(feature = "rules"))]
 fn pool_component(args: &OpRbuilderArgs) -> OpPoolBuilder<FBPooledTransaction> {
     let rollup_args = &args.rollup_args;
     OpPoolBuilder::<FBPooledTransaction>::default()
