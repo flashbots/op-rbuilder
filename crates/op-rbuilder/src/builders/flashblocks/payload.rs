@@ -174,9 +174,12 @@ pub(super) struct OpPayloadBuilder<Pool, Client, BuilderTx> {
     pub pool: Pool,
     /// Node client
     pub client: Client,
-    /// Sender for sending built payloads to [`PayloadHandler`],
-    /// which broadcasts outgoing payloads via p2p.
-    pub payload_tx: mpsc::Sender<OpBuiltPayload>,
+    /// Sender for sending built flashblock payloads to [`PayloadHandler`],
+    /// which broadcasts outgoing flashblock payloads via p2p.
+    pub built_fb_payload_tx: mpsc::Sender<OpBuiltPayload>,
+    /// Sender for sending built full block payloads to [`PayloadHandler`],
+    /// which updates the engine tree state.
+    pub built_payload_tx: mpsc::Sender<OpBuiltPayload>,
     /// WebSocket publisher for broadcasting flashblocks
     /// to all connected subscribers.
     pub ws_pub: Arc<WebSocketPublisher>,
@@ -199,7 +202,8 @@ impl<Pool, Client, BuilderTx> OpPayloadBuilder<Pool, Client, BuilderTx> {
         client: Client,
         config: BuilderConfig<FlashblocksConfig>,
         builder_tx: BuilderTx,
-        payload_tx: mpsc::Sender<OpBuiltPayload>,
+        built_fb_payload_tx: mpsc::Sender<OpBuiltPayload>,
+        built_payload_tx: mpsc::Sender<OpBuiltPayload>,
         ws_pub: Arc<WebSocketPublisher>,
         metrics: Arc<OpRBuilderMetrics>,
     ) -> Self {
@@ -208,7 +212,8 @@ impl<Pool, Client, BuilderTx> OpPayloadBuilder<Pool, Client, BuilderTx> {
             evm_config,
             pool,
             client,
-            payload_tx,
+            built_fb_payload_tx,
+            built_payload_tx,
             ws_pub,
             config,
             metrics,
@@ -848,7 +853,7 @@ where
                     .ws_pub
                     .publish(&fb_payload)
                     .wrap_err("failed to publish flashblock via websocket")?;
-                self.payload_tx
+                self.built_fb_payload_tx
                     .send(new_payload.clone())
                     .await
                     .wrap_err("failed to send built payload to handler")?;
