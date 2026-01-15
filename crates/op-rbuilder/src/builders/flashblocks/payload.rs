@@ -407,10 +407,17 @@ where
             !disable_state_root || ctx.attributes().no_tx_pool, // need to calculate state root for CL sync
         )?;
 
-        self.payload_tx
+        self.built_fb_payload_tx
             .send(payload.clone())
             .await
             .map_err(PayloadBuilderError::other)?;
+        if let Err(e) = self.built_payload_tx.send(payload.clone()).await {
+            warn!(
+                target: "payload_builder",
+                error = %e,
+                "Failed to send updated payload"
+            );
+        }
         best_payload.set(payload);
 
         info!(
@@ -857,6 +864,13 @@ where
                     .send(new_payload.clone())
                     .await
                     .wrap_err("failed to send built payload to handler")?;
+                if let Err(e) = self.built_payload_tx.send(new_payload.clone()).await {
+                    warn!(
+                        target: "payload_builder",
+                        error = %e,
+                        "Failed to send updated payload"
+                    );
+                }
                 best_payload.set(new_payload);
 
                 // Record flashblock build duration
