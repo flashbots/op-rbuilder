@@ -521,7 +521,8 @@ where
                 .best_transactions_with_attributes(ctx.best_transaction_attributes()),
         ));
         let interval = self.config.specific.interval;
-        let (tx, mut rx) = mpsc::channel((self.config.flashblocks_per_block() + 1) as usize);
+        let (tx, rx) =
+            std::sync::mpsc::sync_channel((self.config.flashblocks_per_block() + 1) as usize);
         let build_at_interval_end = self.config.specific.build_at_interval_end;
 
         tokio::spawn({
@@ -531,7 +532,7 @@ where
                 // If NOT building at interval end, send immediate signal to build first
                 // flashblock right away (preserves current default behavior).
                 // Otherwise, wait for first_flashblock_offset before first build.
-                if !build_at_interval_end && tx.send(fb_cancel.clone()).await.is_err() {
+                if !build_at_interval_end && tx.send(fb_cancel.clone()).is_err() {
                     error!(
                         target: "payload_builder",
                     "Did not trigger first flashblock build due to payload building error or block building being cancelled");
@@ -559,7 +560,7 @@ where
                             fb_cancel = block_cancel.child_token();
                             // this will tick at first_flashblock_offset,
                             // starting the next flashblock
-                            if tx.send(fb_cancel.clone()).await.is_err() {
+                            if tx.send(fb_cancel.clone()).is_err() {
                                 // receiver channel was dropped, return.
                                 // this will only happen if the `build_payload` function returns,
                                 // due to payload building error or the main cancellation token being
@@ -574,7 +575,7 @@ where
                         _ = &mut deadline_sleep => {
                             // Deadline reached (with leeway applied to end). Cancel current payload building job
                             fb_cancel.cancel();
-                            if tx.send(block_cancel.child_token()).await.is_err() {
+                            if tx.send(block_cancel.child_token()).is_err() {
                                 error!(
                                     target: "payload_builder",
                                     "Did not trigger next flashblock build due to payload building error or block building being cancelled",
@@ -596,10 +597,7 @@ where
             // Wait for signal before building flashblock.
             // If build_at_interval_end is false, an immediate signal is sent so we don't wait.
             // If build_at_interval_end is true, we wait for the timer tick (first_flashblock_offset).
-            let recv_result = tokio::task::block_in_place(|| {
-                tokio::runtime::Handle::current().block_on(rx.recv())
-            });
-            if let Some(new_fb_cancel) = recv_result {
+            if let Ok(new_fb_cancel) = rx.recv() {
                 ctx = ctx.with_cancel(new_fb_cancel);
             } else {
                 // Channel closed - block building cancelled
