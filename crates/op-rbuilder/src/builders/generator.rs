@@ -53,7 +53,7 @@ pub(super) trait PayloadBuilder: Send + Sync + Clone {
     /// # Returns
     ///
     /// A `Result` indicating the build outcome or an error.
-    async fn try_build(
+    fn try_build(
         &self,
         args: BuildArguments<Self::Attributes, Self::BuiltPayload>,
         best_payload: BlockCell<Self::BuiltPayload>,
@@ -330,7 +330,7 @@ where
                 cancel,
             };
 
-            let result = builder.try_build(args, cell).await;
+            let result = builder.try_build(args, cell);
             let _ = tx.send(result);
         }));
     }
@@ -470,10 +470,10 @@ mod tests {
     use alloy_primitives::U256;
     use rand::rng;
     use reth::tasks::TokioTaskExecutor;
-    use reth_chain_state::ExecutedBlock;
     use reth_node_api::NodePrimitives;
     use reth_optimism_payload_builder::{OpPayloadPrimitives, payload::OpPayloadBuilderAttributes};
     use reth_optimism_primitives::OpPrimitives;
+    use reth_payload_primitives::BuiltPayloadExecutedBlock;
     use reth_primitives::SealedBlock;
     use reth_provider::test_utils::MockEthProvider;
     use reth_testing_utils::generators::{BlockRangeParams, random_block_range};
@@ -590,7 +590,7 @@ mod tests {
         }
 
         /// Returns the entire execution data for the built block, if available.
-        fn executed_block(&self) -> Option<ExecutedBlock<Self::Primitives>> {
+        fn executed_block(&self) -> Option<BuiltPayloadExecutedBlock<Self::Primitives>> {
             None
         }
 
@@ -614,7 +614,7 @@ mod tests {
         type Attributes = OpPayloadBuilderAttributes<N::SignedTx>;
         type BuiltPayload = MockPayload;
 
-        async fn try_build(
+        fn try_build(
             &self,
             args: BuildArguments<Self::Attributes, Self::BuiltPayload>,
             _best_payload: BlockCell<Self::BuiltPayload>,
