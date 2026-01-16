@@ -37,10 +37,21 @@ pub struct FlashblocksConfig {
     /// The address of the flashblocks number contract.
     ///
     /// If set a builder tx will be added to the start of every flashblock instead of the regular builder tx.
-    pub flashblocks_number_contract_address: Option<Address>,
+    pub number_contract_address: Option<Address>,
 
     /// whether to use permit signatures for the contract calls
-    pub flashblocks_number_contract_use_permit: bool,
+    pub number_contract_use_permit: bool,
+
+    /// Build flashblock at the end of the flashblock interval
+    pub build_at_interval_end: bool,
+
+    /// Offset in milliseconds for when to send flashblocks.
+    /// Positive values send late, negative values send early.
+    pub send_offset_ms: i64,
+
+    /// Time in milliseconds to build the last flashblock early before the end of the slot.
+    /// This serves as a buffer time to account for the last flashblock being delayed.
+    pub end_buffer_ms: u64,
 
     /// Whether to enable the p2p node for flashblocks
     pub p2p_enabled: bool,
@@ -63,11 +74,14 @@ impl Default for FlashblocksConfig {
         Self {
             ws_addr: SocketAddr::new(Ipv4Addr::UNSPECIFIED.into(), 1111),
             interval: Duration::from_millis(250),
-            leeway_time: Duration::from_millis(50),
+            leeway_time: Duration::from_millis(0),
             fixed: false,
             disable_state_root: false,
-            flashblocks_number_contract_address: None,
-            flashblocks_number_contract_use_permit: false,
+            number_contract_address: None,
+            number_contract_use_permit: false,
+            build_at_interval_end: false,
+            send_offset_ms: 0,
+            end_buffer_ms: 0,
             p2p_enabled: false,
             p2p_port: 9009,
             p2p_private_key_file: None,
@@ -94,11 +108,9 @@ impl TryFrom<OpRbuilderArgs> for FlashblocksConfig {
 
         let disable_state_root = args.flashblocks.flashblocks_disable_state_root;
 
-        let flashblocks_number_contract_address =
-            args.flashblocks.flashblocks_number_contract_address;
+        let number_contract_address = args.flashblocks.flashblocks_number_contract_address;
 
-        let flashblocks_number_contract_use_permit =
-            args.flashblocks.flashblocks_number_contract_use_permit;
+        let number_contract_use_permit = args.flashblocks.flashblocks_number_contract_use_permit;
 
         Ok(Self {
             ws_addr,
@@ -106,8 +118,11 @@ impl TryFrom<OpRbuilderArgs> for FlashblocksConfig {
             leeway_time,
             fixed,
             disable_state_root,
-            flashblocks_number_contract_address,
-            flashblocks_number_contract_use_permit,
+            number_contract_address,
+            number_contract_use_permit,
+            build_at_interval_end: args.flashblocks.flashblocks_build_at_interval_end,
+            send_offset_ms: args.flashblocks.flashblocks_send_offset_ms,
+            end_buffer_ms: args.flashblocks.flashblocks_end_buffer_ms,
             p2p_enabled: args.flashblocks.p2p.p2p_enabled,
             p2p_port: args.flashblocks.p2p.p2p_port,
             p2p_private_key_file: args.flashblocks.p2p.p2p_private_key_file,

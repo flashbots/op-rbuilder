@@ -1,5 +1,5 @@
 [workspace.package]
-version = "0.2.13"
+version = "0.2.14"
 edition = "2024"
 rust-version = "1.88"
 license = "MIT OR Apache-2.0"
@@ -160,9 +160,6 @@ alloy-genesis = { version = "1.0.41" }
 alloy-trie = { version = "0.9.1" }
 
 alloy-hardforks = "0.4.4"
-
-# rollup-boost
-rollup-boost = { git = "https://github.com/flashbots/rollup-boost", tag = "v0.7.11" }
 
 # optimism
 alloy-op-evm = { version = "0.23.0", default-features = false }

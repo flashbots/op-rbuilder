@@ -42,6 +42,8 @@ pub struct ExecutionInfo<Extra: Debug + Default = ()> {
     pub extra: Extra,
     /// DA Footprint Scalar for Jovian
     pub da_footprint_scalar: Option<u16>,
+    /// Optional blob fields for payload validation
+    pub optional_blob_fields: Option<(Option<u64>, Option<u64>)>,
 }
 
 impl<T: Debug + Default> ExecutionInfo<T> {
@@ -56,6 +58,7 @@ impl<T: Debug + Default> ExecutionInfo<T> {
             total_fees: U256::ZERO,
             extra: Default::default(),
             da_footprint_scalar: None,
+            optional_blob_fields: None,
         }
     }
 
