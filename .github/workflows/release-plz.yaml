@@ -2,8 +2,8 @@ name: Release-plz
 
 on:
   push:
-    branches:
-      - main
+    tags:
+      - "op-rbuilder/v*"
 
 permissions:
   pull-requests: write
