@@ -157,6 +157,14 @@ pub struct FlashblocksArgs {
     )]
     pub flashblocks_disable_state_root: bool,
 
+    /// Whether to disable async state root calculation on full payload resolution
+    #[arg(
+        long = "flashblocks.disable-async-calculate-state-root",
+        default_value = "false",
+        env = "FLASHBLOCKS_DISABLE_ASYNC_CALCULATE_STATE_ROOT"
+    )]
+    pub flashblocks_disable_async_calculate_state_root: bool,
+
     /// Flashblocks number contract address
     ///
     /// This is the address of the contract that will be used to increment the flashblock number.
