@@ -5,8 +5,12 @@ on:
   push:
     branches:
       - main
-    tags:
-      - "op-rbuilder/v*"
+  # Create tags when release PR is merged
+  pull_request:
+    types:
+      - closed
+    branches:
+      - main
 
 permissions:
   pull-requests: write
@@ -27,28 +31,19 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Run release-plz release-pr
-        if: github.ref_type == 'branch'
+        if: github.event_name == 'push' && github.ref_type == 'branch'
         uses: release-plz/action@v0.5
         with:
           command: release-pr
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Check if stable release
-        id: check-stable
-        if: github.ref_type == 'tag'
-        run: |
-          # Extract version portion after "op-rbuilder/"
-          VERSION="${GITHUB_REF_NAME#op-rbuilder/}"
-          echo "version=$VERSION"
-          if [[ "$VERSION" == *-* ]]; then
-            echo "stable=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "stable=true" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Run release-plz release
-        if: github.ref_type == 'tag' && steps.check-stable.outputs.stable == 'true'
+      - name: Create tags on release PR merge
+        if: >-
+          github.event_name == 'pull_request' &&
+          github.event.pull_request.merged == true &&
+          contains(github.event.pull_request.labels.*.name, 'release') &&
+          github.event.pull_request.user.login == 'github-actions[bot]'
         uses: release-plz/action@v0.5
         with:
           command: release
