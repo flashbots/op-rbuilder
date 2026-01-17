@@ -1,7 +1,10 @@
 name: Release-plz
 
 on:
+  # Create/update release PR on main push
   push:
+    branches:
+      - main
     tags:
       - "op-rbuilder/v*"
 
@@ -23,7 +26,31 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Run release-plz
+      - name: Run release-plz release-pr
+        if: github.ref_type == 'branch'
         uses: release-plz/action@v0.5
+        with:
+          command: release-pr
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check if stable release
+        id: check-stable
+        if: github.ref_type == 'tag'
+        run: |
+          # Extract version portion after "op-rbuilder/"
+          VERSION="${GITHUB_REF_NAME#op-rbuilder/}"
+          echo "version=$VERSION"
+          if [[ "$VERSION" == *-* ]]; then
+            echo "stable=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "stable=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run release-plz release
+        if: github.ref_type == 'tag' && steps.check-stable.outputs.stable == 'true'
+        uses: release-plz/action@v0.5
+        with:
+          command: release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
