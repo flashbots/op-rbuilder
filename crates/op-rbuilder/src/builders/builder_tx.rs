@@ -1,6 +1,6 @@
 use alloy_consensus::TxEip1559;
 use alloy_eips::{Encodable2718, eip7623::TOTAL_COST_FLOOR_PER_TOKEN};
-use alloy_evm::Database;
+use alloy_evm::{Database, rpc::TryIntoTxEnv};
 use alloy_op_evm::OpEvm;
 use alloy_primitives::{
     Address, B256, Bytes, TxKind, U256,
@@ -20,13 +20,10 @@ use reth_optimism_primitives::OpTransactionSigned;
 use reth_primitives::Recovered;
 use reth_provider::{ProviderError, StateProvider};
 use reth_revm::{State, database::StateProviderDatabase};
-use reth_rpc_api::eth::{EthTxEnvError, transaction::TryIntoTxEnv};
+use reth_rpc_api::eth::EthTxEnvError;
 use revm::{
     DatabaseCommit, DatabaseRef,
-    context::{
-        ContextTr,
-        result::{EVMError, ExecutionResult, ResultAndState},
-    },
+    context::result::{EVMError, ExecutionResult, ResultAndState},
     inspector::NoOpInspector,
     state::Account,
 };
@@ -323,7 +320,8 @@ pub trait BuilderTransactions<ExtraCtx: Debug + Default = (), Extra: Debug + Def
         expected_logs: Vec<B256>,
         evm: &mut OpEvm<impl Database, NoOpInspector, PrecompilesMap>,
     ) -> Result<SimulationSuccessResult<T>, BuilderTransactionError> {
-        let tx_env = tx.try_into_tx_env(evm.cfg(), evm.block())?;
+        let evm_env = alloy_evm::EvmEnv::from((evm.cfg.clone(), evm.block.clone()));
+        let tx_env = tx.try_into_tx_env(&evm_env)?;
         let to = tx_env.base.kind.into_to().unwrap_or_default();
 
         let ResultAndState { result, state } = match evm.transact(tx_env) {
