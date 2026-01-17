@@ -16,7 +16,8 @@ pr_labels = ["release"]
 
 [[package]]
 name = "op-rbuilder"
-# Main package to release
+# Main package to release (binary only, not published to crates.io)
+publish = false
 changelog_include = ["p2p", "tdx-quote-provider"]
 
 [[package]]
@@ -29,4 +30,10 @@ release = false
 [[package]]
 name = "tdx-quote-provider"
 # Has its own release workflow
+release = false
+
+[[package]]
+name = "macros"
+# Test infrastructure - don't publish or release
+publish = false
 release = false
