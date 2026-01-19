@@ -1179,7 +1179,17 @@ where
         .set(state_transition_merge_time);
 
     let block_number = ctx.block_number();
-    assert_eq!(block_number, ctx.parent().number + 1);
+    let expected = ctx.parent().number + 1;
+    if block_number != expected {
+        return Err(PayloadBuilderError::Other(
+            eyre::eyre!(
+                "build context block number mismatch: expected {}, got {}",
+                expected,
+                block_number
+            )
+            .into(),
+        ));
+    }
 
     let execution_outcome = ExecutionOutcome::new(
         state.bundle_state.clone(),
@@ -1196,10 +1206,26 @@ where
                 ctx.attributes().timestamp(),
             )
         })
-        .expect("Number is in range");
+        .ok_or_else(|| {
+            PayloadBuilderError::Other(
+                eyre::eyre!(
+                    "receipts and block number not in range, block number {}",
+                    block_number
+                )
+                .into(),
+            )
+        })?;
     let logs_bloom = execution_outcome
         .block_logs_bloom(block_number)
-        .expect("Number is in range");
+        .ok_or_else(|| {
+            PayloadBuilderError::Other(
+                eyre::eyre!(
+                    "logs bloom and block number not in range, block number {}",
+                    block_number
+                )
+                .into(),
+            )
+        })?;
 
     // TODO: maybe recreate state with bundle in here
     // calculate the state root
@@ -1353,7 +1379,11 @@ where
                 .attributes()
                 .payload_attributes
                 .parent_beacon_block_root
-                .unwrap(),
+                .ok_or_else(|| {
+                    PayloadBuilderError::Other(
+                        eyre::eyre!("parent beacon block root not found").into(),
+                    )
+                })?,
             parent_hash: ctx.parent().hash(),
             fee_recipient: ctx.attributes().suggested_fee_recipient(),
             prev_randao: ctx.attributes().payload_attributes.prev_randao,
