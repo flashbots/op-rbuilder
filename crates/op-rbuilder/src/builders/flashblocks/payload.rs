@@ -180,7 +180,7 @@ pub(super) struct OpPayloadBuilder<Pool, Client, BuilderTx, Tasks> {
     pub task_executor: Tasks,
     /// Sender for sending built flashblock payloads to [`PayloadHandler`],
     /// which broadcasts outgoing flashblock payloads via p2p.
-    pub built_fb_payload_tx: mpsc::Sender<OpFlashblockPayload>,
+    pub built_fb_payload_tx: mpsc::Sender<OpBuiltPayload>,
     /// Sender for sending built full block payloads to [`PayloadHandler`],
     /// which updates the engine tree state.
     pub built_payload_tx: mpsc::Sender<OpBuiltPayload>,
@@ -207,7 +207,7 @@ impl<Pool, Client, BuilderTx, Tasks> OpPayloadBuilder<Pool, Client, BuilderTx, T
         task_executor: Tasks,
         config: BuilderConfig<FlashblocksConfig>,
         builder_tx: BuilderTx,
-        built_fb_payload_tx: mpsc::Sender<OpFlashblockPayload>,
+        built_fb_payload_tx: mpsc::Sender<OpBuiltPayload>,
         built_payload_tx: mpsc::Sender<OpBuiltPayload>,
         ws_pub: Arc<WebSocketPublisher>,
         metrics: Arc<OpRBuilderMetrics>,
@@ -412,7 +412,7 @@ where
         let (fallback_payload, fb_payload, bundle_state) =
             build_block(&mut state, &ctx, &mut info, true)?;
         self.built_fb_payload_tx
-            .try_send(fb_payload.clone())
+            .try_send(fallback_payload.clone())
             .map_err(PayloadBuilderError::other)?;
         let mut best_payload = (fallback_payload.clone(), bundle_state);
 
@@ -835,7 +835,7 @@ where
                     .publish(&fb_payload)
                     .wrap_err("failed to publish flashblock via websocket")?;
                 self.built_fb_payload_tx
-                    .try_send(fb_payload.clone())
+                    .try_send(new_payload.clone())
                     .wrap_err("failed to send built payload to handler")?;
                 *best_payload = (new_payload, bundle_state);
 
