@@ -1045,7 +1045,11 @@ where
         // Result: Only 1 flashblock possible (200ms remaining < 250ms interval)
         let target_time = std::time::SystemTime::UNIX_EPOCH + Duration::from_secs(timestamp);
         let now = std::time::SystemTime::now();
-        let Ok(remaining_time) = target_time.duration_since(now) else {
+        let Some(remaining_time) = target_time
+            .duration_since(now)
+            .ok()
+            .filter(|duration| duration.as_millis() > 0)
+        else {
             error!(
                 target: "payload_builder",
                 message = "FCU arrived too late or system clock are unsynced",
