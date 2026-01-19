@@ -336,6 +336,8 @@ pub fn default_node_config() -> NodeConfig<OpChainSpec> {
             .parse()
             .expect("Failed to parse data dir path"),
         static_files_path: None,
+        rocksdb_path: None,
+        pprof_dumps_path: None,
     };
 
     NodeConfig::<OpChainSpec>::new(chain_spec())

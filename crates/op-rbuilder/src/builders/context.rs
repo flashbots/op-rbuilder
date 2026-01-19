@@ -153,6 +153,11 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
         &self,
         info: &ExecutionInfo<Extra>,
     ) -> (Option<u64>, Option<u64>) {
+        // For payload validation
+        if let Some(blob_fields) = info.optional_blob_fields {
+            return blob_fields;
+        }
+        // Compute from execution info
         if self.is_jovian_active() {
             let scalar = info
                 .da_footprint_scalar

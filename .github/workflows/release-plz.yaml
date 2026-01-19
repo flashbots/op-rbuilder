@@ -1,0 +1,51 @@
+name: Release-plz
+
+on:
+  # Create/update release PR on main push
+  push:
+    branches:
+      - main
+  # Create tags when release PR is merged
+  pull_request:
+    types:
+      - closed
+    branches:
+      - main
+
+permissions:
+  pull-requests: write
+  contents: write
+
+jobs:
+  release-plz:
+    name: Release-plz
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.ref }}
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Run release-plz release-pr
+        if: github.event_name == 'push' && github.ref_type == 'branch'
+        uses: release-plz/action@v0.5
+        with:
+          command: release-pr
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create tags on release PR merge
+        if: >-
+          github.event_name == 'pull_request' &&
+          github.event.pull_request.merged == true &&
+          contains(github.event.pull_request.labels.*.name, 'release') &&
+          github.event.pull_request.user.login == 'github-actions[bot]'
+        uses: release-plz/action@v0.5
+        with:
+          command: release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

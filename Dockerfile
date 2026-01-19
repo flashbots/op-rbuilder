@@ -9,11 +9,11 @@
 ARG FEATURES
 ARG RBUILDER_BIN="op-rbuilder"
 
-FROM rust:1.88 AS base
+FROM rust:1.92 AS base
 ARG TARGETPLATFORM
 
 RUN apt-get update \
-    && apt-get install -y clang libclang-dev libtss2-dev
+    && apt-get install -y clang libclang-dev libtss2-dev zlib1g-dev
 
 RUN rustup component add clippy rustfmt
 
@@ -96,7 +96,7 @@ RUN case "$TARGETPLATFORM" in \
         ;; \
     esac; \
     SOURCE_DATE_EPOCH=$(git log -1 --pretty=%ct) \
-    RUSTFLAGS="-C target-feature=+crt-static -C link-arg=-static-libgcc -C link-arg=-Wl,--build-id=none -C metadata='' --remap-path-prefix=/app=." \
+    RUSTFLAGS="-C target-feature=+crt-static -C link-arg=-static-libgcc -C link-arg=-lz -C link-arg=-Wl,--build-id=none -C metadata='' --remap-path-prefix=/app=." \
     CARGO_INCREMENTAL=0 \
     LC_ALL=C \
     TZ=UTC \
