@@ -25,10 +25,9 @@ use op_alloy_rpc_types_engine::{
 };
 use reth::payload::PayloadBuilderAttributes;
 use reth_basic_payload_builder::BuildOutcome;
-use reth_chain_state::ExecutedBlock;
 use reth_chainspec::EthChainSpec;
 use reth_evm::{ConfigureEvm, execute::BlockBuilder};
-use reth_node_api::{Block, PayloadBuilderError};
+use reth_node_api::{Block, BuiltPayloadExecutedBlock, PayloadBuilderError};
 use reth_optimism_consensus::{calculate_receipt_root_no_memo_optimism, isthmus};
 use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
 use reth_optimism_forks::OpHardforks;
@@ -328,7 +327,7 @@ where
     /// Given build arguments including an Optimism client, transaction pool,
     /// and configuration, this function creates a transaction payload. Returns
     /// a result indicating success with the payload or an error in case of failure.
-    async fn build_payload(
+    fn build_payload(
         &self,
         args: BuildArguments<OpPayloadBuilderAttributes<OpTransactionSigned>, OpBuiltPayload>,
         best_payload: BlockCell<OpBuiltPayload>,
@@ -408,10 +407,9 @@ where
         )?;
 
         self.built_fb_payload_tx
-            .send(payload.clone())
-            .await
+            .try_send(payload.clone())
             .map_err(PayloadBuilderError::other)?;
-        if let Err(e) = self.built_payload_tx.send(payload.clone()).await {
+        if let Err(e) = self.built_payload_tx.try_send(payload.clone()) {
             warn!(
                 target: "payload_builder",
                 error = %e,
@@ -535,7 +533,8 @@ where
                 .best_transactions_with_attributes(ctx.best_transaction_attributes()),
         ));
         let interval = self.config.specific.interval;
-        let (tx, mut rx) = mpsc::channel((self.config.flashblocks_per_block() + 1) as usize);
+        let (tx, rx) =
+            std::sync::mpsc::sync_channel((self.config.flashblocks_per_block() + 1) as usize);
         let build_at_interval_end = self.config.specific.build_at_interval_end;
 
         tokio::spawn({
@@ -545,9 +544,9 @@ where
                 // If NOT building at interval end, send immediate signal to build first
                 // flashblock right away (preserves current default behavior).
                 // Otherwise, wait for first_flashblock_offset before first build.
-                if !build_at_interval_end && tx.send(fb_cancel.clone()).await.is_err() {
+                if !build_at_interval_end && tx.send(fb_cancel.clone()).is_err() {
                     error!(
-                        target: "payload_builder", 
+                        target: "payload_builder",
                     "Did not trigger first flashblock build due to payload building error or block building being cancelled");
                     return;
                 }
@@ -573,7 +572,7 @@ where
                             fb_cancel = block_cancel.child_token();
                             // this will tick at first_flashblock_offset,
                             // starting the next flashblock
-                            if tx.send(fb_cancel.clone()).await.is_err() {
+                            if tx.send(fb_cancel.clone()).is_err() {
                                 // receiver channel was dropped, return.
                                 // this will only happen if the `build_payload` function returns,
                                 // due to payload building error or the main cancellation token being
@@ -588,7 +587,7 @@ where
                         _ = &mut deadline_sleep => {
                             // Deadline reached (with leeway applied to end). Cancel current payload building job
                             fb_cancel.cancel();
-                            if tx.send(block_cancel.child_token()).await.is_err() {
+                            if tx.send(block_cancel.child_token()).is_err() {
                                 error!(
                                     target: "payload_builder",
                                     "Did not trigger next flashblock build due to payload building error or block building being cancelled",
@@ -597,6 +596,7 @@ where
                             return;
                         }
                         _ = block_cancel.cancelled() => {
+                            drop(tx);
                             return;
                         }
                     }
@@ -604,25 +604,17 @@ where
             }
         });
 
-        // Process flashblocks in a blocking loop
+        // Process flashblocks - block on async channel receive
         loop {
             // Wait for signal before building flashblock.
             // If build_at_interval_end is false, an immediate signal is sent so we don't wait.
             // If build_at_interval_end is true, we wait for the timer tick (first_flashblock_offset).
-            tokio::select! {
-                Some(new_fb_cancel) = rx.recv() => {
-                    ctx = ctx.with_cancel(new_fb_cancel);
-                },
-                _ = block_cancel.cancelled() => {
-                    self.record_flashblocks_metrics(
-                        &ctx,
-                        &info,
-                        flashblocks_per_block,
-                        &span,
-                        "Payload building complete, cancelled before first flashblock",
-                    );
-                    return Ok(());
-                }
+            if let Ok(new_fb_cancel) = rx.recv() {
+                ctx = ctx.with_cancel(new_fb_cancel);
+            } else {
+                // Channel closed - block building cancelled
+                self.record_flashblocks_metrics(&ctx, &info, flashblocks_per_block, &span);
+                return Ok(());
             }
 
             let fb_span = if span.is_none() {
@@ -637,39 +629,23 @@ where
             let _entered = fb_span.enter();
 
             if ctx.flashblock_index() > ctx.target_flashblock_count() {
-                self.record_flashblocks_metrics(
-                    &ctx,
-                    &info,
-                    flashblocks_per_block,
-                    &span,
-                    "Payload building complete, target flashblock count reached",
-                );
+                self.record_flashblocks_metrics(&ctx, &info, flashblocks_per_block, &span);
                 return Ok(());
             }
 
             // Build flashblock after receiving signal
-            let next_flashblocks_ctx = match self
-                .build_next_flashblock(
-                    &ctx,
-                    &mut info,
-                    &mut state,
-                    &state_provider,
-                    &mut best_txs,
-                    &block_cancel,
-                    &best_payload,
-                    &fb_span,
-                )
-                .await
-            {
+            let next_flashblocks_ctx = match self.build_next_flashblock(
+                &ctx,
+                &mut info,
+                &mut state,
+                &state_provider,
+                &mut best_txs,
+                &block_cancel,
+                &best_payload,
+            ) {
                 Ok(Some(next_flashblocks_ctx)) => next_flashblocks_ctx,
                 Ok(None) => {
-                    self.record_flashblocks_metrics(
-                        &ctx,
-                        &info,
-                        flashblocks_per_block,
-                        &span,
-                        "Payload building complete, job cancelled or target flashblock count reached",
-                    );
+                    self.record_flashblocks_metrics(&ctx, &info, flashblocks_per_block, &span);
                     return Ok(());
                 }
                 Err(err) => {
@@ -689,7 +665,7 @@ where
     }
 
     #[allow(clippy::too_many_arguments)]
-    async fn build_next_flashblock<
+    fn build_next_flashblock<
         DB: Database<Error = ProviderError> + std::fmt::Debug + AsRef<P>,
         P: StateRootProvider + HashedPostStateProvider + StorageRootProvider,
     >(
@@ -701,7 +677,6 @@ where
         best_txs: &mut NextBestFlashblocksTxs<Pool>,
         block_cancel: &CancellationToken,
         best_payload: &BlockCell<OpBuiltPayload>,
-        span: &tracing::Span,
     ) -> eyre::Result<Option<FlashblocksExtraCtx>> {
         let flashblock_index = ctx.flashblock_index();
         let mut target_gas_for_batch = ctx.extra_ctx.target_gas_for_batch;
@@ -795,13 +770,6 @@ where
         // We got block cancelled, we won't need anything from the block at this point
         // Caution: this assume that block cancel token only cancelled when new FCU is received
         if block_cancel.is_cancelled() {
-            self.record_flashblocks_metrics(
-                ctx,
-                info,
-                ctx.target_flashblock_count(),
-                span,
-                "Payload building complete, channel closed or job cancelled",
-            );
             return Ok(None);
         }
 
@@ -847,13 +815,6 @@ where
                 // If main token got canceled in here that means we received get_payload and we should drop everything and now update best_payload
                 // To ensure that we will return same blocks as rollup-boost (to leverage caches)
                 if block_cancel.is_cancelled() {
-                    self.record_flashblocks_metrics(
-                        ctx,
-                        info,
-                        ctx.target_flashblock_count(),
-                        span,
-                        "Payload building complete, channel closed or job cancelled",
-                    );
                     return Ok(None);
                 }
                 let flashblock_byte_size = self
@@ -861,10 +822,9 @@ where
                     .publish(&fb_payload)
                     .wrap_err("failed to publish flashblock via websocket")?;
                 self.built_fb_payload_tx
-                    .send(new_payload.clone())
-                    .await
+                    .try_send(new_payload.clone())
                     .wrap_err("failed to send built payload to handler")?;
-                if let Err(e) = self.built_payload_tx.send(new_payload.clone()).await {
+                if let Err(e) = self.built_payload_tx.try_send(new_payload.clone()) {
                     warn!(
                         target: "payload_builder",
                         error = %e,
@@ -932,7 +892,6 @@ where
         info: &ExecutionInfo<FlashblocksExecutionInfo>,
         flashblocks_per_block: u64,
         span: &tracing::Span,
-        message: &str,
     ) {
         ctx.metrics.block_built_success.increment(1);
         ctx.metrics
@@ -950,7 +909,7 @@ where
 
         debug!(
             target: "payload_builder",
-            message = message,
+            message = "Payload building complete, job cancelled or target flashblock count reached",
             flashblocks_per_block = flashblocks_per_block,
             flashblock_index = ctx.flashblock_index(),
         );
@@ -1186,12 +1145,12 @@ where
     type Attributes = OpPayloadBuilderAttributes<OpTransactionSigned>;
     type BuiltPayload = OpBuiltPayload;
 
-    async fn try_build(
+    fn try_build(
         &self,
         args: BuildArguments<Self::Attributes, Self::BuiltPayload>,
         best_payload: BlockCell<Self::BuiltPayload>,
     ) -> Result<(), PayloadBuilderError> {
-        self.build_payload(args, best_payload).await
+        self.build_payload(args, best_payload)
     }
 }
 
@@ -1360,11 +1319,11 @@ where
         RecoveredBlock::new_unhashed(block.clone(), info.executed_senders.clone());
     // create the executed block data
 
-    let executed = ExecutedBlock {
+    let executed = BuiltPayloadExecutedBlock {
         recovered_block: Arc::new(recovered_block),
         execution_output: Arc::new(execution_outcome),
-        hashed_state: Arc::new(hashed_state),
-        trie_updates: Arc::new(trie_output),
+        trie_updates: either::Either::Left(Arc::new(trie_output)),
+        hashed_state: either::Either::Left(Arc::new(hashed_state)),
     };
     debug!(target: "payload_builder", message = "Executed block created");
 
