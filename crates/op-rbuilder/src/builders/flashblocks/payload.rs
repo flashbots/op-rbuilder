@@ -54,7 +54,7 @@ use std::{
     sync::Arc,
     time::Instant,
 };
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, metadata::Level, span, warn};
 
@@ -908,7 +908,7 @@ where
                 let fallback_payload_for_resolve =
                     if self.config.specific.disable_async_calculate_state_root {
                         // Use the fallback payload with state root calculated to ensure the full payload is valid
-                        fallback_payload.clone()
+                        fallback_payload
                     } else {
                         // Use the best payload as empty state root payloads are acceptable
                         best_payload.0.clone()
@@ -924,42 +924,20 @@ where
                 // Async calculate state root
                 match self.client.state_by_block_hash(ctx.parent().hash()) {
                     Ok(state_provider) => {
-                        let (sync_tx, sync_rx) =
-                            if self.config.specific.disable_async_calculate_state_root {
-                                let (tx, rx) = oneshot::channel();
-                                (Some(tx), Some(rx))
-                            } else {
-                                (None, None)
-                            };
-
-                        self.task_executor.spawn(Box::pin(async move {
-                            let result = resolve_zero_state_root(state_root_ctx, state_provider)
+                        if self.config.specific.disable_async_calculate_state_root {
+                            resolve_zero_state_root(state_root_ctx, state_provider)
                                 .unwrap_or_else(|err| {
                                     warn!(
                                         target: "payload_builder",
                                         error = %err,
                                         "Failed to calculate state root, falling back to fallback payload"
                                     );
-                                    // Use the fallback payload with state root calculated on failures as a safety
-                                    // net so that the full built payload is assured to be valid.
-                                    fallback_payload
-                                });
-
-                            // Only send via channel in sync mode
-                            if let Some(tx) = sync_tx {
-                                let _ = tx.send(result);
-                            }
-                        }));
-
-                        if let Some(rx) = sync_rx {
-                            rx.blocking_recv().unwrap_or_else(|_| {
-                                warn!(
-                                    target: "payload_builder",
-                                    "Failed to calculate state root, state root task stopped. Falling back to fallback payload"
-                                );
-                                fallback_payload_for_resolve
-                            })
+                                    fallback_payload_for_resolve
+                                })
                         } else {
+                            self.task_executor.spawn(Box::pin(async move {
+                                let _ = resolve_zero_state_root(state_root_ctx, state_provider);
+                            }));
                             fallback_payload_for_resolve
                         }
                     }
