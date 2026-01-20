@@ -18,7 +18,7 @@ use tokio_tungstenite::{
     WebSocketStream, accept_async,
     tungstenite::{Message, Utf8Bytes},
 };
-use tracing::{debug, warn};
+use tracing::{info, warn};
 
 use crate::metrics::OpRBuilderMetrics;
 
@@ -63,10 +63,11 @@ impl WebSocketPublisher {
         // Serialize the payload to a UTF-8 string
         // serialize only once, then just copy around only a pointer
         // to the serialized data for each subscription.
-        debug!(
+        info!(
             target: "payload_builder",
+            event = "flashblock_sent",
             message = "Sending flashblock to rollup-boost",
-            payload_id = payload.payload_id.to_string(),
+            payload_id = %payload.payload_id,
             index = payload.index,
             base = payload.base.is_some(),
         );
