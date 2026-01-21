@@ -62,7 +62,8 @@ impl RulesMetrics {
     }
 
     pub fn record_external_validation(&self, success: bool, rejected: bool, duration: Duration) {
-        self.external_validation_duration.record(duration.as_secs_f64());
+        self.external_validation_duration
+            .record(duration.as_secs_f64());
         if success {
             self.external_validation_success.increment(1);
             if rejected {

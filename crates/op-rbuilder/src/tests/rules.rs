@@ -1,13 +1,12 @@
 #![cfg(all(test, feature = "rules"))]
 //! Tests for the refactored rules subsystem.
 
-use crate::rules::validator::RuleBasedValidator;
 use crate::{
     mock_tx::MockFbTransaction,
     rules::{
-        AddrSet, AddressAliases, BoostRule, DenyRule, MatchType, RuleFetcher,
-        RuleRegistry, RuleSet, add_deny_rule, add_scoring_rule, add_to_alias_group, clear_rules,
-        get_alias_group, global_ruleset, list_alias_groups, set_global_ruleset,
+        AddrSet, AddressAliases, BoostRule, DenyRule, MatchType, RuleFetcher, RuleRegistry,
+        RuleSet, add_deny_rule, add_scoring_rule, add_to_alias_group, clear_rules, get_alias_group,
+        global_ruleset, list_alias_groups, set_global_ruleset, validator::RuleBasedValidator,
     },
 };
 use alloy_primitives::{Address, Bytes, TxKind, U256};
@@ -740,10 +739,26 @@ fn test_ruleset_multiple_selectors_match_any() {
         ..Default::default()
     });
 
-    let tx1 = make_mock_tx(Address::random(), Address::random(), &[0x11, 0x11, 0x11, 0x11]);
-    let tx2 = make_mock_tx(Address::random(), Address::random(), &[0x22, 0x22, 0x22, 0x22]);
-    let tx3 = make_mock_tx(Address::random(), Address::random(), &[0x33, 0x33, 0x33, 0x33]);
-    let tx_no_match = make_mock_tx(Address::random(), Address::random(), &[0x99, 0x99, 0x99, 0x99]);
+    let tx1 = make_mock_tx(
+        Address::random(),
+        Address::random(),
+        &[0x11, 0x11, 0x11, 0x11],
+    );
+    let tx2 = make_mock_tx(
+        Address::random(),
+        Address::random(),
+        &[0x22, 0x22, 0x22, 0x22],
+    );
+    let tx3 = make_mock_tx(
+        Address::random(),
+        Address::random(),
+        &[0x33, 0x33, 0x33, 0x33],
+    );
+    let tx_no_match = make_mock_tx(
+        Address::random(),
+        Address::random(),
+        &[0x99, 0x99, 0x99, 0x99],
+    );
 
     assert_eq!(ruleset.score_transaction(&tx1), 50);
     assert_eq!(ruleset.score_transaction(&tx2), 50);
@@ -982,7 +997,7 @@ fn test_global_ruleset_thread_safety() {
                 target: vec![format!("{addr_clone:#x}")],
                 aliases: vec![],
                 weight: i as i64,
-        ..Default::default()
+                ..Default::default()
             });
             set_global_ruleset(ruleset);
             let retrieved = global_ruleset();
@@ -1579,10 +1594,10 @@ fn test_invalid_address_in_target_is_ignored() {
         description: None,
         match_type: MatchType::From,
         target: vec![
-            "invalid_address".to_string(),        // Invalid
-            "0xnotanaddress".to_string(),         // Invalid
-            format!("{valid_addr:#x}"),           // Valid
-            "".to_string(),                       // Empty/invalid
+            "invalid_address".to_string(), // Invalid
+            "0xnotanaddress".to_string(),  // Invalid
+            format!("{valid_addr:#x}"),    // Valid
+            "".to_string(),                // Empty/invalid
         ],
         aliases: vec![],
         weight: 100,
@@ -1871,7 +1886,10 @@ rules:
 "#;
     let ruleset: RuleSet = serde_yaml::from_str(yaml).unwrap();
     assert_eq!(ruleset.rules.deny.len(), 1);
-    assert_eq!(ruleset.rules.deny[0].name, Some("block spammers".to_string()));
+    assert_eq!(
+        ruleset.rules.deny[0].name,
+        Some("block spammers".to_string())
+    );
     assert_eq!(
         ruleset.rules.deny[0].description,
         Some("These addresses have been identified as spam sources".to_string())
@@ -2100,7 +2118,12 @@ fn test_scored_payload_transactions_single_item() {
         fn mark_invalid(&mut self, _sender: Address, _nonce: u64) {}
     }
 
-    let mut scored = ScoredPayloadTransactions::new(SingleIter { tx: Some(tx.clone()) }, ruleset);
+    let mut scored = ScoredPayloadTransactions::new(
+        SingleIter {
+            tx: Some(tx.clone()),
+        },
+        ruleset,
+    );
     let result = scored.next(());
     assert!(result.is_some());
     assert_eq!(result.unwrap().hash(), tx.hash());
@@ -2111,8 +2134,10 @@ fn test_scored_payload_transactions_single_item() {
 fn test_scored_payload_transactions_mark_invalid_delegates() {
     use crate::rules::ScoredPayloadTransactions;
     use reth_payload_util::PayloadTransactions;
-    use std::sync::Arc;
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
 
     let ruleset = Arc::new(RuleSet::default());
 
@@ -2294,8 +2319,8 @@ fn test_boost_rule_to_match_skips_create_transactions() {
     });
 
     // Create a Create transaction using MockTransaction directly
-    let mut inner = reth_transaction_pool::test_utils::MockTransaction::legacy()
-        .with_sender(Address::random());
+    let mut inner =
+        reth_transaction_pool::test_utils::MockTransaction::legacy().with_sender(Address::random());
     if let reth_transaction_pool::test_utils::MockTransaction::Legacy { to, .. } = &mut inner {
         *to = TxKind::Create;
     }
@@ -2327,7 +2352,9 @@ fn test_deny_rule_with_empty_addrs_denies_nothing() {
     };
 
     // Should not deny any random address
-    assert!(!ruleset_with_empty_deny.is_denied(&Address::random(), &TxKind::Call(Address::random())));
+    assert!(
+        !ruleset_with_empty_deny.is_denied(&Address::random(), &TxKind::Call(Address::random()))
+    );
     assert!(!ruleset_with_empty_deny.is_denied(&Address::random(), &TxKind::Create));
 }
 
@@ -2348,7 +2375,11 @@ fn test_is_restricted_fields_delegates_to_is_denied() {
     // is_restricted_fields should return true when is_denied returns true
     assert!(ruleset.is_restricted_fields(&sender, &TxKind::Call(Address::random()), &[]));
     // And false for non-denied
-    assert!(!ruleset.is_restricted_fields(&Address::random(), &TxKind::Call(Address::random()), &[]));
+    assert!(!ruleset.is_restricted_fields(
+        &Address::random(),
+        &TxKind::Call(Address::random()),
+        &[]
+    ));
 }
 
 #[test]
@@ -2413,7 +2444,8 @@ fn test_sort_transactions_descending_by_score() {
     let tx_high = make_mock_tx(sender_high, Address::random(), []);
 
     // Insert in reverse order
-    let sorted = ruleset.sort_transactions(vec![tx_low.clone(), tx_medium.clone(), tx_high.clone()]);
+    let sorted =
+        ruleset.sort_transactions(vec![tx_low.clone(), tx_medium.clone(), tx_high.clone()]);
 
     // Should be sorted by descending score
     assert_eq!(sorted[0].hash(), tx_high.hash());
@@ -2453,17 +2485,41 @@ fn test_sort_transactions_ties_broken_by_insertion_order() {
     let sorted = ruleset.sort_transactions(vec![tx1.clone(), tx2.clone(), tx3.clone()]);
 
     // All have score=500, so insertion order should be preserved
-    assert_eq!(sorted[0].hash(), tx1.hash(), "First inserted should be first");
-    assert_eq!(sorted[1].hash(), tx2.hash(), "Second inserted should be second");
-    assert_eq!(sorted[2].hash(), tx3.hash(), "Third inserted should be third");
+    assert_eq!(
+        sorted[0].hash(),
+        tx1.hash(),
+        "First inserted should be first"
+    );
+    assert_eq!(
+        sorted[1].hash(),
+        tx2.hash(),
+        "Second inserted should be second"
+    );
+    assert_eq!(
+        sorted[2].hash(),
+        tx3.hash(),
+        "Third inserted should be third"
+    );
 
     // Now test with different insertion order
     let sorted_reversed = ruleset.sort_transactions(vec![tx3.clone(), tx2.clone(), tx1.clone()]);
 
     // All have score=500, insertion order is tx3, tx2, tx1
-    assert_eq!(sorted_reversed[0].hash(), tx3.hash(), "tx3 was inserted first");
-    assert_eq!(sorted_reversed[1].hash(), tx2.hash(), "tx2 was inserted second");
-    assert_eq!(sorted_reversed[2].hash(), tx1.hash(), "tx1 was inserted third");
+    assert_eq!(
+        sorted_reversed[0].hash(),
+        tx3.hash(),
+        "tx3 was inserted first"
+    );
+    assert_eq!(
+        sorted_reversed[1].hash(),
+        tx2.hash(),
+        "tx2 was inserted second"
+    );
+    assert_eq!(
+        sorted_reversed[2].hash(),
+        tx1.hash(),
+        "tx1 was inserted third"
+    );
 }
 
 #[test]
@@ -2510,10 +2566,26 @@ fn test_sort_transactions_mixed_scores_with_ties() {
 
     // High tier (1000) should come first, within tier preserve insertion order
     // high1 was inserted before high2, so high1 first
-    assert_eq!(sorted[0].hash(), tx_high1.hash(), "high1 first (high tier, inserted first)");
-    assert_eq!(sorted[1].hash(), tx_high2.hash(), "high2 second (high tier, inserted second)");
+    assert_eq!(
+        sorted[0].hash(),
+        tx_high1.hash(),
+        "high1 first (high tier, inserted first)"
+    );
+    assert_eq!(
+        sorted[1].hash(),
+        tx_high2.hash(),
+        "high2 second (high tier, inserted second)"
+    );
     // Low tier (100) should come after, within tier preserve insertion order
     // low2 was inserted before low1, so low2 first
-    assert_eq!(sorted[2].hash(), tx_low2.hash(), "low2 third (low tier, inserted first)");
-    assert_eq!(sorted[3].hash(), tx_low1.hash(), "low1 fourth (low tier, inserted second)");
+    assert_eq!(
+        sorted[2].hash(),
+        tx_low2.hash(),
+        "low2 third (low tier, inserted first)"
+    );
+    assert_eq!(
+        sorted[3].hash(),
+        tx_low1.hash(),
+        "low1 fourth (low tier, inserted second)"
+    );
 }

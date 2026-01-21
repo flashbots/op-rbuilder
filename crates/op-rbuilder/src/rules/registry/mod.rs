@@ -1,11 +1,8 @@
 pub mod file;
 pub mod remote;
 
-use crate::rules::config::default_refresh_interval;
-use crate::rules::metrics::RulesMetrics;
-use crate::rules::types::RuleSet;
-use std::sync::Arc;
-use std::time::Instant;
+use crate::rules::{config::default_refresh_interval, metrics::RulesMetrics, types::RuleSet};
+use std::{sync::Arc, time::Instant};
 
 /// Result of fetching rules from all registries.
 #[derive(Debug, Clone)]

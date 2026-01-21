@@ -30,11 +30,7 @@ impl RemoteRuleRegistry {
             .build()
             .expect("Failed to create HTTP client");
 
-        Self {
-            url,
-            name,
-            client,
-        }
+        Self { url, name, client }
     }
 }
 
@@ -58,10 +54,9 @@ impl RuleRegistry for RemoteRuleRegistry {
             ));
         }
 
-        let content = response
-            .text()
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to read response body from {}: {}", self.url, e))?;
+        let content = response.text().await.map_err(|e| {
+            anyhow::anyhow!("Failed to read response body from {}: {}", self.url, e)
+        })?;
 
         let ruleset: RuleSet = serde_yaml::from_str(&content)
             .map_err(|e| anyhow::anyhow!("Failed to parse YAML from {}: {}", self.url, e))?;
@@ -113,10 +108,7 @@ mod tests {
         let registry = RemoteRuleRegistry::new("https://httpbin.org/status/404");
         let result = registry.get_rules().await;
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("HTTP 404"));
+        assert!(result.unwrap_err().to_string().contains("HTTP 404"));
     }
 
     #[tokio::test]

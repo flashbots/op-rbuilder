@@ -2,8 +2,10 @@ use alloy_consensus::Transaction as ConsensusTx;
 use alloy_primitives::{Address, TxKind};
 use reth_transaction_pool::PoolTransaction;
 use serde::{Deserialize, Serialize};
-use std::cmp::Ordering;
-use std::collections::{HashMap, HashSet};
+use std::{
+    cmp::Ordering,
+    collections::{HashMap, HashSet},
+};
 use tracing::warn;
 
 /// A set of addresses that can be specified directly or via aliases.
@@ -211,17 +213,17 @@ fn parse_address_string(addr_str: &str) -> Option<Address> {
     }
 
     // Try zero-padding odd-length hex strings (e.g., "0x1" -> "0x01")
-    if let Some(stripped) = addr_str.strip_prefix("0x") {
-        if stripped.len() % 2 == 1 {
-            let padded = format!("0x0{}", stripped);
-            if let Ok(addr) = padded.parse::<Address>() {
-                tracing::debug!(
-                    original = %addr_str,
-                    padded = %padded,
-                    "Zero-padded odd-length address string"
-                );
-                return Some(addr);
-            }
+    if let Some(stripped) = addr_str.strip_prefix("0x")
+        && stripped.len() % 2 == 1
+    {
+        let padded = format!("0x0{}", stripped);
+        if let Ok(addr) = padded.parse::<Address>() {
+            tracing::debug!(
+                original = %addr_str,
+                padded = %padded,
+                "Zero-padded odd-length address string"
+            );
+            return Some(addr);
         }
     }
 
@@ -243,9 +245,7 @@ impl AddressAliases {
     }
 
     pub fn contains(&self, name: &str, addr: &Address) -> bool {
-        self.groups
-            .get(name)
-            .map_or(false, |set| set.contains(addr))
+        self.groups.get(name).is_some_and(|set| set.contains(addr))
     }
 
     pub fn get_group(&self, name: &str) -> Option<&HashSet<Address>> {
@@ -254,10 +254,7 @@ impl AddressAliases {
 
     pub fn merge(&mut self, other: &AddressAliases) {
         for (name, addrs) in &other.groups {
-            self.groups
-                .entry(name.clone())
-                .or_insert_with(HashSet::new)
-                .extend(addrs);
+            self.groups.entry(name.clone()).or_default().extend(addrs);
         }
     }
 }
@@ -276,6 +273,10 @@ pub struct Rules {
 impl Rules {
     pub fn len(&self) -> usize {
         self.deny.len() + self.boost.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.deny.is_empty() && self.boost.is_empty()
     }
 }
 
@@ -351,10 +352,10 @@ impl RuleSet {
                 return Some(DenyMatchReason::Sender(*sender));
             }
 
-            if let TxKind::Call(addr) = to {
-                if rule.addrs.contains(addr, &self.aliases) {
-                    return Some(DenyMatchReason::Receiver(*addr));
-                }
+            if let TxKind::Call(addr) = to
+                && rule.addrs.contains(addr, &self.aliases)
+            {
+                return Some(DenyMatchReason::Receiver(*addr));
             }
         }
 
@@ -406,10 +407,10 @@ impl RuleSet {
                 } else {
                     // Fallback to parsing at runtime (before prepare() is called)
                     for target_str in &rule.target {
-                        if let Ok(addr) = target_str.parse::<Address>() {
-                            if sender == &addr {
-                                return true;
-                            }
+                        if let Ok(addr) = target_str.parse::<Address>()
+                            && sender == &addr
+                        {
+                            return true;
                         }
                     }
                 }
@@ -432,10 +433,10 @@ impl RuleSet {
                     } else {
                         // Fallback to parsing at runtime (before prepare() is called)
                         for target_str in &rule.target {
-                            if let Ok(addr) = target_str.parse::<Address>() {
-                                if to_addr == &addr {
-                                    return true;
-                                }
+                            if let Ok(addr) = target_str.parse::<Address>()
+                                && to_addr == &addr
+                            {
+                                return true;
                             }
                         }
                     }
@@ -461,9 +462,9 @@ impl RuleSet {
                     rule.parsed_selectors.contains(&input_sel)
                 } else {
                     // Fallback to parsing at runtime (before prepare() is called)
-                    rule.target.iter().any(|s| {
-                        parse_selector(s).map_or(false, |sel| sel == input_sel)
-                    })
+                    rule.target
+                        .iter()
+                        .any(|s| parse_selector(s) == Some(input_sel))
                 }
             }
         }

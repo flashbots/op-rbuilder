@@ -150,7 +150,11 @@ where
                 use crate::rules::BestTransactionsWithScores;
                 // Use score-ordered iteration for O(k) block building when score index has entries.
                 // Falls back to inner iterator (gas-price ordering) when score index is empty.
-                BestTransactionsWithScores::new(pool.clone(), inner, self.config.score_index.as_ref())
+                BestTransactionsWithScores::new(
+                    pool.clone(),
+                    inner,
+                    self.config.score_index.as_ref(),
+                )
             }
 
             #[cfg(not(feature = "rules"))]

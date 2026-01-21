@@ -37,7 +37,7 @@ pub struct WithWrapper<F>(F);
 /// # Type Parameters
 /// * `T` - The transaction type (typically `FBPooledTransaction`)
 /// * `W` - Wrapper state: `NoWrapper` before calling `with_validator_wrapper()`,
-///         `WithWrapper<F>` after. This enforces at compile time that a wrapper is provided.
+///   `WithWrapper<F>` after. This enforces at compile time that a wrapper is provided.
 ///
 /// # Example
 /// ```ignore
@@ -161,7 +161,7 @@ where
             .minimum_safety(supervisor_safety_level)
             .build()
             .await;
-        
+
         let blob_store = reth_node_builder::components::create_blob_store(ctx)?;
         let op_validator = TransactionValidationTaskExecutor::eth_builder(ctx.provider().clone())
             .no_eip4844()
@@ -208,7 +208,10 @@ where
         debug!(target: "reth::cli", "Spawned txpool maintenance task");
 
         // The Op txpool maintenance task is only spawned when interop is active
-        if ctx.chain_spec().is_interop_active_at_timestamp(ctx.head().timestamp) {
+        if ctx
+            .chain_spec()
+            .is_interop_active_at_timestamp(ctx.head().timestamp)
+        {
             // spawn the Op txpool maintenance task
             let chain_events = ctx.provider().canonical_state_stream();
             ctx.task_executor().spawn_critical(

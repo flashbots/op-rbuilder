@@ -1,0 +1,354 @@
+version: 2.1
+
+# -------------------------------------------------------------------
+# Orbs
+# -------------------------------------------------------------------
+orbs:
+  gcp-cli: circleci/gcp-cli@3.0.1
+
+# -------------------------------------------------------------------
+# Commands
+# -------------------------------------------------------------------
+commands:
+  gcp-oidc-authenticate:
+    description: "Authenticate with GCP using a CircleCI OIDC token."
+    parameters:
+      project_id:
+        type: env_var_name
+        default: GCP_PROJECT_ID
+      workload_identity_pool_id:
+        type: env_var_name
+        default: GCP_WIP_ID
+      workload_identity_pool_provider_id:
+        type: env_var_name
+        default: GCP_WIP_PROVIDER_ID
+      service_account_email:
+        type: env_var_name
+        default: GCP_SERVICE_ACCOUNT_EMAIL
+      gcp_cred_config_file_path:
+        type: string
+        default: /home/circleci/gcp_cred_config.json
+      oidc_token_file_path:
+        type: string
+        default: /home/circleci/oidc_token.json
+    steps:
+      - run:
+          name: "Create OIDC credential configuration"
+          command: |
+            # Store OIDC token in temp file
+            echo $CIRCLE_OIDC_TOKEN > << parameters.oidc_token_file_path >>
+            # Create a credential configuration for the generated OIDC ID Token
+            gcloud iam workload-identity-pools create-cred-config \
+                "projects/${<< parameters.project_id >>}/locations/global/workloadIdentityPools/${<< parameters.workload_identity_pool_id >>}/providers/${<< parameters.workload_identity_pool_provider_id >>}"\
+                --output-file="<< parameters.gcp_cred_config_file_path >>" \
+                --service-account="${<< parameters.service_account_email >>}" \
+                --credential-source-file=<< parameters.oidc_token_file_path >>
+      - run:
+          name: "Authenticate with GCP using OIDC"
+          command: |
+            # Configure gcloud to leverage the generated credential configuration
+            gcloud auth login --brief --cred-file "<< parameters.gcp_cred_config_file_path >>"
+            # Configure ADC
+            echo "export GOOGLE_APPLICATION_CREDENTIALS='<< parameters.gcp_cred_config_file_path >>'" | tee -a "$BASH_ENV"
+
+# -------------------------------------------------------------------
+# Executors
+# -------------------------------------------------------------------
+executors:
+  docker-builder:
+    docker:
+      - image: cimg/base:stable
+    working_directory: ~/project
+    resource_class: xlarge
+
+  rust-docker:
+    docker:
+      - image: cimg/rust:1.73.0
+    working_directory: ~/project
+    resource_class: xlarge
+
+# -------------------------------------------------------------------
+# Jobs
+# -------------------------------------------------------------------
+jobs:
+  # -----------------------------------------------------------------
+  # Docker build (OP-style with docker buildx bake)
+  # -----------------------------------------------------------------
+  docker-build:
+    environment:
+      DOCKER_BUILDKIT: 1
+    parameters:
+      docker_name:
+        description: "Docker buildx bake target name"
+        type: string
+      docker_tags:
+        description: "Comma-separated image tags"
+        type: string
+      registry:
+        description: "Docker registry"
+        type: string
+        default: "us-docker.pkg.dev"
+      repo:
+        description: "Docker repository path"
+        type: string
+        default: "oplabs-tools-artifacts/images"
+      platforms:
+        description: "Target platforms, comma-separated"
+        type: string
+        default: "linux/amd64"
+      publish:
+        description: "Push to registry"
+        type: boolean
+        default: false
+      resource_class:
+        type: string
+        default: xlarge
+    machine:
+      image: ubuntu-2204:current
+    resource_class: << parameters.resource_class >>
+    steps:
+      - checkout
+      - run:
+          name: Initialize submodules
+          command: git submodule sync && git submodule update --init --recursive
+
+      # Authenticate to GCP if publishing
+      - when:
+          condition: << parameters.publish >>
+          steps:
+            - gcp-cli/install
+            - gcp-oidc-authenticate
+
+      - run:
+          name: Build Docker image
+          no_output_timeout: 45m
+          command: |
+            # Optional: login to Docker Hub to avoid rate limits
+            if [[ -v DOCKER_HUB_READ_ONLY_TOKEN ]]; then
+              echo "$DOCKER_HUB_READ_ONLY_TOKEN" | docker login -u "$DOCKER_HUB_READ_ONLY_USER" --password-stdin
+            fi
+
+            # Export variables for docker-bake.hcl
+            export REGISTRY="<< parameters.registry >>"
+            export REPOSITORY="<< parameters.repo >>"
+            export IMAGE_TAGS="$(echo -ne "<< parameters.docker_tags >>" | sed 's/[^a-zA-Z0-9\n,.]/-/g')"
+            export GIT_COMMIT="$(git rev-parse HEAD)"
+            export GIT_DATE="$(git show -s --format='%ct')"
+            export PLATFORMS="<< parameters.platforms >>"
+
+            # Derive version from git tag if present
+            tags_at_commit=$(git tag --points-at $GIT_COMMIT | grep "^<< parameters.docker_name >>/" || true)
+            if [ -z "$tags_at_commit" ]; then
+              export GIT_VERSION="untagged"
+            else
+              export GIT_VERSION=$(echo "$tags_at_commit" | sed "s/<< parameters.docker_name >>\///" | sort -V | tail -n 1)
+            fi
+            echo "GIT_VERSION=$GIT_VERSION"
+
+            # Create buildx builder for multi-platform support
+            docker buildx create --driver=docker-container --name=buildx-build --bootstrap --use
+
+            # Determine output destination
+            DOCKER_OUTPUT=""
+            if [ "<< parameters.publish >>" == "true" ]; then
+              gcloud auth configure-docker << parameters.registry >>
+              DOCKER_OUTPUT="--push"
+              echo "Building and pushing to registry"
+            else
+              echo "Building without push (cache warm-up)"
+            fi
+
+            # Build!
+            docker buildx bake \
+              --progress plain \
+              --builder=buildx-build \
+              -f docker-bake.hcl \
+              $DOCKER_OUTPUT \
+              << parameters.docker_name >>
+
+  # -----------------------------------------------------------------
+  # [op-rbuilder] Check - lint and test
+  # -----------------------------------------------------------------
+  op-rbuilder-check:
+    parameters:
+      toolchain:
+        type: string
+      features:
+        type: string
+    machine:
+      image: ubuntu-2204:current
+    resource_class: xlarge
+    environment:
+      CARGO_TERM_COLOR: always
+      FEATURES: << parameters.features >>
+      TESTS_TEMP_DIR: /home/circleci/project
+    steps:
+      - checkout
+      - run:
+          name: Initialize submodules
+          command: git submodule sync && git submodule update --init --recursive
+      - run:
+          name: Install Rust toolchain (<< parameters.toolchain >>)
+          command: |
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain "<< parameters.toolchain >>"
+            echo 'export PATH=$HOME/.cargo/bin:$PATH' >> "$BASH_ENV"
+            source "$BASH_ENV"
+            rustup component add rustfmt clippy
+            rustc --version
+            cargo --version
+      - run:
+          name: Install native dependencies
+          command: |
+            sudo apt-get update
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
+              libsqlite3-dev clang libclang-dev llvm build-essential pkg-config libtss2-dev
+      - restore_cache:
+          keys:
+            - cargo-deps-v1-{{ checksum "Cargo.lock" }}
+            - cargo-deps-v1-
+      - run:
+          name: Compile tester
+          command: make tester
+      - run:
+          name: Compile op-rbuilder
+          command: cargo build -p op-rbuilder --bin op-rbuilder
+      - run:
+          name: Lint
+          command: make lint
+      - run:
+          name: Test
+          command: make test
+      - save_cache:
+          key: cargo-deps-v1-{{ checksum "Cargo.lock" }}
+          paths:
+            - ~/.cargo/registry
+            - ~/.cargo/git
+
+  # -----------------------------------------------------------------
+  # [op-rbuilder] Verify reproducible build
+  # -----------------------------------------------------------------
+  op-rbuilder-verify-reproducible:
+    executor: rust-docker
+    steps:
+      - checkout
+      - run:
+          name: Ensure stable toolchain installed
+          command: |
+            rustup default stable
+            rustc --version
+            cargo --version
+      - run:
+          name: Build twice and compare
+          command: |
+            export REPRO_FLAGS="--C target-feature=+crt-static -C link-arg=-static-libgcc -C link-arg=-Wl,--build-id=none -C metadata='' --remap-path-prefix=$(pwd)=."
+            export SOURCE_DATE_EPOCH="$(git log -1 --pretty=%ct)"
+
+            RUSTFLAGS="$REPRO_FLAGS" CARGO_INCREMENTAL=0 LC_ALL=C TZ=UTC \
+            CFLAGS='-D__TIME__="" -D__DATE__=""' CXXFLAGS='-D__TIME__="" -D__DATE__=""' \
+            cargo build --release --locked -p op-rbuilder --target x86_64-unknown-linux-gnu
+            mv target/x86_64-unknown-linux-gnu/release/op-rbuilder build1
+
+            cargo clean
+
+            RUSTFLAGS="$REPRO_FLAGS" CARGO_INCREMENTAL=0 LC_ALL=C TZ=UTC \
+            CFLAGS='-D__TIME__="" -D__DATE__=""' CXXFLAGS='-D__TIME__="" -D__DATE__=""' \
+            cargo build --release --locked -p op-rbuilder --target x86_64-unknown-linux-gnu
+            mv target/x86_64-unknown-linux-gnu/release/op-rbuilder build2
+
+            if cmp -s build1 build2; then
+              echo "Builds are reproducible"
+            else
+              echo "Builds differ"
+              exit 1
+            fi
+
+  # -----------------------------------------------------------------
+  # [tdx-quote-provider] Check
+  # -----------------------------------------------------------------
+  tdx-quote-provider-check:
+    executor: rust-docker
+    working_directory: ~/project/crates/tdx-quote-provider
+    environment:
+      CARGO_TERM_COLOR: always
+    steps:
+      - checkout:
+          path: ~/project
+      - run:
+          name: Ensure stable Rust toolchain with rustfmt
+          command: |
+            rustup default stable
+            rustup component add rustfmt
+            rustc --version
+            cargo --version
+      - run:
+          name: Install native dependencies
+          command: |
+            sudo apt-get update
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y libtss2-dev
+      - restore_cache:
+          keys:
+            - cargo-deps-v1-{{ checksum "~/project/Cargo.lock" }}
+            - cargo-deps-v1-
+      - run:
+          name: Run build
+          command: cargo build
+      - run:
+          name: Check formatting
+          command: cargo fmt --all -- --check
+      - run:
+          name: Run clippy
+          command: cargo clippy -- -D warnings
+      - run:
+          name: Run tests
+          command: cargo test --all-features
+      - run:
+          name: Check for common mistakes
+          command: cargo check
+      - save_cache:
+          key: cargo-deps-v1-{{ checksum "~/project/Cargo.lock" }}
+          paths:
+            - ~/.cargo/registry
+            - ~/.cargo/git
+
+# -------------------------------------------------------------------
+# Workflows
+# -------------------------------------------------------------------
+workflows:
+  # Release workflow
+  release:
+    when:
+      or:
+        - equal: [main, << pipeline.git.branch >>]
+        - matches: { pattern: "^op-rbuilder/v.*", value: << pipeline.git.tag >> }
+        - matches: { pattern: "^tdx-quote-provider/v.*", value: << pipeline.git.tag >> }
+    jobs:
+      # op-rbuilder jobs
+      - docker-build:
+          docker_name: op-rbuilder
+          docker_tags: << pipeline.git.revision >>,<< pipeline.git.branch >>
+          platforms: "linux/amd64,linux/arm64"
+          publish: true
+          context:
+            - oplabs-gcr
+            - oplabs-gcr-release
+      - op-rbuilder-verify-reproducible
+      # tdx-quote-provider jobs
+      - docker-build:
+          name: tdx-quote-provider-docker
+          docker_name: tdx-quote-provider
+          docker_tags: << pipeline.git.revision >>,<< pipeline.git.branch >>
+          platforms: "linux/amd64"
+          publish: true
+          context:
+            - oplabs-gcr
+            - oplabs-gcr-release
+
+  # CI - runs on PRs and pushes to main
+  ci:
+    jobs:
+      - op-rbuilder-check:
+          matrix:
+            parameters:
+              toolchain: ["nightly"]
+              features: [""]
+      - tdx-quote-provider-check: {}
