@@ -18,7 +18,7 @@ use tokio_tungstenite::{
     WebSocketStream, accept_async,
     tungstenite::{Message, Utf8Bytes},
 };
-use tracing::{debug, info, warn};
+use tracing::{debug, info, trace, warn};
 
 use crate::{metrics::OpRBuilderMetrics, tokio_metrics::MonitoredTask};
 
