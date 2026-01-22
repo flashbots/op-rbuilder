@@ -114,6 +114,7 @@ impl FlashblocksServiceBuilder {
             self.0.specific.ws_addr,
             metrics.clone(),
             &task_metrics.websocket_publisher,
+            self.0.specific.ws_subscriber_limit,
         )
         .wrap_err("failed to create ws publisher")?
         .into();
