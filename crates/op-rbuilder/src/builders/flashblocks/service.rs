@@ -94,7 +94,7 @@ impl FlashblocksServiceBuilder {
                     tracing::error!(error = %e, "p2p node exited");
                 }
             });
-            tracing::info!(multiaddrs = ?multiaddrs, "flashblocks p2p node started");
+            tracing::info!(target: "payload_builder", multiaddrs = ?multiaddrs, "flashblocks p2p node started");
 
             let incoming_message_rx = incoming_message_rxs
                 .remove(&FLASHBLOCKS_STREAM_PROTOCOL)
@@ -182,7 +182,7 @@ impl FlashblocksServiceBuilder {
             .clone()
             .spawn_metrics_collector(Duration::from_secs(1));
 
-        tracing::info!("Flashblocks payload builder service started");
+        tracing::info!(target: "payload_builder", "Flashblocks payload builder service started");
         Ok(payload_builder_handle)
     }
 }
@@ -207,7 +207,7 @@ where
             {
                 Ok(builder_tx) => Some(builder_tx),
                 Err(e) => {
-                    tracing::warn!(error = %e, "Failed to bootstrap flashtestations, builder will not include flashtestations txs");
+                    tracing::warn!(target: "payload_builder", error = %e, "Failed to bootstrap flashtestations, builder will not include flashtestations txs");
                     None
                 }
             }
