@@ -18,7 +18,7 @@ use tokio_tungstenite::{
     WebSocketStream, accept_async,
     tungstenite::{Message, Utf8Bytes},
 };
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
 use crate::{metrics::OpRBuilderMetrics, tokio_metrics::MonitoredTask};
 
@@ -90,7 +90,7 @@ impl Drop for WebSocketPublisher {
     fn drop(&mut self) {
         // Notify the listener loop to terminate
         let _ = self.term.send(true);
-        tracing::info!(target: "payload_builder", "WebSocketPublisher dropped, terminating listener loop");
+        info!(target: "payload_builder", "WebSocketPublisher dropped, terminating listener loop");
     }
 }
 
@@ -112,7 +112,7 @@ async fn listener_loop(
     let listen_addr = listener
         .local_addr()
         .expect("Failed to get local address of listener");
-    tracing::info!(target: "payload_builder", "Flashblocks WebSocketPublisher listening on {listen_addr}");
+    info!(target: "payload_builder", "Flashblocks WebSocketPublisher listening on {listen_addr}");
 
     let mut term = term;
 
@@ -140,13 +140,13 @@ async fn listener_loop(
                     Ok(stream) => {
                         tokio::spawn(async move {
                             subs.fetch_add(1, Ordering::Relaxed);
-                            tracing::debug!(target: "payload_builder", "WebSocket connection established with {}", peer_addr);
+                            debug!(target: "payload_builder", "WebSocket connection established with {}", peer_addr);
 
                             // Handle the WebSocket connection in a dedicated task
                             broadcast_loop(stream, metrics, term, receiver_clone, sent).await;
 
                             subs.fetch_sub(1, Ordering::Relaxed);
-                            tracing::debug!(target: "payload_builder", "WebSocket connection closed for {}", peer_addr);
+                            debug!(target: "payload_builder", "WebSocket connection closed for {}", peer_addr);
                         });
                     }
                     Err(e) => {
@@ -184,7 +184,7 @@ async fn broadcast_loop(
             // Check if the publisher is terminated
             _ = term.changed() => {
                 if *term.borrow() {
-                    tracing::info!(target: "payload_builder", "WebSocketPublisher is terminating, closing broadcast loop");
+                    info!(target: "payload_builder", "WebSocketPublisher is terminating, closing broadcast loop");
                     return;
                 }
             }
@@ -197,18 +197,18 @@ async fn broadcast_loop(
                     sent.fetch_add(1, Ordering::Relaxed);
                     metrics.messages_sent_count.increment(1);
 
-                    tracing::trace!(target: "payload_builder", "Broadcasted payload: {:?}", payload);
+                    trace!(target: "payload_builder", "Broadcasted payload: {:?}", payload);
                     if let Err(e) = stream.send(Message::Text(payload)).await {
-                        tracing::debug!(target: "payload_builder", "Send payload error for flashblocks subscription {peer_addr}: {e}");
+                        debug!(target: "payload_builder", "Send payload error for flashblocks subscription {peer_addr}: {e}");
                         break; // Exit the loop if sending fails
                     }
                 }
                 Err(RecvError::Closed) => {
-                    tracing::debug!(target: "payload_builder", "Broadcast channel closed, exiting broadcast loop");
+                    debug!(target: "payload_builder", "Broadcast channel closed, exiting broadcast loop");
                     return;
                 }
                 Err(RecvError::Lagged(_)) => {
-                    tracing::warn!(target: "payload_builder", "Broadcast channel lagged, some messages were dropped");
+                    warn!(target: "payload_builder", "Broadcast channel lagged, some messages were dropped");
                 }
             },
 
@@ -216,11 +216,11 @@ async fn broadcast_loop(
             message = stream.next() => if let Some(message) = message { match message {
                 // We handle only close frame to highlight conn closing
                 Ok(Message::Close(_)) => {
-                    tracing::info!(target: "payload_builder", "Closing frame received, stopping connection for {peer_addr}");
+                    info!(target: "payload_builder", "Closing frame received, stopping connection for {peer_addr}");
                     break;
                 }
                 Err(e) => {
-                    tracing::warn!(target: "payload_builder", "Received error. Closing flashblocks subscription for {peer_addr}: {e}");
+                    warn!(target: "payload_builder", "Received error. Closing flashblocks subscription for {peer_addr}: {e}");
                     break;
                 }
                 _ => (),
