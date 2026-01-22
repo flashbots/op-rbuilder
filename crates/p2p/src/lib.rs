@@ -159,10 +159,10 @@ impl<M: Message + 'static> Node<M> {
                     let connected_peers: HashSet<PeerId> = swarm.connected_peers().copied().collect();
                     for (peer_id, address) in &known_peers_info {
                         if !connected_peers.contains(peer_id) {
-                            debug!("retrying connection to disconnected known peer {peer_id} at {address}");
+                            debug!(target: "flashblocks-p2p", "retrying connection to disconnected known peer {peer_id} at {address}");
                             swarm.add_peer_address(*peer_id, address.clone());
                             if let Err(e) = swarm.dial(address.clone()) {
-                                warn!("failed to retry dial to known peer {peer_id} at {address}: {e:?}");
+                                warn!(target: "flashblocks-p2p", "failed to retry dial to known peer {peer_id} at {address}: {e:?}");
                             }
                         }
                     }
