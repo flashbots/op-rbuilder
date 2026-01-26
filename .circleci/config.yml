@@ -91,7 +91,7 @@ jobs:
       repo:
         description: "Docker repository path"
         type: string
-        default: "oplabs-tools-artifacts/images"
+        default: "oplabs-tools-artifacts/internal-images"
       platforms:
         description: "Target platforms, comma-separated"
         type: string
@@ -205,13 +205,12 @@ jobs:
       - restore_cache:
           keys:
             - cargo-deps-v1-{{ checksum "Cargo.lock" }}
-            - cargo-deps-v1-
       - run:
           name: Compile tester
           command: make tester
       - run:
           name: Compile op-rbuilder
-          command: cargo build -p op-rbuilder --bin op-rbuilder
+          command: cargo build -p op-rbuilder --bin op-rbuilder --features "rules"
       - run:
           name: Lint
           command: make lint
