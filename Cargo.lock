@@ -6957,7 +6957,7 @@ dependencies = [
 
 [[package]]
 name = "op-rbuilder"
-version = "0.2.14"
+version = "0.3.0"
 dependencies = [
  "alloy-consensus",
  "alloy-contract",
@@ -7076,6 +7076,7 @@ dependencies = [
  "tikv-jemallocator",
  "time",
  "tokio",
+ "tokio-metrics",
  "tokio-tungstenite",
  "tokio-util",
  "tower",
@@ -7260,7 +7261,7 @@ dependencies = [
 
 [[package]]
 name = "p2p"
-version = "0.2.14"
+version = "0.3.0"
 dependencies = [
  "derive_more",
  "eyre",
@@ -13150,6 +13151,18 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.111",
+]
+
+[[package]]
+name = "tokio-metrics"
+version = "0.4.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f4c2ca6283a34abc77cb58ea83d4a3c40e0162b0095d7a674172a2eed5415197"
+dependencies = [
+ "futures-util",
+ "pin-project-lite",
+ "tokio",
+ "tokio-stream",
 ]
 
 [[package]]

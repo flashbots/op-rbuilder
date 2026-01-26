@@ -20,7 +20,7 @@ use tokio_tungstenite::{
 };
 use tracing::{debug, warn};
 
-use crate::metrics::OpRBuilderMetrics;
+use crate::{metrics::OpRBuilderMetrics, tokio_metrics::MonitoredTask};
 
 /// A WebSockets publisher that accepts connections from client websockets and broadcasts to them
 /// updates about new flashblocks. It maintains a count of sent messages and active subscriptions.
@@ -34,7 +34,11 @@ pub(super) struct WebSocketPublisher {
 }
 
 impl WebSocketPublisher {
-    pub(super) fn new(addr: SocketAddr, metrics: Arc<OpRBuilderMetrics>) -> io::Result<Self> {
+    pub(super) fn new(
+        addr: SocketAddr,
+        metrics: Arc<OpRBuilderMetrics>,
+        task_monitor: &MonitoredTask,
+    ) -> io::Result<Self> {
         let (pipe, _) = broadcast::channel(100);
         let (term, _) = watch::channel(false);
 
@@ -42,14 +46,14 @@ impl WebSocketPublisher {
         let subs = Arc::new(AtomicUsize::new(0));
         let listener = TcpListener::bind(addr)?;
 
-        tokio::spawn(listener_loop(
+        tokio::spawn(task_monitor.instrument(listener_loop(
             listener,
             metrics,
             pipe.subscribe(),
             term.subscribe(),
             Arc::clone(&sent),
             Arc::clone(&subs),
-        ));
+        )));
 
         Ok(Self {
             sent,

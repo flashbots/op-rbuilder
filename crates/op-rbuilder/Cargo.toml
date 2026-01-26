@@ -106,6 +106,7 @@ either.workspace = true
 metrics.workspace = true
 serde_json.workspace = true
 tokio-util.workspace = true
+tokio-metrics.workspace = true
 thiserror.workspace = true
 parking_lot.workspace = true
 url.workspace = true
