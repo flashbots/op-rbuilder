@@ -10,6 +10,7 @@ use crate::{
     gas_limiter::AddressGasLimiter,
     metrics::OpRBuilderMetrics,
     primitives::reth::ExecutionInfo,
+    tokio_metrics::FlashblocksTaskMetrics,
     traits::{ClientBounds, PoolBounds},
 };
 use alloy_consensus::{
@@ -190,6 +191,8 @@ pub(super) struct OpPayloadBuilder<Pool, Client, BuilderTx> {
     pub builder_tx: BuilderTx,
     /// Rate limiting based on gas. This is an optional feature.
     pub address_gas_limiter: AddressGasLimiter,
+    /// Tokio task metrics for monitoring spawned tasks
+    pub task_metrics: Arc<FlashblocksTaskMetrics>,
 }
 
 impl<Pool, Client, BuilderTx> OpPayloadBuilder<Pool, Client, BuilderTx> {
@@ -205,6 +208,7 @@ impl<Pool, Client, BuilderTx> OpPayloadBuilder<Pool, Client, BuilderTx> {
         built_payload_tx: mpsc::Sender<OpBuiltPayload>,
         ws_pub: Arc<WebSocketPublisher>,
         metrics: Arc<OpRBuilderMetrics>,
+        task_metrics: Arc<FlashblocksTaskMetrics>,
     ) -> Self {
         let address_gas_limiter = AddressGasLimiter::new(config.gas_limiter_config.clone());
         Self {
@@ -218,6 +222,7 @@ impl<Pool, Client, BuilderTx> OpPayloadBuilder<Pool, Client, BuilderTx> {
             metrics,
             builder_tx,
             address_gas_limiter,
+            task_metrics,
         }
     }
 }
@@ -537,8 +542,10 @@ where
             std::sync::mpsc::sync_channel((self.config.flashblocks_per_block() + 1) as usize);
         let build_at_interval_end = self.config.specific.build_at_interval_end;
 
-        tokio::spawn({
+        tokio::spawn(self.task_metrics.flashblock_timer.instrument({
             let block_cancel = block_cancel.clone();
+            let flashblock_index = ctx.flashblock_index();
+            let block_number = ctx.block_number();
 
             async move {
                 // If NOT building at interval end, send immediate signal to build first
@@ -567,6 +574,13 @@ where
                 loop {
                     tokio::select! {
                         _ = timer.tick() => {
+                            debug!(
+                                target: "payload_builder",
+                                payload_id = ?fb_payload.payload_id,
+                                flashblock_index = flashblock_index,
+                                block_number = block_number,
+                                "Triggering next flashblock with timer",
+                            );
                             // cancel current payload building job
                             fb_cancel.cancel();
                             fb_cancel = block_cancel.child_token();
@@ -602,7 +616,7 @@ where
                     }
                 }
             }
-        });
+        }));
 
         // Process flashblocks - block on async channel receive
         loop {
@@ -610,6 +624,13 @@ where
             // If build_at_interval_end is false, an immediate signal is sent so we don't wait.
             // If build_at_interval_end is true, we wait for the timer tick (first_flashblock_offset).
             if let Ok(new_fb_cancel) = rx.recv() {
+                debug!(
+                    target: "payload_builder",
+                    payload_id = ?fb_payload.payload_id,
+                    flashblock_index = ctx.flashblock_index(),
+                    block_number = ctx.block_number(),
+                    "Received signal to build flashblock",
+                );
                 ctx = ctx.with_cancel(new_fb_cancel);
             } else {
                 // Channel closed - block building cancelled
@@ -1064,7 +1085,11 @@ where
         // Result: Only 1 flashblock possible (200ms remaining < 250ms interval)
         let target_time = std::time::SystemTime::UNIX_EPOCH + Duration::from_secs(timestamp);
         let now = std::time::SystemTime::now();
-        let Ok(remaining_time) = target_time.duration_since(now) else {
+        let Some(remaining_time) = target_time
+            .duration_since(now)
+            .ok()
+            .filter(|duration| duration.as_millis() > 0)
+        else {
             error!(
                 target: "payload_builder",
                 message = "FCU arrived too late or system clock are unsynced",

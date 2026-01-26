@@ -1,5 +1,5 @@
 [workspace.package]
-version = "0.2.14"
+version = "0.3.0"
 edition = "2024"
 rust-version = "1.92"
 license = "MIT OR Apache-2.0"
@@ -205,6 +205,7 @@ lazy_static = "1.4.0"
 tikv-jemallocator = { version = "0.6" }
 tracing = "0.1.37"
 metrics = { version = "0.24.1" }
+tokio-metrics = { version = "0.4.7" }
 ahash = "0.8.6"
 time = { version = "0.3.36", features = ["macros", "formatting", "parsing"] }
 vergen = "9.0.4"

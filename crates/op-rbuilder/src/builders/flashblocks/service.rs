@@ -14,6 +14,7 @@ use crate::{
     },
     flashtestations::service::bootstrap_flashtestations,
     metrics::OpRBuilderMetrics,
+    tokio_metrics::FlashblocksTaskMetrics,
     traits::{NodeBounds, PoolBounds},
 };
 use eyre::WrapErr as _;
@@ -23,7 +24,7 @@ use reth_node_builder::{BuilderContext, components::PayloadServiceBuilder};
 use reth_optimism_evm::OpEvmConfig;
 use reth_payload_builder::{PayloadBuilderHandle, PayloadBuilderService};
 use reth_provider::CanonStateSubscriptions;
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 pub struct FlashblocksServiceBuilder(pub BuilderConfig<FlashblocksConfig>);
 
@@ -106,15 +107,19 @@ impl FlashblocksServiceBuilder {
         };
 
         let metrics = Arc::new(OpRBuilderMetrics::default());
+        let task_metrics = Arc::new(FlashblocksTaskMetrics::new());
+
         // Channels for built flashblock payloads
         let (built_fb_payload_tx, built_fb_payload_rx) = tokio::sync::mpsc::channel(16);
-        // Channels for built full block payloads
         let (built_payload_tx, built_payload_rx) = tokio::sync::mpsc::channel(16);
 
-        let ws_pub: Arc<WebSocketPublisher> =
-            WebSocketPublisher::new(self.0.specific.ws_addr, metrics.clone())
-                .wrap_err("failed to create ws publisher")?
-                .into();
+        let ws_pub: Arc<WebSocketPublisher> = WebSocketPublisher::new(
+            self.0.specific.ws_addr,
+            metrics.clone(),
+            &task_metrics.websocket_publisher,
+        )
+        .wrap_err("failed to create ws publisher")?
+        .into();
         let payload_builder = OpPayloadBuilder::new(
             OpEvmConfig::optimism(ctx.chain_spec()),
             pool,
@@ -125,6 +130,7 @@ impl FlashblocksServiceBuilder {
             built_payload_tx,
             ws_pub.clone(),
             metrics.clone(),
+            task_metrics.clone(),
         );
         let payload_job_config = BasicPayloadJobGeneratorConfig::default();
 
@@ -159,12 +165,27 @@ impl FlashblocksServiceBuilder {
             cancel,
         );
 
-        ctx.task_executor()
-            .spawn_critical("custom payload builder service", Box::pin(payload_service));
+        ctx.task_executor().spawn_critical(
+            "custom payload builder service",
+            Box::pin(
+                task_metrics
+                    .payload_builder_service
+                    .instrument(payload_service),
+            ),
+        );
         ctx.task_executor().spawn_critical(
             "flashblocks payload handler",
-            Box::pin(payload_handler.run()),
+            Box::pin(
+                task_metrics
+                    .payload_handler
+                    .instrument(payload_handler.run()),
+            ),
         );
+
+        // Spawn the tokio metrics collector (records metrics every second)
+        task_metrics
+            .clone()
+            .spawn_metrics_collector(Duration::from_secs(1));
 
         tracing::info!("Flashblocks payload builder service started");
         Ok(payload_builder_handle)
