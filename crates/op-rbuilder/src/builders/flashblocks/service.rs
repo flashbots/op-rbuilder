@@ -108,6 +108,9 @@ impl FlashblocksServiceBuilder {
 
         let metrics = Arc::new(OpRBuilderMetrics::default());
         let task_metrics = Arc::new(FlashblocksTaskMetrics::new());
+
+        // Channels for built flashblock payloads
+        let (built_fb_payload_tx, built_fb_payload_rx) = tokio::sync::mpsc::channel(16);
         let (built_payload_tx, built_payload_rx) = tokio::sync::mpsc::channel(16);
 
         let ws_pub: Arc<WebSocketPublisher> = WebSocketPublisher::new(
@@ -121,8 +124,10 @@ impl FlashblocksServiceBuilder {
             OpEvmConfig::optimism(ctx.chain_spec()),
             pool,
             ctx.provider().clone(),
+            ctx.task_executor().clone(),
             self.0.clone(),
             builder_tx,
+            built_fb_payload_tx,
             built_payload_tx,
             ws_pub.clone(),
             metrics.clone(),
@@ -151,6 +156,7 @@ impl FlashblocksServiceBuilder {
         .wrap_err("failed to create flashblocks payload builder context")?;
 
         let payload_handler = PayloadHandler::new(
+            built_fb_payload_rx,
             built_payload_rx,
             incoming_message_rx,
             outgoing_message_tx,
