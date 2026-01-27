@@ -17,6 +17,7 @@ use alloy_consensus::{
     BlockBody, EMPTY_OMMER_ROOT_HASH, Header, constants::EMPTY_WITHDRAWALS, proofs,
 };
 use alloy_eips::{Encodable2718, eip7685::EMPTY_REQUESTS_HASH, merge::BEACON_NONCE};
+use alloy_evm::block::BlockExecutionResult;
 use alloy_primitives::{Address, B256, U256};
 use core::time::Duration;
 use eyre::WrapErr as _;
@@ -28,6 +29,7 @@ use reth::payload::PayloadBuilderAttributes;
 use reth_basic_payload_builder::BuildOutcome;
 use reth_chainspec::EthChainSpec;
 use reth_evm::{ConfigureEvm, execute::BlockBuilder};
+use reth_execution_types::BlockExecutionOutput;
 use reth_node_api::{Block, BuiltPayloadExecutedBlock, PayloadBuilderError};
 use reth_optimism_consensus::{calculate_receipt_root_no_memo_optimism, isthmus};
 use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
@@ -1287,6 +1289,17 @@ where
     let (excess_blob_gas, blob_gas_used) = ctx.blob_fields(info);
     let extra_data = ctx.extra_data()?;
 
+    // Create BlockExecutionOutput for BuiltPayloadExecutedBlock
+    let execution_output = BlockExecutionOutput {
+        state: state.bundle_state.clone(),
+        result: BlockExecutionResult {
+            receipts: info.receipts.clone(),
+            requests: Default::default(),
+            gas_used: info.cumulative_gas_used,
+            blob_gas_used: blob_gas_used.unwrap_or_default(),
+        },
+    };
+
     let header = Header {
         parent_hash: ctx.parent().hash(),
         ommers_hash: EMPTY_OMMER_ROOT_HASH,
@@ -1327,7 +1340,7 @@ where
 
     let executed = BuiltPayloadExecutedBlock {
         recovered_block: Arc::new(recovered_block),
-        execution_output: Arc::new(execution_outcome),
+        execution_output: Arc::new(execution_output),
         trie_updates: either::Either::Left(Arc::new(trie_output)),
         hashed_state: either::Either::Left(Arc::new(hashed_state)),
     };

@@ -10,11 +10,12 @@ use alloy_consensus::{
     BlockBody, EMPTY_OMMER_ROOT_HASH, Header, constants::EMPTY_WITHDRAWALS, proofs,
 };
 use alloy_eips::{eip7685::EMPTY_REQUESTS_HASH, merge::BEACON_NONCE};
-use alloy_evm::Database;
+use alloy_evm::{Database, block::BlockExecutionResult};
 use alloy_primitives::U256;
 use reth::payload::PayloadBuilderAttributes;
 use reth_basic_payload_builder::{BuildOutcome, BuildOutcomeKind, MissingPayloadBehaviour};
 use reth_evm::{ConfigureEvm, execute::BlockBuilder};
+use reth_execution_types::BlockExecutionOutput;
 use reth_node_api::{Block, PayloadBuilderError};
 use reth_optimism_consensus::{calculate_receipt_root_no_memo_optimism, isthmus};
 use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
@@ -483,12 +484,22 @@ impl<Txs: PayloadTxsBounds> OpBuilder<'_, Txs> {
         // Need [Some] or [None] based on hardfork to match block hash.
         let (excess_blob_gas, blob_gas_used) = ctx.blob_fields(&info);
 
+        let bundle_state = db.take_bundle();
         let execution_outcome = ExecutionOutcome::new(
-            db.take_bundle(),
-            vec![info.receipts],
+            bundle_state.clone(),
+            vec![info.receipts.clone()],
             block_number,
             Vec::new(),
         );
+        let execution_output = BlockExecutionOutput {
+            state: bundle_state,
+            result: BlockExecutionResult {
+                receipts: info.receipts,
+                requests: Default::default(),
+                gas_used: info.cumulative_gas_used,
+                blob_gas_used: blob_gas_used.unwrap_or_default(),
+            },
+        };
         let receipts_root = execution_outcome
             .generic_receipts_root_slow(block_number, |receipts| {
                 calculate_receipt_root_no_memo_optimism(
@@ -592,7 +603,7 @@ impl<Txs: PayloadTxsBounds> OpBuilder<'_, Txs> {
                     info.executed_senders,
                 ),
             ),
-            execution_output: Arc::new(execution_outcome),
+            execution_output: Arc::new(execution_output),
             hashed_state: either::Either::Left(Arc::new(hashed_state)),
             trie_updates: either::Either::Left(Arc::new(trie_output)),
         };
