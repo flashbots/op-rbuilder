@@ -19,6 +19,7 @@ use alloy_consensus::{
 use alloy_eips::{Encodable2718, eip7685::EMPTY_REQUESTS_HASH, merge::BEACON_NONCE};
 use alloy_evm::block::BlockExecutionResult;
 use alloy_primitives::{Address, B256, U256};
+use alloy_rpc_types_engine::PayloadId;
 use core::time::Duration;
 use eyre::WrapErr as _;
 use op_alloy_rpc_types_engine::{
@@ -415,8 +416,8 @@ where
 
         info!(
             target: "payload_builder",
-            message = "Fallback block built",
             payload_id = fb_payload.payload_id.to_string(),
+            "Fallback block built"
         );
 
         // not emitting flashblock if no_tx_pool in FCU, it's just syncing
@@ -456,7 +457,7 @@ where
         // We adjust our flashblocks timings based on time the fcu block building signal arrived
         let (flashblocks_per_block, first_flashblock_offset, flashblocks_deadline) =
             if self.config.specific.build_at_interval_end {
-                let timing = self.calculate_flashblocks_timing(timestamp);
+                let timing = self.calculate_flashblocks_timing(timestamp, fb_payload.payload_id);
                 (
                     timing.flashblocks_per_block,
                     timing.first_flashblock_offset,
@@ -474,10 +475,11 @@ where
 
         info!(
             target: "payload_builder",
-            message = "Performed flashblocks timing derivation",
+            payload_id = fb_payload.payload_id.to_string(),
             flashblocks_per_block,
             first_flashblock_offset = first_flashblock_offset.as_millis(),
             flashblocks_interval = self.config.specific.interval.as_millis(),
+            "Performed flashblocks timing derivation",
         );
         ctx.metrics.reduced_flashblocks_number.record(
             self.config
@@ -877,11 +879,13 @@ where
 
                 info!(
                     target: "payload_builder",
-                    message = "Flashblock built",
+                    event = "flashblock_built",
+                    payload_id = %ctx.payload_id(),
                     flashblock_index = flashblock_index,
                     current_gas = info.cumulative_gas_used,
                     current_da = info.cumulative_da_bytes_used,
                     target_flashblocks = ctx.target_flashblock_count(),
+                    "Flashblock built"
                 );
 
                 Ok(Some(next_extra_ctx))
@@ -911,9 +915,10 @@ where
             .payload_num_tx_gauge
             .set(info.executed_transactions.len() as f64);
 
-        debug!(
+        info!(
             target: "payload_builder",
-            message = "Payload building complete, job cancelled or target flashblock count reached",
+            event = "build_complete",
+            payload_id = ?ctx.payload_id(),
             flashblocks_per_block = flashblocks_per_block,
             flashblock_index = ctx.flashblock_index(),
         );
@@ -949,9 +954,9 @@ where
         else {
             error!(
                 target: "payload_builder",
-                message = "FCU arrived too late or system clock are unsynced",
                 ?target_time,
                 ?now,
+                "FCU arrived too late or system clock are unsynced"
             );
             return (
                 self.config.flashblocks_per_block(),
@@ -966,10 +971,10 @@ where
         );
         debug!(
             target: "payload_builder",
-            message = "Time drift for building round",
             ?target_time,
             time_drift = self.config.block_time.as_millis().saturating_sub(time_drift.as_millis()),
-            ?timestamp
+            ?timestamp,
+           "Time drift for building round"
         );
         // This is extra check to ensure that we would account at least for block time in case we have any timer discrepancies.
         let time_drift = time_drift.min(self.config.block_time);
@@ -990,7 +995,11 @@ where
 
     /// Calculate number of flashblocks and time until first flashblock and deadline for building flashblocks
     /// If dynamic is enabled this function will take time drift of FCU arrival into the account.
-    pub(super) fn calculate_flashblocks_timing(&self, timestamp: u64) -> FlashblocksTiming {
+    pub(super) fn calculate_flashblocks_timing(
+        &self,
+        timestamp: u64,
+        payload_id: PayloadId,
+    ) -> FlashblocksTiming {
         let offset_delta = self.config.specific.send_offset_ms.unsigned_abs();
         if self.config.specific.fixed {
             let offset = if self.config.specific.send_offset_ms > 0 {
@@ -1075,9 +1084,10 @@ where
         else {
             error!(
                 target: "payload_builder",
-                message = "FCU arrived too late or system clock are unsynced",
+                payload_id = ?payload_id,
                 ?target_time,
                 ?now,
+                "FCU arrived too late or system clock are unsynced",
             );
             return FlashblocksTiming {
                 flashblocks_per_block: self.config.flashblocks_per_block(),
@@ -1096,10 +1106,11 @@ where
         );
         debug!(
             target: "payload_builder",
-            message = "Time delay for building round",
+            payload_id = ?payload_id,
             ?target_time,
             delay = self.config.block_time.as_millis().saturating_sub(remaining_time.as_millis()),
-            ?timestamp
+            ?timestamp,
+            "Time delay for building round",
         );
         // This is extra check to ensure that we would account at least for block time in case we have any timer discrepancies.
         let remaining_time = remaining_time.min(self.config.block_time).as_millis() as u64;
@@ -1370,10 +1381,19 @@ where
         trie_updates: either::Either::Left(Arc::new(trie_output)),
         hashed_state: either::Either::Left(Arc::new(hashed_state)),
     };
-    debug!(target: "payload_builder", message = "Executed block created");
+    debug!(
+        target: "payload_builder",
+        payload_id = ?ctx.payload_id(),
+        "Executed block created"
+    );
 
     let sealed_block = Arc::new(block.seal_slow());
-    debug!(target: "payload_builder", ?sealed_block, "sealed built block");
+    debug!(
+        target: "payload_builder",
+        payload_id = ?ctx.payload_id(),
+        ?sealed_block,
+        "Sealed built block"
+    );
 
     let block_hash = sealed_block.hash();
 
