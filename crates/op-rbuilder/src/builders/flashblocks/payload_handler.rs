@@ -82,13 +82,13 @@ where
             cancel,
         } = self;
 
-        tracing::debug!("flashblocks payload handler started");
+        tracing::info!(target: "payload_builder", "flashblocks payload handler started");
 
         loop {
             tokio::select! {
                 Some(payload) = built_rx.recv() => {
                     if let Err(e) = payload_events_handle.send(Events::BuiltPayload(payload.clone())) {
-                        warn!(e = ?e, "failed to send BuiltPayload event");
+                        warn!(target: "payload_builder", e = ?e, "failed to send BuiltPayload event");
                     }
                     // ignore error here; if p2p was disabled, the channel will be closed.
                     let _ = p2p_tx.send(payload.into()).await;
@@ -113,13 +113,13 @@ where
                                 );
                                 match res {
                                     Ok((payload, _)) => {
-                                        tracing::info!(hash = payload.block().hash().to_string(), block_number = payload.block().header().number, "successfully executed received flashblock");
+                                        tracing::info!(target: "payload_builder", hash = payload.block().hash().to_string(), block_number = payload.block().header().number, "successfully executed external received flashblock");
                                         if let Err(e) = payload_events_handle.send(Events::BuiltPayload(payload)) {
-                                            warn!(e = ?e, "failed to send BuiltPayload event on synced block");
+                                            warn!(target: "payload_builder", e = ?e, "failed to send BuiltPayload event on synced block");
                                         }
                                     }
                                     Err(e) => {
-                                        tracing::error!(error = ?e, "failed to execute received flashblock");
+                                        tracing::error!(target: "payload_builder", error = ?e, "failed to execute external received flashblock");
                                     }
                                 }
                             });
@@ -147,7 +147,7 @@ where
 
     let start = tokio::time::Instant::now();
 
-    tracing::info!(header = ?payload.block().header(), "executing flashblock");
+    tracing::info!(target: "payload_builder", header = ?payload.block().header(), "executing external flashblock");
 
     let mut cached_reads = reth::revm::cached::CachedReads::default();
     let parent_hash = payload.block().sealed_header().parent_hash;
@@ -206,7 +206,7 @@ where
         .is_jovian_active_at_timestamp(timestamp)
     {
         if extra_data.len() != 17 {
-            tracing::debug!(len = extra_data.len(), data = ?extra_data, "invalid extra data length in flashblock for jovian fork");
+            tracing::trace!(target: "payload_builder", len = extra_data.len(), data = ?extra_data, "invalid extra data length in flashblock for jovian fork");
             bail!("extra data length should be 17 bytes");
         }
         let eip_1559_params = extra_data[1..9].try_into().ok();
@@ -217,13 +217,13 @@ where
         (eip_1559_params, Some(min_base_fee))
     } else if chain_spec.is_holocene_active_at_timestamp(timestamp) {
         if extra_data.len() != 9 {
-            tracing::debug!(len = extra_data.len(), data = ?extra_data, "invalid extra data length in flashblock for holocene fork");
+            tracing::trace!(target: "payload_builder", len = extra_data.len(), data = ?extra_data, "invalid extra data length in flashblock for holocene fork");
             bail!("extra data length should be 9 bytes");
         }
         (extra_data[1..9].try_into().ok(), None)
     } else {
         if !extra_data.is_empty() {
-            tracing::debug!(len = extra_data.len(), data = ?extra_data, "invalid extra data length in flashblock for pre holocene fork");
+            tracing::trace!(target: "payload_builder", len = extra_data.len(), data = ?extra_data, "invalid extra data length in flashblock for pre holocene fork");
             bail!("extra data length should be 0 bytes");
         }
         (None, None)
@@ -296,7 +296,7 @@ where
 
     builder_ctx.metrics.block_synced_success.increment(1);
 
-    tracing::info!(header = ?built_payload.block().header(), "successfully executed flashblock");
+    tracing::info!(target: "payload_builder", header = ?built_payload.block().header(), "successfully executed external flashblock");
     Ok((built_payload, fb_payload))
 }
 
