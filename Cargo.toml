@@ -46,63 +46,63 @@ unreachable_pub = "deny"
 unused_async = "warn"
 
 [workspace.dependencies]
-reth = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-chain-state = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-cli = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-cli-commands = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-cli-util = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-db = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-db-common = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-errors = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-payload-builder = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-node-api = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-rpc-engine-api = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-node-ethereum = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-trie = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-trie-parallel = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-basic-payload-builder = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-node-core = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-primitives = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-primitives-traits = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-provider = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3", features = [
+reth = { git = "https://github.com/flashbots/reth", rev = "2a0072b" }
+reth-chain-state = { git = "https://github.com/flashbots/reth", rev = "2a0072b" }
+reth-cli = { git = "https://github.com/flashbots/reth", rev = "2a0072b" }
+reth-cli-commands = { git = "https://github.com/flashbots/reth", rev = "2a0072b" }
+reth-cli-util = { git = "https://github.com/flashbots/reth", rev = "2a0072b" }
+reth-db = { git = "https://github.com/flashbots/reth", rev = "2a0072b" }
+reth-db-common = { git = "https://github.com/flashbots/reth", rev = "2a0072b" }
+reth-errors = { git = "https://github.com/flashbots/reth", rev = "2a0072b" }
+reth-payload-builder = { git = "https://github.com/flashbots/reth", rev = "2a0072b" }
+reth-node-api = { git = "https://github.com/flashbots/reth", rev = "2a0072b" }
+reth-rpc-engine-api = { git = "https://github.com/flashbots/reth", rev = "2a0072b" }
+reth-node-ethereum = { git = "https://github.com/flashbots/reth", rev = "2a0072b" }
+reth-trie = { git = "https://github.com/flashbots/reth", rev = "2a0072b" }
+reth-trie-parallel = { git = "https://github.com/flashbots/reth", rev = "2a0072b" }
+reth-basic-payload-builder = { git = "https://github.com/flashbots/reth", rev = "2a0072b" }
+reth-node-core = { git = "https://github.com/flashbots/reth", rev = "2a0072b" }
+reth-primitives = { git = "https://github.com/flashbots/reth", rev = "2a0072b" }
+reth-primitives-traits = { git = "https://github.com/flashbots/reth", rev = "2a0072b" }
+reth-provider = { git = "https://github.com/flashbots/reth", rev = "2a0072b", features = [
     "test-utils",
 ] }
 
-reth-chainspec = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-storage-api = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-rpc-api = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-evm = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-evm-ethereum = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-execution-errors = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-exex = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-tasks = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-metrics = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-trie-db = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-payload-primitives = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-transaction-pool = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-execution-types = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-revm = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-payload-builder-primitives = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-payload-util = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-rpc-layer = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-network-peers = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-testing-utils = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-node-builder = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-rpc-eth-types = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-tracing-otlp = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-ipc = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
+reth-chainspec = { git = "https://github.com/flashbots/reth", rev = "2a0072b" }
+reth-storage-api = { git = "https://github.com/flashbots/reth", rev = "2a0072b" }
+reth-rpc-api = { git = "https://github.com/flashbots/reth", rev = "2a0072b" }
+reth-evm = { git = "https://github.com/flashbots/reth", rev = "2a0072b" }
+reth-evm-ethereum = { git = "https://github.com/flashbots/reth", rev = "2a0072b" }
+reth-execution-errors = { git = "https://github.com/flashbots/reth", rev = "2a0072b" }
+reth-exex = { git = "https://github.com/flashbots/reth", rev = "2a0072b" }
+reth-tasks = { git = "https://github.com/flashbots/reth", rev = "2a0072b" }
+reth-metrics = { git = "https://github.com/flashbots/reth", rev = "2a0072b" }
+reth-trie-db = { git = "https://github.com/flashbots/reth", rev = "2a0072b" }
+reth-payload-primitives = { git = "https://github.com/flashbots/reth", rev = "2a0072b" }
+reth-transaction-pool = { git = "https://github.com/flashbots/reth", rev = "2a0072b" }
+reth-execution-types = { git = "https://github.com/flashbots/reth", rev = "2a0072b" }
+reth-revm = { git = "https://github.com/flashbots/reth", rev = "2a0072b" }
+reth-payload-builder-primitives = { git = "https://github.com/flashbots/reth", rev = "2a0072b" }
+reth-payload-util = { git = "https://github.com/flashbots/reth", rev = "2a0072b" }
+reth-rpc-layer = { git = "https://github.com/flashbots/reth", rev = "2a0072b" }
+reth-network-peers = { git = "https://github.com/flashbots/reth", rev = "2a0072b" }
+reth-testing-utils = { git = "https://github.com/flashbots/reth", rev = "2a0072b" }
+reth-node-builder = { git = "https://github.com/flashbots/reth", rev = "2a0072b" }
+reth-rpc-eth-types = { git = "https://github.com/flashbots/reth", rev = "2a0072b" }
+reth-tracing-otlp = { git = "https://github.com/flashbots/reth", rev = "2a0072b" }
+reth-ipc = { git = "https://github.com/flashbots/reth", rev = "2a0072b" }
 
 # reth optimism
-reth-optimism-primitives = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-optimism-consensus = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-optimism-cli = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-optimism-forks = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-optimism-evm = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-optimism-node = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-optimism-payload-builder = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-optimism-chainspec = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-optimism-txpool = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-optimism-rpc = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3", features = [
+reth-optimism-primitives = { git = "https://github.com/flashbots/reth", rev = "2a0072b" }
+reth-optimism-consensus = { git = "https://github.com/flashbots/reth", rev = "2a0072b" }
+reth-optimism-cli = { git = "https://github.com/flashbots/reth", rev = "2a0072b" }
+reth-optimism-forks = { git = "https://github.com/flashbots/reth", rev = "2a0072b" }
+reth-optimism-evm = { git = "https://github.com/flashbots/reth", rev = "2a0072b" }
+reth-optimism-node = { git = "https://github.com/flashbots/reth", rev = "2a0072b" }
+reth-optimism-payload-builder = { git = "https://github.com/flashbots/reth", rev = "2a0072b" }
+reth-optimism-chainspec = { git = "https://github.com/flashbots/reth", rev = "2a0072b" }
+reth-optimism-txpool = { git = "https://github.com/flashbots/reth", rev = "2a0072b" }
+reth-optimism-rpc = { git = "https://github.com/flashbots/reth", rev = "2a0072b", features = [
     "client",
 ] }
 
