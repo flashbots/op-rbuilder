@@ -10,7 +10,10 @@ use alloy_primitives::B64;
 use eyre::{WrapErr as _, bail};
 use op_alloy_rpc_types_engine::OpFlashblockPayload;
 use op_revm::L1BlockInfo;
-use reth::revm::{State, database::StateProviderDatabase};
+use reth::{
+    revm::{State, database::StateProviderDatabase},
+    tasks::TaskSpawner,
+};
 use reth_basic_payload_builder::PayloadConfig;
 use reth_node_builder::Events;
 use reth_optimism_chainspec::OpChainSpec;
@@ -43,12 +46,15 @@ pub(crate) struct PayloadHandler<Client> {
     ctx: OpPayloadSyncerCtx,
     // chain client
     client: Client,
+    // task executor
+    task_executor: Tasks,
     cancel: tokio_util::sync::CancellationToken,
 }
 
-impl<Client> PayloadHandler<Client>
+impl<Client, Tasks> PayloadHandler<Client, Tasks>
 where
     Client: ClientBounds + 'static,
+    Tasks: TaskSpawner + Clone + Unpin + 'static,
 {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
@@ -58,6 +64,7 @@ where
         payload_events_handle: tokio::sync::broadcast::Sender<Events<OpEngineTypes>>,
         ctx: OpPayloadSyncerCtx,
         client: Client,
+        task_executor: Tasks,
         cancel: tokio_util::sync::CancellationToken,
     ) -> Self {
         Self {
@@ -67,6 +74,7 @@ where
             payload_events_handle,
             ctx,
             client,
+            task_executor,
             cancel,
         }
     }
@@ -79,6 +87,7 @@ where
             payload_events_handle,
             ctx,
             client,
+            task_executor,
             cancel,
         } = self;
 
@@ -104,7 +113,7 @@ where
 
                             // execute the flashblock on a thread where blocking is acceptable,
                             // as it's potentially a heavy operation
-                            tokio::task::spawn_blocking(move || {
+                            task_executor.spawn(Box::pin(async move {
                                 let res = execute_flashblock(
                                     payload,
                                     ctx,
@@ -122,7 +131,7 @@ where
                                         tracing::error!(target: "payload_builder", error = ?e, "failed to execute external received flashblock");
                                     }
                                 }
-                            });
+                            }));
                         }
                     }
                 }
