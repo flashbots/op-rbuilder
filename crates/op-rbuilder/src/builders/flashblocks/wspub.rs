@@ -34,7 +34,7 @@ pub(super) struct WebSocketPublisher {
     subs: Arc<AtomicUsize>,
     term: watch::Sender<bool>,
     pipe: broadcast::Sender<Utf8Bytes>,
-    subscriber_limit: u16,
+    subscriber_limit: Option<u16>,
 }
 
 impl WebSocketPublisher {
@@ -42,7 +42,7 @@ impl WebSocketPublisher {
         addr: SocketAddr,
         metrics: Arc<OpRBuilderMetrics>,
         task_monitor: &MonitoredTask,
-        subscriber_limit: u16,
+        subscriber_limit: Option<u16>,
     ) -> io::Result<Self> {
         let (pipe, _) = broadcast::channel(100);
         let (term, _) = watch::channel(false);
@@ -108,7 +108,7 @@ async fn listener_loop(
     term: watch::Receiver<bool>,
     sent: Arc<AtomicUsize>,
     subs: Arc<AtomicUsize>,
-    subscriber_limit: u16,
+    subscriber_limit: Option<u16>,
 ) {
     listener
         .set_nonblocking(true)
@@ -147,7 +147,7 @@ async fn listener_loop(
                 match accept_async(connection).await {
                     Ok(mut stream) => {
                         tokio::spawn(async move {
-                            if subs.load(Ordering::Relaxed) >= subscriber_limit as usize {
+                            if let Some(limit) = subscriber_limit && subs.load(Ordering::Relaxed) >= limit as usize {
                                     warn!(target: "payload_builder", "WebSocket connection for {peer_addr} rejected: subscriber limit reached");
                                     let _ = stream.close(Some(CloseFrame {
                                         code: CloseCode::Again,
