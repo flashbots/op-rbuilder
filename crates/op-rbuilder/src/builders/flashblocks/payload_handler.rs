@@ -33,7 +33,7 @@ use tracing::warn;
 ///
 /// In the case of a payload built by this node, it is broadcast to peers and an event is sent to the payload builder.
 /// In the case of a payload received from a peer, it is executed and if successful, an event is sent to the payload builder.
-pub(crate) struct PayloadHandler<Client> {
+pub(crate) struct PayloadHandler<Client, Tasks> {
     // receives new payloads built by this builder.
     built_rx: mpsc::Receiver<OpBuiltPayload>,
     // receives incoming p2p messages from peers.
