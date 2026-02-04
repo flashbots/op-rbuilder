@@ -36,9 +36,10 @@ impl RulesRegistryConfig {
 
     /// Build a RuleFetcher from this configuration
     pub fn build_fetcher(&self) -> anyhow::Result<crate::rules::registry::RuleFetcher> {
-        use crate::rules::registry::{RuleFetcher, file::FileRuleRegistry, remote::RemoteRuleRegistry};
-        use std::sync::Arc;
-        use std::time::Duration;
+        use crate::rules::registry::{
+            RuleFetcher, file::FileRuleRegistry, remote::RemoteRuleRegistry,
+        };
+        use std::{sync::Arc, time::Duration};
 
         let mut fetcher = RuleFetcher::new();
 

@@ -227,10 +227,7 @@ async fn rules_boost_from_address(rbuilder: LocalInstance) -> eyre::Result<()> {
         .iter()
         .position(|h| h == favored_tx.tx_hash())
         .unwrap();
-    let i_other = hashes
-        .iter()
-        .position(|h| h == other_tx.tx_hash())
-        .unwrap();
+    let i_other = hashes.iter().position(|h| h == other_tx.tx_hash()).unwrap();
     let i_other2 = hashes
         .iter()
         .position(|h| h == other_tx2.tx_hash())
@@ -391,7 +388,9 @@ async fn rules_boost_with_aliases(rbuilder: LocalInstance) -> eyre::Result<()> {
 
     // Create ruleset with alias group and boost rule using alias
     let mut ruleset = RuleSet::default();
-    ruleset.aliases.insert_group("vip_users", vec![addr1, addr2]);
+    ruleset
+        .aliases
+        .insert_group("vip_users", vec![addr1, addr2]);
     ruleset.rules.boost.push(BoostRule {
         name: Some("vip boost".into()),
         description: None,
@@ -424,7 +423,10 @@ async fn rules_boost_with_aliases(rbuilder: LocalInstance) -> eyre::Result<()> {
     let block = driver.build_new_block().await?;
     let hashes: Vec<_> = block.transactions.hashes().collect();
     let i_vip = hashes.iter().position(|h| h == vip_tx.tx_hash()).unwrap();
-    let i_normal = hashes.iter().position(|h| h == normal_tx.tx_hash()).unwrap();
+    let i_normal = hashes
+        .iter()
+        .position(|h| h == normal_tx.tx_hash())
+        .unwrap();
 
     assert!(
         i_vip < i_normal,
@@ -533,7 +535,9 @@ async fn rules_combined_boost_rules(rbuilder: LocalInstance) -> eyre::Result<()>
 /// Test that when no scoring rules exist, fee priority is preserved.
 #[rb_test(standard)]
 #[cfg(feature = "rules")]
-async fn rules_no_scoring_rules_preserves_fee_priority(rbuilder: LocalInstance) -> eyre::Result<()> {
+async fn rules_no_scoring_rules_preserves_fee_priority(
+    rbuilder: LocalInstance,
+) -> eyre::Result<()> {
     let driver = rbuilder.driver().await?;
     let accounts = driver.fund_accounts(2, ONE_ETH).await?;
 
@@ -916,7 +920,10 @@ async fn rules_zero_weight_preserves_fee_ordering(rbuilder: LocalInstance) -> ey
     let hashes: Vec<_> = block.transactions.hashes().collect();
 
     // Both have weight=0, so high fee should come first
-    let order = filter_tx_order(&hashes, &[high_fee_unmatched.tx_hash(), low_fee_matched.tx_hash()]);
+    let order = filter_tx_order(
+        &hashes,
+        &[high_fee_unmatched.tx_hash(), low_fee_matched.tx_hash()],
+    );
     assert_eq!(
         order,
         vec![*high_fee_unmatched.tx_hash(), *low_fee_matched.tx_hash()],
@@ -996,10 +1003,17 @@ async fn rules_multiple_alias_groups(rbuilder: LocalInstance) -> eyre::Result<()
     let hashes: Vec<_> = block.transactions.hashes().collect();
 
     // tier1 (10000) > tier2 (5000) > notier (0, high fee)
-    let order = filter_tx_order(&hashes, &[tier1_tx.tx_hash(), tier2_tx.tx_hash(), notier_tx.tx_hash()]);
+    let order = filter_tx_order(
+        &hashes,
+        &[tier1_tx.tx_hash(), tier2_tx.tx_hash(), notier_tx.tx_hash()],
+    );
     assert_eq!(
         order,
-        vec![*tier1_tx.tx_hash(), *tier2_tx.tx_hash(), *notier_tx.tx_hash()],
+        vec![
+            *tier1_tx.tx_hash(),
+            *tier2_tx.tx_hash(),
+            *notier_tx.tx_hash()
+        ],
         "alias group priorities should be respected"
     );
 
@@ -1239,10 +1253,21 @@ async fn rules_mixed_positive_negative_weights(rbuilder: LocalInstance) -> eyre:
     let hashes: Vec<_> = block.transactions.hashes().collect();
 
     // Order should be: boosted (+5000) > neutral (0) > penalized (-3000)
-    let order = filter_tx_order(&hashes, &[boosted_tx.tx_hash(), neutral_tx.tx_hash(), penalized_tx.tx_hash()]);
+    let order = filter_tx_order(
+        &hashes,
+        &[
+            boosted_tx.tx_hash(),
+            neutral_tx.tx_hash(),
+            penalized_tx.tx_hash(),
+        ],
+    );
     assert_eq!(
         order,
-        vec![*boosted_tx.tx_hash(), *neutral_tx.tx_hash(), *penalized_tx.tx_hash()],
+        vec![
+            *boosted_tx.tx_hash(),
+            *neutral_tx.tx_hash(),
+            *penalized_tx.tx_hash()
+        ],
         "mixed weights should order correctly: boosted > neutral > penalized"
     );
 
@@ -1382,10 +1407,17 @@ async fn rules_empty_ruleset_fee_priority(rbuilder: LocalInstance) -> eyre::Resu
     let hashes: Vec<_> = block.transactions.hashes().collect();
 
     // Fee ordering should apply
-    let order = filter_tx_order(&hashes, &[high_fee.tx_hash(), medium_fee.tx_hash(), low_fee.tx_hash()]);
+    let order = filter_tx_order(
+        &hashes,
+        &[high_fee.tx_hash(), medium_fee.tx_hash(), low_fee.tx_hash()],
+    );
     assert_eq!(
         order,
-        vec![*high_fee.tx_hash(), *medium_fee.tx_hash(), *low_fee.tx_hash()],
+        vec![
+            *high_fee.tx_hash(),
+            *medium_fee.tx_hash(),
+            *low_fee.tx_hash()
+        ],
         "empty ruleset should result in fee priority ordering"
     );
 

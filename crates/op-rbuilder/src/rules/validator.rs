@@ -7,9 +7,7 @@
 //! When validation succeeds, this validator also computes the transaction's rule-based score
 //! and inserts it into the shared score index for O(k) block building.
 
-use crate::rules::global_ruleset;
-use crate::rules::metrics::RulesMetrics;
-use crate::rules::score_index::SharedScoreIndex;
+use crate::rules::{global_ruleset, metrics::RulesMetrics, score_index::SharedScoreIndex};
 use alloy_consensus::Transaction as ConsensusTx;
 use reqwest::Client;
 use reth_primitives_traits::{Block, SealedBlock};
@@ -17,7 +15,11 @@ use reth_transaction_pool::{
     PoolTransaction, TransactionOrigin, TransactionValidationOutcome, TransactionValidator,
     error::{InvalidPoolTransactionError, PoolTransactionError},
 };
-use std::{any::Any, fmt, time::{Duration, Instant}};
+use std::{
+    any::Any,
+    fmt,
+    time::{Duration, Instant},
+};
 use tracing::{debug, trace, warn};
 
 /// Rule-based transaction validator that applies ingress-phase rules and optional external checks.
@@ -141,9 +143,11 @@ impl<V> RuleBasedValidator<V> {
             match response {
                 Ok(response) => {
                     if response.status().is_success() {
-                        self.metrics.record_external_validation(true, false, duration);
+                        self.metrics
+                            .record_external_validation(true, false, duration);
                     } else {
-                        self.metrics.record_external_validation(true, true, duration);
+                        self.metrics
+                            .record_external_validation(true, true, duration);
                         warn!(
                             target: "rule_validator",
                             tx_hash = %tx_hash,
@@ -153,12 +157,14 @@ impl<V> RuleBasedValidator<V> {
                         );
                         return Err(format!(
                             "External validation failed: {} returned {}",
-                            config.endpoint, response.status()
+                            config.endpoint,
+                            response.status()
                         ));
                     }
                 }
                 Err(err) => {
-                    self.metrics.record_external_validation(false, false, duration);
+                    self.metrics
+                        .record_external_validation(false, false, duration);
                     warn!(
                         target: "rule_validator",
                         tx_hash = %tx_hash,
@@ -200,7 +206,10 @@ struct RuleValidationError {
 
 impl RuleValidationError {
     fn new(message: impl Into<String>, is_bad: bool) -> Self {
-        Self { message: message.into(), is_bad }
+        Self {
+            message: message.into(),
+            is_bad,
+        }
     }
 }
 
@@ -265,21 +274,20 @@ where
 
         // If validation succeeded, insert score into the shared index
         // This enables O(k) block building by pre-scoring transactions at ingress
-        if let TransactionValidationOutcome::Valid { .. } = outcome {
-            if let (Some(score_index), Some((tx_hash, sender, score, tip))) =
+        if let TransactionValidationOutcome::Valid { .. } = outcome
+            && let (Some(score_index), Some((tx_hash, sender, score, tip))) =
                 (&self.score_index, score_data)
-            {
-                score_index.write().upsert(tx_hash, sender, score, tip);
+        {
+            score_index.write().upsert(tx_hash, sender, score, tip);
 
-                trace!(
-                    target: "rule_validator",
-                    %tx_hash,
-                    %sender,
-                    score,
-                    tip,
-                    "Inserted transaction score into index"
-                );
-            }
+            trace!(
+                target: "rule_validator",
+                %tx_hash,
+                %sender,
+                score,
+                tip,
+                "Inserted transaction score into index"
+            );
         }
 
         outcome

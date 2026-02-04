@@ -5,8 +5,10 @@
 
 use alloy_primitives::{Address, B256};
 use parking_lot::RwLock;
-use std::collections::{BTreeSet, HashMap, HashSet};
-use std::sync::Arc;
+use std::{
+    collections::{BTreeSet, HashMap, HashSet},
+    sync::Arc,
+};
 
 /// Key for ordering transactions by score in the index.
 ///
@@ -141,7 +143,9 @@ impl ScoreIndex {
 
     /// Iterate full entries in score order (highest first).
     pub fn iter_entries(&self) -> impl Iterator<Item = &ScoreEntry> + '_ {
-        self.ordered.iter().filter_map(|k| self.lookup.get(&k.tx_hash))
+        self.ordered
+            .iter()
+            .filter_map(|k| self.lookup.get(&k.tx_hash))
     }
 
     /// Number of entries in the index.

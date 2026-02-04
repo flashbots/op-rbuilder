@@ -135,64 +135,67 @@ where
 
         // Initialize rules system if enabled
         #[cfg(feature = "rules")]
-        let (rules_enabled, rule_fetcher, rule_refresh_interval_seconds, score_index) = if builder_args.rules.rules_enabled {
-            use crate::rules::RulesRegistryConfig;
+        let (rules_enabled, rule_fetcher, rule_refresh_interval_seconds, score_index) =
+            if builder_args.rules.rules_enabled {
+                use crate::rules::RulesRegistryConfig;
 
-            tracing::info!("Rule based block building enabled");
+                tracing::info!("Rule based block building enabled");
 
-            // Create the shared score index for O(k) block building
-            let score_index = new_shared_score_index();
+                // Create the shared score index for O(k) block building
+                let score_index = new_shared_score_index();
 
-            // Load registry configuration if provided
-            let (fetcher, refresh_interval) = if let Some(config_path) = &builder_args.rules.config_path {
-                tracing::info!(path = ?config_path, "Loading rules registry configuration");
+                // Load registry configuration if provided
+                let (fetcher, refresh_interval) = if let Some(config_path) =
+                    &builder_args.rules.config_path
+                {
+                    tracing::info!(path = ?config_path, "Loading rules registry configuration");
 
-                match RulesRegistryConfig::load(config_path).await {
-                    Ok(config) => {
-                        if config.is_registry_config_empty() {
-                            tracing::warn!("Rules registry config is empty");
-                            (None, config.refresh_interval)
-                        } else {
-                            match config.build_fetcher() {
-                                Ok(f) => {
-                                    let interval = config.refresh_interval;
-                                    tracing::info!(
-                                        refresh_interval_secs = interval,
-                                        "Using refresh interval from config"
-                                    );
-                                    (Some(f), interval)
-                                }
-                                Err(e) => {
-                                    tracing::error!(error = %e, "Failed to build rule fetcher");
-                                    (None, config.refresh_interval)
+                    match RulesRegistryConfig::load(config_path).await {
+                        Ok(config) => {
+                            if config.is_registry_config_empty() {
+                                tracing::warn!("Rules registry config is empty");
+                                (None, config.refresh_interval)
+                            } else {
+                                match config.build_fetcher() {
+                                    Ok(f) => {
+                                        let interval = config.refresh_interval;
+                                        tracing::info!(
+                                            refresh_interval_secs = interval,
+                                            "Using refresh interval from config"
+                                        );
+                                        (Some(f), interval)
+                                    }
+                                    Err(e) => {
+                                        tracing::error!(error = %e, "Failed to build rule fetcher");
+                                        (None, config.refresh_interval)
+                                    }
                                 }
                             }
                         }
+                        Err(e) => {
+                            tracing::error!(
+                                error = %e,
+                                path = ?config_path,
+                                "Failed to load rules registry config"
+                            );
+                            (None, 0)
+                        }
                     }
-                    Err(e) => {
-                        tracing::error!(
-                            error = %e,
-                            path = ?config_path,
-                            "Failed to load rules registry config"
-                        );
-                        (None, 0)
-                    }
+                } else {
+                    tracing::debug!("No rules registry config provided, using empty ruleset");
+                    (None, 0)
+                };
+
+                // Fetch initial rules and update global state
+                if let Some(ref f) = fetcher {
+                    f.refresh_global_ruleset().await;
                 }
+
+                (true, fetcher, refresh_interval, Some(score_index))
             } else {
-                tracing::debug!("No rules registry config provided, using empty ruleset");
-                (None, 0)
+                tracing::debug!("Rules system feature compiled in but disabled at runtime");
+                (false, None, 0, None)
             };
-
-            // Fetch initial rules and update global state
-            if let Some(ref f) = fetcher {
-                f.refresh_global_ruleset().await;
-            }
-
-            (true, fetcher, refresh_interval, Some(score_index))
-        } else {
-            tracing::debug!("Rules system feature compiled in but disabled at runtime");
-            (false, None, 0, None)
-        };
 
         // Clone score_index for use in different closures and set on config
         #[cfg(feature = "rules")]
@@ -223,10 +226,9 @@ where
                 tracing::info!("Rules disabled at runtime, external validation only");
             }
 
-            builder
-                .with_validator_wrapper(move |op_validator| {
-                    RuleBasedValidator::with_score_index(op_validator, score_index_for_validator)
-                })
+            builder.with_validator_wrapper(move |op_validator| {
+                RuleBasedValidator::with_score_index(op_validator, score_index_for_validator)
+            })
         };
 
         #[cfg(not(feature = "rules"))]
