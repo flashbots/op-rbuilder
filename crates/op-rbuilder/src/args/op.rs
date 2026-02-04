@@ -208,6 +208,14 @@ pub struct FlashblocksArgs {
     /// Flashblocks p2p configuration
     #[command(flatten)]
     pub p2p: FlashblocksP2pArgs,
+
+    /// Maximum number of concurrent WebSocket subscribers
+    #[arg(
+        long = "flashblocks.ws-subscriber-limit",
+        env = "FLASHBLOCK_WS_SUBSCRIBER_LIMIT",
+        default_value = "256"
+    )]
+    pub ws_subscriber_limit: Option<u16>,
 }
 
 impl Default for FlashblocksArgs {
