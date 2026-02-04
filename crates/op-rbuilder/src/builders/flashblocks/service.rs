@@ -157,6 +157,7 @@ impl FlashblocksServiceBuilder {
             payload_service.payload_events_handle(),
             syncer_ctx,
             ctx.provider().clone(),
+            ctx.task_executor().clone(),
             cancel,
         );
 
