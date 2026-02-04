@@ -92,11 +92,6 @@ where
         loop {
             tokio::select! {
                 Some(payload) = built_fb_payload_rx.recv() => {
-                    // Update engine tree state with locally built block payloads
-                    if let Err(e) = payload_events_handle.send(Events::BuiltPayload(payload.clone())) {
-                        warn!(e = ?e, "failed to send BuiltPayload event");
-                    }
-
                     // ignore error here; if p2p was disabled, the channel will be closed.
                     let _ = p2p_tx.send(payload.into()).await;
                 }
@@ -105,9 +100,6 @@ where
                     if let Err(e) = payload_events_handle.send(Events::BuiltPayload(payload.clone())) {
                         warn!(e = ?e, "failed to send BuiltPayload event");
                     }
-
-                    // ignore error here; if p2p was disabled, the channel will be closed.
-                    let _ = p2p_tx.send(payload.into()).await;
                 }
                 Some(message) = p2p_rx.recv() => {
                     match message {
