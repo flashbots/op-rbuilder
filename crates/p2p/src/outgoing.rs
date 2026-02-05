@@ -56,7 +56,7 @@ impl StreamsHandler {
                 .get_mut(&peer)
                 .expect("stream map must exist for peer");
             let Some(stream) = protocol_to_stream.remove(&protocol) else {
-                warn!("no stream for protocol {protocol:?} to peer {peer}");
+                warn!(target: "flashblocks-p2p", "no stream for protocol {protocol:?} to peer {peer}");
                 continue;
             };
             let stream = stream.compat();
@@ -85,12 +85,13 @@ impl StreamsHandler {
                     protocol_to_stream.insert(protocol.clone(), stream);
                 }
                 Err(e) => {
-                    warn!("failed to send payload to peer: {e:?}");
+                    warn!(target: "flashblocks-p2p", "failed to send payload to peer: {e:?}");
                 }
             }
         }
 
         debug!(
+            target: "flashblocks-p2p",
             "broadcasted message to {} peers",
             self.peers_to_stream.len()
         );

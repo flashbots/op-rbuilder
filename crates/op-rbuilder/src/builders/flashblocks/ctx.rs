@@ -9,6 +9,7 @@ use reth_basic_payload_builder::PayloadConfig;
 use reth_evm::EvmEnv;
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
+use reth_optimism_forks::OpHardforks;
 use reth_optimism_payload_builder::{
     OpPayloadBuilderAttributes,
     config::{OpDAConfig, OpGasLimitConfig},
@@ -57,6 +58,16 @@ impl OpPayloadSyncerCtx {
 
     pub(super) fn max_gas_per_txn(&self) -> Option<u64> {
         self.max_gas_per_txn
+    }
+
+    /// Returns true if regolith is active for the payload.
+    pub(super) fn is_regolith_active(&self, timestamp: u64) -> bool {
+        self.chain_spec.is_regolith_active_at_timestamp(timestamp)
+    }
+
+    /// Returns true if canyon is active for the payload.
+    pub(super) fn is_canyon_active(&self, timestamp: u64) -> bool {
+        self.chain_spec.is_canyon_active_at_timestamp(timestamp)
     }
 
     pub(super) fn into_op_payload_builder_ctx(

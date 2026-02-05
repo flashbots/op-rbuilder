@@ -67,6 +67,9 @@ pub struct FlashblocksConfig {
 
     /// Maximum number of peers for the p2p node
     pub p2p_max_peer_count: u32,
+
+    /// Maximum number of concurrent WebSocket subscribers
+    pub ws_subscriber_limit: Option<u16>,
 }
 
 impl Default for FlashblocksConfig {
@@ -87,6 +90,7 @@ impl Default for FlashblocksConfig {
             p2p_private_key_file: None,
             p2p_known_peers: None,
             p2p_max_peer_count: 50,
+            ws_subscriber_limit: None,
         }
     }
 }
@@ -128,6 +132,7 @@ impl TryFrom<OpRbuilderArgs> for FlashblocksConfig {
             p2p_private_key_file: args.flashblocks.p2p.p2p_private_key_file,
             p2p_known_peers: args.flashblocks.p2p.p2p_known_peers,
             p2p_max_peer_count: args.flashblocks.p2p.p2p_max_peer_count,
+            ws_subscriber_limit: args.flashblocks.ws_subscriber_limit,
         })
     }
 }

@@ -94,7 +94,7 @@ impl FlashblocksServiceBuilder {
                     tracing::error!(error = %e, "p2p node exited");
                 }
             });
-            tracing::info!(multiaddrs = ?multiaddrs, "flashblocks p2p node started");
+            tracing::info!(target: "payload_builder", multiaddrs = ?multiaddrs, "flashblocks p2p node started");
 
             let incoming_message_rx = incoming_message_rxs
                 .remove(&FLASHBLOCKS_STREAM_PROTOCOL)
@@ -117,6 +117,7 @@ impl FlashblocksServiceBuilder {
             self.0.specific.ws_addr,
             metrics.clone(),
             &task_metrics.websocket_publisher,
+            self.0.specific.ws_subscriber_limit,
         )
         .wrap_err("failed to create ws publisher")?
         .into();
@@ -162,6 +163,7 @@ impl FlashblocksServiceBuilder {
             payload_service.payload_events_handle(),
             syncer_ctx,
             ctx.provider().clone(),
+            ctx.task_executor().clone(),
             cancel,
         );
 
@@ -187,7 +189,7 @@ impl FlashblocksServiceBuilder {
             .clone()
             .spawn_metrics_collector(Duration::from_secs(1));
 
-        tracing::info!("Flashblocks payload builder service started");
+        tracing::info!(target: "payload_builder", "Flashblocks payload builder service started");
         Ok(payload_builder_handle)
     }
 }
@@ -212,7 +214,7 @@ where
             {
                 Ok(builder_tx) => Some(builder_tx),
                 Err(e) => {
-                    tracing::warn!(error = %e, "Failed to bootstrap flashtestations, builder will not include flashtestations txs");
+                    tracing::warn!(target: "payload_builder", error = %e, "Failed to bootstrap flashtestations, builder will not include flashtestations txs");
                     None
                 }
             }
