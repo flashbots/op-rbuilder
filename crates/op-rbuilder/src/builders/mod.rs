@@ -15,8 +15,6 @@ use crate::{
     tx_signer::Signer,
 };
 
-#[cfg(feature = "rules")]
-use crate::rules::SharedScoreIndex;
 
 mod builder_tx;
 mod context;
@@ -129,11 +127,6 @@ pub struct BuilderConfig<Specific: Clone> {
 
     /// Address gas limiter stuff
     pub gas_limiter_config: GasLimiterArgs,
-
-    /// Shared score index for O(k) block building (rules feature only).
-    /// When present, enables score-ordered transaction iteration.
-    #[cfg(feature = "rules")]
-    pub score_index: Option<SharedScoreIndex>,
 }
 
 impl<S: Debug + Clone> core::fmt::Debug for BuilderConfig<S> {
@@ -157,8 +150,6 @@ impl<S: Debug + Clone> core::fmt::Debug for BuilderConfig<S> {
             .field("specific", &self.specific)
             .field("max_gas_per_txn", &self.max_gas_per_txn)
             .field("gas_limiter_config", &self.gas_limiter_config);
-        #[cfg(feature = "rules")]
-        debug.field("score_index", &self.score_index.is_some());
         debug.finish()
     }
 }
@@ -177,8 +168,6 @@ impl<S: Default + Clone> Default for BuilderConfig<S> {
             sampling_ratio: 100,
             max_gas_per_txn: None,
             gas_limiter_config: GasLimiterArgs::default(),
-            #[cfg(feature = "rules")]
-            score_index: None,
         }
     }
 }
@@ -202,19 +191,7 @@ where
             max_gas_per_txn: args.max_gas_per_txn,
             gas_limiter_config: args.gas_limiter.clone(),
             specific: S::try_from(args)?,
-            // score_index is set separately after config creation
-            #[cfg(feature = "rules")]
-            score_index: None,
         })
-    }
-}
-
-impl<S: Clone> BuilderConfig<S> {
-    /// Set the shared score index for O(k) block building.
-    #[cfg(feature = "rules")]
-    pub fn with_score_index(mut self, score_index: Option<SharedScoreIndex>) -> Self {
-        self.score_index = score_index;
-        self
     }
 }
 

@@ -57,8 +57,6 @@ use tokio_util::sync::CancellationToken;
 
 #[cfg(feature = "rules")]
 use crate::pool::{CustomOpPoolBuilder, RuleBasedValidator};
-#[cfg(feature = "rules")]
-use crate::rules::new_shared_score_index;
 /// Represents a type that emulates a local in-process instance of the OP builder node.
 /// This node uses IPC as the communication channel for the RPC server Engine API.
 pub struct LocalInstance {
@@ -91,11 +89,6 @@ impl LocalInstance {
         args: OpRbuilderArgs,
         config: NodeConfig<OpChainSpec>,
     ) -> eyre::Result<Self> {
-        // Create score index for this test instance (rules feature only).
-        // Each test gets its own score index, preventing global state contamination.
-        #[cfg(feature = "rules")]
-        let score_index = new_shared_score_index();
-
         let mut args = args;
         let task_manager = task_manager();
         let op_node = OpNode::new(args.rollup_args.clone());
@@ -121,9 +114,6 @@ impl LocalInstance {
 
         let builder_config = BuilderConfig::<P::Config>::try_from(args.clone())
             .expect("Failed to convert rollup args to builder config");
-        // Set score index on builder config for O(k) block building
-        #[cfg(feature = "rules")]
-        let builder_config = builder_config.with_score_index(Some(score_index.clone()));
         let da_config = builder_config.da_config.clone();
         let gas_limit_config = builder_config.gas_limit_config.clone();
 
@@ -142,7 +132,6 @@ impl LocalInstance {
         #[cfg(feature = "rules")]
         let pool_builder = {
             let rollup_args = &args.rollup_args;
-            let score_index_for_validator = Some(score_index.clone());
             CustomOpPoolBuilder::<FBPooledTransaction>::default()
                 .with_enable_tx_conditional(
                     rollup_args.enable_tx_conditional || args.enable_revert_protection,
@@ -152,7 +141,7 @@ impl LocalInstance {
                     rollup_args.supervisor_safety_level,
                 )
                 .with_validator_wrapper(move |op_validator| {
-                    RuleBasedValidator::with_score_index(op_validator, score_index_for_validator)
+                    RuleBasedValidator::new(op_validator)
                 })
         };
 

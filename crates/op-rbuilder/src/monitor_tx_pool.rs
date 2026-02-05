@@ -5,36 +5,24 @@ use moka::future::Cache;
 use reth_transaction_pool::{AllTransactionsEvents, FullTransactionEvent};
 use tracing::info;
 
-#[cfg(feature = "rules")]
-use crate::rules::SharedScoreIndex;
-
-/// Monitor transaction pool events and update caches/indices accordingly.
+/// Monitor transaction pool events and update caches accordingly.
 ///
 /// # Arguments
 ///
 /// * `new_transactions` - Stream of transaction pool events
 /// * `reverted_cache` - Cache for tracking reverted transactions
-/// * `score_index` - Optional shared score index to update on tx removal (rules feature)
 pub(crate) async fn monitor_tx_pool(
     mut new_transactions: AllTransactionsEvents<FBPooledTransaction>,
     reverted_cache: Cache<B256, ()>,
-    #[cfg(feature = "rules")] score_index: Option<SharedScoreIndex>,
 ) {
     while let Some(event) = new_transactions.next().await {
-        transaction_event_log(
-            event,
-            &reverted_cache,
-            #[cfg(feature = "rules")]
-            score_index.as_ref(),
-        )
-        .await;
+        transaction_event_log(event, &reverted_cache).await;
     }
 }
 
 async fn transaction_event_log(
     event: FullTransactionEvent<FBPooledTransaction>,
     reverted_cache: &Cache<B256, ()>,
-    #[cfg(feature = "rules")] score_index: Option<&SharedScoreIndex>,
 ) {
     match event {
         FullTransactionEvent::Pending(hash) => {
@@ -57,12 +45,6 @@ async fn transaction_event_log(
             tx_hash,
             block_hash,
         } => {
-            // Remove from score index - transaction is no longer in pool
-            #[cfg(feature = "rules")]
-            if let Some(idx) = score_index {
-                idx.write().remove(&tx_hash);
-            }
-
             info!(
                 target = "monitoring",
                 tx_hash = tx_hash.to_string(),
@@ -75,12 +57,6 @@ async fn transaction_event_log(
             transaction,
             replaced_by,
         } => {
-            // Remove old transaction from score index - it's been replaced
-            #[cfg(feature = "rules")]
-            if let Some(idx) = score_index {
-                idx.write().remove(transaction.hash());
-            }
-
             info!(
                 target = "monitoring",
                 tx_hash = transaction.hash().to_string(),
@@ -90,12 +66,6 @@ async fn transaction_event_log(
             )
         }
         FullTransactionEvent::Discarded(hash) => {
-            // Remove from score index - transaction was discarded
-            #[cfg(feature = "rules")]
-            if let Some(idx) = score_index {
-                idx.write().remove(&hash);
-            }
-
             // add the transaction hash to the reverted cache to notify the
             // eth get transaction receipt method
             reverted_cache.insert(hash, ()).await;
@@ -108,12 +78,6 @@ async fn transaction_event_log(
             )
         }
         FullTransactionEvent::Invalid(hash) => {
-            // Remove from score index - transaction is invalid
-            #[cfg(feature = "rules")]
-            if let Some(idx) = score_index {
-                idx.write().remove(&hash);
-            }
-
             info!(
                 target = "monitoring",
                 tx_hash = hash.to_string(),

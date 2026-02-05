@@ -1,6 +1,4 @@
 use super::{config::FlashblocksConfig, wspub::WebSocketPublisher};
-#[cfg(feature = "rules")]
-use crate::rules::BestTransactionsWithScores;
 use crate::{
     builders::{
         BuilderConfig,
@@ -63,11 +61,6 @@ type BestPoolPayloadIter<P> = BestPayloadTransactions<
     Box<dyn BestTransactions<Item = Arc<ValidPoolTransaction<PoolTransactionOf<P>>>>>,
 >;
 
-// When rules feature is enabled, we use BestTransactionsWithScores for O(k) block building.
-// This wraps the base iterator and provides score-ordered iteration when score index has entries.
-#[cfg(feature = "rules")]
-type FlashblockPayloadIter<P> = BestTransactionsWithScores<P, BestPoolPayloadIter<P>>;
-#[cfg(not(feature = "rules"))]
 type FlashblockPayloadIter<P> = BestPoolPayloadIter<P>;
 
 #[derive(Debug, Default, Clone)]
@@ -225,29 +218,14 @@ where
     BuilderTx: BuilderTransactions<FlashblocksExtraCtx, FlashblocksExecutionInfo> + Send + Sync,
 {
     /// Creates a payload iterator for block building.
-    ///
-    /// When the `rules` feature is enabled, this wraps the base iterator with
-    /// `BestTransactionsWithScores` for O(k) block building when the score index has entries.
     fn create_payload_iter(
         &self,
         ctx: &OpPayloadBuilderCtx<FlashblocksExtraCtx>,
     ) -> FlashblockPayloadIter<Pool> {
-        let base_iter: BestPoolPayloadIter<Pool> = BestPayloadTransactions::new(
+        BestPayloadTransactions::new(
             self.pool
                 .best_transactions_with_attributes(ctx.best_transaction_attributes()),
-        );
-        #[cfg(feature = "rules")]
-        {
-            BestTransactionsWithScores::new(
-                self.pool.clone(),
-                base_iter,
-                self.config.score_index.as_ref(),
-            )
-        }
-        #[cfg(not(feature = "rules"))]
-        {
-            base_iter
-        }
+        )
     }
 
     fn get_op_payload_builder_ctx(

@@ -1,3 +1,5 @@
+#[cfg(feature = "rules")]
+use crate::rules::ScoreOrdering;
 use op_alloy_consensus::interop::SafetyLevel;
 use reth_chain_state::CanonStateSubscriptions;
 use reth_node_builder::{
@@ -8,17 +10,15 @@ use reth_optimism_chainspec::OpHardforks;
 use reth_optimism_node::OpPoolBuilder;
 use reth_optimism_txpool::supervisor::{DEFAULT_SUPERVISOR_URL, SupervisorClient};
 use reth_tracing::tracing::{debug, info};
-use reth_transaction_pool::{
-    CoinbaseTipOrdering, Pool, TransactionValidationTaskExecutor, TransactionValidator,
-};
+#[cfg(not(feature = "rules"))]
+use reth_transaction_pool::CoinbaseTipOrdering;
+use reth_transaction_pool::{Pool, TransactionValidationTaskExecutor, TransactionValidator};
 use std::marker::PhantomData;
 
-// Note: Pool uses standard CoinbaseTipOrdering. Rule-based scoring is handled
-// via a side index populated at validation time (see rules::score_index).
-// Block building uses BestTransactionsWithScores to iterate in score order.
+#[cfg(feature = "rules")]
+pub type PoolOrdering<T> = ScoreOrdering<T>;
 
-/// Pool ordering type - uses standard CoinbaseTipOrdering.
-/// Rule-based ordering is handled by the score index and BestTransactionsWithScores.
+#[cfg(not(feature = "rules"))]
 pub type PoolOrdering<T> = CoinbaseTipOrdering<T>;
 
 /// Marker type indicating no validator wrapper has been set
@@ -200,6 +200,16 @@ where
 
         let final_pool_config = pool_config_overrides.clone().apply(ctx.pool_config());
 
+        #[cfg(feature = "rules")]
+        let transaction_pool = reth_node_builder::components::TxPoolBuilder::new(ctx)
+            .with_validator(final_validator)
+            .build_with_ordering_and_spawn_maintenance_task(
+                ScoreOrdering::default(),
+                blob_store,
+                final_pool_config,
+            )?;
+
+        #[cfg(not(feature = "rules"))]
         let transaction_pool = reth_node_builder::components::TxPoolBuilder::new(ctx)
             .with_validator(final_validator)
             .build_and_spawn_maintenance_task(blob_store, final_pool_config)?;

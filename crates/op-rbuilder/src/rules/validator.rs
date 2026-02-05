@@ -3,24 +3,17 @@
 //! This validator wraps any base validator and adds custom ingress filtering in front of it. The
 //! additional checks include rule-based deny lists backed by the shared global ruleset as well as
 //! an optional HTTP call-out for bespoke validation logic.
-//!
-//! When validation succeeds, this validator also computes the transaction's rule-based score
-//! and inserts it into the shared score index for O(k) block building.
 
-use crate::rules::{global_ruleset, metrics::RulesMetrics, score_index::SharedScoreIndex};
-use alloy_consensus::Transaction as ConsensusTx;
+use crate::rules::global_ruleset;
+use crate::rules::metrics::RulesMetrics;
 use reqwest::Client;
 use reth_primitives_traits::{Block, SealedBlock};
 use reth_transaction_pool::{
     PoolTransaction, TransactionOrigin, TransactionValidationOutcome, TransactionValidator,
     error::{InvalidPoolTransactionError, PoolTransactionError},
 };
-use std::{
-    any::Any,
-    fmt,
-    time::{Duration, Instant},
-};
-use tracing::{debug, trace, warn};
+use std::{any::Any, fmt, time::{Duration, Instant}};
+use tracing::{debug, warn};
 
 /// Rule-based transaction validator that applies ingress-phase rules and optional external checks.
 ///
@@ -30,7 +23,7 @@ use tracing::{debug, trace, warn};
 ///
 /// Both checks happen before delegating to the wrapped validator. When rules are disabled or no
 /// external validation is configured, the validator acts as a simple passthrough.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct RuleBasedValidator<V> {
     /// The wrapped validator (typically `OpTransactionValidator`).
     inner: V,
@@ -38,24 +31,20 @@ pub struct RuleBasedValidator<V> {
     client: Client,
     /// Metrics for rule-based validation.
     metrics: RulesMetrics,
-    /// Shared score index for O(k) block building.
-    /// When present, transaction scores are inserted at validation time.
-    score_index: Option<SharedScoreIndex>,
+}
+
+impl<V: Clone> Clone for RuleBasedValidator<V> {
+    fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+            client: self.client.clone(),
+            metrics: self.metrics.clone(),
+        }
+    }
 }
 
 impl<V> RuleBasedValidator<V> {
-    /// Create a new rule-based validator without score indexing.
-    ///
-    /// Use [`with_score_index`] if you need O(k) block building with score-ordered iteration.
     pub fn new(inner: V) -> Self {
-        Self::with_score_index(inner, None)
-    }
-
-    /// Create a new rule-based validator with optional score indexing.
-    ///
-    /// When `score_index` is provided, transaction scores are computed and stored
-    /// at validation time, enabling O(k) block building via [`ScoreOrderedTransactions`].
-    pub fn with_score_index(inner: V, score_index: Option<SharedScoreIndex>) -> Self {
         let client = Client::builder()
             .timeout(Duration::from_secs(1))
             .build()
@@ -64,7 +53,6 @@ impl<V> RuleBasedValidator<V> {
             inner,
             client,
             metrics: RulesMetrics::default(),
-            score_index,
         }
     }
 
@@ -234,7 +222,6 @@ impl PoolTransactionError for RuleValidationError {
 impl<V> TransactionValidator for RuleBasedValidator<V>
 where
     V: TransactionValidator,
-    V::Transaction: ConsensusTx,
 {
     type Transaction = V::Transaction;
 
@@ -257,40 +244,7 @@ where
             );
         }
 
-        // Compute score BEFORE delegating to inner validator, while we still have the transaction
-        let ruleset = global_ruleset();
-        let score_data = if self.score_index.is_some() && ruleset.has_scoring_rules() {
-            let tx_hash = *transaction.hash();
-            let sender = transaction.sender();
-            let score = ruleset.score_transaction(&transaction);
-            let tip = transaction.max_priority_fee_per_gas().unwrap_or(0);
-            Some((tx_hash, sender, score, tip))
-        } else {
-            None
-        };
-
-        // Delegate to inner validator
-        let outcome = self.inner.validate_transaction(origin, transaction).await;
-
-        // If validation succeeded, insert score into the shared index
-        // This enables O(k) block building by pre-scoring transactions at ingress
-        if let TransactionValidationOutcome::Valid { .. } = outcome
-            && let (Some(score_index), Some((tx_hash, sender, score, tip))) =
-                (&self.score_index, score_data)
-        {
-            score_index.write().upsert(tx_hash, sender, score, tip);
-
-            trace!(
-                target: "rule_validator",
-                %tx_hash,
-                %sender,
-                score,
-                tip,
-                "Inserted transaction score into index"
-            );
-        }
-
-        outcome
+        self.inner.validate_transaction(origin, transaction).await
     }
 
     fn on_new_head_block<B>(&self, new_tip_block: &SealedBlock<B>)
