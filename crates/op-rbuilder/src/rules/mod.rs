@@ -43,7 +43,8 @@ pub use ordering::{ScoreOrdering, ScorePriority};
 pub use registry::{FetchResult, RuleFetcher, RuleRegistry, file::FileRuleRegistry};
 pub use state::{
     add_deny_rule, add_scoring_rule, add_to_alias_group, clear_rules, get_alias_group,
-    global_ruleset, list_alias_groups, set_global_ruleset, update_global_ruleset,
+    get_tx_score, global_ruleset, insert_tx_score, list_alias_groups, remove_tx_score,
+    set_global_ruleset, update_global_ruleset,
 };
 pub use types::{AddrSet, AddressAliases, BoostRule, DenyRule, MatchType, RuleSet, Rules};
 pub use validator::RuleBasedValidator;

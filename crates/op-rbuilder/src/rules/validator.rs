@@ -6,6 +6,7 @@
 
 use crate::rules::global_ruleset;
 use crate::rules::metrics::RulesMetrics;
+use crate::rules::state::insert_tx_score;
 use reqwest::Client;
 use reth_primitives_traits::{Block, SealedBlock};
 use reth_transaction_pool::{
@@ -242,6 +243,13 @@ where
                 transaction,
                 InvalidPoolTransactionError::other(RuleValidationError::new(e, false)),
             );
+        }
+
+        let ruleset = global_ruleset();
+        if ruleset.has_scoring_rules() {
+            let tx_hash = *transaction.hash();
+            let score = ruleset.score_transaction(&transaction);
+            insert_tx_score(tx_hash, score);
         }
 
         self.inner.validate_transaction(origin, transaction).await

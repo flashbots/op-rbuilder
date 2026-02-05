@@ -5,6 +5,9 @@ use moka::future::Cache;
 use reth_transaction_pool::{AllTransactionsEvents, FullTransactionEvent};
 use tracing::info;
 
+#[cfg(feature = "rules")]
+use crate::rules::remove_tx_score;
+
 /// Monitor transaction pool events and update caches accordingly.
 ///
 /// # Arguments
@@ -45,6 +48,9 @@ async fn transaction_event_log(
             tx_hash,
             block_hash,
         } => {
+            #[cfg(feature = "rules")]
+            remove_tx_score(&tx_hash);
+
             info!(
                 target = "monitoring",
                 tx_hash = tx_hash.to_string(),
@@ -57,6 +63,9 @@ async fn transaction_event_log(
             transaction,
             replaced_by,
         } => {
+            #[cfg(feature = "rules")]
+            remove_tx_score(transaction.hash());
+
             info!(
                 target = "monitoring",
                 tx_hash = transaction.hash().to_string(),
@@ -66,6 +75,9 @@ async fn transaction_event_log(
             )
         }
         FullTransactionEvent::Discarded(hash) => {
+            #[cfg(feature = "rules")]
+            remove_tx_score(&hash);
+
             // add the transaction hash to the reverted cache to notify the
             // eth get transaction receipt method
             reverted_cache.insert(hash, ()).await;
@@ -78,6 +90,9 @@ async fn transaction_event_log(
             )
         }
         FullTransactionEvent::Invalid(hash) => {
+            #[cfg(feature = "rules")]
+            remove_tx_score(&hash);
+
             info!(
                 target = "monitoring",
                 tx_hash = hash.to_string(),

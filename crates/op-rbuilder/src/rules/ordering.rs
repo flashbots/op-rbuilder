@@ -1,4 +1,4 @@
-use crate::rules::global_ruleset;
+use crate::rules::state::get_tx_score;
 use reth_transaction_pool::{PoolTransaction, Priority, TransactionOrdering};
 use std::{cmp::Ordering, fmt::Debug, marker::PhantomData};
 
@@ -25,16 +25,11 @@ impl PartialOrd for ScorePriority {
     }
 }
 
-/// Transaction ordering that integrates rule-based scoring directly into the pool.
+/// Transaction ordering that uses pre-computed scores from the global score cache.
 ///
-/// On each call to `priority()`, reads the current global ruleset and computes
-/// a composite score: (rule_score, effective_tip). When no scoring rules are
-/// configured, all transactions get score=0 and ordering degrades gracefully
-/// to tip-based (identical to `CoinbaseTipOrdering`).
-///
-/// The pool's `PendingPool` calls `priority()` when:
-/// - A transaction is added (`add_transaction`)
-/// - Base fee changes (`update_base_fee`) — which also re-scores with latest rules
+/// Scores are inserted at validation time by [`RuleBasedValidator`] and looked up
+/// here via [`get_tx_score`]. Transactions without a cached score get score=0,
+/// degrading to tip-based ordering (identical to `CoinbaseTipOrdering`).
 #[derive(Debug)]
 pub struct ScoreOrdering<T>(PhantomData<T>);
 
@@ -62,13 +57,7 @@ where
         transaction: &Self::Transaction,
         base_fee: u64,
     ) -> Priority<Self::PriorityValue> {
-        let ruleset = global_ruleset();
-        let score = if ruleset.has_scoring_rules() {
-            ruleset.score_transaction(transaction)
-        } else {
-            0
-        };
-
+        let score = get_tx_score(transaction.hash()).unwrap_or(0);
         let effective_tip = transaction.effective_tip_per_gas(base_fee).unwrap_or(0);
 
         Priority::Value(ScorePriority {
