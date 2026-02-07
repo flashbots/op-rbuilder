@@ -22,23 +22,62 @@ impl FlashblockScheduler {
         block_time: Duration,
         payload_timestamp: u64,
     ) -> Self {
-        if config.build_at_interval_end {
-            let timing = calculate_flashblocks_timing(config, block_time, payload_timestamp);
-            Self {
-                target_flashblocks: timing.flashblocks_per_block,
-                first_flashblock_offset: timing.first_flashblock_offset,
-                flashblocks_deadline: timing.flashblocks_deadline,
-                config: config.clone(),
-            }
-        } else {
-            let (target_flashblocks, first_flashblock_offset) =
-                calculate_flashblocks_legacy(config, block_time, payload_timestamp);
-            Self {
+        // Dynamic adjustment disabled
+        if config.fixed {
+            let target_flashblocks = (block_time.as_millis() / config.interval.as_millis()) as u64;
+            let (first_flashblock_offset, flashblocks_deadline) = if config.build_at_interval_end {
+                let offset = apply_offset(config.interval, config.send_offset_ms);
+                (
+                    offset,
+                    block_time.saturating_sub(Duration::from_millis(config.end_buffer_ms)),
+                )
+            } else {
+                (config.interval - config.leeway_time, block_time)
+            };
+
+            return Self {
                 target_flashblocks,
                 first_flashblock_offset,
-                flashblocks_deadline: block_time,
+                flashblocks_deadline,
                 config: config.clone(),
-            }
+            };
+        }
+
+        // Dynamic adjustment enabled, calculate timing based on payload timestamp and current system time
+        let reference_system = std::time::SystemTime::now();
+        let target_time = std::time::SystemTime::UNIX_EPOCH
+            + Duration::from_secs(payload_timestamp)
+            - if !config.build_at_interval_end {
+                config.leeway_time
+            } else {
+                Duration::ZERO
+            };
+
+        let remaining_time = target_time
+            .duration_since(reference_system)
+            .ok()
+            .filter(|duration| duration.as_millis() > 0)
+            .unwrap_or(block_time)
+            .min(block_time);
+
+        let (target_flashblocks, first_flashblock_offset) =
+            calculate_first_flashblock_offset(remaining_time, config.interval);
+
+        let (first_flashblock_offset, flashblocks_deadline) = if config.build_at_interval_end {
+            let deadline =
+                remaining_time.saturating_sub(Duration::from_millis(config.end_buffer_ms));
+            let adjusted_offset = apply_offset(first_flashblock_offset, config.send_offset_ms);
+            let adjusted_deadline = apply_offset(deadline, config.send_offset_ms);
+            (adjusted_offset, adjusted_deadline)
+        } else {
+            (first_flashblock_offset, block_time)
+        };
+
+        Self {
+            target_flashblocks,
+            first_flashblock_offset,
+            flashblocks_deadline,
+            config: config.clone(),
         }
     }
 
@@ -102,155 +141,35 @@ impl FlashblockScheduler {
     }
 }
 
-struct FlashblocksTiming {
-    /// Number of flashblocks to build in this block
-    pub flashblocks_per_block: u64,
-    /// Time until the first flashblock should be built
-    pub first_flashblock_offset: Duration,
-    /// Total time available for flashblock building (deadline)
-    pub flashblocks_deadline: Duration,
+fn apply_offset(duration: Duration, offset_ms: i64) -> Duration {
+    let offset_delta = offset_ms.unsigned_abs();
+    if offset_ms >= 0 {
+        duration.saturating_add(Duration::from_millis(offset_delta))
+    } else {
+        duration.saturating_sub(Duration::from_millis(offset_delta))
+    }
 }
 
-/// Calculate number of flashblocks and time until first flashblock and deadline for building flashblocks
-/// If dynamic is enabled this function will take time drift of FCU arrival into the account.
-fn calculate_flashblocks_timing(
-    config: &FlashblocksConfig,
-    block_time: Duration,
-    timestamp: u64,
-) -> FlashblocksTiming {
-    let target_flashblocks = {
-        if block_time.as_millis() == 0 {
-            0
-        } else {
-            (block_time.as_millis() / config.interval.as_millis()) as u64
-        }
-    };
-
-    let offset_delta = config.send_offset_ms.unsigned_abs();
-    if config.fixed {
-        let offset = if config.send_offset_ms > 0 {
-            config
-                .interval
-                .saturating_add(Duration::from_millis(offset_delta))
-        } else {
-            config
-                .interval
-                .saturating_sub(Duration::from_millis(offset_delta))
-        };
-        return FlashblocksTiming {
-            flashblocks_per_block: target_flashblocks,
-            first_flashblock_offset: offset,
-            flashblocks_deadline: block_time
-                .saturating_sub(Duration::from_millis(config.end_buffer_ms)),
-        };
-    }
-
-    let target_time = std::time::SystemTime::UNIX_EPOCH + Duration::from_secs(timestamp);
-    let now = std::time::SystemTime::now();
-    let Some(remaining_time) = target_time
-        .duration_since(now)
-        .ok()
-        .filter(|duration| duration.as_millis() > 0)
-    else {
-        return FlashblocksTiming {
-            flashblocks_per_block: target_flashblocks,
-            first_flashblock_offset: config.interval,
-            flashblocks_deadline: block_time
-                .saturating_sub(Duration::from_millis(config.end_buffer_ms)),
-        };
-    };
+fn calculate_first_flashblock_offset(
+    remaining_time: Duration,
+    interval: Duration,
+) -> (u64, Duration) {
+    let remaining_time_ms = remaining_time.as_millis() as u64;
+    let interval_ms = interval.as_millis() as u64;
 
     // This is extra check to ensure that we would account at least for block time in case we have any timer discrepancies.
-    let remaining_time = remaining_time.min(block_time).as_millis() as u64;
-    let interval = config.interval.as_millis() as u64;
-    let first_flashblock_offset = remaining_time.rem(interval);
-    let (flashblocks_per_block, offset) = if first_flashblock_offset == 0 {
+    let first_flashblock_offset_ms = remaining_time_ms.rem(interval_ms);
+    if first_flashblock_offset_ms == 0 {
         // We have perfect division, so we use interval as first fb offset
         (
-            remaining_time.div(interval),
-            Duration::from_millis(interval),
+            remaining_time_ms.div(interval_ms),
+            Duration::from_millis(interval_ms),
         )
     } else {
         // Non-perfect division, set the first flashblock offset to the remainder of the division
         (
-            remaining_time.div(interval) + 1,
-            Duration::from_millis(first_flashblock_offset),
-        )
-    };
-    // Apply send_offset_ms to the timer start time.
-    // Positive values = send later, negative values = send earlier.
-    let deadline = Duration::from_millis(remaining_time.saturating_sub(config.end_buffer_ms));
-    let (adjusted_offset, adjusted_deadline) = if config.send_offset_ms >= 0 {
-        (
-            offset.saturating_add(Duration::from_millis(offset_delta)),
-            deadline.saturating_add(Duration::from_millis(offset_delta)),
-        )
-    } else {
-        (
-            offset.saturating_sub(Duration::from_millis(offset_delta)),
-            deadline.saturating_sub(Duration::from_millis(offset_delta)),
-        )
-    };
-    FlashblocksTiming {
-        flashblocks_per_block,
-        first_flashblock_offset: adjusted_offset,
-        flashblocks_deadline: adjusted_deadline,
-    }
-}
-
-/// Calculate number of flashblocks.
-/// If dynamic is enabled this function will take time drift into the account.
-/// TODO: deprecate this flashblocks timing calculation
-fn calculate_flashblocks_legacy(
-    config: &FlashblocksConfig,
-    block_time: Duration,
-    timestamp: u64,
-) -> (u64, Duration) {
-    let target_flashblocks = {
-        if block_time.as_millis() == 0 {
-            0
-        } else {
-            (block_time.as_millis() / config.interval.as_millis()) as u64
-        }
-    };
-    if config.fixed {
-        return (
-            target_flashblocks,
-            // We adjust first FB to ensure that we have at least some time to make all FB in time
-            config.interval - config.leeway_time,
-        );
-    }
-
-    // We use this system time to determine remining time to build a block
-    // Things to consider:
-    // FCU(a) - FCU with attributes
-    // FCU(a) could arrive with `block_time - fb_time < delay`. In this case we could only produce 1 flashblock
-    // FCU(a) could arrive with `delay < fb_time` - in this case we will shrink first flashblock
-    // FCU(a) could arrive with `fb_time < delay < block_time - fb_time` - in this case we will issue less flashblocks
-    let target_time =
-        std::time::SystemTime::UNIX_EPOCH + Duration::from_secs(timestamp) - config.leeway_time;
-    let now = std::time::SystemTime::now();
-    let Some(time_drift) = target_time
-        .duration_since(now)
-        .ok()
-        .filter(|duration| duration.as_millis() > 0)
-    else {
-        return (target_flashblocks, config.interval);
-    };
-
-    // This is extra check to ensure that we would account at least for block time in case we have any timer discrepancies.
-    let time_drift = time_drift.min(block_time);
-    let interval = config.interval.as_millis() as u64;
-    let time_drift = time_drift.as_millis() as u64;
-    let first_flashblock_offset = time_drift.rem(interval);
-    if first_flashblock_offset == 0 {
-        // We have perfect division, so we use interval as first fb offset
-        (time_drift.div(interval), Duration::from_millis(interval))
-    } else {
-        // Non-perfect division, so we account for it.
-        (
-            time_drift.div(interval) + 1,
-            Duration::from_millis(first_flashblock_offset),
+            remaining_time_ms.div(interval_ms) + 1,
+            Duration::from_millis(first_flashblock_offset_ms),
         )
     }
 }
