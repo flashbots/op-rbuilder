@@ -454,6 +454,12 @@ where
         let timestamp = config.attributes.timestamp();
         let flashblock_scheduler =
             FlashblockScheduler::new(&self.config.specific, self.config.block_time, timestamp);
+        info!(
+            target: "payload_builder",
+            payload_id = ?fb_payload.payload_id,
+            schedule = ?flashblock_scheduler,
+            "Computed flashblock timing schedule"
+        );
         let target_flashblocks = flashblock_scheduler.target_flashblocks();
 
         ctx.metrics.reduced_flashblocks_number.record(
@@ -513,8 +519,6 @@ where
         // Process flashblocks - block on async channel receive
         loop {
             // Wait for signal before building flashblock.
-            // If build_at_interval_end is false, an immediate signal is sent so we don't wait.
-            // If build_at_interval_end is true, we wait for the timer tick (first_flashblock_offset).
             if let Ok(new_fb_cancel) = rx.recv() {
                 debug!(
                     target: "payload_builder",
@@ -540,11 +544,6 @@ where
                 )
             };
             let _entered = fb_span.enter();
-
-            if ctx.flashblock_index() > ctx.target_flashblock_count() {
-                self.record_flashblocks_metrics(&ctx, &info, target_flashblocks, &span);
-                return Ok(());
-            }
 
             // Build flashblock after receiving signal
             let next_flashblocks_ctx = match self.build_next_flashblock(
