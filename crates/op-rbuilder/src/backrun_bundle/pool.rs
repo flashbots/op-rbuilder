@@ -3,6 +3,7 @@ use crate::primitives::bundle::Bundle;
 use reth_basic_payload_builder::PayloadConfig;
 use reth_optimism_node::OpPayloadBuilderAttributes;
 use reth_optimism_primitives::OpTransactionSigned;
+use reth_primitives_traits::{Block, RecoveredBlock};
 use std::sync::Arc;
 
 #[derive(Debug, Clone)]
@@ -26,6 +27,10 @@ impl BackrunBundleGlobalPool {
 
     pub fn add_rpc_backrun_bundle(&self, _bundle: Bundle) {
         // dummy: does nothing
+    }
+
+    pub fn on_canonical_state_change<B: Block>(&self, _tip: &RecoveredBlock<B>) {
+        // dummy: does nothing for now
     }
 
     pub fn payload_pool(

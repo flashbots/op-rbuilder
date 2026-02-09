@@ -3,7 +3,10 @@ use reth_optimism_rpc::OpEthApiBuilder;
 
 use crate::{
     args::*,
-    backrun_bundle::rpc::{BackrunBundleApiServer, BackrunBundleRpc},
+    backrun_bundle::{
+        maintain::maintain_backrun_bundle_pool_future,
+        rpc::{BackrunBundleApiServer, BackrunBundleRpc},
+    },
     builders::{BuilderConfig, BuilderMode, FlashblocksBuilder, PayloadBuilder, StandardBuilder},
     metrics::{VERSION, record_flag_gauge_metrics},
     monitor_tx_pool::monitor_tx_pool,
@@ -22,6 +25,7 @@ use reth_optimism_node::{
     OpNode,
     node::{OpAddOns, OpAddOnsBuilder, OpEngineValidatorBuilder, OpPoolBuilder},
 };
+use reth_provider::CanonStateSubscriptions;
 use reth_transaction_pool::TransactionPool;
 use std::{marker::PhantomData, sync::Arc};
 
@@ -111,6 +115,7 @@ where
         let reverted_cache = Cache::builder().max_capacity(100).build();
         let reverted_cache_copy = reverted_cache.clone();
         let backrun_bundle_pool = builder_config.backrun_bundle_pool.clone();
+        let backrun_bundle_pool_maintain = backrun_bundle_pool.clone();
 
         let mut addons: OpAddOns<
             _,
@@ -180,6 +185,15 @@ where
                     let task = monitor_tx_pool(listener, reverted_cache_copy);
                     ctx.task_executor.spawn_critical("txlogging", task);
                 }
+
+                let chain_events = ctx.provider.canonical_state_stream();
+                let task_executor = ctx.task_executor.clone();
+                ctx.task_executor.spawn(maintain_backrun_bundle_pool_future(
+                    backrun_bundle_pool_maintain,
+                    chain_events,
+                    task_executor,
+                ));
+
                 Ok(())
             })
             .launch()
