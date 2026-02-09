@@ -9,6 +9,7 @@ use reth_optimism_payload_builder::config::{OpDAConfig, OpGasLimitConfig};
 
 use crate::{
     args::OpRbuilderArgs,
+    backrun_bundle::pool::BackrunBundleGlobalPool,
     flashtestations::args::FlashtestationsArgs,
     gas_limiter::args::GasLimiterArgs,
     traits::{NodeBounds, PoolBounds},
@@ -126,6 +127,9 @@ pub struct BuilderConfig<Specific: Clone> {
 
     /// Address gas limiter stuff
     pub gas_limiter_config: GasLimiterArgs,
+
+    /// Global pool for backrun bundles
+    pub backrun_bundle_pool: BackrunBundleGlobalPool,
 }
 
 impl<S: Debug + Clone> core::fmt::Debug for BuilderConfig<S> {
@@ -148,6 +152,7 @@ impl<S: Debug + Clone> core::fmt::Debug for BuilderConfig<S> {
             .field("specific", &self.specific)
             .field("max_gas_per_txn", &self.max_gas_per_txn)
             .field("gas_limiter_config", &self.gas_limiter_config)
+            .field("backrun_bundle_pool", &self.backrun_bundle_pool)
             .finish()
     }
 }
@@ -166,6 +171,7 @@ impl<S: Default + Clone> Default for BuilderConfig<S> {
             sampling_ratio: 100,
             max_gas_per_txn: None,
             gas_limiter_config: GasLimiterArgs::default(),
+            backrun_bundle_pool: BackrunBundleGlobalPool::default(),
         }
     }
 }
@@ -188,6 +194,7 @@ where
             sampling_ratio: args.telemetry.sampling_ratio,
             max_gas_per_txn: args.max_gas_per_txn,
             gas_limiter_config: args.gas_limiter.clone(),
+            backrun_bundle_pool: BackrunBundleGlobalPool::new(args.backrun_bundle.clone()),
             specific: S::try_from(args)?,
         })
     }

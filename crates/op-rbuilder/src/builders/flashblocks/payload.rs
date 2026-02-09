@@ -304,6 +304,8 @@ where
             .next_evm_env(&config.parent_header, &block_env_attributes)
             .wrap_err("failed to create next evm env")?;
 
+        let backrun_bundle_pool = self.config.backrun_bundle_pool.payload_pool(&config);
+
         Ok(OpPayloadBuilderCtx::<FlashblocksExtraCtx> {
             evm_config: self.evm_config.clone(),
             chain_spec,
@@ -318,6 +320,7 @@ where
             extra_ctx,
             max_gas_per_txn: self.config.max_gas_per_txn,
             address_gas_limiter: self.address_gas_limiter.clone(),
+            backrun_bundle_pool,
         })
     }
 

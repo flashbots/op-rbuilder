@@ -238,6 +238,8 @@ where
             .next_evm_env(&config.parent_header, &block_env_attributes)
             .map_err(PayloadBuilderError::other)?;
 
+        let backrun_bundle_pool = self.config.backrun_bundle_pool.payload_pool(&config);
+
         let ctx = OpPayloadBuilderCtx {
             evm_config: self.evm_config.clone(),
             da_config: self.config.da_config.clone(),
@@ -252,6 +254,7 @@ where
             extra_ctx: Default::default(),
             max_gas_per_txn: self.config.max_gas_per_txn,
             address_gas_limiter: self.address_gas_limiter.clone(),
+            backrun_bundle_pool,
         };
 
         let builder = OpBuilder::new(best);

@@ -3,6 +3,7 @@ use reth_optimism_rpc::OpEthApiBuilder;
 
 use crate::{
     args::*,
+    backrun_bundle::rpc::{BackrunBundleApiServer, BackrunBundleRpc},
     builders::{BuilderConfig, BuilderMode, FlashblocksBuilder, PayloadBuilder, StandardBuilder},
     metrics::{VERSION, record_flag_gauge_metrics},
     monitor_tx_pool::monitor_tx_pool,
@@ -109,6 +110,7 @@ where
         let op_node = OpNode::new(rollup_args.clone());
         let reverted_cache = Cache::builder().max_capacity(100).build();
         let reverted_cache_copy = reverted_cache.clone();
+        let backrun_bundle_pool = builder_config.backrun_bundle_pool.clone();
 
         let mut addons: OpAddOns<
             _,
@@ -163,6 +165,10 @@ where
                     ctx.modules
                         .add_or_replace_configured(revert_protection_ext.into_rpc())?;
                 }
+
+                let backrun_rpc = BackrunBundleRpc::new(backrun_bundle_pool.clone());
+                ctx.modules
+                    .add_or_replace_configured(backrun_rpc.into_rpc())?;
 
                 Ok(())
             })
