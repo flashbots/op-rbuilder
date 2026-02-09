@@ -104,10 +104,21 @@ RUN case "$TARGETPLATFORM" in \
     CXXFLAGS="-D__TIME__=\"\" -D__DATE__=\"\"" \
     cargo build --release --locked --features="$FEATURES" --package=${RBUILDER_BIN} --target "${ARCH_TAG}"
 
+FROM debian:12.13 AS debian
+
+WORKDIR /app/lib
+
+RUN apt-get update && \
+    apt-get install --yes zlib1g
+
+RUN if [ -f /lib/aarch64-linux-gnu/libz.so.1 ]; then mkdir /app/lib/aarch64-linux-gnu; cp /lib/aarch64-linux-gnu/libz.so.1 /app/lib/; fi
+RUN if [ -f  /lib/x86_64-linux-gnu/libz.so.1 ]; then mkdir  /app/lib/x86_64-linux-gnu; cp  /lib/x86_64-linux-gnu/libz.so.1 /app/lib/; fi
+
 # Runtime container for rbuilder
 FROM gcr.io/distroless/cc-debian12 AS rbuilder-runtime
 ARG RBUILDER_BIN
 WORKDIR /app
+COPY --from=debian /app/lib/* /lib/
 COPY --from=rbuilder /app/target/release/${RBUILDER_BIN} /app/rbuilder
 ENTRYPOINT ["/app/rbuilder"]
 
@@ -115,5 +126,6 @@ ENTRYPOINT ["/app/rbuilder"]
 FROM gcr.io/distroless/cc-debian12 AS rbuilder-reproducible-runtime
 ARG RBUILDER_BIN
 WORKDIR /app
+COPY --from=debian /app/lib/* /lib/
 COPY --from=rbuilder-reproducible /app/target/*/release/${RBUILDER_BIN} /app/rbuilder
 ENTRYPOINT ["/app/rbuilder"]
