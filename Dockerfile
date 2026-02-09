@@ -9,7 +9,7 @@
 ARG FEATURES
 ARG RBUILDER_BIN="op-rbuilder"
 
-FROM rust:1.92 AS base
+FROM rust:1.92-bookworm AS base
 ARG TARGETPLATFORM
 
 RUN apt-get update \
@@ -105,15 +105,17 @@ RUN case "$TARGETPLATFORM" in \
     cargo build --release --locked --features="$FEATURES" --package=${RBUILDER_BIN} --target "${ARCH_TAG}"
 
 # Runtime container for rbuilder
-FROM gcr.io/distroless/cc-debian12 AS rbuilder-runtime
+FROM debian:bookworm-slim AS rbuilder-runtime
 ARG RBUILDER_BIN
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY --from=rbuilder /app/target/release/${RBUILDER_BIN} /app/rbuilder
 ENTRYPOINT ["/app/rbuilder"]
 
 # Reproducible runtime container for rbuilder
-FROM gcr.io/distroless/cc-debian12 AS rbuilder-reproducible-runtime
+FROM debian:bookworm-slim AS rbuilder-reproducible-runtime
 ARG RBUILDER_BIN
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY --from=rbuilder-reproducible /app/target/*/release/${RBUILDER_BIN} /app/rbuilder
 ENTRYPOINT ["/app/rbuilder"]
