@@ -6,14 +6,17 @@ use libp2p_stream::IncomingStreams;
 
 use eyre::Context;
 use libp2p::{
-    PeerId, Swarm, Transport as _,
+    PeerId, Swarm, Transport as _, dns,
     identity::{self, ed25519},
     noise,
     swarm::SwarmEvent,
     tcp, yamux,
 };
 use multiaddr::Protocol;
-use std::{collections::HashMap, time::Duration};
+use std::{
+    collections::{HashMap, HashSet},
+    time::Duration,
+};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, warn};
@@ -21,6 +24,7 @@ use tracing::{debug, warn};
 pub use libp2p::{Multiaddr, StreamProtocol};
 
 const DEFAULT_MAX_PEER_COUNT: u32 = 50;
+const DEFAULT_PEER_RETRY_INTERVAL: Duration = Duration::from_secs(60);
 
 /// A message that can be sent between peers.
 pub trait Message:
@@ -119,6 +123,10 @@ impl<M: Message + 'static> Node<M> {
                 .wrap_err("swarm failed to listen on multiaddr")?;
         }
 
+        let mut known_peers_info = Vec::new();
+        let mut retry_interval = tokio::time::interval(DEFAULT_PEER_RETRY_INTERVAL);
+        retry_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
         for mut address in known_peers {
             let peer_id = match address.pop() {
                 Some(multiaddr::Protocol::P2p(peer_id)) => peer_id,
@@ -128,8 +136,9 @@ impl<M: Message + 'static> Node<M> {
             };
             swarm.add_peer_address(peer_id, address.clone());
             swarm
-                .dial(address)
+                .dial(address.clone())
                 .wrap_err("swarm failed to dial known peer")?;
+            known_peers_info.push((peer_id, address));
         }
 
         let handles = incoming_streams_handlers
@@ -141,15 +150,28 @@ impl<M: Message + 'static> Node<M> {
             tokio::select! {
                 biased;
                 _ = cancellation_token.cancelled() => {
-                    debug!("cancellation token triggered, shutting down node");
+                    debug!(target: "flashblocks-p2p", "cancellation token triggered, shutting down node");
                     handles.into_iter().for_each(|h| h.abort());
                     break Ok(());
                 }
+                _ = retry_interval.tick() => {
+                    // Check for disconnected known peers and retry connection
+                    let connected_peers: HashSet<PeerId> = swarm.connected_peers().copied().collect();
+                    for (peer_id, address) in &known_peers_info {
+                        if !connected_peers.contains(peer_id) {
+                            debug!(target: "flashblocks-p2p", "retrying connection to disconnected known peer {peer_id} at {address}");
+                            swarm.add_peer_address(*peer_id, address.clone());
+                            if let Err(e) = swarm.dial(address.clone()) {
+                                warn!(target: "flashblocks-p2p", "failed to retry dial to known peer {peer_id} at {address}: {e:?}");
+                            }
+                        }
+                    }
+                }
                 Some(message) = outgoing_message_rx.recv() => {
                     let protocol = message.protocol();
-                    debug!("received message to broadcast on protocol {protocol}");
+                    debug!(target: "flashblocks-p2p", "received message to broadcast on protocol {protocol}");
                     if let Err(e) = outgoing_streams_handler.broadcast_message(message).await {
-                        warn!("failed to broadcast message on protocol {protocol}: {e:?}");
+                        warn!(target: "flashblocks-p2p", "failed to broadcast message on protocol {protocol}: {e:?}");
                     }
                 }
                 event = swarm.select_next_some() => {
@@ -158,10 +180,10 @@ impl<M: Message + 'static> Node<M> {
                             address,
                             ..
                         } => {
-                            debug!("new listen address: {address}");
+                            debug!(target: "flashblocks-p2p", "new listen address: {address}");
                         }
                         SwarmEvent::ExternalAddrConfirmed { address } => {
-                            debug!("external address confirmed: {address}");
+                            debug!(target: "flashblocks-p2p", "external address confirmed: {address}");
                         }
                         SwarmEvent::ConnectionEstablished {
                             peer_id,
@@ -170,7 +192,7 @@ impl<M: Message + 'static> Node<M> {
                         } => {
                             // when a new connection is established, open outbound streams for each protocol
                             // and add them to the outgoing streams handler.
-                            debug!("connection established with peer {peer_id}");
+                            debug!(target: "flashblocks-p2p", "fb p2p connection established with peer {peer_id}");
                             if !outgoing_streams_handler.has_peer(&peer_id) {
                                 for protocol in &protocols {
                                         match swarm
@@ -180,10 +202,10 @@ impl<M: Message + 'static> Node<M> {
                                         .await
                                     {
                                         Ok(stream) => { outgoing_streams_handler.insert_peer_and_stream(peer_id, protocol.clone(), stream);
-                                            debug!("opened outbound stream with peer {peer_id} with protocol {protocol} on connection {connection_id}");
+                                            debug!(target: "flashblocks-p2p", "opened outbound stream with peer {peer_id} with protocol {protocol} on connection {connection_id}");
                                         }
                                         Err(e) => {
-                                            warn!("failed to open stream with peer {peer_id} on connection {connection_id}: {e:?}");
+                                            warn!(target: "flashblocks-p2p", "failed to open stream with peer {peer_id} on connection {connection_id}: {e:?}");
                                         }
                                     }
                                 }
@@ -194,7 +216,7 @@ impl<M: Message + 'static> Node<M> {
                             cause,
                             ..
                         } => {
-                            debug!("connection closed with peer {peer_id}: {cause:?}");
+                            debug!(target: "flashblocks-p2p", "connection closed with peer {peer_id}: {cause:?}");
                             outgoing_streams_handler.remove_peer(&peer_id);
                         }
                         SwarmEvent::Behaviour(event) => event.handle(&mut swarm),
@@ -434,21 +456,21 @@ impl<M: Message + 'static> IncomingStreamsHandler<M> {
         loop {
             tokio::select! {
                 _ = cancellation_token.cancelled() => {
-                    debug!("cancellation token triggered, shutting down incoming streams handler for protocol {protocol}");
+                    debug!(target: "flashblocks-p2p", "cancellation token triggered, shutting down incoming streams handler for protocol {protocol}");
                     return;
                 }
                 Some((from, stream)) = incoming.next() => {
-                    debug!("new incoming stream on protocol {protocol} from peer {from}");
+                    debug!(target: "flashblocks-p2p", "new incoming stream on protocol {protocol} from peer {from}");
                     handle_stream_futures.push(tokio::spawn(handle_incoming_stream(from, stream, tx.clone())));
                 }
                 Some(res) = handle_stream_futures.next() => {
                     match res {
                         Ok(Ok(())) => {}
                         Ok(Err(e)) => {
-                            warn!("error handling incoming stream: {e:?}");
+                            warn!(target: "flashblocks-p2p", "error handling incoming stream: {e:?}");
                         }
                         Err(e) => {
-                            warn!("task handling incoming stream panicked: {e:?}");
+                            warn!(target: "flashblocks-p2p", "task handling incoming stream panicked: {e:?}");
                         }
                     }
                 }
@@ -475,7 +497,7 @@ async fn handle_incoming_stream<M: Message>(
         match res {
             Ok(str) => {
                 let payload = M::from_str(&str).wrap_err("failed to decode stream message")?;
-                debug!("got message from peer {peer_id}: {payload:?}");
+                debug!(target: "flashblocks-p2p", "got message from peer {peer_id}: {payload:?}");
                 let _ = payload_tx.send(payload).await;
             }
             Err(e) => {
@@ -490,7 +512,10 @@ async fn handle_incoming_stream<M: Message>(
 fn create_transport(
     keypair: &identity::Keypair,
 ) -> eyre::Result<libp2p::core::transport::Boxed<(PeerId, libp2p::core::muxing::StreamMuxerBox)>> {
-    let transport = tcp::tokio::Transport::new(tcp::Config::default())
+    let tcp_transport = tcp::tokio::Transport::new(tcp::Config::default());
+    let dns_transport =
+        dns::tokio::Transport::system(tcp_transport).wrap_err("failed to create DNS transport")?;
+    let transport = dns_transport
         .upgrade(libp2p::core::upgrade::Version::V1)
         .authenticate(noise::Config::new(keypair)?)
         .multiplex(yamux::Config::default())
