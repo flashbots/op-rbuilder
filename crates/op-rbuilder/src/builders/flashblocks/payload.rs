@@ -462,11 +462,19 @@ where
         );
         let target_flashblocks = flashblock_scheduler.target_flashblocks();
 
-        ctx.metrics.reduced_flashblocks_number.record(
-            self.config
-                .flashblocks_per_block()
-                .saturating_sub(ctx.target_flashblock_count()) as f64,
-        );
+        let expected_flashblocks = self.config.flashblocks_per_block();
+        if target_flashblocks < expected_flashblocks {
+            warn!(
+                target: "payload_builder",
+                expected_flashblocks,
+                target_flashblocks,
+                "FCU arrived late, building fewer flashblocks"
+            );
+            ctx.metrics
+                .reduced_flashblocks_number
+                .record((expected_flashblocks - target_flashblocks) as f64);
+        }
+
         let gas_per_batch = ctx.block_gas_limit() / target_flashblocks;
         let da_per_batch = ctx
             .da_config
@@ -508,8 +516,7 @@ where
                 .best_transactions_with_attributes(ctx.best_transaction_attributes()),
         ));
 
-        let (tx, rx) =
-            std::sync::mpsc::sync_channel((self.config.flashblocks_per_block() + 1) as usize);
+        let (tx, rx) = std::sync::mpsc::sync_channel((expected_flashblocks + 1) as usize);
         tokio::spawn(
             self.task_metrics
                 .flashblock_timer
