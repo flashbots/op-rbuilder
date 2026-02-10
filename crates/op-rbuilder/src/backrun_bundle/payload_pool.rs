@@ -57,6 +57,12 @@ pub struct TxBackruns {
     pub bundles: std::collections::BTreeSet<OrderedBackrunBundle>,
 }
 
+impl TxBackruns {
+    pub fn iter(&self) -> impl Iterator<Item = &OrderedBackrunBundle> {
+        self.bundles.iter()
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct BackrunBundlePayloadPool {
     inner: Arc<DashMap<B256, TxBackruns>>,
@@ -75,6 +81,10 @@ impl BackrunBundlePayloadPool {
             .or_default()
             .bundles
             .insert(OrderedBackrunBundle(bundle));
+    }
+
+    pub fn get_backruns(&self, target_tx_hash: &B256) -> Option<TxBackruns> {
+        self.inner.get(target_tx_hash).map(|r| r.clone())
     }
 }
 

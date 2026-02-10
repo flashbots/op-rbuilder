@@ -1,4 +1,7 @@
-use super::{args::BackrunBundleArgs, payload_pool::{BackrunBundle, BackrunBundlePayloadPool}};
+use super::{
+    args::BackrunBundleArgs,
+    payload_pool::{BackrunBundle, BackrunBundlePayloadPool},
+};
 use alloy_consensus::BlockHeader;
 use dashmap::DashMap;
 use reth_basic_payload_builder::PayloadConfig;
@@ -53,9 +56,7 @@ impl BackrunBundleGlobalPool {
 
     pub fn on_canonical_state_change<B: Block>(&self, tip: &RecoveredBlock<B>) {
         let block_number = tip.number();
-        self.inner
-            .payload_pools
-            .retain(|k, _| *k > block_number);
+        self.inner.payload_pools.retain(|k, _| *k > block_number);
     }
 }
 

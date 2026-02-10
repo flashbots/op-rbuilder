@@ -6,10 +6,7 @@ use reth_rpc_eth_types::{EthApiError, utils::recover_raw_transaction};
 
 use crate::primitives::bundle::{Bundle, BundleResult};
 
-use super::{
-    global_pool::BackrunBundleGlobalPool,
-    payload_pool::BackrunBundle,
-};
+use super::{global_pool::BackrunBundleGlobalPool, payload_pool::BackrunBundle};
 
 #[rpc(server, namespace = "eth")]
 pub trait BackrunBundleApi {
@@ -62,10 +59,8 @@ where
             .block_number_max
             .expect("block_number_max is always set after conditional()");
 
-        let target_tx =
-            recover_raw_transaction::<OpTransactionSigned>(&bundle.transactions[0])?;
-        let backrun_tx =
-            recover_raw_transaction::<OpTransactionSigned>(&bundle.transactions[1])?;
+        let target_tx = recover_raw_transaction::<OpTransactionSigned>(&bundle.transactions[0])?;
+        let backrun_tx = recover_raw_transaction::<OpTransactionSigned>(&bundle.transactions[1])?;
 
         let target_tx_hash = B256::from(*target_tx.tx_hash());
         let backrun_tx_hash = B256::from(*backrun_tx.tx_hash());

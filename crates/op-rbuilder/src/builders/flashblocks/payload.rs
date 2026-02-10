@@ -3,7 +3,7 @@ use crate::{
     builders::{
         BuilderConfig,
         builder_tx::BuilderTransactions,
-        context::OpPayloadBuilderCtx,
+        context::{MaybeFlashblockIndex, OpPayloadBuilderCtx},
         flashblocks::{best_txs::BestFlashblocksTxs, config::FlashBlocksConfigExt},
         generator::{BlockCell, BuildArguments, PayloadBuilder},
     },
@@ -126,6 +126,12 @@ pub struct FlashblocksExtraCtx {
     da_footprint_per_batch: Option<u64>,
     /// Whether to disable state root calculation for each flashblock
     disable_state_root: bool,
+}
+
+impl MaybeFlashblockIndex for FlashblocksExtraCtx {
+    fn flashblock_index(&self) -> Option<u64> {
+        Some(self.flashblock_index)
+    }
 }
 
 impl FlashblocksExtraCtx {

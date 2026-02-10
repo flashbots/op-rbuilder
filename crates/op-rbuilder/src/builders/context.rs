@@ -2,7 +2,7 @@ use alloy_consensus::{Eip658Value, Transaction, conditional::BlockConditionalAtt
 use alloy_eips::{Encodable2718, Typed2718};
 use alloy_evm::Database;
 use alloy_op_evm::block::receipt_builder::OpReceiptBuilder;
-use alloy_primitives::{BlockHash, Bytes, U256};
+use alloy_primitives::{B256, BlockHash, Bytes, U256};
 use alloy_rpc_types_eth::Withdrawals;
 use core::fmt::Debug;
 use op_alloy_consensus::OpDepositReceipt;
@@ -48,6 +48,14 @@ use crate::{
     tx::MaybeRevertingTransaction,
     tx_signer::Signer,
 };
+
+pub trait MaybeFlashblockIndex {
+    fn flashblock_index(&self) -> Option<u64> {
+        None
+    }
+}
+
+impl MaybeFlashblockIndex for () {}
 
 /// Container type that holds all necessities to build a new payload.
 #[derive(Debug)]
@@ -382,7 +390,9 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
 
         Ok(info)
     }
+}
 
+impl<ExtraCtx: Debug + Default + MaybeFlashblockIndex> OpPayloadBuilderCtx<ExtraCtx> {
     /// Executes the given best transactions and updates the execution info.
     ///
     /// Returns `Ok(Some(())` if the job was cancelled.
@@ -581,6 +591,8 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
             // record tx da size
             info.cumulative_da_bytes_used += tx_da_size;
 
+            let tx_succeeded = result.is_success();
+
             // Push transaction changeset and calculate header bloom filter for receipt.
             let ctx = ReceiptBuilderCtx {
                 tx: tx.inner(),
@@ -600,9 +612,76 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
                 .expect("fee is always valid; execution succeeded");
             info.total_fees += U256::from(miner_fee) * U256::from(gas_used);
 
+            let target_hash = B256::new(*tx_hash);
+
             // append sender and transaction to the respective lists
             info.executed_senders.push(tx.signer());
             info.executed_transactions.push(tx.into_inner());
+
+            if tx_succeeded
+                && let Some(backruns) = self.backrun_bundle_pool.get_backruns(&target_hash)
+            {
+                // first dirty impl.
+                let flashblock_index = self.extra_ctx.flashblock_index();
+                for backrun in backruns.iter() {
+                    let bundle = &backrun.0;
+
+                    if let Some(fb_idx) = flashblock_index {
+                        if bundle.flashblock_number_min.is_some_and(|min| fb_idx < min) {
+                            continue;
+                        }
+                        if bundle.flashblock_number_max.is_some_and(|max| fb_idx > max) {
+                            continue;
+                        }
+                    }
+
+                    let backrun_priority_fee =
+                        bundle.backrun_tx.max_priority_fee_per_gas().unwrap_or(0);
+                    if backrun_priority_fee < miner_fee {
+                        continue;
+                    }
+
+                    let Ok(recovered_backrun) = bundle.backrun_tx.clone().try_into_recovered()
+                    else {
+                        continue;
+                    };
+
+                    let Ok(ResultAndState {
+                        result: br_result,
+                        state: br_state,
+                    }) = evm.transact(&recovered_backrun)
+                    else {
+                        continue;
+                    };
+                    if !br_result.is_success() {
+                        continue;
+                    }
+
+                    let br_gas_used = br_result.gas_used();
+                    info.cumulative_gas_used += br_gas_used;
+
+                    let br_ctx = ReceiptBuilderCtx {
+                        tx: recovered_backrun.inner(),
+                        evm: &evm,
+                        result: br_result,
+                        state: &br_state,
+                        cumulative_gas_used: info.cumulative_gas_used,
+                    };
+                    info.receipts.push(self.build_receipt(br_ctx, None));
+                    evm.db_mut().commit(br_state);
+
+                    let br_miner_fee = recovered_backrun
+                        .effective_tip_per_gas(base_fee)
+                        .expect("fee is always valid; execution succeeded");
+                    info.total_fees += U256::from(br_miner_fee) * U256::from(br_gas_used);
+
+                    info.executed_senders.push(recovered_backrun.signer());
+                    info.executed_transactions
+                        .push(recovered_backrun.into_inner());
+
+                    break;
+                }
+            }
         }
 
         let payload_transaction_simulation_time = execute_txs_start_time.elapsed();
