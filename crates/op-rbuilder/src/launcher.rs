@@ -171,7 +171,8 @@ where
                         .add_or_replace_configured(revert_protection_ext.into_rpc())?;
                 }
 
-                let backrun_rpc = BackrunBundleRpc::new(backrun_bundle_pool.clone());
+                let backrun_rpc =
+                    BackrunBundleRpc::new(backrun_bundle_pool.clone(), ctx.provider().clone());
                 ctx.modules
                     .add_or_replace_configured(backrun_rpc.into_rpc())?;
 

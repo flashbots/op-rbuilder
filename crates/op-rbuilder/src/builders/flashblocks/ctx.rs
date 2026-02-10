@@ -1,5 +1,5 @@
 use crate::{
-    backrun_bundle::pool::BackrunBundleGlobalPool,
+    backrun_bundle::global_pool::BackrunBundleGlobalPool,
     builders::{BuilderConfig, OpPayloadBuilderCtx, flashblocks::FlashblocksConfig},
     gas_limiter::{AddressGasLimiter, args::GasLimiterArgs},
     metrics::OpRBuilderMetrics,

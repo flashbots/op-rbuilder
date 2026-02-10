@@ -40,7 +40,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, trace};
 
 use crate::{
-    backrun_bundle::pool::BackrunBundlePayloadPool,
+    backrun_bundle::payload_pool::BackrunBundlePayloadPool,
     gas_limiter::AddressGasLimiter,
     metrics::OpRBuilderMetrics,
     primitives::reth::{ExecutionInfo, TxnExecutionResult},

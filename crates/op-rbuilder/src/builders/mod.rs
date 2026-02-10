@@ -9,7 +9,7 @@ use reth_optimism_payload_builder::config::{OpDAConfig, OpGasLimitConfig};
 
 use crate::{
     args::OpRbuilderArgs,
-    backrun_bundle::pool::BackrunBundleGlobalPool,
+    backrun_bundle::global_pool::BackrunBundleGlobalPool,
     flashtestations::args::FlashtestationsArgs,
     gas_limiter::args::GasLimiterArgs,
     traits::{NodeBounds, PoolBounds},

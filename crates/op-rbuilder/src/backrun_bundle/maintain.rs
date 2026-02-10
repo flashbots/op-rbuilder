@@ -1,4 +1,4 @@
-use super::pool::BackrunBundleGlobalPool;
+use super::global_pool::BackrunBundleGlobalPool;
 use futures_util::{FutureExt, Stream, StreamExt, future::BoxFuture};
 use reth_chain_state::CanonStateNotification;
 use reth_primitives_traits::NodePrimitives;
@@ -32,10 +32,9 @@ async fn maintain_backrun_bundle_pool<N, St>(
             tracing::debug!(target: "op-rbuilder::backrun_bundle", "canonical state stream ended");
             break;
         };
-        let tip = event.tip().clone();
         let pool = pool.clone();
         task_executor.spawn_blocking(async move {
-            pool.on_canonical_state_change(&tip);
+            pool.on_canonical_state_change(event.tip());
         });
     }
 }
