@@ -19,6 +19,8 @@ impl FlashblockScheduler {
         let reference_system = std::time::SystemTime::now();
         let reference_instant = tokio::time::Instant::now();
 
+        let target_flashblocks = (block_time.as_millis() / config.interval.as_millis()) as u64;
+
         // Dynamic adjustment disabled
         if config.fixed {
             let (first_flashblock_offset, flashblocks_deadline) = if config.build_at_interval_end {
@@ -37,6 +39,7 @@ impl FlashblockScheduler {
                 config.interval,
                 flashblocks_deadline,
                 config.build_at_interval_end,
+                target_flashblocks,
             );
 
             return Self { send_times };
@@ -78,6 +81,7 @@ impl FlashblockScheduler {
             config.interval,
             flashblocks_deadline,
             config.build_at_interval_end,
+            target_flashblocks,
         );
 
         Self { send_times }
@@ -135,12 +139,14 @@ fn compute_send_times(
     interval: Duration,
     deadline: Duration,
     build_at_interval_end: bool,
+    target_flashblocks: u64,
 ) -> Vec<tokio::time::Instant> {
     compute_send_time_intervals(
         first_flashblock_offset,
         interval,
         deadline,
         build_at_interval_end,
+        target_flashblocks,
     )
     .into_iter()
     .map(|duration| start + duration)
@@ -152,6 +158,7 @@ fn compute_send_time_intervals(
     interval: Duration,
     deadline: Duration,
     build_at_interval_end: bool,
+    target_flashblocks: u64,
 ) -> Vec<Duration> {
     let mut send_times = vec![];
 
@@ -170,6 +177,11 @@ fn compute_send_time_intervals(
     }
 
     send_times.push(deadline);
+
+    // Clamp the number of triggers. Some of the calculation strategies end up
+    // with more triggers concentrated towards the start of the block and so
+    // this is needed to preserve backwards compatibility.
+    send_times.truncate(target_flashblocks as usize);
 
     send_times
 }
@@ -212,12 +224,14 @@ mod tests {
         test_case: ComputeSendTimesTestCase,
         interval: Duration,
         build_at_interval_end: bool,
+        target_flashblocks: u64,
     ) {
         let send_times = compute_send_time_intervals(
             Duration::from_millis(test_case.first_flashblock_offset_ms),
             interval,
             Duration::from_millis(test_case.deadline_ms),
             build_at_interval_end,
+            target_flashblocks,
         );
         let expected_send_times: Vec<Duration> = test_case
             .expected_send_times_ms
@@ -237,14 +251,21 @@ mod tests {
 
     #[test]
     fn test_compute_send_times_build_at_start() {
-        let test_cases = vec![ComputeSendTimesTestCase {
-            first_flashblock_offset_ms: 140,
-            deadline_ms: 870,
-            expected_send_times_ms: vec![0, 140, 340, 540, 740, 870],
-        }];
+        let test_cases = vec![
+            ComputeSendTimesTestCase {
+                first_flashblock_offset_ms: 90,
+                deadline_ms: 1000,
+                expected_send_times_ms: vec![0, 90, 290, 490, 690],
+            },
+            ComputeSendTimesTestCase {
+                first_flashblock_offset_ms: 140,
+                deadline_ms: 870,
+                expected_send_times_ms: vec![0, 140, 340, 540, 740],
+            },
+        ];
 
         for test_case in test_cases {
-            check_compute_send_times(test_case, Duration::from_millis(200), false);
+            check_compute_send_times(test_case, Duration::from_millis(200), false, 5);
         }
     }
 
@@ -257,7 +278,7 @@ mod tests {
         }];
 
         for test_case in test_cases {
-            check_compute_send_times(test_case, Duration::from_millis(200), true);
+            check_compute_send_times(test_case, Duration::from_millis(200), true, 5);
         }
     }
 }
