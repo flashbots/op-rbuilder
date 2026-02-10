@@ -67,10 +67,11 @@ where
         let backrun_tx =
             recover_raw_transaction::<OpTransactionSigned>(&bundle.transactions[1])?;
 
+        let target_tx_hash = B256::from(*target_tx.tx_hash());
         let backrun_tx_hash = B256::from(*backrun_tx.tx_hash());
 
         let backrun_bundle = BackrunBundle {
-            target_tx: target_tx.into_inner(),
+            target_tx_hash,
             backrun_tx: backrun_tx.into_inner(),
             block_number_min,
             block_number_max,

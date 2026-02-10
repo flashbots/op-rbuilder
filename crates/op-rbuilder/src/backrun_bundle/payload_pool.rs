@@ -6,7 +6,8 @@ use std::{cmp::Ordering, sync::Arc};
 
 #[derive(Debug, Clone)]
 pub struct BackrunBundle {
-    pub target_tx: OpTransactionSigned,
+    /// Hash of the target tx; we assume it's in the txpool.
+    pub target_tx_hash: B256,
     pub backrun_tx: OpTransactionSigned,
     pub block_number_min: u64,
     pub block_number_max: u64,
@@ -69,9 +70,8 @@ impl BackrunBundlePayloadPool {
     }
 
     pub fn add_bundle(&self, bundle: BackrunBundle) {
-        let target_hash = B256::from(*bundle.target_tx.tx_hash());
         self.inner
-            .entry(target_hash)
+            .entry(bundle.target_tx_hash)
             .or_default()
             .bundles
             .insert(OrderedBackrunBundle(bundle));
