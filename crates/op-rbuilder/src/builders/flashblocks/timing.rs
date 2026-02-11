@@ -350,85 +350,156 @@ mod tests {
             .collect()
     }
 
+    struct SchedulerIntervalsTestCase {
+        name: &'static str,
+        interval_ms: u64,
+        send_offset_ms: i64,
+        end_buffer_ms: u64,
+        remaining_time_ms: u64,
+        target_flashblocks: u64,
+        expected_intervals_ms: Vec<u64>,
+    }
+
+    fn check_scheduler_intervals(test_case: SchedulerIntervalsTestCase) {
+        let intervals = compute_scheduler_intervals(
+            Duration::from_millis(test_case.interval_ms),
+            test_case.send_offset_ms,
+            test_case.end_buffer_ms,
+            Duration::from_millis(test_case.remaining_time_ms),
+            test_case.target_flashblocks,
+        );
+        assert_eq!(
+            intervals,
+            durations_ms(&test_case.expected_intervals_ms),
+            "Failed test case '{}': interval={}ms, offset={}ms, buffer={}ms, remaining={}ms",
+            test_case.name,
+            test_case.interval_ms,
+            test_case.send_offset_ms,
+            test_case.end_buffer_ms,
+            test_case.remaining_time_ms,
+        );
+    }
+
     #[test]
     fn test_compute_scheduler_intervals() {
-        // remaining_time = 880ms
-        // first_offset = calculate_first_flashblock_offset(880, 200) = (880-1) % 200 + 1 = 80
-        // adjusted_offset = apply_offset(80, 0) = 80
-        // adjusted_deadline = apply_offset(880 - 0, 0) = 880
-        let remaining_time = Duration::from_millis(880);
+        let test_cases = vec![
+            // Basic cases
+            SchedulerIntervalsTestCase {
+                name: "normal timing",
+                interval_ms: 200,
+                send_offset_ms: 0,
+                end_buffer_ms: 0,
+                remaining_time_ms: 880,
+                target_flashblocks: 5,
+                expected_intervals_ms: vec![80, 280, 480, 680, 880],
+            },
+            SchedulerIntervalsTestCase {
+                name: "with offset and buffer",
+                interval_ms: 200,
+                send_offset_ms: -20,
+                end_buffer_ms: 50,
+                remaining_time_ms: 800,
+                target_flashblocks: 5,
+                expected_intervals_ms: vec![180, 380, 580, 730],
+            },
+            SchedulerIntervalsTestCase {
+                name: "late FCU (300ms remaining)",
+                interval_ms: 200,
+                send_offset_ms: 0,
+                end_buffer_ms: 0,
+                remaining_time_ms: 300,
+                target_flashblocks: 5,
+                expected_intervals_ms: vec![100, 300],
+            },
+            SchedulerIntervalsTestCase {
+                name: "end buffer equals remaining time",
+                interval_ms: 200,
+                send_offset_ms: 0,
+                end_buffer_ms: 200,
+                remaining_time_ms: 200,
+                target_flashblocks: 5,
+                expected_intervals_ms: vec![0],
+            },
+            SchedulerIntervalsTestCase {
+                name: "late FCU with offset and buffer combined",
+                interval_ms: 200,
+                send_offset_ms: -30,
+                end_buffer_ms: 50,
+                remaining_time_ms: 400,
+                target_flashblocks: 5,
+                expected_intervals_ms: vec![170, 320],
+            },
+            SchedulerIntervalsTestCase {
+                name: "no end buffer",
+                interval_ms: 200,
+                send_offset_ms: 0,
+                end_buffer_ms: 0,
+                remaining_time_ms: 1000,
+                target_flashblocks: 5,
+                expected_intervals_ms: vec![200, 400, 600, 800, 1000],
+            },
+        ];
 
-        let intervals =
-            compute_scheduler_intervals(Duration::from_millis(200), 0, 0, remaining_time, 5);
+        for test_case in test_cases {
+            check_scheduler_intervals(test_case);
+        }
+    }
 
-        assert_eq!(intervals, durations_ms(&[80, 280, 480, 680, 880]));
+    struct RemainingTimeTestCase {
+        name: &'static str,
+        block_time_ms: u64,
+        reference_secs: u64,
+        payload_timestamp: u64,
+        expected_remaining_ms: u64,
+    }
+
+    fn check_remaining_time(test_case: RemainingTimeTestCase) {
+        let block_time = Duration::from_millis(test_case.block_time_ms);
+        let reference_system =
+            std::time::SystemTime::UNIX_EPOCH + Duration::from_secs(test_case.reference_secs);
+
+        let remaining =
+            compute_remaining_time(block_time, test_case.payload_timestamp, reference_system);
+
+        assert_eq!(
+            remaining,
+            Duration::from_millis(test_case.expected_remaining_ms),
+            "Failed test case '{}': block_time={}ms, reference={}s, timestamp={}",
+            test_case.name,
+            test_case.block_time_ms,
+            test_case.reference_secs,
+            test_case.payload_timestamp,
+        );
     }
 
     #[test]
-    fn test_compute_scheduler_intervals_late_fcu() {
-        // Late FCU arrival - remaining_time is much less than block_time.
-        // This simulates FCU arriving 700ms into a 1000ms slot.
-        let remaining_time = Duration::from_millis(300);
+    fn test_compute_remaining_time() {
+        let test_cases = vec![
+            RemainingTimeTestCase {
+                name: "future timestamp within block time",
+                block_time_ms: 2000,
+                reference_secs: 1000,
+                payload_timestamp: 1002,
+                expected_remaining_ms: 2000,
+            },
+            RemainingTimeTestCase {
+                name: "remaining exceeds block time (capped)",
+                block_time_ms: 1000,
+                reference_secs: 1000,
+                payload_timestamp: 1005,
+                expected_remaining_ms: 1000,
+            },
+            RemainingTimeTestCase {
+                name: "past timestamp (fallback to block time)",
+                block_time_ms: 1000,
+                reference_secs: 1000,
+                payload_timestamp: 999,
+                expected_remaining_ms: 1000,
+            },
+        ];
 
-        let intervals =
-            compute_scheduler_intervals(Duration::from_millis(200), 0, 0, remaining_time, 5);
-
-        // first_offset = (300-1) % 200 + 1 = 100
-        // Signals: [100, 300] (deadline included)
-        assert_eq!(intervals, durations_ms(&[100, 300]));
-    }
-
-    #[test]
-    fn test_compute_scheduler_intervals_with_offset_and_buffer() {
-        // With send_offset and end_buffer remaining_time = 800ms
-        // first_offset = calculate_first_flashblock_offset(800, 200) = (800-1) % 200 + 1 = 200
-        // adjusted_offset = apply_offset(200, -20) = 180
-        // adjusted_deadline = apply_offset(800 - 50, -20) = apply_offset(750, -20) = 730
-        let remaining_time = Duration::from_millis(800);
-
-        let intervals =
-            compute_scheduler_intervals(Duration::from_millis(200), -20, 50, remaining_time, 5);
-
-        assert_eq!(intervals, durations_ms(&[180, 380, 580, 730]));
-    }
-
-    #[test]
-    fn test_compute_remaining_time_future_timestamp() {
-        let block_time = Duration::from_millis(2000);
-        let reference_system = std::time::SystemTime::UNIX_EPOCH + Duration::from_secs(1000);
-        let payload_timestamp = 1002;
-
-        let remaining = compute_remaining_time(block_time, payload_timestamp, reference_system);
-
-        // target_time = EPOCH + 1002s, reference = EPOCH + 1000s
-        // remaining = 1002s - 1000s = 2s = 2000ms, capped at block_time
-        assert_eq!(remaining, Duration::from_millis(2000));
-    }
-
-    #[test]
-    fn test_compute_remaining_time_capped_at_block_time() {
-        // Calculated remaining exceeds block_time
-        let block_time = Duration::from_millis(1000);
-        let reference_system = std::time::SystemTime::UNIX_EPOCH + Duration::from_secs(1000);
-        // Target = EPOCH + 1005s, Reference = EPOCH + 1000s
-        // Remaining would be 5s, but capped at block_time (1s)
-        let payload_timestamp = 1005;
-
-        let remaining = compute_remaining_time(block_time, payload_timestamp, reference_system);
-
-        assert_eq!(remaining, block_time);
-    }
-
-    #[test]
-    fn test_compute_remaining_time_past_timestamp() {
-        // Past timestamp (returns block_time as fallback)
-        let block_time = Duration::from_millis(1000);
-        let reference_system = std::time::SystemTime::UNIX_EPOCH + Duration::from_secs(1000);
-        // Target is in the past
-        let payload_timestamp = 999;
-
-        let remaining = compute_remaining_time(block_time, payload_timestamp, reference_system);
-
-        assert_eq!(remaining, block_time);
+        for test_case in test_cases {
+            check_remaining_time(test_case);
+        }
     }
 }
