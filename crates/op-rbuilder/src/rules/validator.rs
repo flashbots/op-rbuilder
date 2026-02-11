@@ -6,7 +6,7 @@
 
 use crate::rules::global_ruleset;
 use crate::rules::metrics::RulesMetrics;
-use crate::rules::state::insert_tx_score;
+use crate::rules::state::{insert_tx_score, score_cache_len};
 use reqwest::Client;
 use reth_primitives_traits::{Block, SealedBlock};
 use reth_transaction_pool::{
@@ -245,14 +245,20 @@ where
             );
         }
 
-        let ruleset = global_ruleset();
-        if ruleset.has_scoring_rules() {
-            let tx_hash = *transaction.hash();
-            let score = ruleset.score_transaction(&transaction);
-            insert_tx_score(tx_hash, score);
+        let outcome = self.inner.validate_transaction(origin, transaction).await;
+
+        if let TransactionValidationOutcome::Valid { transaction: ref valid_tx, .. } = outcome {
+            let ruleset = global_ruleset();
+            if ruleset.has_scoring_rules() {
+                let tx = valid_tx.transaction();
+                let tx_hash = *tx.hash();
+                let score = ruleset.score_transaction(tx);
+                insert_tx_score(tx_hash, score);
+                self.metrics.score_cache_size.set(score_cache_len() as f64);
+            }
         }
 
-        self.inner.validate_transaction(origin, transaction).await
+        outcome
     }
 
     fn on_new_head_block<B>(&self, new_tip_block: &SealedBlock<B>)

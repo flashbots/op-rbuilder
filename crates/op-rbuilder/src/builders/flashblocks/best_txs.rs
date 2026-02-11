@@ -1,29 +1,29 @@
 use alloy_primitives::{Address, TxHash};
 use reth_payload_util::PayloadTransactions;
-use reth_transaction_pool::PoolTransaction;
-use std::collections::HashSet;
+use reth_transaction_pool::{PoolTransaction, ValidPoolTransaction};
+use std::{collections::HashSet, sync::Arc};
 use tracing::debug;
 
 use crate::tx::MaybeFlashblockFilter;
 
-pub(super) struct BestFlashblocksTxs<T, P>
+pub(super) struct BestFlashblocksTxs<T, I>
 where
     T: PoolTransaction,
-    P: PayloadTransactions<Transaction = T>,
+    I: Iterator<Item = Arc<ValidPoolTransaction<T>>>,
 {
-    inner: P,
+    inner: reth_payload_util::BestPayloadTransactions<T, I>,
     current_flashblock_number: u64,
     // Transactions that were already commited to the state. Using them again would cause NonceTooLow
     // so we skip them
     commited_transactions: HashSet<TxHash>,
 }
 
-impl<T, P> BestFlashblocksTxs<T, P>
+impl<T, I> BestFlashblocksTxs<T, I>
 where
     T: PoolTransaction,
-    P: PayloadTransactions<Transaction = T>,
+    I: Iterator<Item = Arc<ValidPoolTransaction<T>>>,
 {
-    pub(super) fn new(inner: P) -> Self {
+    pub(super) fn new(inner: reth_payload_util::BestPayloadTransactions<T, I>) -> Self {
         Self {
             inner,
             current_flashblock_number: 0,
@@ -33,7 +33,11 @@ where
 
     /// Replaces current iterator with new one. We use it on new flashblock building, to refresh
     /// priority boundaries
-    pub(super) fn refresh_iterator(&mut self, inner: P, current_flashblock_number: u64) {
+    pub(super) fn refresh_iterator(
+        &mut self,
+        inner: reth_payload_util::BestPayloadTransactions<T, I>,
+        current_flashblock_number: u64,
+    ) {
         self.inner = inner;
         self.current_flashblock_number = current_flashblock_number;
     }
@@ -44,10 +48,10 @@ where
     }
 }
 
-impl<T, P> PayloadTransactions for BestFlashblocksTxs<T, P>
+impl<T, I> PayloadTransactions for BestFlashblocksTxs<T, I>
 where
     T: PoolTransaction + MaybeFlashblockFilter,
-    P: PayloadTransactions<Transaction = T>,
+    I: Iterator<Item = Arc<ValidPoolTransaction<T>>>,
 {
     type Transaction = T;
 
@@ -63,27 +67,27 @@ where
             let flashblock_number_max = tx.flashblock_number_max();
 
             // Check min flashblock requirement
-            if let Some(min) = flashblock_number_min
-                && self.current_flashblock_number < min
-            {
-                continue;
+            if let Some(min) = flashblock_number_min {
+                if self.current_flashblock_number < min {
+                    continue;
+                }
             }
 
             // Check max flashblock requirement
-            if let Some(max) = flashblock_number_max
-                && self.current_flashblock_number > max
-            {
-                debug!(
-                    target: "payload_builder",
-                    tx_hash = ?tx.hash(),
-                    sender = ?tx.sender(),
-                    nonce = tx.nonce(),
-                    current_flashblock = self.current_flashblock_number,
-                    max_flashblock = max,
-                    "Bundle flashblock max exceeded"
-                );
-                self.inner.mark_invalid(tx.sender(), tx.nonce());
-                continue;
+            if let Some(max) = flashblock_number_max {
+                if self.current_flashblock_number > max {
+                    debug!(
+                        target: "payload_builder",
+                        tx_hash = ?tx.hash(),
+                        sender = ?tx.sender(),
+                        nonce = tx.nonce(),
+                        current_flashblock = self.current_flashblock_number,
+                        max_flashblock = max,
+                        "Bundle flashblock max exceeded"
+                    );
+                    self.inner.mark_invalid(tx.sender(), tx.nonce());
+                    continue;
+                }
             }
 
             return Some(tx);

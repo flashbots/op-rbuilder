@@ -15,7 +15,6 @@ use crate::{
     tx_signer::Signer,
 };
 
-
 mod builder_tx;
 mod context;
 mod flashblocks;

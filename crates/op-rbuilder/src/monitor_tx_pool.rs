@@ -6,7 +6,15 @@ use reth_transaction_pool::{AllTransactionsEvents, FullTransactionEvent};
 use tracing::info;
 
 #[cfg(feature = "rules")]
-use crate::rules::remove_tx_score;
+use crate::rules::{state::score_cache_len, RulesMetrics};
+
+#[cfg(feature = "rules")]
+fn remove_tx_score(tx_hash: &B256) {
+    crate::rules::remove_tx_score(tx_hash);
+    RulesMetrics::default()
+        .score_cache_size
+        .set(score_cache_len() as f64);
+}
 
 /// Monitor transaction pool events and update caches accordingly.
 ///

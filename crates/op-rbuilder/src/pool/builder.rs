@@ -1,4 +1,3 @@
-#[cfg(feature = "rules")]
 use crate::rules::ScoreOrdering;
 use op_alloy_consensus::interop::SafetyLevel;
 use reth_chain_state::CanonStateSubscriptions;
@@ -10,16 +9,10 @@ use reth_optimism_chainspec::OpHardforks;
 use reth_optimism_node::OpPoolBuilder;
 use reth_optimism_txpool::supervisor::{DEFAULT_SUPERVISOR_URL, SupervisorClient};
 use reth_tracing::tracing::{debug, info};
-#[cfg(not(feature = "rules"))]
-use reth_transaction_pool::CoinbaseTipOrdering;
 use reth_transaction_pool::{Pool, TransactionValidationTaskExecutor, TransactionValidator};
 use std::marker::PhantomData;
 
-#[cfg(feature = "rules")]
 pub type PoolOrdering<T> = ScoreOrdering<T>;
-
-#[cfg(not(feature = "rules"))]
-pub type PoolOrdering<T> = CoinbaseTipOrdering<T>;
 
 /// Marker type indicating no validator wrapper has been set
 /// Used to enforce at compile time that `with_validator_wrapper()` is called.
@@ -200,7 +193,6 @@ where
 
         let final_pool_config = pool_config_overrides.clone().apply(ctx.pool_config());
 
-        #[cfg(feature = "rules")]
         let transaction_pool = reth_node_builder::components::TxPoolBuilder::new(ctx)
             .with_validator(final_validator)
             .build_with_ordering_and_spawn_maintenance_task(
@@ -208,11 +200,6 @@ where
                 blob_store,
                 final_pool_config,
             )?;
-
-        #[cfg(not(feature = "rules"))]
-        let transaction_pool = reth_node_builder::components::TxPoolBuilder::new(ctx)
-            .with_validator(final_validator)
-            .build_and_spawn_maintenance_task(blob_store, final_pool_config)?;
 
         info!(target: "reth::cli", "Transaction pool initialized");
         debug!(target: "reth::cli", "Spawned txpool maintenance task");

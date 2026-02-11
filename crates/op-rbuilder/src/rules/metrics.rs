@@ -33,6 +33,8 @@ pub struct RulesMetrics {
     pub active_deny_rules: Gauge,
     /// Active boost rules
     pub active_boost_rules: Gauge,
+    /// Number of entries in the tx score cache
+    pub score_cache_size: Gauge,
     /// Configured registries
     pub registries_count: Gauge,
     /// Last successful rules refresh (unix timestamp)

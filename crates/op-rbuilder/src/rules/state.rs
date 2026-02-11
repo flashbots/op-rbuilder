@@ -125,3 +125,11 @@ pub fn remove_tx_score(tx_hash: &B256) {
         .expect("score cache lock poisoned")
         .remove(tx_hash);
 }
+
+/// Returns the current number of entries in the score cache.
+pub fn score_cache_len() -> usize {
+    score_cache()
+        .read()
+        .expect("score cache lock poisoned")
+        .len()
+}
