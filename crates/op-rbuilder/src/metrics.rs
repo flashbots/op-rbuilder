@@ -1,8 +1,10 @@
+use std::time::Duration;
+
 use alloy_primitives::{Address, hex};
 use metrics::IntoF64;
 use reth_metrics::{
     Metrics,
-    metrics::{Counter, Gauge, Histogram, gauge},
+    metrics::{Counter, Gauge, Histogram, SharedString, counter, gauge, histogram},
 };
 
 use crate::{
@@ -193,6 +195,40 @@ impl OpRBuilderMetrics {
             .set(num_txs_simulated_fail);
         self.bundles_reverted.record(num_bundles_reverted);
         self.payload_reverted_tx_gas_used.set(reverted_gas_used);
+    }
+
+    /// Record per-flashblock-index metrics for build duration and emission.
+    pub fn record_flashblock_indexed_metrics(
+        &self,
+        flashblock_index: u64,
+        build_duration: Duration,
+    ) {
+        let index_label: SharedString = flashblock_index.to_string().into();
+        histogram!(
+            "op_rbuilder_flashblock_build_duration_seconds_by_index",
+            "flashblock_index" => index_label.clone()
+        )
+        .record(build_duration.as_secs_f64());
+        counter!(
+            "op_rbuilder_flashblock_emitted_total",
+            "flashblock_index" => index_label
+        )
+        .increment(1);
+    }
+
+    /// Record the time spent waiting between finishing a flashblock build and
+    /// receiving the next tick from the scheduler.
+    pub fn record_flashblock_wait_for_next_tick(
+        &self,
+        flashblock_index: u64,
+        wait_duration: Duration,
+    ) {
+        let index_label: SharedString = flashblock_index.to_string().into();
+        histogram!(
+            "op_rbuilder_flashblock_wait_for_next_tick_duration_seconds",
+            "flashblock_index" => index_label
+        )
+        .record(wait_duration.as_secs_f64());
     }
 }
 

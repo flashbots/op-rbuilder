@@ -529,9 +529,16 @@ where
         );
 
         // Process flashblocks - block on async channel receive
+        let mut wait_start: Option<Instant> = None;
         loop {
             // Wait for signal before building flashblock.
             if let Ok(new_fb_cancel) = rx.recv() {
+                if let Some(start) = wait_start {
+                    ctx.metrics.record_flashblock_wait_for_next_tick(
+                        ctx.flashblock_index(),
+                        start.elapsed(),
+                    );
+                }
                 debug!(
                     target: "payload_builder",
                     id = %fb_payload.payload_id,
@@ -585,6 +592,7 @@ where
                 }
             };
 
+            wait_start = Some(Instant::now());
             ctx = ctx.with_extra_ctx(next_flashblocks_ctx);
         }
     }
@@ -759,15 +767,18 @@ where
                 best_payload.set(new_payload);
 
                 // Record flashblock build duration
+                let flashblock_build_duration = flashblock_build_start_time.elapsed();
                 ctx.metrics
                     .flashblock_build_duration
-                    .record(flashblock_build_start_time.elapsed());
+                    .record(flashblock_build_duration);
                 ctx.metrics
                     .flashblock_byte_size_histogram
                     .record(flashblock_byte_size as f64);
                 ctx.metrics
                     .flashblock_num_tx_histogram
                     .record(info.executed_transactions.len() as f64);
+                ctx.metrics
+                    .record_flashblock_indexed_metrics(flashblock_index, flashblock_build_duration);
 
                 // Update bundle_state for next iteration
                 if let Some(da_limit) = ctx.extra_ctx.da_per_batch {
