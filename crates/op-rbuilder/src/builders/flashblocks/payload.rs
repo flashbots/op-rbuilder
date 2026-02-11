@@ -1,5 +1,6 @@
 use super::{config::FlashblocksConfig, wspub::WebSocketPublisher};
 use crate::{
+    backrun_bundle::BackrunBundlesPayloadCtx,
     builders::{
         BuilderConfig,
         builder_tx::BuilderTransactions,
@@ -310,7 +311,10 @@ where
             .next_evm_env(&config.parent_header, &block_env_attributes)
             .wrap_err("failed to create next evm env")?;
 
-        let backrun_bundle_pool = self.config.backrun_bundle_pool.payload_pool(&config);
+        let backrun_ctx = BackrunBundlesPayloadCtx {
+            pool: self.config.backrun_bundle_pool.payload_pool(&config),
+            args: self.config.backrun_bundle_args.clone(),
+        };
 
         Ok(OpPayloadBuilderCtx::<FlashblocksExtraCtx> {
             evm_config: self.evm_config.clone(),
@@ -326,7 +330,7 @@ where
             extra_ctx,
             max_gas_per_txn: self.config.max_gas_per_txn,
             address_gas_limiter: self.address_gas_limiter.clone(),
-            backrun_bundle_pool,
+            backrun_ctx,
         })
     }
 

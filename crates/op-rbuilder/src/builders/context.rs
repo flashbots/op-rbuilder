@@ -44,7 +44,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, trace};
 
 use crate::{
-    backrun_bundle::payload_pool::BackrunBundlePayloadPool,
+    backrun_bundle::BackrunBundlesPayloadCtx,
     gas_limiter::AddressGasLimiter,
     metrics::OpRBuilderMetrics,
     primitives::reth::{ExecutionInfo, TxnExecutionResult},
@@ -90,8 +90,8 @@ pub struct OpPayloadBuilderCtx<ExtraCtx: Debug + Default = ()> {
     pub max_gas_per_txn: Option<u64>,
     /// Rate limiting based on gas. This is an optional feature.
     pub address_gas_limiter: AddressGasLimiter,
-    /// Backrun bundle pool for this payload's block.
-    pub backrun_bundle_pool: BackrunBundlePayloadPool,
+    /// Backrun bundles context.
+    pub backrun_ctx: BackrunBundlesPayloadCtx,
 }
 
 impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
@@ -416,8 +416,8 @@ impl<ExtraCtx: Debug + Default + MaybeFlashblockIndex> OpPayloadBuilderCtx<Extra
         let mut num_txs_simulated_fail = 0;
         let mut num_bundles_reverted = 0;
         let mut reverted_gas_used = 0;
-        let mut num_backruns_considered = 0;
-        let mut num_backruns_successful = 0;
+        let mut num_backruns_considered = 0usize;
+        let mut num_backruns_successful = 0usize;
         let base_fee = self.base_fee();
 
         let tx_da_limit = self.da_config.max_da_tx_size();
@@ -624,10 +624,30 @@ impl<ExtraCtx: Debug + Default + MaybeFlashblockIndex> OpPayloadBuilderCtx<Extra
             info.executed_senders.push(tx.signer());
             info.executed_transactions.push(tx.into_inner());
 
-            if tx_succeeded
-                && let Some(backruns) = self.backrun_bundle_pool.get_backruns(&target_hash)
+            let can_backrun = self.backrun_ctx.args.backruns_enabled
+                && tx_succeeded
+                && !self.backrun_ctx.args.is_limit_reached(
+                    num_backruns_considered,
+                    num_backruns_successful,
+                    0,
+                    0,
+                );
+
+            if can_backrun && let Some(backruns) = self.backrun_ctx.pool.get_backruns(&target_hash)
             {
+                let mut target_backruns_considered = 0;
+                let mut target_backruns_landed = 0;
+
                 for backrun in backruns.iter() {
+                    if self.backrun_ctx.args.is_limit_reached(
+                        num_backruns_considered,
+                        num_backruns_successful,
+                        target_backruns_considered,
+                        target_backruns_landed,
+                    ) {
+                        break;
+                    }
+
                     let bundle = &backrun.0;
 
                     /* Backrun tx commit checklist:
@@ -677,6 +697,7 @@ impl<ExtraCtx: Debug + Default + MaybeFlashblockIndex> OpPayloadBuilderCtx<Extra
 
                     num_txs_considered += 1;
                     num_backruns_considered += 1;
+                    target_backruns_considered += 1;
 
                     if !bundle.is_valid(block_attr.number, self.extra_ctx.flashblock_index()) {
                         log_br_txn(TxnExecutionResult::ConditionalCheckFailed);
@@ -799,7 +820,7 @@ impl<ExtraCtx: Debug + Default + MaybeFlashblockIndex> OpPayloadBuilderCtx<Extra
                     info.executed_transactions
                         .push(recovered_backrun.into_inner());
 
-                    break;
+                    target_backruns_landed += 1;
                 }
             }
         }
@@ -813,8 +834,8 @@ impl<ExtraCtx: Debug + Default + MaybeFlashblockIndex> OpPayloadBuilderCtx<Extra
             num_txs_simulated_fail,
             num_bundles_reverted,
             reverted_gas_used,
-            num_backruns_considered,
-            num_backruns_successful,
+            num_backruns_considered as f64,
+            num_backruns_successful as f64,
         );
 
         debug!(

@@ -9,7 +9,7 @@ use reth_optimism_payload_builder::config::{OpDAConfig, OpGasLimitConfig};
 
 use crate::{
     args::OpRbuilderArgs,
-    backrun_bundle::global_pool::BackrunBundleGlobalPool,
+    backrun_bundle::{args::BackrunBundleArgs, global_pool::BackrunBundleGlobalPool},
     flashtestations::args::FlashtestationsArgs,
     gas_limiter::args::GasLimiterArgs,
     traits::{NodeBounds, PoolBounds},
@@ -130,6 +130,9 @@ pub struct BuilderConfig<Specific: Clone> {
 
     /// Global pool for backrun bundles
     pub backrun_bundle_pool: BackrunBundleGlobalPool,
+
+    /// Backrun bundle configuration
+    pub backrun_bundle_args: BackrunBundleArgs,
 }
 
 impl<S: Debug + Clone> core::fmt::Debug for BuilderConfig<S> {
@@ -153,6 +156,7 @@ impl<S: Debug + Clone> core::fmt::Debug for BuilderConfig<S> {
             .field("max_gas_per_txn", &self.max_gas_per_txn)
             .field("gas_limiter_config", &self.gas_limiter_config)
             .field("backrun_bundle_pool", &self.backrun_bundle_pool)
+            .field("backrun_bundle_args", &self.backrun_bundle_args)
             .finish()
     }
 }
@@ -172,6 +176,7 @@ impl<S: Default + Clone> Default for BuilderConfig<S> {
             max_gas_per_txn: None,
             gas_limiter_config: GasLimiterArgs::default(),
             backrun_bundle_pool: BackrunBundleGlobalPool::default(),
+            backrun_bundle_args: BackrunBundleArgs::default(),
         }
     }
 }
@@ -195,6 +200,7 @@ where
             max_gas_per_txn: args.max_gas_per_txn,
             gas_limiter_config: args.gas_limiter.clone(),
             backrun_bundle_pool: BackrunBundleGlobalPool::new(args.backrun_bundle.clone()),
+            backrun_bundle_args: args.backrun_bundle.clone(),
             specific: S::try_from(args)?,
         })
     }

@@ -114,6 +114,7 @@ where
         let op_node = OpNode::new(rollup_args.clone());
         let reverted_cache = Cache::builder().max_capacity(100).build();
         let reverted_cache_copy = reverted_cache.clone();
+        let backrun_bundle_enabled = builder_args.backrun_bundle.backruns_enabled;
         let backrun_bundle_pool = builder_config.backrun_bundle_pool.clone();
         let backrun_bundle_pool_maintain = backrun_bundle_pool.clone();
 
@@ -171,10 +172,12 @@ where
                         .add_or_replace_configured(revert_protection_ext.into_rpc())?;
                 }
 
-                let backrun_rpc =
-                    BackrunBundleRpc::new(backrun_bundle_pool.clone(), ctx.provider().clone());
-                ctx.modules
-                    .add_or_replace_configured(backrun_rpc.into_rpc())?;
+                if builder_args.backrun_bundle.backruns_enabled {
+                    let backrun_rpc =
+                        BackrunBundleRpc::new(backrun_bundle_pool.clone(), ctx.provider().clone());
+                    ctx.modules
+                        .add_or_replace_configured(backrun_rpc.into_rpc())?;
+                }
 
                 Ok(())
             })
@@ -187,13 +190,15 @@ where
                     ctx.task_executor.spawn_critical("txlogging", task);
                 }
 
-                let chain_events = ctx.provider.canonical_state_stream();
-                let task_executor = ctx.task_executor.clone();
-                ctx.task_executor.spawn(maintain_backrun_bundle_pool_future(
-                    backrun_bundle_pool_maintain,
-                    chain_events,
-                    task_executor,
-                ));
+                if backrun_bundle_enabled {
+                    let chain_events = ctx.provider.canonical_state_stream();
+                    let task_executor = ctx.task_executor.clone();
+                    ctx.task_executor.spawn(maintain_backrun_bundle_pool_future(
+                        backrun_bundle_pool_maintain,
+                        chain_events,
+                        task_executor,
+                    ));
+                }
 
                 Ok(())
             })
