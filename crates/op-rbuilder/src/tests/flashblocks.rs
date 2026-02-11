@@ -9,181 +9,10 @@ use std::time::Duration;
 use crate::{
     args::{FlashblocksArgs, OpRbuilderArgs},
     tests::{
-        BlockTransactionsExt, BuilderTxValidation, BundleOpts, ChainDriver,
-        FLASHBLOCKS_NUMBER_ADDRESS, LocalInstance, TransactionBuilderExt,
-        flashblocks_number_contract::FlashblocksNumber,
+        BlockTransactionsExt, BundleOpts, ChainDriver, FLASHBLOCKS_NUMBER_ADDRESS, LocalInstance,
+        TransactionBuilderExt, flashblocks_number_contract::FlashblocksNumber,
     },
 };
-
-#[rb_test(flashblocks, args = OpRbuilderArgs {
-    chain_block_time: 2000,
-    flashblocks: FlashblocksArgs {
-        enabled: true,
-        flashblocks_port: 1239,
-        flashblocks_addr: "127.0.0.1".into(),
-        flashblocks_block_time: 200,
-        flashblocks_leeway_time: 100,
-        ..Default::default()
-    },
-    ..Default::default()
-})]
-async fn smoke_base(rbuilder: LocalInstance) -> eyre::Result<()> {
-    let driver = rbuilder.driver().await?;
-    let flashblocks_listener = rbuilder.spawn_flashblocks_listener();
-
-    // We align out block timestamps with current unix timestamp
-    for _ in 0..10 {
-        for _ in 0..5 {
-            // send a valid transaction
-            let _ = driver
-                .create_transaction()
-                .random_valid_transfer()
-                .send()
-                .await?;
-        }
-        let block = driver.build_new_block_with_current_timestamp(None).await?;
-        assert_eq!(block.transactions.len(), 8, "Got: {:?}", block.transactions); // 5 normal txn + deposit + 2 builder txn
-
-        // Validate builder transactions using BuilderTxValidation
-        block.assert_builder_tx_count(2);
-
-        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-    }
-
-    let flashblocks = flashblocks_listener.get_flashblocks();
-    assert_eq!(110, flashblocks.len());
-
-    flashblocks_listener.stop().await
-}
-
-#[rb_test(flashblocks, args = OpRbuilderArgs {
-    chain_block_time: 1000,
-    flashblocks: FlashblocksArgs {
-        enabled: true,
-        flashblocks_port: 1239,
-        flashblocks_addr: "127.0.0.1".into(),
-        flashblocks_block_time: 200,
-        flashblocks_leeway_time: 100,
-        ..Default::default()
-    },
-    ..Default::default()
-})]
-async fn smoke_unichain(rbuilder: LocalInstance) -> eyre::Result<()> {
-    let driver = rbuilder.driver().await?;
-    let flashblocks_listener = rbuilder.spawn_flashblocks_listener();
-
-    // We align out block timestamps with current unix timestamp
-    for _ in 0..10 {
-        for _ in 0..5 {
-            // send a valid transaction
-            let _ = driver
-                .create_transaction()
-                .random_valid_transfer()
-                .send()
-                .await?;
-        }
-        let block = driver.build_new_block_with_current_timestamp(None).await?;
-        assert_eq!(block.transactions.len(), 8, "Got: {:?}", block.transactions); // 5 normal txn + deposit + 2 builder txn
-
-        // Validate builder transactions using BuilderTxValidation
-        block.assert_builder_tx_count(2);
-
-        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-    }
-
-    let flashblocks = flashblocks_listener.get_flashblocks();
-    assert_eq!(60, flashblocks.len());
-
-    flashblocks_listener.stop().await
-}
-
-#[rb_test(flashblocks, args = OpRbuilderArgs {
-    chain_block_time: 1000,
-    flashblocks: FlashblocksArgs {
-        enabled: true,
-        flashblocks_port: 1239,
-        flashblocks_addr: "127.0.0.1".into(),
-        flashblocks_block_time: 200,
-        flashblocks_leeway_time: 100,
-        ..Default::default()
-    },
-    ..Default::default()
-})]
-async fn unichain_with_lag(rbuilder: LocalInstance) -> eyre::Result<()> {
-    let driver = rbuilder.driver().await?;
-    let flashblocks_listener = rbuilder.spawn_flashblocks_listener();
-
-    // We align out block timestamps with current unix timestamp
-    for i in 0..9 {
-        for _ in 0..5 {
-            // send a valid transaction
-            let _ = driver
-                .create_transaction()
-                .random_valid_transfer()
-                .send()
-                .await?;
-        }
-        let block = driver
-            .build_new_block_with_current_timestamp(Some(Duration::from_millis(i * 100)))
-            .await?;
-        assert_eq!(
-            block.transactions.len(),
-            8,
-            "Got: {:#?}",
-            block.transactions
-        ); // 5 normal txn + deposit + 2 builder txn
-        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-    }
-
-    let flashblocks = flashblocks_listener.get_flashblocks();
-    // 9 blocks with increasing lag (0ms, 100ms, ..., 800ms).
-    // With 1000ms block_time, 200ms interval, 100ms leeway:
-    //   remaining_time = 900 - lag
-    // Flashblocks per block decrease as lag increases:
-    //   lag=0-200ms: 5-6 flashblocks each
-    //   lag=300-500ms: 3-4 flashblocks each
-    //   lag=600-800ms: 2-3 flashblocks each
-    // Total = 42 flashblocks across all 9 blocks.
-    assert_eq!(42, flashblocks.len());
-
-    flashblocks_listener.stop().await
-}
-
-#[rb_test(flashblocks, args = OpRbuilderArgs {
-    chain_block_time: 1000,
-    flashblocks: FlashblocksArgs {
-        enabled: true,
-        flashblocks_port: 1239,
-        flashblocks_addr: "127.0.0.1".into(),
-        flashblocks_block_time: 200,
-        flashblocks_leeway_time: 0,
-        ..Default::default()
-    },
-    ..Default::default()
-})]
-async fn full_block_lag(rbuilder: LocalInstance) -> eyre::Result<()> {
-    let driver = rbuilder.driver().await?;
-    let flashblocks_listener = rbuilder.spawn_flashblocks_listener();
-
-    for _ in 0..5 {
-        // send a valid transaction
-        let _ = driver
-            .create_transaction()
-            .random_valid_transfer()
-            .send()
-            .await?;
-    }
-    let block = driver
-        .build_new_block_with_current_timestamp(Some(Duration::from_millis(999)))
-        .await?;
-    // We could only produce block with deposits + builder tx because of short time frame
-    assert_eq!(block.transactions.len(), 2);
-
-    let flashblocks = flashblocks_listener.get_flashblocks();
-    assert_eq!(1, flashblocks.len());
-
-    flashblocks_listener.stop().await
-}
 
 #[rb_test(flashblocks, args = OpRbuilderArgs {
     chain_block_time: 1000,
@@ -193,7 +22,6 @@ async fn full_block_lag(rbuilder: LocalInstance) -> eyre::Result<()> {
         flashblocks_port: 1239,
         flashblocks_addr: "127.0.0.1".into(),
         flashblocks_block_time: 200,
-        flashblocks_leeway_time: 100,
         ..Default::default()
     },
     ..Default::default()
@@ -252,7 +80,6 @@ async fn test_flashblock_min_filtering(rbuilder: LocalInstance) -> eyre::Result<
         flashblocks_port: 1239,
         flashblocks_addr: "127.0.0.1".into(),
         flashblocks_block_time: 200,
-        flashblocks_leeway_time: 100,
         ..Default::default()
     },
     ..Default::default()
@@ -307,7 +134,6 @@ async fn test_flashblock_max_filtering(rbuilder: LocalInstance) -> eyre::Result<
         flashblocks_port: 1239,
         flashblocks_addr: "127.0.0.1".into(),
         flashblocks_block_time: 200,
-        flashblocks_leeway_time: 100,
         ..Default::default()
     },
     ..Default::default()
@@ -351,7 +177,6 @@ async fn test_flashblock_min_max_filtering(rbuilder: LocalInstance) -> eyre::Res
         flashblocks_port: 1239,
         flashblocks_addr: "127.0.0.1".into(),
         flashblocks_block_time: 200,
-        flashblocks_leeway_time: 100,
         flashblocks_disable_state_root: true,
         ..Default::default()
     },
@@ -594,9 +419,7 @@ fn verify_user_tx_hashes(
     }
 }
 
-/// Test that build_at_interval_end causes flashblocks to be built after the interval
-/// instead of immediately. With this flag enabled, the first flashblock should be
-/// delayed by first_flashblock_offset.
+/// Smoke test for flashblocks with end buffer.
 #[rb_test(flashblocks, args = OpRbuilderArgs {
     chain_block_time: 1000,
     flashblocks: FlashblocksArgs {
@@ -605,12 +428,11 @@ fn verify_user_tx_hashes(
         flashblocks_addr: "127.0.0.1".into(),
         flashblocks_block_time: 250,
         flashblocks_end_buffer_ms: 50,
-        flashblocks_build_at_interval_end: true,
         ..Default::default()
     },
     ..Default::default()
 })]
-async fn build_at_interval_end_basic(rbuilder: LocalInstance) -> eyre::Result<()> {
+async fn smoke_basic(rbuilder: LocalInstance) -> eyre::Result<()> {
     let driver = rbuilder.driver().await?;
     let flashblocks_listener = rbuilder.spawn_flashblocks_listener();
 
@@ -628,19 +450,18 @@ async fn build_at_interval_end_basic(rbuilder: LocalInstance) -> eyre::Result<()
     }
 
     let flashblocks = flashblocks_listener.get_flashblocks();
-    // With build_at_interval_end, the deadline_sleep controls when to stop
-    // Expected: ~4 flashblocks per block with end_buffer_ms applied at the end
+    // Expected: ~5 flashblocks per block (1000ms / 250ms interval, with end_buffer_ms applied)
     assert_eq!(
         25,
         flashblocks.len(),
-        "Expected 15 flashblocks, got {:#?}",
+        "Expected 25 flashblocks, got {:#?}",
         flashblocks.len()
     );
 
     flashblocks_listener.stop().await
 }
 
-/// Test build_at_interval_end with send_offset_ms combined
+/// Smoke test with send_offset_ms
 #[rb_test(flashblocks, args = OpRbuilderArgs {
     chain_block_time: 1000,
     flashblocks: FlashblocksArgs {
@@ -649,13 +470,12 @@ async fn build_at_interval_end_basic(rbuilder: LocalInstance) -> eyre::Result<()
         flashblocks_addr: "127.0.0.1".into(),
         flashblocks_block_time: 250,
         flashblocks_end_buffer_ms: 50,
-        flashblocks_build_at_interval_end: true,
         flashblocks_send_offset_ms: -25, // Send 25ms earlier
         ..Default::default()
     },
     ..Default::default()
 })]
-async fn build_at_interval_end_with_offset(rbuilder: LocalInstance) -> eyre::Result<()> {
+async fn smoke_with_offset(rbuilder: LocalInstance) -> eyre::Result<()> {
     let driver: ChainDriver = rbuilder.driver().await?;
     let flashblocks_listener = rbuilder.spawn_flashblocks_listener();
 
@@ -673,11 +493,11 @@ async fn build_at_interval_end_with_offset(rbuilder: LocalInstance) -> eyre::Res
     }
 
     let flashblocks = flashblocks_listener.get_flashblocks();
-    // Combined flags should still produce reasonable flashblock count
+    // Offset should still produce expected flashblock count
     assert_eq!(
         25,
         flashblocks.len(),
-        "Expected 15 flashblocks, got {:#?}",
+        "Expected 25 flashblocks, got {:#?}",
         flashblocks.len()
     );
 
@@ -694,7 +514,6 @@ async fn build_at_interval_end_with_offset(rbuilder: LocalInstance) -> eyre::Res
         flashblocks_addr: "127.0.0.1".into(),
         flashblocks_block_time: 200,
         flashblocks_end_buffer_ms: 50,
-        flashblocks_build_at_interval_end: true,
         ..Default::default()
     },
     ..Default::default()

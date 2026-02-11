@@ -33,10 +33,16 @@ impl FlashblockScheduler {
 
         // Calculate how much time remains until the payload deadline
         let remaining_time =
-            compute_remaining_time(config, block_time, payload_timestamp, reference_system);
+            compute_remaining_time(block_time, payload_timestamp, reference_system);
 
         // Compute the schedule as relative durations from now
-        let intervals = compute_scheduler_intervals(config, remaining_time, target_flashblocks);
+        let intervals = compute_scheduler_intervals(
+            config.interval,
+            config.send_offset_ms,
+            config.end_buffer_ms,
+            remaining_time,
+            target_flashblocks,
+        );
 
         // Convert relative durations to absolute instants for
         // tokio::time::sleep_until
@@ -117,21 +123,14 @@ impl FlashblockScheduler {
 }
 
 /// Computes the remaining time until the payload deadline. Calculates remaining
-/// time as `payload_timestamp - now - leeway`. The result is capped at
-/// `block_time` and falls back to `block_time` if the timestamp is in the past.
+/// time as `payload_timestamp - now`. The result is capped at `block_time` and
+/// falls back to `block_time` if the timestamp is in the past.
 fn compute_remaining_time(
-    config: &FlashblocksConfig,
     block_time: Duration,
     payload_timestamp: u64,
     reference_system: std::time::SystemTime,
 ) -> Duration {
-    // Calculate target time, subtracting leeway when building at interval start
-    let target_time = std::time::SystemTime::UNIX_EPOCH + Duration::from_secs(payload_timestamp)
-        - if !config.build_at_interval_end {
-            config.leeway_time
-        } else {
-            Duration::ZERO
-        };
+    let target_time = std::time::SystemTime::UNIX_EPOCH + Duration::from_secs(payload_timestamp);
 
     // Calculate remaining time, with fallback to block_time if:
     // - target_time is in the past (duration_since returns Err)
@@ -147,32 +146,26 @@ fn compute_remaining_time(
 /// Computes the scheduler send time intervals as durations relative to the
 /// start instant.
 fn compute_scheduler_intervals(
-    config: &FlashblocksConfig,
+    flashblock_interval: Duration,
+    send_offset_ms: i64,
+    end_buffer_ms: u64,
     remaining_time: Duration,
     target_flashblocks: u64,
 ) -> Vec<Duration> {
     // Align flashblocks to remaining_time
     let first_flashblock_offset =
-        calculate_first_flashblock_offset(remaining_time, config.interval);
+        calculate_first_flashblock_offset(remaining_time, flashblock_interval);
 
-    let (first_flashblock_offset, flashblocks_deadline) = if config.build_at_interval_end {
-        let adjusted_offset = apply_offset(first_flashblock_offset, config.send_offset_ms);
-        let adjusted_deadline = apply_offset(
-            remaining_time.saturating_sub(Duration::from_millis(config.end_buffer_ms)),
-            config.send_offset_ms,
-        );
-        (adjusted_offset, adjusted_deadline)
-    } else {
-        // Build at start: use calculated offset, deadline is remaining_time to
-        // ensure signals fit within the actual time available
-        (first_flashblock_offset, remaining_time)
-    };
+    let first_flashblock_offset = apply_offset(first_flashblock_offset, send_offset_ms);
+    let flashblocks_deadline = apply_offset(
+        remaining_time.saturating_sub(Duration::from_millis(end_buffer_ms)),
+        send_offset_ms,
+    );
 
     compute_send_time_intervals(
         first_flashblock_offset,
-        config.interval,
+        flashblock_interval,
         flashblocks_deadline,
-        config.build_at_interval_end,
         target_flashblocks,
     )
 }
@@ -182,15 +175,9 @@ fn compute_send_time_intervals(
     first_flashblock_offset: Duration,
     interval: Duration,
     deadline: Duration,
-    build_at_interval_end: bool,
     target_flashblocks: u64,
 ) -> Vec<Duration> {
     let mut send_times = vec![];
-
-    // When building at interval start, trigger immediately at t=0
-    if !build_at_interval_end && Duration::ZERO < deadline {
-        send_times.push(Duration::ZERO);
-    }
 
     // Add triggers at first_flashblock_offset, then every interval until
     // deadline
@@ -199,7 +186,6 @@ fn compute_send_time_intervals(
         send_times.push(next_time);
         next_time += interval;
     }
-
     send_times.push(deadline);
 
     // Clamp the number of triggers. Some of the calculation strategies end up
@@ -263,14 +249,12 @@ mod tests {
     fn check_compute_send_times(
         test_case: ComputeSendTimesTestCase,
         interval: Duration,
-        build_at_interval_end: bool,
         target_flashblocks: u64,
     ) {
         let send_times = compute_send_time_intervals(
             Duration::from_millis(test_case.first_flashblock_offset_ms),
             interval,
             Duration::from_millis(test_case.deadline_ms),
-            build_at_interval_end,
             target_flashblocks,
         );
         let expected_send_times: Vec<Duration> = test_case
@@ -279,38 +263,14 @@ mod tests {
             .map(|ms| Duration::from_millis(*ms))
             .collect();
         assert_eq!(
-            send_times,
-            expected_send_times,
-            "Failed for test case: first_flashblock_offset_ms: {}, interval: {:?}, deadline_ms: {}, build_at_interval_end: {}",
-            test_case.first_flashblock_offset_ms,
-            interval,
-            test_case.deadline_ms,
-            build_at_interval_end
+            send_times, expected_send_times,
+            "Failed for test case: first_flashblock_offset_ms: {}, interval: {:?}, deadline_ms: {}",
+            test_case.first_flashblock_offset_ms, interval, test_case.deadline_ms,
         );
     }
 
     #[test]
-    fn test_compute_send_times_build_at_start() {
-        let test_cases = vec![
-            ComputeSendTimesTestCase {
-                first_flashblock_offset_ms: 90,
-                deadline_ms: 1000,
-                expected_send_times_ms: vec![0, 90, 290, 490, 690],
-            },
-            ComputeSendTimesTestCase {
-                first_flashblock_offset_ms: 140,
-                deadline_ms: 870,
-                expected_send_times_ms: vec![0, 140, 340, 540, 740],
-            },
-        ];
-
-        for test_case in test_cases {
-            check_compute_send_times(test_case, Duration::from_millis(200), false, 5);
-        }
-    }
-
-    #[test]
-    fn test_compute_send_times_build_at_end() {
+    fn test_compute_send_times() {
         let test_cases = vec![ComputeSendTimesTestCase {
             first_flashblock_offset_ms: 150,
             deadline_ms: 880,
@@ -318,7 +278,7 @@ mod tests {
         }];
 
         for test_case in test_cases {
-            check_compute_send_times(test_case, Duration::from_millis(200), true, 5);
+            check_compute_send_times(test_case, Duration::from_millis(200), 5);
         }
     }
 
@@ -383,23 +343,6 @@ mod tests {
         );
     }
 
-    fn make_config(
-        interval_ms: u64,
-        leeway_time_ms: u64,
-        build_at_interval_end: bool,
-        send_offset_ms: i64,
-        end_buffer_ms: u64,
-    ) -> FlashblocksConfig {
-        FlashblocksConfig {
-            interval: Duration::from_millis(interval_ms),
-            leeway_time: Duration::from_millis(leeway_time_ms),
-            build_at_interval_end,
-            send_offset_ms,
-            end_buffer_ms,
-            ..Default::default()
-        }
-    }
-
     fn durations_ms(ms_values: &[u64]) -> Vec<Duration> {
         ms_values
             .iter()
@@ -408,100 +351,70 @@ mod tests {
     }
 
     #[test]
-    fn test_compute_scheduler_intervals_build_at_start() {
-        // Build at start remaining_time = 870ms first_offset =
-        // calculate_first_flashblock_offset(870, 200) = (870-1) % 200 + 1 = 70
-        // deadline = remaining_time = 870 (so signals fit within available
-        // time)
-        let config = make_config(200, 0, false, 0, 0);
-        let remaining_time = Duration::from_millis(870);
-
-        let intervals = compute_scheduler_intervals(&config, remaining_time, 5);
-
-        // Expect: 0 (immediate), 70, 270, 470, 670 (all < 870)
-        // (deadline=remaining_time ensures signals complete before slot ends)
-        assert_eq!(intervals, durations_ms(&[0, 70, 270, 470, 670]));
-    }
-
-    #[test]
-    fn test_compute_scheduler_intervals_build_at_start_late_fcu() {
-        // Late FCU arrival - remaining_time is much less than block_time. This
-        // simulates FCU arriving 700ms into a 1000ms slot. The deadline must be
-        // remaining_time (not block_time) so signals fit within the actual time
-        // available before block_cancel fires.
-        let config = make_config(200, 0, false, 0, 0);
-        let remaining_time = Duration::from_millis(300); // Only 300ms left
-
-        let intervals = compute_scheduler_intervals(&config, remaining_time, 5);
-
-        // first_offset = (300-1) % 200 + 1 = 100
-        // deadline = remaining_time = 300 (NOT block_time!)
-        // Signals: [0, 100] (200 and 300 would be >= deadline)
-        // All signals must complete before remaining_time, otherwise they'd be
-        // cancelled when block_cancel fires at the slot boundary.
-        assert_eq!(intervals, durations_ms(&[0, 100]));
-    }
-
-    #[test]
-    fn test_compute_scheduler_intervals_build_at_end() {
-        // Build at end remaining_time = 880ms first_offset =
-        // calculate_first_flashblock_offset(880, 200) = (880-1) % 200 + 1 = 80
-        // adjusted_offset = apply_offset(80, 0) = 80 adjusted_deadline =
-        // apply_offset(880 - 0, 0) = 880
-        let config = make_config(200, 0, true, 0, 0);
+    fn test_compute_scheduler_intervals() {
+        // remaining_time = 880ms
+        // first_offset = calculate_first_flashblock_offset(880, 200) = (880-1) % 200 + 1 = 80
+        // adjusted_offset = apply_offset(80, 0) = 80
+        // adjusted_deadline = apply_offset(880 - 0, 0) = 880
         let remaining_time = Duration::from_millis(880);
 
-        let intervals = compute_scheduler_intervals(&config, remaining_time, 5);
+        let intervals =
+            compute_scheduler_intervals(Duration::from_millis(200), 0, 0, remaining_time, 5);
 
-        // Expect: 80, 280, 480, 680, 880 (deadline)
         assert_eq!(intervals, durations_ms(&[80, 280, 480, 680, 880]));
     }
 
     #[test]
-    fn test_compute_scheduler_intervals_build_at_end_with_offset_and_buffer() {
-        // Build at end with send_offset and end_buffer remaining_time = 800ms
-        // first_offset = calculate_first_flashblock_offset(800, 200) = (800-1)
-        // % 200 + 1 = 200 adjusted_offset = apply_offset(200, -20) = 180
-        // adjusted_deadline = apply_offset(800 - 50, -20) = apply_offset(750,
-        // -20) = 730
-        let config = make_config(200, 0, true, -20, 50);
+    fn test_compute_scheduler_intervals_late_fcu() {
+        // Late FCU arrival - remaining_time is much less than block_time.
+        // This simulates FCU arriving 700ms into a 1000ms slot.
+        let remaining_time = Duration::from_millis(300);
+
+        let intervals =
+            compute_scheduler_intervals(Duration::from_millis(200), 0, 0, remaining_time, 5);
+
+        // first_offset = (300-1) % 200 + 1 = 100
+        // Signals: [100, 300] (deadline included)
+        assert_eq!(intervals, durations_ms(&[100, 300]));
+    }
+
+    #[test]
+    fn test_compute_scheduler_intervals_with_offset_and_buffer() {
+        // With send_offset and end_buffer remaining_time = 800ms
+        // first_offset = calculate_first_flashblock_offset(800, 200) = (800-1) % 200 + 1 = 200
+        // adjusted_offset = apply_offset(200, -20) = 180
+        // adjusted_deadline = apply_offset(800 - 50, -20) = apply_offset(750, -20) = 730
         let remaining_time = Duration::from_millis(800);
 
-        let intervals = compute_scheduler_intervals(&config, remaining_time, 5);
+        let intervals =
+            compute_scheduler_intervals(Duration::from_millis(200), -20, 50, remaining_time, 5);
 
-        // Expect: 180, 380, 580, 730 (deadline)
         assert_eq!(intervals, durations_ms(&[180, 380, 580, 730]));
     }
 
     #[test]
     fn test_compute_remaining_time_future_timestamp() {
-        let config = make_config(200, 100, false, 0, 0);
         let block_time = Duration::from_millis(2000);
         let reference_system = std::time::SystemTime::UNIX_EPOCH + Duration::from_secs(1000);
-        // Target = 1000 + 2 - 0.1 (leeway) = 1001.9 Remaining = 1001.9 - 1000 =
-        // 1.9s = 1900ms, but capped at block_time
         let payload_timestamp = 1002;
 
-        let remaining =
-            compute_remaining_time(&config, block_time, payload_timestamp, reference_system);
+        let remaining = compute_remaining_time(block_time, payload_timestamp, reference_system);
 
-        // target_time = EPOCH + 1002s - 100ms = EPOCH + 1001.9s remaining =
-        // 1001.9s - 1000s = 1.9s = 1900ms
-        assert_eq!(remaining, Duration::from_millis(1900));
+        // target_time = EPOCH + 1002s, reference = EPOCH + 1000s
+        // remaining = 1002s - 1000s = 2s = 2000ms, capped at block_time
+        assert_eq!(remaining, Duration::from_millis(2000));
     }
 
     #[test]
     fn test_compute_remaining_time_capped_at_block_time() {
         // Calculated remaining exceeds block_time
-        let config = make_config(200, 0, false, 0, 0);
         let block_time = Duration::from_millis(1000);
         let reference_system = std::time::SystemTime::UNIX_EPOCH + Duration::from_secs(1000);
-        // Target = EPOCH + 1005s, Reference = EPOCH + 1000s Remaining would be
-        // 5s, but capped at block_time (1s)
+        // Target = EPOCH + 1005s, Reference = EPOCH + 1000s
+        // Remaining would be 5s, but capped at block_time (1s)
         let payload_timestamp = 1005;
 
-        let remaining =
-            compute_remaining_time(&config, block_time, payload_timestamp, reference_system);
+        let remaining = compute_remaining_time(block_time, payload_timestamp, reference_system);
 
         assert_eq!(remaining, block_time);
     }
@@ -509,33 +422,13 @@ mod tests {
     #[test]
     fn test_compute_remaining_time_past_timestamp() {
         // Past timestamp (returns block_time as fallback)
-        let config = make_config(200, 0, false, 0, 0);
         let block_time = Duration::from_millis(1000);
         let reference_system = std::time::SystemTime::UNIX_EPOCH + Duration::from_secs(1000);
         // Target is in the past
         let payload_timestamp = 999;
 
-        let remaining =
-            compute_remaining_time(&config, block_time, payload_timestamp, reference_system);
+        let remaining = compute_remaining_time(block_time, payload_timestamp, reference_system);
 
         assert_eq!(remaining, block_time);
-    }
-
-    #[test]
-    fn test_compute_remaining_time_build_at_interval_end_no_leeway() {
-        // When build_at_interval_end is true, leeway is not subtracted from
-        // target
-        let config = make_config(200, 100, true, 0, 0);
-        let block_time = Duration::from_millis(2000);
-        let reference_system = std::time::SystemTime::UNIX_EPOCH + Duration::from_secs(1000);
-        let payload_timestamp = 1002;
-
-        let remaining =
-            compute_remaining_time(&config, block_time, payload_timestamp, reference_system);
-
-        // target_time = EPOCH + 1002s - 0 (no leeway when
-        // build_at_interval_end) remaining = 1002s - 1000s = 2s = 2000ms,
-        // capped at block_time
-        assert_eq!(remaining, Duration::from_millis(2000));
     }
 }
