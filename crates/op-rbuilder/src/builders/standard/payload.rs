@@ -1,13 +1,13 @@
 use super::super::context::OpPayloadBuilderCtx;
 use crate::{
-    builders::{generator::BuildArguments, BuilderConfig, BuilderTransactions},
+    builders::{BuilderConfig, BuilderTransactions, generator::BuildArguments},
     gas_limiter::AddressGasLimiter,
     metrics::OpRBuilderMetrics,
     primitives::reth::ExecutionInfo,
     traits::{ClientBounds, PayloadTxsBounds, PoolBounds},
 };
 use alloy_consensus::{
-    constants::EMPTY_WITHDRAWALS, proofs, BlockBody, Header, EMPTY_OMMER_ROOT_HASH,
+    BlockBody, EMPTY_OMMER_ROOT_HASH, Header, constants::EMPTY_WITHDRAWALS, proofs,
 };
 use alloy_eips::{eip7685::EMPTY_REQUESTS_HASH, merge::BEACON_NONCE};
 use alloy_evm::Database;
@@ -15,7 +15,7 @@ use alloy_primitives::U256;
 use reth::payload::PayloadBuilderAttributes;
 use reth_basic_payload_builder::{BuildOutcome, BuildOutcomeKind, MissingPayloadBehaviour};
 use reth_chain_state::ExecutedBlock;
-use reth_evm::{execute::BlockBuilder, ConfigureEvm};
+use reth_evm::{ConfigureEvm, execute::BlockBuilder};
 use reth_node_api::{Block, PayloadBuilderError};
 use reth_optimism_consensus::{calculate_receipt_root_no_memo_optimism, isthmus};
 use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
@@ -27,7 +27,7 @@ use reth_primitives::RecoveredBlock;
 use reth_primitives_traits::InMemorySize;
 use reth_provider::{ExecutionOutcome, StateProvider};
 use reth_revm::{
-    database::StateProviderDatabase, db::states::bundle_state::BundleRetention, State,
+    State, database::StateProviderDatabase, db::states::bundle_state::BundleRetention,
 };
 use reth_transaction_pool::{
     BestTransactions, BestTransactionsAttributes, PoolTransaction, TransactionPool,

@@ -5,8 +5,10 @@
 //! ingress, payload execution) access directly.
 use crate::rules::types::{BoostRule, DenyRule, RuleSet};
 use alloy_primitives::{Address, B256};
-use std::collections::HashMap;
-use std::sync::{Arc, OnceLock, RwLock};
+use std::{
+    collections::HashMap,
+    sync::{Arc, OnceLock, RwLock},
+};
 
 /// Global ruleset singleton
 static GLOBAL_RULESET: OnceLock<RwLock<Arc<RuleSet>>> = OnceLock::new();

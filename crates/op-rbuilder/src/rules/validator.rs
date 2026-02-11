@@ -4,16 +4,22 @@
 //! additional checks include rule-based deny lists backed by the shared global ruleset as well as
 //! an optional HTTP call-out for bespoke validation logic.
 
-use crate::rules::global_ruleset;
-use crate::rules::metrics::RulesMetrics;
-use crate::rules::state::{insert_tx_score, score_cache_len};
+use crate::rules::{
+    global_ruleset,
+    metrics::RulesMetrics,
+    state::{insert_tx_score, score_cache_len},
+};
 use reqwest::Client;
 use reth_primitives_traits::{Block, SealedBlock};
 use reth_transaction_pool::{
     PoolTransaction, TransactionOrigin, TransactionValidationOutcome, TransactionValidator,
     error::{InvalidPoolTransactionError, PoolTransactionError},
 };
-use std::{any::Any, fmt, time::{Duration, Instant}};
+use std::{
+    any::Any,
+    fmt,
+    time::{Duration, Instant},
+};
 use tracing::{debug, warn};
 
 /// Rule-based transaction validator that applies ingress-phase rules and optional external checks.
@@ -247,7 +253,11 @@ where
 
         let outcome = self.inner.validate_transaction(origin, transaction).await;
 
-        if let TransactionValidationOutcome::Valid { transaction: ref valid_tx, .. } = outcome {
+        if let TransactionValidationOutcome::Valid {
+            transaction: ref valid_tx,
+            ..
+        } = outcome
+        {
             let ruleset = global_ruleset();
             if ruleset.has_scoring_rules() {
                 let tx = valid_tx.transaction();
