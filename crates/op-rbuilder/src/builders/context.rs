@@ -416,6 +416,8 @@ impl<ExtraCtx: Debug + Default + MaybeFlashblockIndex> OpPayloadBuilderCtx<Extra
         let mut num_txs_simulated_fail = 0;
         let mut num_bundles_reverted = 0;
         let mut reverted_gas_used = 0;
+        let mut num_backruns_considered = 0;
+        let mut num_backruns_successful = 0;
         let base_fee = self.base_fee();
 
         let tx_da_limit = self.da_config.max_da_tx_size();
@@ -674,6 +676,7 @@ impl<ExtraCtx: Debug + Default + MaybeFlashblockIndex> OpPayloadBuilderCtx<Extra
                     };
 
                     num_txs_considered += 1;
+                    num_backruns_considered += 1;
 
                     if !bundle.is_valid(block_attr.number, self.extra_ctx.flashblock_index()) {
                         log_br_txn(TxnExecutionResult::ConditionalCheckFailed);
@@ -772,6 +775,7 @@ impl<ExtraCtx: Debug + Default + MaybeFlashblockIndex> OpPayloadBuilderCtx<Extra
                     }
 
                     num_txs_simulated_success += 1;
+                    num_backruns_successful += 1;
                     self.metrics
                         .successful_tx_gas_used
                         .record(br_gas_used as f64);
@@ -809,6 +813,8 @@ impl<ExtraCtx: Debug + Default + MaybeFlashblockIndex> OpPayloadBuilderCtx<Extra
             num_txs_simulated_fail,
             num_bundles_reverted,
             reverted_gas_used,
+            num_backruns_considered,
+            num_backruns_successful,
         );
 
         debug!(
@@ -818,6 +824,8 @@ impl<ExtraCtx: Debug + Default + MaybeFlashblockIndex> OpPayloadBuilderCtx<Extra
             txs_applied = num_txs_simulated_success,
             txs_rejected = num_txs_simulated_fail,
             bundles_reverted = num_bundles_reverted,
+            backruns_considered = num_backruns_considered,
+            backruns_successful = num_backruns_successful,
         );
         Ok(None)
     }
