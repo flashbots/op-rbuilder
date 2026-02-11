@@ -9,7 +9,7 @@
 ARG FEATURES
 ARG RBUILDER_BIN="op-rbuilder"
 
-FROM rust:1.92 AS base
+FROM rust:1.92-bookworm AS base
 ARG TARGETPLATFORM
 
 RUN apt-get update \
@@ -108,6 +108,7 @@ RUN case "$TARGETPLATFORM" in \
 FROM gcr.io/distroless/cc-debian12 AS rbuilder-runtime
 ARG RBUILDER_BIN
 WORKDIR /app
+COPY --from=rbuilder /lib/*-linux-gnu/libz.so.1* /lib/
 COPY --from=rbuilder /app/target/release/${RBUILDER_BIN} /app/rbuilder
 ENTRYPOINT ["/app/rbuilder"]
 
@@ -115,5 +116,6 @@ ENTRYPOINT ["/app/rbuilder"]
 FROM gcr.io/distroless/cc-debian12 AS rbuilder-reproducible-runtime
 ARG RBUILDER_BIN
 WORKDIR /app
+COPY --from=rbuilder-reproducible /lib/*-linux-gnu/libz.so.1* /lib/
 COPY --from=rbuilder-reproducible /app/target/*/release/${RBUILDER_BIN} /app/rbuilder
 ENTRYPOINT ["/app/rbuilder"]
