@@ -140,7 +140,7 @@ impl LocalInstance {
                     rollup_args.supervisor_http.clone(),
                     rollup_args.supervisor_safety_level,
                 )
-                .with_validator_wrapper(move |op_validator| RuleBasedValidator::new(op_validator))
+                .with_validator_wrapper(RuleBasedValidator::new)
         };
 
         let node_builder = NodeBuilder::<_, OpChainSpec>::new(config.clone())

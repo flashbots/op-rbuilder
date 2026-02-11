@@ -211,8 +211,7 @@ where
                 tracing::info!("Rules disabled at runtime, external validation only");
             }
 
-            builder
-                .with_validator_wrapper(move |op_validator| RuleBasedValidator::new(op_validator))
+            builder.with_validator_wrapper(RuleBasedValidator::new)
         };
 
         #[cfg(not(feature = "rules"))]
