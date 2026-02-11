@@ -428,8 +428,8 @@ where
 
         info!(
             target: "payload_builder",
-            message = "Fallback block built",
             payload_id = fb_payload.payload_id.to_string(),
+            "Fallback block built"
         );
 
         // not emitting flashblock if no_tx_pool in FCU, it's just syncing
@@ -898,11 +898,13 @@ where
 
                 info!(
                     target: "payload_builder",
-                    message = "Flashblock built",
+                    event = "flashblock_built",
+                    payload_id = %ctx.payload_id(),
                     flashblock_index = flashblock_index,
                     current_gas = info.cumulative_gas_used,
                     current_da = info.cumulative_da_bytes_used,
                     target_flashblocks = ctx.target_flashblock_count(),
+                    "Flashblock built"
                 );
 
                 Ok(Some(next_extra_ctx))
@@ -932,8 +934,9 @@ where
             .payload_num_tx_gauge
             .set(info.executed_transactions.len() as f64);
 
-        debug!(
+        info!(
             target: "payload_builder",
+            event = "build_complete",
             payload_id = ?ctx.payload_id(),
             flashblocks_per_block = flashblocks_per_block,
             flashblock_index = ctx.flashblock_index(),
@@ -970,9 +973,9 @@ where
         else {
             error!(
                 target: "payload_builder",
-                message = "FCU arrived too late or system clock are unsynced",
                 ?target_time,
                 ?now,
+                "FCU arrived too late or system clock are unsynced"
             );
             return (
                 self.config.flashblocks_per_block(),
@@ -987,10 +990,10 @@ where
         );
         debug!(
             target: "payload_builder",
-            message = "Time drift for building round",
             ?target_time,
             time_drift = self.config.block_time.as_millis().saturating_sub(time_drift.as_millis()),
-            ?timestamp
+            ?timestamp,
+           "Time drift for building round"
         );
         // This is extra check to ensure that we would account at least for block time in case we have any timer discrepancies.
         let time_drift = time_drift.min(self.config.block_time);
