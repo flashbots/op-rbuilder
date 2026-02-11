@@ -223,7 +223,15 @@ async fn unichain_dynamic_with_lag(rbuilder: LocalInstance) -> eyre::Result<()> 
     }
 
     let flashblocks = flashblocks_listener.get_flashblocks();
-    assert_eq!(34, flashblocks.len());
+    // 9 blocks with increasing lag (0ms, 100ms, ..., 800ms).
+    // With 1000ms block_time, 200ms interval, 100ms leeway:
+    //   remaining_time = 900 - lag
+    // Flashblocks per block decrease as lag increases:
+    //   lag=0-200ms: 5-6 flashblocks each
+    //   lag=300-500ms: 3-4 flashblocks each
+    //   lag=600-800ms: 2-3 flashblocks each
+    // Total = 42 flashblocks across all 9 blocks.
+    assert_eq!(42, flashblocks.len());
 
     flashblocks_listener.stop().await
 }

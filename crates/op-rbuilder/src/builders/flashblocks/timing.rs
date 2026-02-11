@@ -180,8 +180,9 @@ fn compute_scheduler_intervals(
         );
         (adjusted_offset, adjusted_deadline)
     } else {
-        // Build at start: use calculated offset, deadline is full block_time
-        (first_flashblock_offset, block_time)
+        // Build at start: use calculated offset, deadline is remaining_time to
+        // ensure signals fit within the actual time available
+        (first_flashblock_offset, remaining_time)
     };
 
     compute_send_time_intervals(
@@ -458,18 +459,38 @@ mod tests {
 
     #[test]
     fn test_compute_scheduler_intervals_dynamic_build_at_start() {
-        // Dynamic mode, build at end remaining_time = 870ms first_offset =
+        // Dynamic mode, build at start remaining_time = 870ms first_offset =
         // calculate_first_flashblock_offset(870, 200) = (870-1) % 200 + 1 = 70
-        // deadline = block_time = 1000
+        // deadline = remaining_time = 870 (so signals fit within available time)
         let config = make_config(200, 0, false, false, 0, 0);
         let block_time = Duration::from_millis(1000);
         let remaining_time = Duration::from_millis(870);
 
         let intervals = compute_scheduler_intervals(&config, block_time, remaining_time, 5);
 
-        // Expect: 0 (immediate), 70, 270, 470, 670
-        // (deadline=block_time)
+        // Expect: 0 (immediate), 70, 270, 470, 670 (all < 870)
+        // (deadline=remaining_time ensures signals complete before slot ends)
         assert_eq!(intervals, durations_ms(&[0, 70, 270, 470, 670]));
+    }
+
+    #[test]
+    fn test_compute_scheduler_intervals_dynamic_build_at_start_late_fcu() {
+        // Dynamic mode with late FCU arrival - remaining_time is much less than
+        // block_time. This simulates FCU arriving 700ms into a 1000ms slot.
+        // The deadline must be remaining_time (not block_time) so signals fit
+        // within the actual time available before block_cancel fires.
+        let config = make_config(200, 0, false, false, 0, 0);
+        let block_time = Duration::from_millis(1000);
+        let remaining_time = Duration::from_millis(300); // Only 300ms left
+
+        let intervals = compute_scheduler_intervals(&config, block_time, remaining_time, 5);
+
+        // first_offset = (300-1) % 200 + 1 = 100
+        // deadline = remaining_time = 300 (NOT block_time!)
+        // Signals: [0, 100] (200 and 300 would be >= deadline)
+        // All signals must complete before remaining_time, otherwise they'd be
+        // cancelled when block_cancel fires at the slot boundary.
+        assert_eq!(intervals, durations_ms(&[0, 100]));
     }
 
     #[test]
