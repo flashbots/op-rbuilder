@@ -428,7 +428,7 @@ where
 
         info!(
             target: "payload_builder",
-            payload_id = fb_payload.payload_id.to_string(),
+            id = fb_payload.payload_id.to_string(),
             "Fallback block built"
         );
 
@@ -487,7 +487,7 @@ where
 
         info!(
             target: "payload_builder",
-            payload_id = fb_payload.payload_id.to_string(),
+            id = fb_payload.payload_id.to_string(),
             flashblocks_per_block,
             first_flashblock_offset = first_flashblock_offset.as_millis(),
             flashblocks_interval = self.config.specific.interval.as_millis(),
@@ -580,7 +580,7 @@ where
                         _ = timer.tick() => {
                             debug!(
                                 target: "payload_builder",
-                                payload_id = ?fb_payload.payload_id,
+                                id = ?fb_payload.payload_id,
                                 flashblock_index = flashblock_index,
                                 block_number = block_number,
                                 "Triggering next flashblock with timer",
@@ -630,7 +630,7 @@ where
             if let Ok(new_fb_cancel) = rx.recv() {
                 debug!(
                     target: "payload_builder",
-                    payload_id = ?fb_payload.payload_id,
+                    id = ?fb_payload.payload_id,
                     flashblock_index = ctx.flashblock_index(),
                     block_number = ctx.block_number(),
                     "Received signal to build flashblock",
@@ -899,7 +899,7 @@ where
                 info!(
                     target: "payload_builder",
                     event = "flashblock_built",
-                    payload_id = %ctx.payload_id(),
+                    id = %ctx.payload_id(),
                     flashblock_index = flashblock_index,
                     current_gas = info.cumulative_gas_used,
                     current_da = info.cumulative_da_bytes_used,
@@ -937,7 +937,7 @@ where
         info!(
             target: "payload_builder",
             event = "build_complete",
-            payload_id = ?ctx.payload_id(),
+            id = ?ctx.payload_id(),
             flashblocks_per_block = flashblocks_per_block,
             flashblock_index = ctx.flashblock_index(),
         );
@@ -1103,7 +1103,7 @@ where
         else {
             error!(
                 target: "payload_builder",
-                payload_id = ?payload_id,
+                id = ?payload_id,
                 ?target_time,
                 ?now,
                 "FCU arrived too late or system clock are unsynced",
@@ -1125,7 +1125,7 @@ where
         );
         debug!(
             target: "payload_builder",
-            payload_id = ?payload_id,
+            id = ?payload_id,
             ?target_time,
             delay = self.config.block_time.as_millis().saturating_sub(remaining_time.as_millis()),
             ?timestamp,
@@ -1402,14 +1402,14 @@ where
     };
     debug!(
         target: "payload_builder",
-        payload_id = ?ctx.payload_id(),
+        id = ?ctx.payload_id(),
         "Executed block created"
     );
 
     let sealed_block = Arc::new(block.seal_slow());
     debug!(
         target: "payload_builder",
-        payload_id = ?ctx.payload_id(),
+        id = ?ctx.payload_id(),
         ?sealed_block,
         "Sealed built block"
     );

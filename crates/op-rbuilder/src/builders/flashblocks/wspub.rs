@@ -78,7 +78,7 @@ impl WebSocketPublisher {
             target: "payload_builder",
             event = "flashblock_sent",
             message = "Sending flashblock to rollup-boost",
-            payload_id = %payload.payload_id,
+            id = %payload.payload_id,
             index = payload.index,
             base = payload.base.is_some(),
         );

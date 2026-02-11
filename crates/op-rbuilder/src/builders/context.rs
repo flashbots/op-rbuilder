@@ -406,7 +406,7 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
 
         debug!(
             target: "payload_builder",
-            payload_id = ?self.payload_id(),
+            id = ?self.payload_id(),
             block_da_limit = ?block_da_limit,
             tx_da_limit = ?tx_da_limit,
             block_gas_limit = ?block_gas_limit,
@@ -438,7 +438,7 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
             let log_txn = |result: TxnExecutionResult| {
                 debug!(
                     target: "payload_builder",
-                    payload_id = ?self.payload_id(),
+                    id = ?self.payload_id(),
                     tx_hash = ?tx_hash,
                     tx_da_size = ?tx_da_size,
                     exclude_reverting_txs = ?exclude_reverting_txs,
@@ -617,7 +617,7 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
 
         debug!(
             target: "payload_builder",
-            payload_id = ?self.payload_id(),
+            id = ?self.payload_id(),
             txs_executed = num_txs_considered,
             txs_applied = num_txs_simulated_success,
             txs_rejected = num_txs_simulated_fail,
