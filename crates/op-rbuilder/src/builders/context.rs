@@ -6,7 +6,7 @@ use alloy_primitives::{B256, BlockHash, Bytes, U256};
 use alloy_rpc_types_eth::Withdrawals;
 use core::fmt::Debug;
 use op_alloy_consensus::OpDepositReceipt;
-use op_revm::OpSpecId;
+use op_revm::{OpSpecId, OpTransactionError};
 use reth::payload::PayloadBuilderAttributes;
 use reth_basic_payload_builder::PayloadConfig;
 use reth_chainspec::{EthChainSpec, EthereumHardforks};
@@ -34,7 +34,11 @@ use reth_primitives::SealedHeader;
 use reth_primitives_traits::{InMemorySize, SignedTransaction};
 use reth_revm::{State, context::Block};
 use reth_transaction_pool::{BestTransactionsAttributes, PoolTransaction};
-use revm::{DatabaseCommit, context::result::ResultAndState, interpreter::as_u64_saturated};
+use revm::{
+    DatabaseCommit,
+    context::result::{InvalidTransaction, ResultAndState},
+    interpreter::as_u64_saturated,
+};
 use std::{sync::Arc, time::Instant};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, trace};
@@ -621,44 +625,159 @@ impl<ExtraCtx: Debug + Default + MaybeFlashblockIndex> OpPayloadBuilderCtx<Extra
             if tx_succeeded
                 && let Some(backruns) = self.backrun_bundle_pool.get_backruns(&target_hash)
             {
-                // first dirty impl.
-                let flashblock_index = self.extra_ctx.flashblock_index();
                 for backrun in backruns.iter() {
                     let bundle = &backrun.0;
 
-                    if let Some(fb_idx) = flashblock_index {
-                        if bundle.flashblock_number_min.is_some_and(|min| fb_idx < min) {
-                            continue;
-                        }
-                        if bundle.flashblock_number_max.is_some_and(|max| fb_idx > max) {
-                            continue;
-                        }
-                    }
+                    /* Backrun tx commit checklist:
+                    This is a set of steps that are performed for normal transactsions above that we need to
+                    replicate for backrun transactions
+                    - [x] num_txs_considered inc
+                    - [x] check conditional (block and flashblock number)
+                    - [x] check if tx over limits
+                    - [x] reject blobs and deposit txs
+                    - [x] exit early before evm execution if cancelled
+                    - [x] meter simulation duration
+                    - [] (optional) if transacton is invalid remove it forever
+                    - [x] meter tx_byte_size
+                    - [x] use gas limiter
+                    - [x] log when tx execution fails
+                    - [x] inc num_txs_simulated_success or num_txs_simulated_fail
+                    - [x] inc reverted_gas_used
+                    - [x] metrics use successful_tx_gas_used and reverted_tx_gas_used
+                    - [x] inc num_bundles_reverted
+                    - [x] enforce self.max_gas_per_txn
+                    - [x] increase info.{cumulative_gas_used, cumulative_da_bytes_used}
+                    - [x] push receipt to info.receipts
+                    - [x] commit changes to db
+                    - [x] increase info.total_fees
+                    - [x] update info.{executed_senders, executed_transactions}
 
-                    let backrun_priority_fee =
-                        bundle.backrun_tx.max_priority_fee_per_gas().unwrap_or(0);
-                    if backrun_priority_fee < miner_fee {
-                        continue;
-                    }
+                    In addition to that for backruns we do:
+                    - [x] check backrun priority fee >= target priority fee
+                            */
 
+                    // TODO: use recovered tx for backrun to skip this
                     let Ok(recovered_backrun) = bundle.backrun_tx.clone().try_into_recovered()
                     else {
                         continue;
                     };
 
-                    let Ok(ResultAndState {
-                        result: br_result,
-                        state: br_state,
-                    }) = evm.transact(&recovered_backrun)
-                    else {
-                        continue;
+                    let br_hash = recovered_backrun.hash();
+
+                    let log_br_txn = |result: TxnExecutionResult| {
+                        debug!(
+                            target: "payload_builder",
+                            message = "Considering backrun",
+                            tx_hash = ?br_hash,
+                            result = %result,
+                        )
                     };
-                    if !br_result.is_success() {
+
+                    num_txs_considered += 1;
+
+                    if !bundle.is_valid(block_attr.number, self.extra_ctx.flashblock_index()) {
+                        log_br_txn(TxnExecutionResult::ConditionalCheckFailed);
                         continue;
                     }
 
+                    let Some(backrun_priority_fee) =
+                        bundle.backrun_tx.effective_tip_per_gas(base_fee)
+                    else {
+                        log_br_txn(TxnExecutionResult::InternalError(OpTransactionError::Base(
+                            InvalidTransaction::GasPriceLessThanBasefee,
+                        )));
+                        continue;
+                    };
+
+                    // Reject backrun if its priority fee below target transaction
+                    if backrun_priority_fee < miner_fee {
+                        log_br_txn(TxnExecutionResult::PriorityFeeTooLow);
+                        continue;
+                    }
+
+                    if recovered_backrun.is_eip4844() || recovered_backrun.is_deposit() {
+                        log_br_txn(TxnExecutionResult::SequencerTransaction);
+                        continue;
+                    }
+
+                    // TODO: do this estimation in backrun tx pool
+                    let br_tx_da_size = op_alloy_flz::tx_estimated_size_fjord_bytes(
+                        recovered_backrun.encoded_2718().as_slice(),
+                    );
+                    if let Err(result) = info.is_tx_over_limits(
+                        br_tx_da_size,
+                        block_gas_limit,
+                        tx_da_limit,
+                        block_da_limit,
+                        recovered_backrun.gas_limit(),
+                        info.da_footprint_scalar,
+                        block_da_footprint_limit,
+                    ) {
+                        log_br_txn(result);
+                        continue;
+                    }
+
+                    if self.cancel.is_cancelled() {
+                        return Ok(Some(()));
+                    }
+
+                    let br_simulation_start = Instant::now();
+                    let ResultAndState {
+                        result: br_result,
+                        state: br_state,
+                    } = match evm.transact(&recovered_backrun) {
+                        Ok(res) => res,
+                        Err(err) => {
+                            if let Some(err) = err.as_invalid_tx_err() {
+                                log_br_txn(TxnExecutionResult::InternalError(err.clone()));
+                            } else {
+                                log_br_txn(TxnExecutionResult::EvmError);
+                            }
+                            continue;
+                        }
+                    };
+                    self.metrics
+                        .tx_simulation_duration
+                        .record(br_simulation_start.elapsed());
+                    self.metrics
+                        .tx_byte_size
+                        .record(recovered_backrun.inner().size() as f64);
+                    num_txs_simulated += 1;
+
                     let br_gas_used = br_result.gas_used();
+
+                    if self
+                        .address_gas_limiter
+                        .consume_gas(recovered_backrun.signer(), br_gas_used)
+                        .is_err()
+                    {
+                        log_br_txn(TxnExecutionResult::MaxGasUsageExceeded);
+                        continue;
+                    }
+
+                    if !br_result.is_success() {
+                        num_txs_simulated_fail += 1;
+                        num_bundles_reverted += 1;
+                        reverted_gas_used += br_gas_used as i32;
+                        self.metrics.reverted_tx_gas_used.record(br_gas_used as f64);
+                        log_br_txn(TxnExecutionResult::RevertedAndExcluded);
+                        continue;
+                    }
+
+                    if let Some(max_gas_per_txn) = self.max_gas_per_txn
+                        && br_gas_used > max_gas_per_txn
+                    {
+                        log_br_txn(TxnExecutionResult::MaxGasUsageExceeded);
+                        continue;
+                    }
+
+                    num_txs_simulated_success += 1;
+                    self.metrics
+                        .successful_tx_gas_used
+                        .record(br_gas_used as f64);
+                    log_br_txn(TxnExecutionResult::Success);
                     info.cumulative_gas_used += br_gas_used;
+                    info.cumulative_da_bytes_used += br_tx_da_size;
 
                     let br_ctx = ReceiptBuilderCtx {
                         tx: recovered_backrun.inner(),
@@ -670,10 +789,7 @@ impl<ExtraCtx: Debug + Default + MaybeFlashblockIndex> OpPayloadBuilderCtx<Extra
                     info.receipts.push(self.build_receipt(br_ctx, None));
                     evm.db_mut().commit(br_state);
 
-                    let br_miner_fee = recovered_backrun
-                        .effective_tip_per_gas(base_fee)
-                        .expect("fee is always valid; execution succeeded");
-                    info.total_fees += U256::from(br_miner_fee) * U256::from(br_gas_used);
+                    info.total_fees += U256::from(backrun_priority_fee) * U256::from(br_gas_used);
 
                     info.executed_senders.push(recovered_backrun.signer());
                     info.executed_transactions

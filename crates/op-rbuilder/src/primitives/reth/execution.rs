@@ -22,6 +22,8 @@ pub enum TxnExecutionResult {
     Reverted,
     RevertedAndExcluded,
     MaxGasUsageExceeded,
+    ConditionalCheckFailed,
+    PriorityFeeTooLow,
 }
 
 #[derive(Default, Debug)]

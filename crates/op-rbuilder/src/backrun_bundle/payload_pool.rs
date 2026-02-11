@@ -15,6 +15,25 @@ pub struct BackrunBundle {
     pub flashblock_number_max: Option<u64>,
 }
 
+impl BackrunBundle {
+    pub fn is_valid(&self, block_number: u64, flashblock_number: Option<u64>) -> bool {
+        if block_number < self.block_number_min || block_number > self.block_number_max {
+            return false;
+        }
+
+        if let Some(fb) = flashblock_number {
+            if self.flashblock_number_min.is_some_and(|min| fb < min) {
+                return false;
+            }
+            if self.flashblock_number_max.is_some_and(|max| fb > max) {
+                return false;
+            }
+        }
+
+        true
+    }
+}
+
 /// Ord impl: highest `max_priority_fee_per_gas` first, backrun tx hash as tiebreaker.
 #[derive(Debug, Clone)]
 pub struct OrderedBackrunBundle(pub BackrunBundle);
