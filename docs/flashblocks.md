@@ -38,14 +38,24 @@ function build_payload(build_arguments, best_payload_cell):
         record_metrics_and_return()
     
     // === FLASHBLOCKS TIMING CALCULATION ===
-    // 7. Calculate dynamic flashblock timing and number of flashblocks we are able to produce based on the formula
-    // first_offset = (block timestamp - current timestamp) % flashblock_time
-    // flashblocks_count = (block timestamp - current timestamp) // flashblock_time
-    // Ex: If we started building flashblocks at 400ms (because of network latency) that means we have only 
-    // 600ms to build the block (assuming block time is 1s) 
-    // If we have 250ms flashblock time, we could build only 3 flashblocks, the first one must be sent after 100ms and others 
-    // after 250ms each.
-    (flashblocks_count, first_offset) = calculate_flashblocks_timing(timestamp)
+    // 7. Calculate flashblock timing based on remaining time until payload deadline.
+    // The scheduler computes:
+    //   - remaining_time = min(payload_timestamp - now, block_time)
+    //   - first_offset = ((remaining_time - 1) % flashblock_interval) + 1
+    //   - Subsequent flashblocks are sent at first_offset + N * flashblock_interval
+    //   - The deadline (last flashblock) = remaining_time - end_buffer_ms
+    //
+    // The send_offset_ms parameter shifts all send times (positive = late, negative = early).
+    // The end_buffer_ms parameter shifts the last sent time.
+    // The number of triggers is clamped to target_flashblocks (block_time / flashblock_interval).
+    //
+    // Ex: If FCU arrives 400ms into a 1000ms slot:
+    //   - remaining_time = 600ms, flashblock_interval = 200ms
+    //   - first_offset = (600-1) % 200 + 1 = 200ms
+    //   - With end_buffer_ms=30, deadline = 570ms
+    //   - Triggers at: 200ms, 400ms, 570ms (3 flashblocks)
+    scheduler = FlashblockScheduler::new(config, block_time, payload_timestamp)
+    tokio::spawn(scheduler.run(..));
     
     // 8. Calculate resource limits per flashblock
     gas_per_flashblock = total_gas_limit / flashblocks_count
@@ -122,12 +132,25 @@ function build_payload(build_arguments, best_payload_cell):
 ```
 
 ### Timing Coordination
-- **Timer Task**: Spawned async task that sends timing signals at regular intervals
-- **First Offset**: Timeout after which we must send the flashblock. We calculate it so we send flashblocks at `current time % flashblock_time == 0`
-- **Cancellation Tokens**: When we cancel the flashblock token we stop this flashblock building process and publish it.
+
+The `FlashblockScheduler` handles timing coordination for flashblock production:
+
+- **Scheduler**: Pre-computes all send times at initialization based on remaining time until the payload deadline
+- **First Offset**: Aligned to `(remaining_time - 1) % interval + 1` to produce evenly spaced flashblocks
+- **Trigger Clamping**: The number of triggers is clamped to `block_time / flashblock_interval` to maintain backwards compatibility
+- **Cancellation Tokens**: When a flashblock trigger fires, the current flashblock building is cancelled and published
+
+### Configuration Parameters
+
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `flashblocks.block-time` | Flashblock interval in milliseconds | 250 |
+| `flashblocks.send-offset-ms` | Shifts all send times. Positive = late, negative = early | 0 |
+| `flashblocks.end-buffer-ms` | Time reserved at end of slot for final processing | 30 |
 
 ### Caveats
-If the system clock drifts too much we will print an error message and fallback to producing flashblocks with regular flashblock_time intervals, without adjusting anything.
+- If the payload timestamp is in the past or remaining time is 0, the scheduler falls back to using the full block_time
+- Late FCU arrivals result in fewer flashblocks being produced (proportional to remaining time)
 
 ## Block building flow
 These are sequence diagrams for flashblock building flow, rollup-boost, op-node and fallback sequencer interaction.
