@@ -549,3 +549,82 @@ async fn late_fcu_reduces_flashblocks(rbuilder: LocalInstance) -> eyre::Result<(
 
     flashblocks_listener.stop().await
 }
+
+/// Test progressive FCU delays across multiple blocks.
+/// With 1000ms block time, 200ms flashblock interval, and 50ms end buffer:
+/// - Available time = 1000 - lag - 50 = 950 - lag
+/// - Flashblocks per block = ceil((available_time) / 200) + 1 (base flashblock)
+#[rb_test(flashblocks, args = OpRbuilderArgs {
+      chain_block_time: 1000,
+      flashblocks: FlashblocksArgs {
+          enabled: true,
+          flashblocks_port: 1239,
+          flashblocks_addr: "127.0.0.1".into(),
+          flashblocks_block_time: 200,
+          flashblocks_end_buffer_ms: 50,
+          ..Default::default()
+      },
+      ..Default::default()
+  })]
+async fn progressive_lag_reduces_flashblocks(rbuilder: LocalInstance) -> eyre::Result<()> {
+    let driver = rbuilder.driver().await?;
+    let flashblocks_listener = rbuilder.spawn_flashblocks_listener();
+
+    // Test 9 blocks with increasing FCU delays (0ms, 100ms, ..., 800ms)
+    for i in 0..9 {
+        for _ in 0..5 {
+            let _ = driver
+                .create_transaction()
+                .random_valid_transfer()
+                .send()
+                .await?;
+        }
+        let block = driver
+            .build_new_block_with_current_timestamp(Some(Duration::from_millis(i * 100)))
+            .await?;
+        assert_eq!(
+            block.transactions.len(),
+            8,
+            "Got: {:#?}",
+            block.transactions
+        ); // 5 normal txn + deposit + 2 builder txn
+
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    }
+
+    let flashblocks = flashblocks_listener.get_flashblocks();
+
+    // Count flashblocks for each block
+    // Expected flashblocks per block based on lag:
+    // lag=0ms:   ceil((1000-50)/200) + 1 = 6
+    // lag=100ms: ceil((900-50)/200) + 1 = 6
+    // lag=200ms: ceil((800-50)/200) + 1 = 5
+    // lag=300ms: ceil((700-50)/200) + 1 = 5
+    // lag=400ms: ceil((600-50)/200) + 1 = 4
+    // lag=500ms: ceil((500-50)/200) + 1 = 4
+    // lag=600ms: ceil((400-50)/200) + 1 = 3
+    // lag=700ms: ceil((300-50)/200) + 1 = 3
+    // lag=800ms: ceil((200-50)/200) + 1 = 2
+    let expected_flashblocks_per_block = [6, 6, 5, 5, 4, 4, 3, 3, 2];
+    for i in 0..9 {
+        let block_number = i + 1; // Block numbers start from 1
+        let flashblocks_for_block = flashblocks
+            .iter()
+            .filter(|fb| fb.block_number() == block_number)
+            .count();
+        assert_eq!(
+            flashblocks_for_block,
+            expected_flashblocks_per_block[i as usize],
+            "Block {} (lag {}ms): expected {} flashblocks, got {}",
+            i,
+            i * 100,
+            expected_flashblocks_per_block[i as usize],
+            flashblocks_for_block
+        );
+    }
+
+    // Total: 6+6+5+5+4+4+3+3+2 = 38
+    assert_eq!(38, flashblocks.len());
+
+    flashblocks_listener.stop().await
+}
