@@ -520,7 +520,12 @@ where
         tokio::spawn(
             self.task_metrics
                 .flashblock_timer
-                .instrument(flashblock_scheduler.run(tx, block_cancel.clone(), fb_cancel)),
+                .instrument(flashblock_scheduler.run(
+                    tx,
+                    block_cancel.clone(),
+                    fb_cancel,
+                    fb_payload.payload_id,
+                )),
         );
 
         // Process flashblocks - block on async channel receive

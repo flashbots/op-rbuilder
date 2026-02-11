@@ -1,6 +1,7 @@
 use core::time::Duration;
 use std::{ops::Rem, sync::mpsc::SyncSender};
 
+use reth_payload_builder::PayloadId;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, warn};
 
@@ -10,6 +11,10 @@ use crate::builders::flashblocks::config::FlashblocksConfig;
 /// block slot. This should be created at the start of each payload building
 /// job.
 pub(super) struct FlashblockScheduler {
+    /// Wall clock time when this scheduler was created.
+    reference_system: std::time::SystemTime,
+    /// Monotonic instant when this scheduler was created.
+    reference_instant: tokio::time::Instant,
     /// Absolute times at which to trigger flashblock builds.
     send_times: Vec<tokio::time::Instant>,
 }
@@ -41,7 +46,11 @@ impl FlashblockScheduler {
             .map(|d| reference_instant + d)
             .collect();
 
-        Self { send_times }
+        Self {
+            reference_system,
+            reference_instant,
+            send_times,
+        }
     }
 
     /// Runs the scheduler, sending flashblock triggers at the scheduled times.
@@ -50,6 +59,7 @@ impl FlashblockScheduler {
         tx: SyncSender<CancellationToken>,
         block_cancel: CancellationToken,
         mut fb_cancel: CancellationToken,
+        payload_id: PayloadId,
     ) {
         let start = tokio::time::Instant::now();
 
@@ -66,6 +76,7 @@ impl FlashblockScheduler {
                     let elapsed = start.elapsed();
                     debug!(
                         target: "payload_builder",
+                        id = %payload_id,
                         flashblock_index = i + 1,
                         scheduled_time = ?(send_time - start),
                         actual_time = ?elapsed,
@@ -78,13 +89,18 @@ impl FlashblockScheduler {
                         // happen if the `build_payload` function returns, due
                         // to payload building error or the main cancellation
                         // token being cancelled.
-                        error!(target: "payload_builder", "Failed to send flashblock trigger, receiver channel was dropped");
+                        error!(
+                            target: "payload_builder",
+                            id = %payload_id,
+                            "Failed to send flashblock trigger, receiver channel was dropped"
+                        );
                         return;
                     }
                 }
                 _ = block_cancel.cancelled() => {
                     warn!(
                         target: "payload_builder",
+                        id = %payload_id,
                         missed_count = target_flashblocks - i,
                         target_flashblocks = target_flashblocks,
                         "Missing flashblocks because the payload building job was cancelled too early"
@@ -251,7 +267,19 @@ fn calculate_first_flashblock_offset(remaining_time: Duration, interval: Duratio
 
 impl std::fmt::Debug for FlashblockScheduler {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.send_times.fmt(f)
+        f.debug_list()
+            .entries(self.send_times.iter().map(|t| {
+                let offset = *t - self.reference_instant;
+                let wall_time = self.reference_system + offset;
+                let duration = wall_time.duration_since(std::time::UNIX_EPOCH).unwrap();
+                let total_secs = duration.as_secs();
+                let micros = duration.subsec_micros();
+                let secs = total_secs % 60;
+                let mins = (total_secs / 60) % 60;
+                let hours = (total_secs / 3600) % 24;
+                format!("{:02}:{:02}:{:02}.{:06}", hours, mins, secs, micros)
+            }))
+            .finish()
     }
 }
 
