@@ -36,8 +36,7 @@ impl FlashblockScheduler {
             compute_remaining_time(config, block_time, payload_timestamp, reference_system);
 
         // Compute the schedule as relative durations from now
-        let intervals =
-            compute_scheduler_intervals(config, block_time, remaining_time, target_flashblocks);
+        let intervals = compute_scheduler_intervals(config, remaining_time, target_flashblocks);
 
         // Convert relative durations to absolute instants for
         // tokio::time::sleep_until
@@ -117,21 +116,15 @@ impl FlashblockScheduler {
     }
 }
 
-/// Computes the remaining time until the payload deadline.
-/// - **Fixed mode**: Always returns `block_time`, ignoring actual timing.
-/// - **Dynamic mode**: Calculates remaining time as `payload_timestamp - now -
-///   leeway`. The result is capped at `block_time` and falls back to
-///   `block_time` if the timestamp is in the past.
+/// Computes the remaining time until the payload deadline. Calculates remaining
+/// time as `payload_timestamp - now - leeway`. The result is capped at
+/// `block_time` and falls back to `block_time` if the timestamp is in the past.
 fn compute_remaining_time(
     config: &FlashblocksConfig,
     block_time: Duration,
     payload_timestamp: u64,
     reference_system: std::time::SystemTime,
 ) -> Duration {
-    if config.fixed {
-        return block_time;
-    }
-
     // Calculate target time, subtracting leeway when building at interval start
     let target_time = std::time::SystemTime::UNIX_EPOCH + Duration::from_secs(payload_timestamp)
         - if !config.build_at_interval_end {
@@ -155,36 +148,10 @@ fn compute_remaining_time(
 /// start instant.
 fn compute_scheduler_intervals(
     config: &FlashblocksConfig,
-    block_time: Duration,
     remaining_time: Duration,
     target_flashblocks: u64,
 ) -> Vec<Duration> {
-    // Fixed mode: calculate timing based on block_time and interval alone
-    if config.fixed {
-        let (first_flashblock_offset, flashblocks_deadline) = if config.build_at_interval_end {
-            // Build at end: first trigger at interval + offset, deadline
-            // reduced by end_buffer
-            let offset = apply_offset(config.interval, config.send_offset_ms);
-            (
-                offset,
-                block_time.saturating_sub(Duration::from_millis(config.end_buffer_ms)),
-            )
-        } else {
-            // Build at start: first trigger at interval - leeway, deadline is
-            // block_time
-            (config.interval - config.leeway_time, block_time)
-        };
-
-        return compute_send_time_intervals(
-            first_flashblock_offset,
-            config.interval,
-            flashblocks_deadline,
-            config.build_at_interval_end,
-            target_flashblocks,
-        );
-    }
-
-    // Dynamic mode: align flashblocks to remaining_time
+    // Align flashblocks to remaining_time
     let first_flashblock_offset =
         calculate_first_flashblock_offset(remaining_time, config.interval);
 
@@ -255,7 +222,7 @@ fn apply_offset(duration: Duration, offset_ms: i64) -> Duration {
     }
 }
 
-/// Calculates when the first flashblock should be triggered in dynamic mode.
+/// Calculates when the first flashblock should be triggered.
 fn calculate_first_flashblock_offset(remaining_time: Duration, interval: Duration) -> Duration {
     let remaining_time_ms = remaining_time.as_millis() as u64;
     let interval_ms = interval.as_millis() as u64;
@@ -419,7 +386,6 @@ mod tests {
     fn make_config(
         interval_ms: u64,
         leeway_time_ms: u64,
-        fixed: bool,
         build_at_interval_end: bool,
         send_offset_ms: i64,
         end_buffer_ms: u64,
@@ -427,7 +393,6 @@ mod tests {
         FlashblocksConfig {
             interval: Duration::from_millis(interval_ms),
             leeway_time: Duration::from_millis(leeway_time_ms),
-            fixed,
             build_at_interval_end,
             send_offset_ms,
             end_buffer_ms,
@@ -443,58 +408,15 @@ mod tests {
     }
 
     #[test]
-    fn test_compute_scheduler_intervals_fixed_build_at_start() {
-        // Fixed mode, build at start first_offset = interval - leeway = 200 -
-        // 60 = 140 deadline = block_time = 1000
-        let config = make_config(200, 60, true, false, 0, 0);
-        let block_time = Duration::from_millis(1000);
-        let remaining_time = block_time; // ignored in fixed mode
-
-        let intervals = compute_scheduler_intervals(&config, block_time, remaining_time, 5);
-
-        // Expect: 0 (immediate), 140, 340, 540, 740
-        assert_eq!(intervals, durations_ms(&[0, 140, 340, 540, 740]));
-    }
-
-    #[test]
-    fn test_compute_scheduler_intervals_fixed_build_at_end() {
-        // Fixed mode, build at start first_offset = apply_offset(interval,
-        // send_offset) = 200 + 0 = 200 deadline = block_time - end_buffer =
-        // 1000 - 100 = 900
-        let config = make_config(200, 0, true, true, 0, 100);
-        let block_time = Duration::from_millis(1000);
-        let remaining_time = block_time;
-
-        let intervals = compute_scheduler_intervals(&config, block_time, remaining_time, 5);
-
-        // Expect: 200, 400, 600, 800, 900 (deadline)
-        assert_eq!(intervals, durations_ms(&[200, 400, 600, 800, 900]));
-    }
-
-    #[test]
-    fn test_compute_scheduler_intervals_fixed_build_at_end_with_offset() {
-        // Fixed mode with positive send_offset first_offset = apply_offset(200,
-        // 50) = 250 deadline = 1000 - 100 = 900
-        let config = make_config(200, 0, true, true, 50, 100);
-        let block_time = Duration::from_millis(1000);
-        let remaining_time = block_time;
-
-        let intervals = compute_scheduler_intervals(&config, block_time, remaining_time, 5);
-
-        // Expect: 250, 450, 650, 850, 900 (deadline)
-        assert_eq!(intervals, durations_ms(&[250, 450, 650, 850, 900]));
-    }
-
-    #[test]
-    fn test_compute_scheduler_intervals_dynamic_build_at_start() {
-        // Dynamic mode, build at start remaining_time = 870ms first_offset =
+    fn test_compute_scheduler_intervals_build_at_start() {
+        // Build at start remaining_time = 870ms first_offset =
         // calculate_first_flashblock_offset(870, 200) = (870-1) % 200 + 1 = 70
-        // deadline = remaining_time = 870 (so signals fit within available time)
-        let config = make_config(200, 0, false, false, 0, 0);
-        let block_time = Duration::from_millis(1000);
+        // deadline = remaining_time = 870 (so signals fit within available
+        // time)
+        let config = make_config(200, 0, false, 0, 0);
         let remaining_time = Duration::from_millis(870);
 
-        let intervals = compute_scheduler_intervals(&config, block_time, remaining_time, 5);
+        let intervals = compute_scheduler_intervals(&config, remaining_time, 5);
 
         // Expect: 0 (immediate), 70, 270, 470, 670 (all < 870)
         // (deadline=remaining_time ensures signals complete before slot ends)
@@ -502,16 +424,15 @@ mod tests {
     }
 
     #[test]
-    fn test_compute_scheduler_intervals_dynamic_build_at_start_late_fcu() {
-        // Dynamic mode with late FCU arrival - remaining_time is much less than
-        // block_time. This simulates FCU arriving 700ms into a 1000ms slot.
-        // The deadline must be remaining_time (not block_time) so signals fit
-        // within the actual time available before block_cancel fires.
-        let config = make_config(200, 0, false, false, 0, 0);
-        let block_time = Duration::from_millis(1000);
+    fn test_compute_scheduler_intervals_build_at_start_late_fcu() {
+        // Late FCU arrival - remaining_time is much less than block_time. This
+        // simulates FCU arriving 700ms into a 1000ms slot. The deadline must be
+        // remaining_time (not block_time) so signals fit within the actual time
+        // available before block_cancel fires.
+        let config = make_config(200, 0, false, 0, 0);
         let remaining_time = Duration::from_millis(300); // Only 300ms left
 
-        let intervals = compute_scheduler_intervals(&config, block_time, remaining_time, 5);
+        let intervals = compute_scheduler_intervals(&config, remaining_time, 5);
 
         // first_offset = (300-1) % 200 + 1 = 100
         // deadline = remaining_time = 300 (NOT block_time!)
@@ -522,54 +443,39 @@ mod tests {
     }
 
     #[test]
-    fn test_compute_scheduler_intervals_dynamic_build_at_end() {
-        // Dynamic mode, build at end remaining_time = 880ms first_offset =
+    fn test_compute_scheduler_intervals_build_at_end() {
+        // Build at end remaining_time = 880ms first_offset =
         // calculate_first_flashblock_offset(880, 200) = (880-1) % 200 + 1 = 80
         // adjusted_offset = apply_offset(80, 0) = 80 adjusted_deadline =
         // apply_offset(880 - 0, 0) = 880
-        let config = make_config(200, 0, false, true, 0, 0);
-        let block_time = Duration::from_millis(1000);
+        let config = make_config(200, 0, true, 0, 0);
         let remaining_time = Duration::from_millis(880);
 
-        let intervals = compute_scheduler_intervals(&config, block_time, remaining_time, 5);
+        let intervals = compute_scheduler_intervals(&config, remaining_time, 5);
 
         // Expect: 80, 280, 480, 680, 880 (deadline)
         assert_eq!(intervals, durations_ms(&[80, 280, 480, 680, 880]));
     }
 
     #[test]
-    fn test_compute_scheduler_intervals_dynamic_build_at_end_with_offset_and_buffer() {
-        // Dynamic mode with send_offset and end_buffer remaining_time = 800ms
+    fn test_compute_scheduler_intervals_build_at_end_with_offset_and_buffer() {
+        // Build at end with send_offset and end_buffer remaining_time = 800ms
         // first_offset = calculate_first_flashblock_offset(800, 200) = (800-1)
         // % 200 + 1 = 200 adjusted_offset = apply_offset(200, -20) = 180
         // adjusted_deadline = apply_offset(800 - 50, -20) = apply_offset(750,
         // -20) = 730
-        let config = make_config(200, 0, false, true, -20, 50);
-        let block_time = Duration::from_millis(1000);
+        let config = make_config(200, 0, true, -20, 50);
         let remaining_time = Duration::from_millis(800);
 
-        let intervals = compute_scheduler_intervals(&config, block_time, remaining_time, 5);
+        let intervals = compute_scheduler_intervals(&config, remaining_time, 5);
 
         // Expect: 180, 380, 580, 730 (deadline)
         assert_eq!(intervals, durations_ms(&[180, 380, 580, 730]));
     }
 
     #[test]
-    fn test_compute_remaining_time_fixed_mode() {
-        // In fixed mode, always returns block_time regardless of other params
-        let config = make_config(200, 50, true, false, 0, 0);
-        let block_time = Duration::from_millis(1000);
-        let reference_system = std::time::SystemTime::now();
-
-        let remaining = compute_remaining_time(&config, block_time, 0, reference_system);
-
-        assert_eq!(remaining, block_time);
-    }
-
-    #[test]
-    fn test_compute_remaining_time_dynamic_future_timestamp() {
-        // Dynamic mode with a future timestamp
-        let config = make_config(200, 100, false, false, 0, 0);
+    fn test_compute_remaining_time_future_timestamp() {
+        let config = make_config(200, 100, false, 0, 0);
         let block_time = Duration::from_millis(2000);
         let reference_system = std::time::SystemTime::UNIX_EPOCH + Duration::from_secs(1000);
         // Target = 1000 + 2 - 0.1 (leeway) = 1001.9 Remaining = 1001.9 - 1000 =
@@ -585,9 +491,9 @@ mod tests {
     }
 
     #[test]
-    fn test_compute_remaining_time_dynamic_capped_at_block_time() {
-        // Dynamic mode where calculated remaining exceeds block_time
-        let config = make_config(200, 0, false, false, 0, 0);
+    fn test_compute_remaining_time_capped_at_block_time() {
+        // Calculated remaining exceeds block_time
+        let config = make_config(200, 0, false, 0, 0);
         let block_time = Duration::from_millis(1000);
         let reference_system = std::time::SystemTime::UNIX_EPOCH + Duration::from_secs(1000);
         // Target = EPOCH + 1005s, Reference = EPOCH + 1000s Remaining would be
@@ -601,9 +507,9 @@ mod tests {
     }
 
     #[test]
-    fn test_compute_remaining_time_dynamic_past_timestamp() {
-        // Dynamic mode with a past timestamp (returns block_time as fallback)
-        let config = make_config(200, 0, false, false, 0, 0);
+    fn test_compute_remaining_time_past_timestamp() {
+        // Past timestamp (returns block_time as fallback)
+        let config = make_config(200, 0, false, 0, 0);
         let block_time = Duration::from_millis(1000);
         let reference_system = std::time::SystemTime::UNIX_EPOCH + Duration::from_secs(1000);
         // Target is in the past
@@ -616,10 +522,10 @@ mod tests {
     }
 
     #[test]
-    fn test_compute_remaining_time_dynamic_build_at_interval_end_no_leeway() {
+    fn test_compute_remaining_time_build_at_interval_end_no_leeway() {
         // When build_at_interval_end is true, leeway is not subtracted from
         // target
-        let config = make_config(200, 100, false, true, 0, 0);
+        let config = make_config(200, 100, true, 0, 0);
         let block_time = Duration::from_millis(2000);
         let reference_system = std::time::SystemTime::UNIX_EPOCH + Duration::from_secs(1000);
         let payload_timestamp = 1002;

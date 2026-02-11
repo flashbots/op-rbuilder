@@ -128,16 +128,6 @@ pub struct FlashblocksArgs {
     )]
     pub flashblocks_block_time: u64,
 
-    /// Builder would always thry to produce fixed number of flashblocks without regard to time of
-    /// FCU arrival.
-    /// In cases of late FCU it could lead to partially filled blocks.
-    #[arg(
-        long = "flashblocks.fixed",
-        default_value = "false",
-        env = "FLASHBLOCK_FIXED"
-    )]
-    pub flashblocks_fixed: bool,
-
     /// Time by which blocks would be completed earlier in milliseconds.
     ///
     /// This time used to account for latencies, this time would be deducted from total block

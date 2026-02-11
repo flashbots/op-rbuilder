@@ -18,18 +18,12 @@ pub struct FlashblocksConfig {
     /// per block is equal to the block time divided by the flashblock interval.
     pub interval: Duration,
 
-    /// How much time would be deducted from block build time to account for latencies in
-    /// milliseconds.
+    /// How much time would be deducted from block build time to account for
+    /// latencies in milliseconds.
     ///
-    /// If dynamic_adjustment is false this value would be deducted from first flashblock and
-    /// it shouldn't be more than interval
-    ///
-    /// If dynamic_adjustment is true this value would be deducted from first flashblock and
-    /// it shouldn't be more than interval
+    /// This value is deducted from first flashblock and it shouldn't be more
+    /// than interval.
     pub leeway_time: Duration,
-
-    /// Disables dynamic flashblocks number adjustment based on FCU arrival time
-    pub fixed: bool,
 
     /// Should we disable state root calculation for each flashblock
     pub disable_state_root: bool,
@@ -78,7 +72,6 @@ impl Default for FlashblocksConfig {
             ws_addr: SocketAddr::new(Ipv4Addr::UNSPECIFIED.into(), 1111),
             interval: Duration::from_millis(250),
             leeway_time: Duration::from_millis(0),
-            fixed: false,
             disable_state_root: false,
             number_contract_address: None,
             number_contract_use_permit: false,
@@ -108,8 +101,6 @@ impl TryFrom<OpRbuilderArgs> for FlashblocksConfig {
 
         let leeway_time = Duration::from_millis(args.flashblocks.flashblocks_leeway_time);
 
-        let fixed = args.flashblocks.flashblocks_fixed;
-
         let disable_state_root = args.flashblocks.flashblocks_disable_state_root;
 
         let number_contract_address = args.flashblocks.flashblocks_number_contract_address;
@@ -120,7 +111,6 @@ impl TryFrom<OpRbuilderArgs> for FlashblocksConfig {
             ws_addr,
             interval,
             leeway_time,
-            fixed,
             disable_state_root,
             number_contract_address,
             number_contract_use_permit,
