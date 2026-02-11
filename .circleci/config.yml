@@ -221,7 +221,12 @@ jobs:
           command: make lint
       - run:
           name: Test
-          command: make test
+          command: |
+            if [ "<< parameters.features >>" = "rules" ]; then
+              make test-rules
+            else
+              make test
+            fi
       - save_cache:
           key: cargo-deps-v1-{{ checksum "Cargo.lock" }}
           paths:
