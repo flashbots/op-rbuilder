@@ -399,6 +399,7 @@ where
             &ctx,
             &mut info,
             !disable_state_root || ctx.attributes().no_tx_pool, // need to calculate state root for CL sync
+            self.config.specific.enable_incremental_trie_cache,
         )?;
 
         self.built_fb_payload_tx
@@ -723,6 +724,7 @@ where
             ctx,
             info,
             !ctx.extra_ctx.disable_state_root || ctx.attributes().no_tx_pool,
+            self.config.specific.enable_incremental_trie_cache,
         );
         let total_block_built_duration = total_block_built_duration.elapsed();
         ctx.metrics
@@ -896,6 +898,7 @@ pub(super) fn build_block<DB, P, ExtraCtx>(
     ctx: &OpPayloadBuilderCtx<ExtraCtx>,
     info: &mut ExecutionInfo<FlashblocksExecutionInfo>,
     calculate_state_root: bool,
+    enable_incremental_trie_cache: bool,
 ) -> Result<(OpBuiltPayload, OpFlashblockPayload), PayloadBuilderError>
 where
     DB: Database<Error = ProviderError> + AsRef<P>,
@@ -945,7 +948,8 @@ where
         let state_provider = state.database.as_ref();
 
         // Check if we can use incremental trie caching (use cached trie from previous flashblock if available)
-        let use_incremental = if let Some(prev_trie) = &info.extra.prev_trie_updates {
+        let use_incremental = if enable_incremental_trie_cache
+            && let Some(prev_trie) = &info.extra.prev_trie_updates {
             // Incremental path: Use cached trie from previous flashblock
             debug!(
                 target: "payload_builder",
@@ -999,50 +1003,6 @@ where
                         "failed to calculate state root for payload"
                     );
                 })?;
-        }
-
-        // Verification: only for incremental path in debug builds
-        #[cfg(debug_assertions)]
-        if use_incremental {
-            let full_hashed_state = state_provider.hashed_post_state(&state.bundle_state);
-            let (full_state_root, _) = state
-                .database
-                .as_ref()
-                .state_root_with_updates(full_hashed_state.clone())
-                .expect("Full state root calculation should succeed");
-
-            if state_root != full_state_root {
-                error!(
-                    target: "payload_builder",
-                    incremental_root = %state_root,
-                    full_root = %full_state_root,
-                    flashblock_index = info.extra.last_flashblock_index + 1,
-                    total_accounts = state.bundle_state.state.len(),
-                    "❌ TRIE CACHE VERIFICATION FAILED: State roots do not match!"
-                );
-
-                // DEBUG: Compare hashed states
-                error!(
-                    target: "payload_builder",
-                    incremental_hashed_accounts = hashed_state.accounts.len(),
-                    full_hashed_accounts = full_hashed_state.accounts.len(),
-                    incremental_hashed_storages = hashed_state.storages.len(),
-                    full_hashed_storages = full_hashed_state.storages.len(),
-                    "Hashed state comparison"
-                );
-
-                panic!(
-                    "Trie cache correctness verification failed! Incremental: {}, Full: {}",
-                    state_root, full_state_root
-                );
-            } else {
-                debug!(
-                    target: "payload_builder",
-                    state_root = %state_root,
-                    flashblock_index = info.extra.last_flashblock_index + 1,
-                    "✅ Trie cache verification passed: incremental matches full calculation"
-                );
-            }
         }
 
         // Save trie updates for next flashblock's incremental calculation

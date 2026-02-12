@@ -166,6 +166,8 @@ rlimit = { version = "0.10" }
 hyper = { version = "1.7.0", features = ["http1"] }
 hyper-util = { version = "0.1.11" }
 http-body-util = { version = "0.1.3" }
+criterion = { version = "0.5", features = ["html_reports"] }
+reth-trie-db = { workspace = true }
 
 [features]
 default = ["jemalloc"]
@@ -213,3 +215,7 @@ path = "src/bin/op-rbuilder/main.rs"
 [[bin]]
 name = "tester"
 required-features = ["testing"]
+
+[[bench]]
+name = "bench_flashblocks_state_root"
+harness = false
