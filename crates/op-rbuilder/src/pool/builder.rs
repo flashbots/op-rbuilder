@@ -1,3 +1,4 @@
+use crate::rules::ScoreOrdering;
 use op_alloy_consensus::interop::SafetyLevel;
 use reth_chain_state::CanonStateSubscriptions;
 use reth_node_builder::{
@@ -8,18 +9,10 @@ use reth_optimism_chainspec::OpHardforks;
 use reth_optimism_node::OpPoolBuilder;
 use reth_optimism_txpool::supervisor::{DEFAULT_SUPERVISOR_URL, SupervisorClient};
 use reth_tracing::tracing::{debug, info};
-use reth_transaction_pool::{
-    CoinbaseTipOrdering, Pool, TransactionValidationTaskExecutor, TransactionValidator,
-};
+use reth_transaction_pool::{Pool, TransactionValidationTaskExecutor, TransactionValidator};
 use std::marker::PhantomData;
 
-// Note: Pool uses standard CoinbaseTipOrdering. Rule-based scoring is handled
-// via a side index populated at validation time (see rules::score_index).
-// Block building uses BestTransactionsWithScores to iterate in score order.
-
-/// Pool ordering type - uses standard CoinbaseTipOrdering.
-/// Rule-based ordering is handled by the score index and BestTransactionsWithScores.
-pub type PoolOrdering<T> = CoinbaseTipOrdering<T>;
+pub type PoolOrdering<T> = ScoreOrdering<T>;
 
 /// Marker type indicating no validator wrapper has been set
 /// Used to enforce at compile time that `with_validator_wrapper()` is called.
@@ -202,7 +195,11 @@ where
 
         let transaction_pool = reth_node_builder::components::TxPoolBuilder::new(ctx)
             .with_validator(final_validator)
-            .build_and_spawn_maintenance_task(blob_store, final_pool_config)?;
+            .build_with_ordering_and_spawn_maintenance_task(
+                ScoreOrdering::default(),
+                blob_store,
+                final_pool_config,
+            )?;
 
         info!(target: "reth::cli", "Transaction pool initialized");
         debug!(target: "reth::cli", "Spawned txpool maintenance task");

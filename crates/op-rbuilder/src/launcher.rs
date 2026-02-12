@@ -3,8 +3,6 @@ use reth_optimism_rpc::OpEthApiBuilder;
 
 #[cfg(feature = "rules")]
 use crate::pool::{CustomOpPoolBuilder, RuleBasedValidator};
-#[cfg(feature = "rules")]
-use crate::rules::new_shared_score_index;
 use crate::{
     args::*,
     builders::{BuilderConfig, BuilderMode, FlashblocksBuilder, PayloadBuilder, StandardBuilder},
@@ -104,7 +102,7 @@ where
         builder: WithLaunchContext<NodeBuilder<Arc<DatabaseEnv>, OpChainSpec>>,
         builder_args: OpRbuilderArgs,
     ) -> Result<()> {
-        let mut builder_config = BuilderConfig::<B::Config>::try_from(builder_args.clone())
+        let builder_config = BuilderConfig::<B::Config>::try_from(builder_args.clone())
             .expect("Failed to convert rollup args to builder config");
 
         record_flag_gauge_metrics(&builder_args);
@@ -135,14 +133,11 @@ where
 
         // Initialize rules system if enabled
         #[cfg(feature = "rules")]
-        let (rules_enabled, rule_fetcher, rule_refresh_interval_seconds, score_index) =
+        let (rules_enabled, rule_fetcher, rule_refresh_interval_seconds) =
             if builder_args.rules.rules_enabled {
                 use crate::rules::RulesRegistryConfig;
 
                 tracing::info!("Rule based block building enabled");
-
-                // Create the shared score index for O(k) block building
-                let score_index = new_shared_score_index();
 
                 // Load registry configuration if provided
                 let (fetcher, refresh_interval) = if let Some(config_path) =
@@ -191,21 +186,11 @@ where
                     f.refresh_global_ruleset().await;
                 }
 
-                (true, fetcher, refresh_interval, Some(score_index))
+                (true, fetcher, refresh_interval)
             } else {
                 tracing::debug!("Rules system feature compiled in but disabled at runtime");
-                (false, None, 0, None)
+                (false, None, 0)
             };
-
-        // Clone score_index for use in different closures and set on config
-        #[cfg(feature = "rules")]
-        let score_index_for_validator = score_index.clone();
-        #[cfg(feature = "rules")]
-        let score_index_for_monitor = score_index.clone();
-        #[cfg(feature = "rules")]
-        {
-            builder_config.score_index = score_index;
-        }
 
         // Build pool with conditional rules integration
         #[cfg(feature = "rules")]
@@ -226,9 +211,7 @@ where
                 tracing::info!("Rules disabled at runtime, external validation only");
             }
 
-            builder.with_validator_wrapper(move |op_validator| {
-                RuleBasedValidator::with_score_index(op_validator, score_index_for_validator)
-            })
+            builder.with_validator_wrapper(RuleBasedValidator::new)
         };
 
         #[cfg(not(feature = "rules"))]
@@ -275,12 +258,7 @@ where
                 if builder_args.log_pool_transactions {
                     tracing::info!("Logging pool transactions");
                     let listener = ctx.pool.all_transactions_event_listener();
-                    let task = monitor_tx_pool(
-                        listener,
-                        reverted_cache_copy,
-                        #[cfg(feature = "rules")]
-                        score_index_for_monitor,
-                    );
+                    let task = monitor_tx_pool(listener, reverted_cache_copy);
                     ctx.task_executor.spawn_critical("txlogging", task);
                 }
 

@@ -4,11 +4,20 @@
 //! The ruleset lives behind a global singleton that hot-path components (pool
 //! ingress, payload execution) access directly.
 use crate::rules::types::{BoostRule, DenyRule, RuleSet};
-use alloy_primitives::Address;
-use std::sync::{Arc, OnceLock, RwLock};
+use alloy_primitives::{Address, B256};
+use std::{
+    collections::HashMap,
+    sync::{Arc, OnceLock, RwLock},
+};
 
 /// Global ruleset singleton
 static GLOBAL_RULESET: OnceLock<RwLock<Arc<RuleSet>>> = OnceLock::new();
+
+/// Global score cache: tx_hash → pre-computed rule score.
+///
+/// Populated at validation time by [`RuleBasedValidator`], read by
+/// [`ScoreOrdering::priority()`] for cheap lookups instead of re-computing.
+static GLOBAL_SCORE_CACHE: OnceLock<RwLock<HashMap<B256, i64>>> = OnceLock::new();
 
 /// Get a reference to the global ruleset
 pub fn global_ruleset() -> Arc<RuleSet> {
@@ -89,4 +98,40 @@ pub fn get_alias_group(name: &str) -> Option<Vec<Address>> {
 pub fn list_alias_groups() -> Vec<String> {
     let rs = global_ruleset();
     rs.aliases.groups.keys().cloned().collect()
+}
+
+// ========== Score Cache ==========
+
+fn score_cache() -> &'static RwLock<HashMap<B256, i64>> {
+    GLOBAL_SCORE_CACHE.get_or_init(|| RwLock::new(HashMap::new()))
+}
+
+pub fn get_tx_score(tx_hash: &B256) -> Option<i64> {
+    score_cache()
+        .read()
+        .expect("score cache lock poisoned")
+        .get(tx_hash)
+        .copied()
+}
+
+pub fn insert_tx_score(tx_hash: B256, score: i64) {
+    score_cache()
+        .write()
+        .expect("score cache lock poisoned")
+        .insert(tx_hash, score);
+}
+
+pub fn remove_tx_score(tx_hash: &B256) {
+    score_cache()
+        .write()
+        .expect("score cache lock poisoned")
+        .remove(tx_hash);
+}
+
+/// Returns the current number of entries in the score cache.
+pub fn score_cache_len() -> usize {
+    score_cache()
+        .read()
+        .expect("score cache lock poisoned")
+        .len()
 }
