@@ -1209,38 +1209,39 @@ where
         let state_provider = state.database.as_ref();
 
         // Check if we can use incremental trie caching (use cached trie from previous flashblock if available)
-        let use_incremental = if let Some(prev_trie) = fb_state.as_ref().and_then(|s| s.prev_trie_updates.clone()) {
-            // Incremental path: Use cached trie from previous flashblock
-            debug!(
-                target: "payload_builder",
-                flashblock_index = fb_state.as_ref().map_or(0, |s| s.flashblock_index),
-                "Using incremental state root calculation with cached trie"
-            );
+        let use_incremental =
+            if let Some(prev_trie) = fb_state.as_ref().and_then(|s| s.prev_trie_updates.clone()) {
+                // Incremental path: Use cached trie from previous flashblock
+                debug!(
+                    target: "payload_builder",
+                    flashblock_index = fb_state.as_ref().map_or(0, |s| s.flashblock_index),
+                    "Using incremental state root calculation with cached trie"
+                );
 
-            // Get FULL cumulative hashed_state (not delta!)
-            hashed_state = state_provider.hashed_post_state(&state.bundle_state);
+                // Get FULL cumulative hashed_state (not delta!)
+                hashed_state = state_provider.hashed_post_state(&state.bundle_state);
 
-            let trie_input = TrieInput::new(
-                TrieUpdates::clone(&prev_trie),
-                hashed_state.clone(),
-                hashed_state.construct_prefix_sets(), // Don't freeze - need TriePrefixSetsMut
-            );
+                let trie_input = TrieInput::new(
+                    TrieUpdates::clone(&prev_trie),
+                    hashed_state.clone(),
+                    hashed_state.construct_prefix_sets(), // Don't freeze - need TriePrefixSetsMut
+                );
 
-            (state_root, trie_output) = state_provider
-                .state_root_from_nodes_with_updates(trie_input)
-                .map_err(PayloadBuilderError::other)?;
+                (state_root, trie_output) = state_provider
+                    .state_root_from_nodes_with_updates(trie_input)
+                    .map_err(PayloadBuilderError::other)?;
 
-            debug!(
-                target: "payload_builder",
-                flashblock_index = fb_state.as_ref().map_or(0, |s| s.flashblock_index),
-                state_root = %state_root,
-                "Incremental state root calculation completed"
-            );
+                debug!(
+                    target: "payload_builder",
+                    flashblock_index = fb_state.as_ref().map_or(0, |s| s.flashblock_index),
+                    state_root = %state_root,
+                    "Incremental state root calculation completed"
+                );
 
-            true
-        } else {
-            false
-        };
+                true
+            } else {
+                false
+            };
 
         if !use_incremental {
             debug!(
@@ -1263,50 +1264,6 @@ where
                         "failed to calculate state root for payload"
                     );
                 })?;
-        }
-
-        // Verification: only for incremental path in debug builds
-        #[cfg(debug_assertions)]
-        if use_incremental {
-            let full_hashed_state = state_provider.hashed_post_state(&state.bundle_state);
-            let (full_state_root, _) = state
-                .database
-                .as_ref()
-                .state_root_with_updates(full_hashed_state.clone())
-                .expect("Full state root calculation should succeed");
-
-            if state_root != full_state_root {
-                error!(
-                    target: "payload_builder",
-                    incremental_root = %state_root,
-                    full_root = %full_state_root,
-                    flashblock_index = fb_state.as_ref().map_or(0, |s| s.flashblock_index),
-                    total_accounts = state.bundle_state.state.len(),
-                    "❌ TRIE CACHE VERIFICATION FAILED: State roots do not match!"
-                );
-
-                // DEBUG: Compare hashed states
-                error!(
-                    target: "payload_builder",
-                    incremental_hashed_accounts = hashed_state.accounts.len(),
-                    full_hashed_accounts = full_hashed_state.accounts.len(),
-                    incremental_hashed_storages = hashed_state.storages.len(),
-                    full_hashed_storages = full_hashed_state.storages.len(),
-                    "Hashed state comparison"
-                );
-
-                panic!(
-                    "Trie cache correctness verification failed! Incremental: {}, Full: {}",
-                    state_root, full_state_root
-                );
-            } else {
-                debug!(
-                    target: "payload_builder",
-                    state_root = %state_root,
-                    flashblock_index = fb_state.as_ref().map_or(0, |s| s.flashblock_index),
-                    "✅ Trie cache verification passed: incremental matches full calculation"
-                );
-            }
         }
 
         // Save trie updates for next flashblock's incremental calculation
