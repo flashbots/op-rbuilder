@@ -18,19 +18,6 @@ pub struct FlashblocksConfig {
     /// per block is equal to the block time divided by the flashblock interval.
     pub interval: Duration,
 
-    /// How much time would be deducted from block build time to account for latencies in
-    /// milliseconds.
-    ///
-    /// If dynamic_adjustment is false this value would be deducted from first flashblock and
-    /// it shouldn't be more than interval
-    ///
-    /// If dynamic_adjustment is true this value would be deducted from first flashblock and
-    /// it shouldn't be more than interval
-    pub leeway_time: Duration,
-
-    /// Disables dynamic flashblocks number adjustment based on FCU arrival time
-    pub fixed: bool,
-
     /// Should we disable state root calculation for each flashblock
     pub disable_state_root: bool,
 
@@ -41,9 +28,6 @@ pub struct FlashblocksConfig {
 
     /// whether to use permit signatures for the contract calls
     pub number_contract_use_permit: bool,
-
-    /// Build flashblock at the end of the flashblock interval
-    pub build_at_interval_end: bool,
 
     /// Offset in milliseconds for when to send flashblocks.
     /// Positive values send late, negative values send early.
@@ -77,12 +61,9 @@ impl Default for FlashblocksConfig {
         Self {
             ws_addr: SocketAddr::new(Ipv4Addr::UNSPECIFIED.into(), 1111),
             interval: Duration::from_millis(250),
-            leeway_time: Duration::from_millis(0),
-            fixed: false,
             disable_state_root: false,
             number_contract_address: None,
             number_contract_use_permit: false,
-            build_at_interval_end: false,
             send_offset_ms: 0,
             end_buffer_ms: 0,
             p2p_enabled: false,
@@ -106,10 +87,6 @@ impl TryFrom<OpRbuilderArgs> for FlashblocksConfig {
             args.flashblocks.flashblocks_port,
         );
 
-        let leeway_time = Duration::from_millis(args.flashblocks.flashblocks_leeway_time);
-
-        let fixed = args.flashblocks.flashblocks_fixed;
-
         let disable_state_root = args.flashblocks.flashblocks_disable_state_root;
 
         let number_contract_address = args.flashblocks.flashblocks_number_contract_address;
@@ -119,12 +96,9 @@ impl TryFrom<OpRbuilderArgs> for FlashblocksConfig {
         Ok(Self {
             ws_addr,
             interval,
-            leeway_time,
-            fixed,
             disable_state_root,
             number_contract_address,
             number_contract_use_permit,
-            build_at_interval_end: args.flashblocks.flashblocks_build_at_interval_end,
             send_offset_ms: args.flashblocks.flashblocks_send_offset_ms,
             end_buffer_ms: args.flashblocks.flashblocks_end_buffer_ms,
             p2p_enabled: args.flashblocks.p2p.p2p_enabled,

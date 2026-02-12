@@ -11,6 +11,7 @@ mod p2p;
 mod payload;
 mod payload_handler;
 mod service;
+mod timing;
 mod wspub;
 
 /// Block building strategy that progressively builds chunks of a block and makes them available
