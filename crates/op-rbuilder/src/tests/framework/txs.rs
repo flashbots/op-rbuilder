@@ -20,6 +20,7 @@ use reth_transaction_pool::{AllTransactionsEvents, FullTransactionEvent, Transac
 use std::{collections::VecDeque, sync::Arc};
 use tokio::sync::watch;
 use tracing::debug;
+use uuid::Uuid;
 
 use alloy_eips::eip1559::MIN_PROTOCOL_BASE_FEE;
 
@@ -31,6 +32,8 @@ pub struct BundleOpts {
     flashblock_number_max: Option<u64>,
     min_timestamp: Option<u64>,
     max_timestamp: Option<u64>,
+    replacement_uuid: Option<Uuid>,
+    replacement_nonce: Option<u64>,
 }
 
 impl BundleOpts {
@@ -61,6 +64,12 @@ impl BundleOpts {
 
     pub fn with_max_timestamp(mut self, max_timestamp: u64) -> Self {
         self.max_timestamp = Some(max_timestamp);
+        self
+    }
+
+    pub fn with_replacement_key(mut self, uuid: Uuid, nonce: u64) -> Self {
+        self.replacement_uuid = Some(uuid);
+        self.replacement_nonce = Some(nonce);
         self
     }
 }
@@ -215,6 +224,10 @@ impl TransactionBuilder {
         let transaction_encoded = transaction.encoded_2718();
 
         if let Some(bundle_opts) = bundle_opts {
+            eyre::ensure!(
+                bundle_opts.replacement_uuid.is_none(),
+                "replacement_uuid is not supported for ordinary bundles, use send_backrun_bundle"
+            );
             // Send the transaction as a bundle with the bundle options
             let raw_tx = transaction_encoded.clone();
             let bundle = Bundle {
@@ -418,8 +431,8 @@ pub async fn send_backrun_bundle(
         block_number_max: bundle_opts.block_number_max,
         flashblock_number_min: bundle_opts.flashblock_number_min,
         flashblock_number_max: bundle_opts.flashblock_number_max,
-        replacement_uuid: None,
-        replacement_nonce: None,
+        replacement_uuid: bundle_opts.replacement_uuid,
+        replacement_nonce: bundle_opts.replacement_nonce,
     };
 
     let _result: BundleResult = provider

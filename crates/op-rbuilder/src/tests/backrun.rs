@@ -9,6 +9,7 @@ use crate::{
 use alloy_network::ReceiptResponse;
 use alloy_provider::Provider;
 use macros::rb_test;
+use uuid::Uuid;
 
 /// Tests that a valid backrun bundle lands in the block immediately after the target transaction.
 #[rb_test(args = OpRbuilderArgs {
@@ -522,6 +523,138 @@ async fn backrun_not_triggered_when_target_reverts(rbuilder: LocalInstance) -> e
     assert!(
         !block.includes(&backrun_hash),
         "Backrun should not be in block when target reverts"
+    );
+
+    Ok(())
+}
+
+/// Tests that a replacement bundle with a higher nonce replaces the original,
+/// even when the replacement has a lower priority fee.
+#[rb_test(args = OpRbuilderArgs {
+    backrun_bundle: BackrunBundleArgs {
+        backruns_enabled: true,
+        max_landed_backruns_per_target: 1,
+        max_considered_backruns_per_target: 10,
+        ..Default::default()
+    },
+    ..Default::default()
+})]
+async fn backrun_replacement_lower_fee_replaces_higher(
+    rbuilder: LocalInstance,
+) -> eyre::Result<()> {
+    let driver = rbuilder.driver().await?;
+    let accounts = driver.fund_accounts(3, ONE_ETH).await?;
+
+    let (target_pending, target_raw_tx) = driver
+        .create_transaction()
+        .with_signer(accounts[0])
+        .random_valid_transfer()
+        .with_max_priority_fee_per_gas(10)
+        .send_and_get_raw_tx()
+        .await?;
+    let target_hash = *target_pending.tx_hash();
+
+    let replacement_uuid = Uuid::new_v4();
+
+    // First bundle: high priority fee, nonce=0
+    let high_fee_hash = send_backrun_bundle(
+        target_raw_tx.clone(),
+        driver
+            .create_transaction()
+            .with_signer(accounts[1])
+            .random_valid_transfer()
+            .with_max_priority_fee_per_gas(100),
+        BundleOpts::default().with_replacement_key(replacement_uuid, 0),
+    )
+    .await?;
+
+    // Replacement: lower priority fee, nonce=1 — should replace the first
+    let low_fee_hash = send_backrun_bundle(
+        target_raw_tx,
+        driver
+            .create_transaction()
+            .with_signer(accounts[2])
+            .random_valid_transfer()
+            .with_max_priority_fee_per_gas(10),
+        BundleOpts::default().with_replacement_key(replacement_uuid, 1),
+    )
+    .await?;
+
+    let block = driver.build_new_block().await?;
+
+    assert!(block.includes(&target_hash), "Target tx should be in block");
+    assert!(
+        !block.includes(&high_fee_hash),
+        "Original high-fee bundle should have been replaced"
+    );
+    assert!(
+        block.includes(&low_fee_hash),
+        "Replacement low-fee bundle should be in block"
+    );
+
+    Ok(())
+}
+
+/// Tests that a replacement with a stale (lower or equal) nonce is rejected
+/// and the original bundle remains.
+#[rb_test(args = OpRbuilderArgs {
+    backrun_bundle: BackrunBundleArgs {
+        backruns_enabled: true,
+        max_landed_backruns_per_target: 1,
+        max_considered_backruns_per_target: 10,
+        ..Default::default()
+    },
+    ..Default::default()
+})]
+async fn backrun_replacement_stale_nonce_rejected(rbuilder: LocalInstance) -> eyre::Result<()> {
+    let driver = rbuilder.driver().await?;
+    let accounts = driver.fund_accounts(3, ONE_ETH).await?;
+
+    let (target_pending, target_raw_tx) = driver
+        .create_transaction()
+        .with_signer(accounts[0])
+        .random_valid_transfer()
+        .with_max_priority_fee_per_gas(10)
+        .send_and_get_raw_tx()
+        .await?;
+    let target_hash = *target_pending.tx_hash();
+
+    let replacement_uuid = Uuid::new_v4();
+
+    // First bundle: nonce=5
+    let original_hash = send_backrun_bundle(
+        target_raw_tx.clone(),
+        driver
+            .create_transaction()
+            .with_signer(accounts[1])
+            .random_valid_transfer()
+            .with_max_priority_fee_per_gas(10),
+        BundleOpts::default().with_replacement_key(replacement_uuid, 5),
+    )
+    .await?;
+
+    // Stale replacement: nonce=3
+    let stale_hash = send_backrun_bundle(
+        target_raw_tx,
+        driver
+            .create_transaction()
+            .with_signer(accounts[2])
+            .random_valid_transfer()
+            .with_max_priority_fee_per_gas(50),
+        BundleOpts::default().with_replacement_key(replacement_uuid, 3),
+    )
+    .await?;
+
+    let block = driver.build_new_block().await?;
+
+    assert!(block.includes(&target_hash), "Target tx should be in block");
+    assert!(
+        block.includes(&original_hash),
+        "Original bundle should still be in block"
+    );
+    assert!(
+        !block.includes(&stale_hash),
+        "Stale replacement should not be in block"
     );
 
     Ok(())

@@ -746,7 +746,7 @@ impl<ExtraCtx: Debug + Default + MaybeFlashblockIndex> OpPayloadBuilderCtx<Extra
                     let ResultAndState {
                         result: br_result,
                         state: br_state,
-                    } = match evm.transact(&bundle.backrun_tx) {
+                    } = match evm.transact(&*bundle.backrun_tx) {
                         Ok(res) => res,
                         Err(err) => {
                             if let Some(err) = err.as_invalid_tx_err() {
@@ -815,7 +815,7 @@ impl<ExtraCtx: Debug + Default + MaybeFlashblockIndex> OpPayloadBuilderCtx<Extra
 
                     info.executed_senders.push(bundle.backrun_tx.signer());
                     info.executed_transactions
-                        .push(bundle.backrun_tx.into_inner());
+                        .push(bundle.backrun_tx.inner().clone());
 
                     target_backruns_landed += 1;
                 }

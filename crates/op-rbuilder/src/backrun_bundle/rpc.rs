@@ -5,6 +5,7 @@ use reth_optimism_primitives::OpTransactionSigned;
 use reth_provider::BlockNumReader;
 use reth_rpc_eth_types::{EthApiError, utils::recover_raw_transaction};
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::primitives::bundle::BundleResult;
@@ -141,7 +142,7 @@ where
 
         let backrun_bundle = StoredBackrunBundle {
             target_tx_hash,
-            backrun_tx,
+            backrun_tx: Arc::new(backrun_tx),
             block_number,
             block_number_max,
             flashblock_number_min: bundle.flashblock_number_min,

@@ -17,7 +17,7 @@ pub struct ReplacementKey {
 pub struct StoredBackrunBundle {
     /// Hash of the target tx; we assume it's in the txpool.
     pub target_tx_hash: B256,
-    pub backrun_tx: Recovered<OpTransactionSigned>,
+    pub backrun_tx: Arc<Recovered<OpTransactionSigned>>,
     pub block_number: u64,
     pub block_number_max: u64,
     pub flashblock_number_min: Option<u64>,
@@ -109,6 +109,14 @@ impl BackrunBundlePayloadPool {
             .or_default()
             .bundles
             .insert(OrderedBackrunBundle(bundle));
+    }
+
+    pub fn remove_bundle(&self, bundle: &StoredBackrunBundle) {
+        if let Some(mut tx_backruns) = self.inner.get_mut(&bundle.target_tx_hash) {
+            tx_backruns
+                .bundles
+                .remove(&OrderedBackrunBundle(bundle.clone()));
+        }
     }
 
     pub fn get_backruns(
