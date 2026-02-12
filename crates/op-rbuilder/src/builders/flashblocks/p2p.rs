@@ -1,4 +1,5 @@
 use alloy_primitives::U256;
+use op_alloy_rpc_types_engine::OpFlashblockPayload;
 use reth::{core::primitives::SealedBlock, payload::PayloadId};
 use reth_optimism_payload_builder::OpBuiltPayload as RethOpBuiltPayload;
 use reth_optimism_primitives::OpBlock;
@@ -11,6 +12,7 @@ pub(super) const FLASHBLOCKS_STREAM_PROTOCOL: p2p::StreamProtocol =
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub(super) enum Message {
     OpBuiltPayload(OpBuiltPayload),
+    OpFlashblockPayload(OpFlashblockPayload),
 }
 
 impl p2p::Message for Message {
@@ -31,15 +33,13 @@ pub(crate) struct OpBuiltPayload {
     pub(crate) fees: U256,
 }
 
-impl From<RethOpBuiltPayload> for Message {
-    fn from(value: RethOpBuiltPayload) -> Self {
+impl Message {
+    pub(super) fn from_built_payload(value: RethOpBuiltPayload) -> Self {
         Message::OpBuiltPayload(value.into())
     }
-}
 
-impl From<OpBuiltPayload> for Message {
-    fn from(value: OpBuiltPayload) -> Self {
-        Message::OpBuiltPayload(value)
+    pub(super) fn from_flashblock_payload(value: OpFlashblockPayload) -> Self {
+        Message::OpFlashblockPayload(value)
     }
 }
 

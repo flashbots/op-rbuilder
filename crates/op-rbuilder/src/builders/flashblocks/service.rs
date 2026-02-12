@@ -149,7 +149,7 @@ impl FlashblocksServiceBuilder {
 
         let syncer_ctx = crate::builders::flashblocks::ctx::OpPayloadSyncerCtx::new(
             &ctx.provider().clone(),
-            self.0,
+            self.0.clone(),
             OpEvmConfig::optimism(ctx.chain_spec()),
             metrics.clone(),
         )
@@ -161,10 +161,13 @@ impl FlashblocksServiceBuilder {
             incoming_message_rx,
             outgoing_message_tx,
             payload_service.payload_events_handle(),
+            ws_pub.clone(),
             syncer_ctx,
             ctx.provider().clone(),
             ctx.task_executor().clone(),
             cancel,
+            self.0.specific.p2p_send_full_payload,
+            self.0.specific.p2p_process_full_payload,
         );
 
         ctx.task_executor().spawn_critical(
