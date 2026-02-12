@@ -1,4 +1,5 @@
 use crate::{
+    backrun_bundle::rpc::BackrunBundleRPCArgs,
     primitives::bundle::{Bundle, BundleResult},
     tests::funded_signer,
     tx::FBPooledTransaction,
@@ -406,15 +407,19 @@ pub async fn send_backrun_bundle(
     let backrun_encoded = backrun_tx.encoded_2718();
 
     // Submit both as a backrun bundle
-    let bundle = Bundle {
+    let block_number = match bundle_opts.block_number_min {
+        Some(n) => n,
+        None => provider.get_block_number().await? + 1,
+    };
+
+    let bundle = BackrunBundleRPCArgs {
         transactions: vec![target_raw_tx.into(), backrun_encoded.into()],
-        reverting_hashes: None,
-        block_number_min: bundle_opts.block_number_min,
+        block_number,
         block_number_max: bundle_opts.block_number_max,
         flashblock_number_min: bundle_opts.flashblock_number_min,
         flashblock_number_max: bundle_opts.flashblock_number_max,
-        min_timestamp: bundle_opts.min_timestamp,
-        max_timestamp: bundle_opts.max_timestamp,
+        replacement_uuid: None,
+        replacement_nonce: None,
     };
 
     let _result: BundleResult = provider

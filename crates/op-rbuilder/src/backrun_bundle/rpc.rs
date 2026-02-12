@@ -1,18 +1,73 @@
 use alloy_consensus::Transaction;
-use alloy_primitives::B256;
+use alloy_primitives::{B256, Bytes};
 use jsonrpsee::{core::RpcResult, proc_macros::rpc};
 use reth_optimism_primitives::OpTransactionSigned;
 use reth_provider::BlockNumReader;
 use reth_rpc_eth_types::{EthApiError, utils::recover_raw_transaction};
+use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
-use crate::primitives::bundle::{Bundle, BundleResult};
+use crate::primitives::bundle::BundleResult;
 
-use super::{global_pool::BackrunBundleGlobalPool, payload_pool::StoredBackrunBundle};
+use super::{
+    global_pool::BackrunBundleGlobalPool,
+    payload_pool::{ReplacementKey, StoredBackrunBundle},
+};
+
+const MAX_BLOCK_RANGE: u64 = 10;
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct BackrunBundleRPCArgs {
+    #[serde(rename = "txs")]
+    pub transactions: Vec<Bytes>,
+
+    #[serde(rename = "blockNumber", with = "alloy_serde::quantity")]
+    pub block_number: u64,
+
+    #[serde(
+        default,
+        rename = "maxBlockNumber",
+        with = "alloy_serde::quantity::opt",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub block_number_max: Option<u64>,
+
+    #[serde(
+        default,
+        rename = "minFlashblockNumber",
+        with = "alloy_serde::quantity::opt",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub flashblock_number_min: Option<u64>,
+
+    #[serde(
+        default,
+        rename = "maxFlashblockNumber",
+        with = "alloy_serde::quantity::opt",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub flashblock_number_max: Option<u64>,
+
+    #[serde(
+        default,
+        rename = "replacementUuid",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub replacement_uuid: Option<Uuid>,
+
+    /// Replacment nonce must be set if `replacement_uuid` is set
+    #[serde(
+        default,
+        rename = "replacementNonce",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub replacement_nonce: Option<u64>,
+}
 
 #[rpc(server, namespace = "eth")]
 pub trait BackrunBundleApi {
     #[method(name = "sendBackrunBundle")]
-    async fn send_backrun_bundle(&self, bundle: Bundle) -> RpcResult<BundleResult>;
+    async fn send_backrun_bundle(&self, bundle: BackrunBundleRPCArgs) -> RpcResult<BundleResult>;
 }
 
 pub struct BackrunBundleRpc<Provider> {
@@ -34,7 +89,7 @@ impl<Provider> BackrunBundleApiServer for BackrunBundleRpc<Provider>
 where
     Provider: BlockNumReader + Send + Sync + 'static,
 {
-    async fn send_backrun_bundle(&self, bundle: Bundle) -> RpcResult<BundleResult> {
+    async fn send_backrun_bundle(&self, bundle: BackrunBundleRPCArgs) -> RpcResult<BundleResult> {
         if bundle.transactions.len() != 2 {
             return Err(EthApiError::InvalidParams(
                 "backrun bundle must contain exactly 2 transactions".into(),
@@ -42,23 +97,38 @@ where
             .into());
         }
 
+        let block_number = bundle.block_number;
+        let block_number_max = bundle.block_number_max.unwrap_or(block_number);
+
+        if block_number_max.saturating_sub(block_number) >= MAX_BLOCK_RANGE {
+            return Err(EthApiError::InvalidParams(format!(
+                "block range too large: {block_number}..{block_number_max} (max range: {MAX_BLOCK_RANGE})"
+            ))
+            .into());
+        }
+
+        let replacement_key = match (bundle.replacement_uuid, bundle.replacement_nonce) {
+            (Some(uuid), Some(nonce)) => Some(ReplacementKey { uuid, nonce }),
+            (Some(_), None) => {
+                return Err(EthApiError::InvalidParams(
+                    "replacementNonce must be set when replacementUuid is set".into(),
+                )
+                .into());
+            }
+            _ => None,
+        };
+
         let last_block_number = self
             .provider
             .best_block_number()
             .map_err(|_| EthApiError::InternalEthError)?;
 
-        let conditional = bundle
-            .conditional(last_block_number)
-            .map_err(EthApiError::from)?;
-
-        let block_number_min = conditional
-            .transaction_conditional
-            .block_number_min
-            .unwrap_or(last_block_number + 1);
-        let block_number_max = conditional
-            .transaction_conditional
-            .block_number_max
-            .expect("block_number_max is always set after conditional()");
+        if block_number_max <= last_block_number {
+            return Err(EthApiError::InvalidParams(format!(
+                "maxBlockNumber ({block_number_max}) is in the past (current: {last_block_number})"
+            ))
+            .into());
+        }
 
         let target_tx = recover_raw_transaction::<OpTransactionSigned>(&bundle.transactions[0])?;
         let backrun_tx = recover_raw_transaction::<OpTransactionSigned>(&bundle.transactions[1])?;
@@ -67,17 +137,17 @@ where
         let backrun_tx_hash = B256::from(*backrun_tx.tx_hash());
 
         // TODO: using base_fee=0 for the estimate, should use a better estimate
-        let estimated_effective_priority_fee =
-            backrun_tx.effective_tip_per_gas(0).unwrap_or(0);
+        let estimated_effective_priority_fee = backrun_tx.effective_tip_per_gas(0).unwrap_or(0);
 
         let backrun_bundle = StoredBackrunBundle {
             target_tx_hash,
             backrun_tx,
-            block_number_min,
+            block_number,
             block_number_max,
-            flashblock_number_min: conditional.flashblock_number_min,
-            flashblock_number_max: conditional.flashblock_number_max,
+            flashblock_number_min: bundle.flashblock_number_min,
+            flashblock_number_max: bundle.flashblock_number_max,
             estimated_effective_priority_fee,
+            replacement_key,
         };
 
         self.global_pool.add_bundle(backrun_bundle);

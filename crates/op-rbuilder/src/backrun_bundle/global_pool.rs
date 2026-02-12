@@ -41,7 +41,7 @@ impl BackrunBundleGlobalPool {
     }
 
     pub fn add_bundle(&self, bundle: StoredBackrunBundle) {
-        for block in bundle.block_number_min..=bundle.block_number_max {
+        for block in bundle.block_number..=bundle.block_number_max {
             self.get_or_create_pool(block).add_bundle(bundle.clone());
         }
     }

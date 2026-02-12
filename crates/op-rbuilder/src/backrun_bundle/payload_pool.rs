@@ -5,23 +5,31 @@ use reth_optimism_primitives::OpTransactionSigned;
 use reth_primitives::Recovered;
 use revm::state::AccountInfo;
 use std::{cmp::Ordering, collections::HashSet, sync::Arc};
+use uuid::Uuid;
+
+#[derive(Debug, Clone)]
+pub struct ReplacementKey {
+    pub uuid: Uuid,
+    pub nonce: u64,
+}
 
 #[derive(Debug, Clone)]
 pub struct StoredBackrunBundle {
     /// Hash of the target tx; we assume it's in the txpool.
     pub target_tx_hash: B256,
     pub backrun_tx: Recovered<OpTransactionSigned>,
-    pub block_number_min: u64,
+    pub block_number: u64,
     pub block_number_max: u64,
     pub flashblock_number_min: Option<u64>,
     pub flashblock_number_max: Option<u64>,
     // TODO: using base_fee=0 for the estimate, should use a better estimate
     pub estimated_effective_priority_fee: u128,
+    pub replacement_key: Option<ReplacementKey>,
 }
 
 impl StoredBackrunBundle {
     pub fn is_valid(&self, block_number: u64, flashblock_number: Option<u64>) -> bool {
-        if block_number < self.block_number_min || block_number > self.block_number_max {
+        if block_number < self.block_number || block_number > self.block_number_max {
             return false;
         }
 
