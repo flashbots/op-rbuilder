@@ -146,7 +146,7 @@ The `FlashblockScheduler` handles timing coordination for flashblock production:
 |-----------|-------------|---------|
 | `flashblocks.block-time` | Flashblock interval in milliseconds | 250 |
 | `flashblocks.send-offset-ms` | Shifts all send times. Positive = late, negative = early | 0 |
-| `flashblocks.end-buffer-ms` | Time reserved at end of slot for final processing | 30 |
+| `flashblocks.end-buffer-ms` | Time reserved at end of slot for final processing | 0 |
 
 ### Caveats
 - If the payload timestamp is in the past or remaining time is 0, the scheduler falls back to using the full block_time

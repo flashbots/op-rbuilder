@@ -172,7 +172,7 @@ pub struct FlashblocksArgs {
     #[arg(
         long = "flashblocks.end-buffer-ms",
         env = "FLASHBLOCK_END_BUFFER_MS",
-        default_value = "50"
+        default_value = "0"
     )]
     pub flashblocks_end_buffer_ms: u64,
 
