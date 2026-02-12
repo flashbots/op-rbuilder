@@ -1,0 +1,38 @@
+name: "[op-rbuilder] Release Candidate"
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:  # manual trigger
+
+jobs:
+  rc-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-release
+        run: cargo install cargo-binstall && cargo binstall -y cargo-release
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Bump RC version
+        run: cargo release rc --package op-rbuilder --no-publish --no-push --no-confirm --execute
+
+      - name: Push changes
+        run: |
+          git remote set-url origin https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}
+          git push origin main
+          git push origin --tags
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
