@@ -1,0 +1,20 @@
+# Cargo release configuration
+# https://github.com/crate-ci/cargo-release/blob/master/docs/reference.md
+
+# Don't publish to crates.io
+publish = false
+
+# Skip building the package (since this is just to make tags)
+verify = false
+
+# Tag format: creates tags like "op-rbuilder/v0.3.2" or "op-rbuilder/v0.3.2-rc.1"
+tag-name = "{{crate_name}}/v{{version}}"
+
+# Only allow releases from main branch
+allow-branch = ["main"]
+
+# Commit message format for version bumps
+pre-release-commit-message = "release: {{crate_name}} v{{version}}"
+
+# Tag annotation message
+tag-message = "{{crate_name}} v{{version}}"
