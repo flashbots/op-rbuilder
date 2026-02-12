@@ -18,8 +18,9 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
-      - name: Install cargo-release
-        run: cargo install cargo-binstall && cargo binstall -y cargo-release
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-release
 
       - name: Configure git
         run: |
@@ -32,7 +33,6 @@ jobs:
       - name: Push changes
         run: |
           git remote set-url origin https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}
-          git push origin main
           git push origin --tags
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
