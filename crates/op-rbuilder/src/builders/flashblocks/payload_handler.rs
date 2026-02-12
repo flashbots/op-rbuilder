@@ -1,6 +1,7 @@
 use crate::{
     builders::flashblocks::{
         ctx::OpPayloadSyncerCtx, p2p::Message, payload::FlashblocksExecutionInfo,
+        wspub::WebSocketPublisher,
     },
     primitives::reth::ExecutionInfo,
     traits::ClientBounds,
@@ -35,7 +36,7 @@ use tracing::warn;
 /// In the case of a payload received from a peer, it is executed and if successful, an event is sent to the payload builder.
 pub(crate) struct PayloadHandler<Client, Tasks> {
     // receives new flashblock payloads built by this builder.
-    built_fb_payload_rx: mpsc::Receiver<OpBuiltPayload>,
+    built_fb_payload_rx: mpsc::Receiver<OpFlashblockPayload>,
     // receives new full block payloads built by this builder.
     built_payload_rx: mpsc::Receiver<OpBuiltPayload>,
     // receives incoming p2p messages from peers.
@@ -44,6 +45,8 @@ pub(crate) struct PayloadHandler<Client, Tasks> {
     p2p_tx: mpsc::Sender<Message>,
     // sends a `Events::BuiltPayload` to the reth payload builder when a new payload is received.
     payload_events_handle: tokio::sync::broadcast::Sender<Events<OpEngineTypes>>,
+    // websocket publisher for broadcasting flashblocks to all connected subscribers.
+    ws_pub: Arc<WebSocketPublisher>,
     // context required for execution of blocks during syncing
     ctx: OpPayloadSyncerCtx,
     // chain client
@@ -51,6 +54,8 @@ pub(crate) struct PayloadHandler<Client, Tasks> {
     // task executor
     task_executor: Tasks,
     cancel: tokio_util::sync::CancellationToken,
+    p2p_send_full_payload_flag: bool,
+    p2p_process_full_payload_flag: bool,
 }
 
 impl<Client, Tasks> PayloadHandler<Client, Tasks>
@@ -60,15 +65,18 @@ where
 {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
-        built_fb_payload_rx: mpsc::Receiver<OpBuiltPayload>,
+        built_fb_payload_rx: mpsc::Receiver<OpFlashblockPayload>,
         built_payload_rx: mpsc::Receiver<OpBuiltPayload>,
         p2p_rx: mpsc::Receiver<Message>,
         p2p_tx: mpsc::Sender<Message>,
         payload_events_handle: tokio::sync::broadcast::Sender<Events<OpEngineTypes>>,
+        ws_pub: Arc<WebSocketPublisher>,
         ctx: OpPayloadSyncerCtx,
         client: Client,
         task_executor: Tasks,
         cancel: tokio_util::sync::CancellationToken,
+        p2p_send_full_payload_flag: bool,
+        p2p_process_full_payload_flag: bool,
     ) -> Self {
         Self {
             built_fb_payload_rx,
@@ -76,10 +84,13 @@ where
             p2p_rx,
             p2p_tx,
             payload_events_handle,
+            ws_pub,
             ctx,
             client,
             task_executor,
             cancel,
+            p2p_send_full_payload_flag,
+            p2p_process_full_payload_flag,
         }
     }
 
@@ -90,10 +101,13 @@ where
             mut p2p_rx,
             p2p_tx,
             payload_events_handle,
+            ws_pub,
             ctx,
             client,
             task_executor,
             cancel,
+            p2p_send_full_payload_flag,
+            p2p_process_full_payload_flag,
         } = self;
 
         tracing::info!(target: "payload_builder", "flashblocks payload handler started");
@@ -102,24 +116,46 @@ where
             tokio::select! {
                 Some(payload) = built_fb_payload_rx.recv() => {
                     // ignore error here; if p2p was disabled, the channel will be closed.
-                    let _ = p2p_tx.send(payload.into()).await;
+                    let _ = p2p_tx.send(Message::from_flashblock_payload(payload)).await;
                 }
                 Some(payload) = built_payload_rx.recv() => {
                     // Update engine tree state with locally built block payloads
                     if let Err(e) = payload_events_handle.send(Events::BuiltPayload(payload.clone())) {
                         warn!(target: "payload_builder", e = ?e, "failed to send BuiltPayload event");
                     }
+                    if p2p_send_full_payload_flag {
+                        // ignore error here; if p2p was disabled, the channel will be closed.
+                        let _ = p2p_tx.send(Message::from_built_payload(payload)).await;
+                    }
                 }
                 Some(message) = p2p_rx.recv() => {
                     match message {
                         Message::OpBuiltPayload(payload) => {
+                            if !p2p_process_full_payload_flag {
+                                continue;
+                            }
+
                             let payload: OpBuiltPayload = payload.into();
+                            let block_hash = payload.block().hash();
+                            // Check if this block is already the pending block in canonical state
+                            if let Ok(Some(pending)) = client.pending_block()
+                                && pending.hash() == block_hash
+                            {
+                                tracing::trace!(
+                                    target: "payload_builder",
+                                    hash = %block_hash,
+                                    block_number = payload.block().header().number,
+                                    "skipping flashblock execution - block already pending in canonical state"
+                                );
+                                continue;
+                            }
+
                             let ctx = ctx.clone();
                             let client = client.clone();
                             let payload_events_handle = payload_events_handle.clone();
                             let cancel = cancel.clone();
 
-                            // execute the flashblock on a thread where blocking is acceptable,
+                            // execute the built full payload on a thread where blocking is acceptable,
                             // as it's potentially a heavy operation
                             task_executor.spawn_blocking(Box::pin(async move {
                                 let res = execute_flashblock(
@@ -140,6 +176,11 @@ where
                                     }
                                 }
                             }));
+                        }
+                        Message::OpFlashblockPayload(fb_payload) => {
+                            if let Err(e) = ws_pub.publish(&fb_payload) {
+                                warn!(target: "payload_builder", e = ?e, "failed to publish flashblock to websocket publisher");
+                            }
                         }
                     }
                 }
