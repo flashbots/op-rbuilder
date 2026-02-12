@@ -1,8 +1,10 @@
 use alloy_consensus::Transaction;
-use alloy_primitives::B256;
+use alloy_primitives::{Address, B256, U256};
 use dashmap::DashMap;
 use reth_optimism_primitives::OpTransactionSigned;
-use std::{cmp::Ordering, sync::Arc};
+use reth_primitives_traits::SignedTransaction;
+use revm::state::AccountInfo;
+use std::{cmp::Ordering, collections::HashSet, sync::Arc};
 
 #[derive(Debug, Clone)]
 pub struct BackrunBundle {
@@ -102,8 +104,68 @@ impl BackrunBundlePayloadPool {
             .insert(OrderedBackrunBundle(bundle));
     }
 
-    pub fn get_backruns(&self, target_tx_hash: &B256) -> Option<TxBackruns> {
-        self.inner.get(target_tx_hash).map(|r| r.clone())
+    pub fn get_backruns(
+        &self,
+        target_tx_hash: &B256,
+        mut account_info: impl FnMut(Address) -> Option<AccountInfo>,
+        base_fee: u64,
+        max_count: usize,
+    ) -> Vec<BackrunBundle> {
+        let Some(tx_backruns) = self.inner.get(target_tx_hash) else {
+            return Vec::new();
+        };
+
+        let mut result = Vec::new();
+        let mut seen = HashSet::<(Address, u64)>::new();
+        let base_fee = base_fee as u128;
+
+        for ordered in tx_backruns.bundles.iter() {
+            if result.len() >= max_count {
+                break;
+            }
+
+            let bundle = &ordered.0;
+            let backrun_tx = &bundle.backrun_tx;
+
+            // Base fee check
+            if backrun_tx.max_fee_per_gas() < base_fee {
+                continue;
+            }
+
+            // Recover signer
+            let Ok(recovered) = backrun_tx.clone().try_into_recovered() else {
+                continue;
+            };
+            let sender = recovered.signer();
+            let nonce = backrun_tx.nonce();
+
+            // Dedup by (address, nonce) — first seen wins (highest priority fee)
+            if !seen.insert((sender, nonce)) {
+                continue;
+            }
+
+            // Account state checks
+            let Some(account) = account_info(sender) else {
+                continue;
+            };
+
+            // Nonce check
+            if account.nonce != nonce {
+                continue;
+            }
+
+            // Balance check: max_fee_per_gas * gas_limit + value
+            let max_cost = U256::from(backrun_tx.max_fee_per_gas())
+                * U256::from(backrun_tx.gas_limit())
+                + U256::from(backrun_tx.value());
+            if account.balance < max_cost {
+                continue;
+            }
+
+            result.push(bundle.clone());
+        }
+
+        result
     }
 }
 

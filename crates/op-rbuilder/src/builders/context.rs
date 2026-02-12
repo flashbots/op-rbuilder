@@ -35,7 +35,7 @@ use reth_primitives_traits::{InMemorySize, SignedTransaction};
 use reth_revm::{State, context::Block};
 use reth_transaction_pool::{BestTransactionsAttributes, PoolTransaction};
 use revm::{
-    DatabaseCommit,
+    Database as _, DatabaseCommit,
     context::result::{InvalidTransaction, ResultAndState},
     interpreter::as_u64_saturated,
 };
@@ -633,12 +633,18 @@ impl<ExtraCtx: Debug + Default + MaybeFlashblockIndex> OpPayloadBuilderCtx<Extra
                     0,
                 );
 
-            if can_backrun && let Some(backruns) = self.backrun_ctx.pool.get_backruns(&target_hash)
-            {
+            if can_backrun {
+                let backruns = self.backrun_ctx.pool.get_backruns(
+                    &target_hash,
+                    |addr| evm.db_mut().basic(addr).ok().flatten(),
+                    base_fee,
+                    self.backrun_ctx.args.max_considered_backruns_per_target,
+                );
+
                 let mut target_backruns_considered = 0;
                 let mut target_backruns_landed = 0;
 
-                for backrun in backruns.iter() {
+                for bundle in &backruns {
                     if self.backrun_ctx.args.is_limit_reached(
                         num_backruns_considered,
                         num_backruns_successful,
@@ -647,8 +653,6 @@ impl<ExtraCtx: Debug + Default + MaybeFlashblockIndex> OpPayloadBuilderCtx<Extra
                     ) {
                         break;
                     }
-
-                    let bundle = &backrun.0;
 
                     /* Backrun tx commit checklist:
                     This is a set of steps that are performed for normal transactsions above that we need to
@@ -659,7 +663,6 @@ impl<ExtraCtx: Debug + Default + MaybeFlashblockIndex> OpPayloadBuilderCtx<Extra
                     - [x] reject blobs and deposit txs
                     - [x] exit early before evm execution if cancelled
                     - [x] meter simulation duration
-                    - [] (optional) if transacton is invalid remove it forever
                     - [x] meter tx_byte_size
                     - [x] use gas limiter
                     - [x] log when tx execution fails
