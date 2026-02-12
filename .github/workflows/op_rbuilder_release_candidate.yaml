@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - main
+    paths:
+      - "crates/op-rbuilder/**"
+      - "crates/p2p/**"
   workflow_dispatch:  # manual trigger
 
 jobs:
@@ -16,21 +19,34 @@ jobs:
         with:
           fetch-depth: 0
 
-      - uses: dtolnay/rust-toolchain@stable
-
-      - uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-release
-
-      - name: Configure git
+      - name: Create RC tag
         run: |
+          # Get current version from Cargo.toml
+          CURRENT_VERSION=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "op-rbuilder") | .version')
+
+          # Bump patch version for RC (0.3.1 -> 0.3.2)
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT_VERSION"
+          NEXT_PATCH=$((PATCH + 1))
+          VERSION="${MAJOR}.${MINOR}.${NEXT_PATCH}"
+
+          # Find next RC number
+          LATEST_RC=$(git tag -l "op-rbuilder/v${VERSION}-rc.*" | sort -V | tail -1)
+          if [ -z "$LATEST_RC" ]; then
+            NEXT_RC=1
+          else
+            CURRENT_RC=$(echo "$LATEST_RC" | grep -oP 'rc\.\K\d+')
+            NEXT_RC=$((CURRENT_RC + 1))
+          fi
+
+          # Create tag
+          TAG="op-rbuilder/v${VERSION}-rc.${NEXT_RC}"
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "$TAG" -m "op-rbuilder v${VERSION}-rc.${NEXT_RC}"
 
-      - name: Bump RC version
-        run: cargo release rc --package op-rbuilder --no-publish --no-push --no-confirm --execute
+          echo "Created tag: $TAG"
 
-      - name: Push changes
+      - name: Push tag
         run: |
           git remote set-url origin https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}
           git push origin --tags
