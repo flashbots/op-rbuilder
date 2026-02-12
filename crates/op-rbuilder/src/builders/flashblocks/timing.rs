@@ -123,8 +123,9 @@ impl FlashblockScheduler {
 }
 
 /// Computes the remaining time until the payload deadline. Calculates remaining
-/// time as `payload_timestamp - now`. The result is capped at `block_time` and
-/// falls back to `block_time` if the timestamp is in the past.
+/// time as `payload_timestamp - now`. The result is capped at `block_time`. If
+/// the timestamp is in the past (late FCU), sets remaining time to 0 to try to
+/// emit one flashblock.
 fn compute_remaining_time(
     block_time: Duration,
     payload_timestamp: u64,
@@ -132,15 +133,28 @@ fn compute_remaining_time(
 ) -> Duration {
     let target_time = std::time::SystemTime::UNIX_EPOCH + Duration::from_secs(payload_timestamp);
 
-    // Calculate remaining time, with fallback to block_time if:
-    // - target_time is in the past (duration_since returns Err)
-    // - remaining time is 0 or negative
     target_time
         .duration_since(reference_system)
         .ok()
         .filter(|duration| duration.as_millis() > 0)
-        .unwrap_or(block_time)
-        .min(block_time)
+        .map(|d| d.min(block_time))
+        .unwrap_or_else(|| {
+            // If we're here then the payload timestamp is in the past. This
+            // happens when the FCU is really late and it also means we're
+            // expecting a getPayload call basically right away, so we don't
+            // have any time to build.
+            let delay_ms = reference_system
+                .duration_since(target_time)
+                .map(|d| d.as_millis())
+                .unwrap_or(0);
+            warn!(
+                target: "payload_builder",
+                payload_timestamp,
+                delay_ms,
+                "Late FCU: payload timestamp is in the past"
+            );
+            Duration::ZERO
+        })
 }
 
 /// Computes the scheduler send time intervals as durations relative to the
@@ -448,7 +462,7 @@ mod tests {
     struct RemainingTimeTestCase {
         name: &'static str,
         block_time_ms: u64,
-        reference_secs: u64,
+        reference_ms: u64,
         payload_timestamp: u64,
         expected_remaining_ms: u64,
     }
@@ -456,7 +470,7 @@ mod tests {
     fn check_remaining_time(test_case: RemainingTimeTestCase) {
         let block_time = Duration::from_millis(test_case.block_time_ms);
         let reference_system =
-            std::time::SystemTime::UNIX_EPOCH + Duration::from_secs(test_case.reference_secs);
+            std::time::SystemTime::UNIX_EPOCH + Duration::from_millis(test_case.reference_ms);
 
         let remaining =
             compute_remaining_time(block_time, test_case.payload_timestamp, reference_system);
@@ -464,10 +478,10 @@ mod tests {
         assert_eq!(
             remaining,
             Duration::from_millis(test_case.expected_remaining_ms),
-            "Failed test case '{}': block_time={}ms, reference={}s, timestamp={}",
+            "Failed test case '{}': block_time={}ms, reference={}ms, timestamp={}",
             test_case.name,
             test_case.block_time_ms,
-            test_case.reference_secs,
+            test_case.reference_ms,
             test_case.payload_timestamp,
         );
     }
@@ -478,23 +492,30 @@ mod tests {
             RemainingTimeTestCase {
                 name: "future timestamp within block time",
                 block_time_ms: 2000,
-                reference_secs: 1000,
+                reference_ms: 1_000_000,
                 payload_timestamp: 1002,
                 expected_remaining_ms: 2000,
             },
             RemainingTimeTestCase {
                 name: "remaining exceeds block time (capped)",
                 block_time_ms: 1000,
-                reference_secs: 1000,
+                reference_ms: 1_000_000,
                 payload_timestamp: 1005,
                 expected_remaining_ms: 1000,
             },
             RemainingTimeTestCase {
-                name: "past timestamp (fallback to block time)",
+                name: "late FCU (844ms past timestamp)",
                 block_time_ms: 1000,
-                reference_secs: 1000,
-                payload_timestamp: 999,
-                expected_remaining_ms: 1000,
+                reference_ms: 1_000_844, // 1000.844 seconds
+                payload_timestamp: 1000,
+                expected_remaining_ms: 0,
+            },
+            RemainingTimeTestCase {
+                name: "late FCU (1ms past timestamp)",
+                block_time_ms: 1000,
+                reference_ms: 1_000_001, // 1000.001 seconds
+                payload_timestamp: 1000,
+                expected_remaining_ms: 0,
             },
         ];
 
