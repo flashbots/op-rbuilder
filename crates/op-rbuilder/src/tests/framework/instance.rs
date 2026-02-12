@@ -1,5 +1,6 @@
 use crate::{
     args::OpRbuilderArgs,
+    backrun_bundle::rpc::{BackrunBundleApiServer, BackrunBundleRpc},
     builders::{BuilderConfig, FlashblocksBuilder, PayloadBuilder, StandardBuilder},
     primitives::reth::engine_api_builder::OpEngineApiBuilder,
     revert_protection::{EthApiExtServer, RevertProtectionExt},
@@ -113,6 +114,7 @@ impl LocalInstance {
             .expect("Failed to convert rollup args to builder config");
         let da_config = builder_config.da_config.clone();
         let gas_limit_config = builder_config.gas_limit_config.clone();
+        let backrun_bundle_pool = builder_config.backrun_bundle_pool.clone();
 
         let addons: OpAddOns<
             _,
@@ -152,6 +154,14 @@ impl LocalInstance {
 
                     ctx.modules
                         .add_or_replace_configured(revert_protection_ext.into_rpc())?;
+                }
+
+                if args.backrun_bundle.backruns_enabled {
+                    tracing::info!("Backrun bundle RPC enabled");
+                    let backrun_rpc =
+                        BackrunBundleRpc::new(backrun_bundle_pool.clone(), ctx.provider().clone());
+                    ctx.modules
+                        .add_or_replace_configured(backrun_rpc.into_rpc())?;
                 }
 
                 Ok(())

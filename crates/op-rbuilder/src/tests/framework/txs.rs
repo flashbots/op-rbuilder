@@ -66,7 +66,7 @@ impl BundleOpts {
 
 #[derive(Clone)]
 pub struct TransactionBuilder {
-    provider: RootProvider<Optimism>,
+    pub(crate) provider: RootProvider<Optimism>,
     signer: Option<Signer>,
     nonce: Option<u64>,
     base_fee: Option<u128>,
@@ -199,6 +199,13 @@ impl TransactionBuilder {
     }
 
     pub async fn send(self) -> eyre::Result<PendingTransactionBuilder<Optimism>> {
+        let (pending, _raw_tx) = self.send_and_get_raw_tx().await?;
+        Ok(pending)
+    }
+
+    pub async fn send_and_get_raw_tx(
+        self,
+    ) -> eyre::Result<(PendingTransactionBuilder<Optimism>, Vec<u8>)> {
         let with_reverted_hash = self.with_reverted_hash;
         let bundle_opts = self.bundle_opts;
         let provider = self.provider.clone();
@@ -208,6 +215,7 @@ impl TransactionBuilder {
 
         if let Some(bundle_opts) = bundle_opts {
             // Send the transaction as a bundle with the bundle options
+            let raw_tx = transaction_encoded.clone();
             let bundle = Bundle {
                 transactions: vec![transaction_encoded.into()],
                 reverting_hashes: if with_reverted_hash {
@@ -228,15 +236,17 @@ impl TransactionBuilder {
                 .request("eth_sendBundle", (bundle,))
                 .await?;
 
-            return Ok(PendingTransactionBuilder::new(
-                provider.root().clone(),
-                result.bundle_hash,
+            return Ok((
+                PendingTransactionBuilder::new(provider.root().clone(), result.bundle_hash),
+                raw_tx,
             ));
         }
 
-        Ok(provider
+        let raw_tx = transaction_encoded.clone();
+        let pending = provider
             .send_raw_transaction(transaction_encoded.as_slice())
-            .await?)
+            .await?;
+        Ok((pending, raw_tx))
     }
 }
 
@@ -376,4 +386,41 @@ impl TransactionPoolObserver {
             Some(TransactionEvent::Pending) | Some(TransactionEvent::Queued)
         )
     }
+}
+
+/// Sends a backrun bundle consisting of a raw target transaction and a backrun transaction.
+///
+/// The target transaction is assumed to have already been sent to the mempool.
+/// Both transactions are submitted as a backrun bundle via `eth_sendBackrunBundle`.
+///
+/// Returns the backrun tx hash.
+pub async fn send_backrun_bundle(
+    target_raw_tx: Vec<u8>,
+    backrun_builder: TransactionBuilder,
+    bundle_opts: BundleOpts,
+) -> eyre::Result<B256> {
+    let provider = backrun_builder.provider.clone();
+
+    let backrun_tx = backrun_builder.build().await;
+    let backrun_hash = B256::from(*backrun_tx.tx_hash());
+    let backrun_encoded = backrun_tx.encoded_2718();
+
+    // Submit both as a backrun bundle
+    let bundle = Bundle {
+        transactions: vec![target_raw_tx.into(), backrun_encoded.into()],
+        reverting_hashes: None,
+        block_number_min: bundle_opts.block_number_min,
+        block_number_max: bundle_opts.block_number_max,
+        flashblock_number_min: bundle_opts.flashblock_number_min,
+        flashblock_number_max: bundle_opts.flashblock_number_max,
+        min_timestamp: bundle_opts.min_timestamp,
+        max_timestamp: bundle_opts.max_timestamp,
+    };
+
+    let _result: BundleResult = provider
+        .client()
+        .request("eth_sendBackrunBundle", (bundle,))
+        .await?;
+
+    Ok(backrun_hash)
 }
