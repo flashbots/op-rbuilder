@@ -47,7 +47,7 @@ use reth_revm::{
     State, database::StateProviderDatabase, db::states::bundle_state::BundleRetention,
 };
 use reth_transaction_pool::TransactionPool;
-use reth_trie::{HashedPostState, updates::TrieUpdates};
+use reth_trie::{HashedPostState, TrieInput, updates::TrieUpdates};
 use revm::Database;
 use std::{collections::BTreeMap, sync::Arc, time::Instant};
 use tokio::sync::mpsc;
@@ -89,6 +89,9 @@ type NextBestFlashblocksTxs<Pool> = BestFlashblocksTxs<
 pub(super) struct FlashblocksExecutionInfo {
     /// Index of the last consumed flashblock
     last_flashblock_index: usize,
+
+    /// Cached trie updates from previous flashblock for incremental state root calculation
+    prev_trie_updates: Option<Arc<TrieUpdates>>,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -395,6 +398,7 @@ where
             &ctx,
             &mut info,
             !disable_state_root || ctx.attributes().no_tx_pool, // need to calculate state root for CL sync
+            self.config.specific.enable_incremental_trie_cache,
         )?;
 
         self.built_fb_payload_tx
@@ -719,6 +723,7 @@ where
             ctx,
             info,
             !ctx.extra_ctx.disable_state_root || ctx.attributes().no_tx_pool,
+            self.config.specific.enable_incremental_trie_cache,
         );
         let total_block_built_duration = total_block_built_duration.elapsed();
         ctx.metrics
@@ -892,6 +897,7 @@ pub(super) fn build_block<DB, P, ExtraCtx>(
     ctx: &OpPayloadBuilderCtx<ExtraCtx>,
     info: &mut ExecutionInfo<FlashblocksExecutionInfo>,
     calculate_state_root: bool,
+    enable_incremental_trie_cache: bool,
 ) -> Result<(OpBuiltPayload, OpFlashblockPayload), PayloadBuilderError>
 where
     DB: Database<Error = ProviderError> + AsRef<P>,
@@ -968,20 +974,69 @@ where
 
     if calculate_state_root {
         let state_provider = state.database.as_ref();
-        hashed_state = state_provider.hashed_post_state(execution_outcome.state());
-        (state_root, trie_output) = {
-            state
+
+        // Check if we can use incremental trie caching (use cached trie from previous flashblock if available)
+        let use_incremental = if enable_incremental_trie_cache
+            && let Some(prev_trie) = &info.extra.prev_trie_updates
+        {
+            // Incremental path: Use cached trie from previous flashblock
+            debug!(
+                target: "payload_builder",
+                flashblock_index = info.extra.last_flashblock_index + 1,
+                "Using incremental state root calculation with cached trie"
+            );
+
+            // Get FULL cumulative hashed_state (not delta!)
+            hashed_state = state_provider.hashed_post_state(execution_outcome.state());
+
+            let trie_input = TrieInput::new(
+                prev_trie.as_ref().clone(),
+                hashed_state.clone(),
+                hashed_state.construct_prefix_sets(), // Don't freeze - need TriePrefixSetsMut
+            );
+
+            (state_root, trie_output) = state_provider
+                .state_root_from_nodes_with_updates(trie_input)
+                .map_err(PayloadBuilderError::other)?;
+
+            debug!(
+                target: "payload_builder",
+                flashblock_index = info.extra.last_flashblock_index + 1,
+                state_root = %state_root,
+                "Incremental state root calculation completed"
+            );
+
+            true
+        } else {
+            false
+        };
+
+        if !use_incremental {
+            debug!(
+                target: "payload_builder",
+                flashblock_index = info.extra.last_flashblock_index + 1,
+                "Using full state root calculation"
+            );
+
+            hashed_state = state_provider.hashed_post_state(execution_outcome.state());
+
+            (state_root, trie_output) = state
                 .database
                 .as_ref()
                 .state_root_with_updates(hashed_state.clone())
                 .inspect_err(|err| {
-                    warn!(target: "payload_builder",
-                    parent_header=%ctx.parent().hash(),
+                    warn!(
+                        target: "payload_builder",
+                        parent_header=%ctx.parent().hash(),
                         %err,
                         "failed to calculate state root for payload"
                     );
-                })?
-        };
+                })?;
+        }
+
+        // Save trie updates for next flashblock's incremental calculation
+        info.extra.prev_trie_updates = Some(Arc::new(trie_output.clone()));
+
         let state_root_calculation_time = state_root_start_time.elapsed();
         ctx.metrics
             .state_root_calculation_duration
@@ -989,6 +1044,14 @@ where
         ctx.metrics
             .state_root_calculation_gauge
             .set(state_root_calculation_time);
+
+        debug!(
+            target: "payload_builder",
+            flashblock_index = info.extra.last_flashblock_index + 1,
+            state_root = %state_root,
+            duration_ms = state_root_calculation_time.as_millis(),
+            "State root calculation completed"
+        );
     }
 
     let mut requests_hash = None;
