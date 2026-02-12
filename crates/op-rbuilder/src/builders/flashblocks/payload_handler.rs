@@ -214,7 +214,7 @@ where
         .wrap_err("failed to get parent header")?
         .ok_or_else(|| eyre::eyre!("parent header not found"))?;
 
-    // For X Layer, validate header and parent relationship before execution
+    // Validate header and parent relationship before execution
     let chain_spec = client.chain_spec();
     validate_pre_execution(&payload, &parent_header, parent_hash, chain_spec.clone())
         .wrap_err("pre-execution validation failed")?;
