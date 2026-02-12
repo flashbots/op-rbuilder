@@ -43,9 +43,7 @@ use reth_provider::{
     HashedPostStateProvider, ProviderError, StateRootProvider, StorageRootProvider,
 };
 use reth_revm::{
-    State,
-    database::StateProviderDatabase,
-    db::states::bundle_state::BundleRetention,
+    State, database::StateProviderDatabase, db::states::bundle_state::BundleRetention,
 };
 use reth_transaction_pool::TransactionPool;
 use reth_trie::{HashedPostState, TrieInput, updates::TrieUpdates};
@@ -949,7 +947,8 @@ where
 
         // Check if we can use incremental trie caching (use cached trie from previous flashblock if available)
         let use_incremental = if enable_incremental_trie_cache
-            && let Some(prev_trie) = &info.extra.prev_trie_updates {
+            && let Some(prev_trie) = &info.extra.prev_trie_updates
+        {
             // Incremental path: Use cached trie from previous flashblock
             debug!(
                 target: "payload_builder",

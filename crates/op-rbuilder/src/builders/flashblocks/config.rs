@@ -113,7 +113,9 @@ impl TryFrom<OpRbuilderArgs> for FlashblocksConfig {
             p2p_known_peers: args.flashblocks.p2p.p2p_known_peers,
             p2p_max_peer_count: args.flashblocks.p2p.p2p_max_peer_count,
             ws_subscriber_limit: args.flashblocks.ws_subscriber_limit,
-            enable_incremental_trie_cache: args.flashblocks.flashblocks_enable_incremental_trie_cache,
+            enable_incremental_trie_cache: args
+                .flashblocks
+                .flashblocks_enable_incremental_trie_cache,
         })
     }
 }

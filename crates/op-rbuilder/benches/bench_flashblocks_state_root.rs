@@ -10,14 +10,14 @@
 //! cargo bench -p op-rbuilder --bench bench_flashblocks_state_root
 //! ```
 
-use alloy_primitives::{keccak256, Address, B256, U256};
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
-use rand::{rngs::StdRng, Rng, SeedableRng};
+use alloy_primitives::{Address, B256, U256, keccak256};
+use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
+use rand::{Rng, SeedableRng, rngs::StdRng};
 use reth_chainspec::MAINNET;
 use reth_primitives_traits::Account;
 use reth_provider::{
-    test_utils::create_test_provider_factory_with_chain_spec, DatabaseProviderFactory,
-    HashingWriter, StateRootProvider,
+    DatabaseProviderFactory, HashingWriter, StateRootProvider,
+    test_utils::create_test_provider_factory_with_chain_spec,
 };
 use reth_trie::{HashedPostState, HashedStorage, TrieInput};
 use std::{collections::HashMap, time::Instant};
@@ -80,7 +80,9 @@ fn setup_database(
 
         // Insert accounts
         let accounts_iter = accounts.iter().map(|(addr, acc)| (*addr, Some(*acc)));
-        provider_rw.insert_account_for_hashing(accounts_iter).unwrap();
+        provider_rw
+            .insert_account_for_hashing(accounts_iter)
+            .unwrap();
 
         // Insert storage
         let storage_entries: Vec<_> = storage
@@ -96,7 +98,9 @@ fn setup_database(
                 (*addr, entries)
             })
             .collect();
-        provider_rw.insert_storage_for_hashing(storage_entries).unwrap();
+        provider_rw
+            .insert_storage_for_hashing(storage_entries)
+            .unwrap();
 
         provider_rw.commit().unwrap();
     }
@@ -152,8 +156,10 @@ fn to_hashed_post_state(
     accounts: &[(Address, Account)],
     storage: &HashMap<Address, Vec<(B256, U256)>>,
 ) -> HashedPostState {
-    let hashed_accounts: Vec<_> =
-        accounts.iter().map(|(addr, acc)| (keccak256(addr), Some(*acc))).collect();
+    let hashed_accounts: Vec<_> = accounts
+        .iter()
+        .map(|(addr, acc)| (keccak256(addr), Some(*acc)))
+        .collect();
 
     let mut hashed_storages = alloy_primitives::map::HashMap::default();
     for (addr, slots) in storage {
@@ -165,7 +171,10 @@ fn to_hashed_post_state(
         hashed_storages.insert(hashed_addr, hashed_storage);
     }
 
-    HashedPostState { accounts: hashed_accounts.into_iter().collect(), storages: hashed_storages }
+    HashedPostState {
+        accounts: hashed_accounts.into_iter().collect(),
+        storages: hashed_storages,
+    }
 }
 
 /// Benchmark without incremental trie cache (baseline)
@@ -182,7 +191,11 @@ fn bench_without_cache(
         let fb_start = Instant::now();
         let provider = provider_factory.database_provider_ro().unwrap();
         let latest = reth_provider::LatestStateProvider::new(provider);
-        let _ = black_box(latest.state_root_with_updates(hashed_state.clone()).unwrap());
+        let _ = black_box(
+            latest
+                .state_root_with_updates(hashed_state.clone())
+                .unwrap(),
+        );
         individual_times.push(fb_start.elapsed().as_micros());
     }
 
@@ -207,7 +220,9 @@ fn bench_with_cache(
         let (state_root, trie_output) = if i == 0 || prev_trie_updates.is_none() {
             // First flashblock: full calculation
             let latest = reth_provider::LatestStateProvider::new(provider);
-            latest.state_root_with_updates(hashed_state.clone()).unwrap()
+            latest
+                .state_root_with_updates(hashed_state.clone())
+                .unwrap()
         } else {
             // Subsequent flashblocks: incremental calculation
             // Use state_root_from_nodes_with_updates from StateRootProvider trait
@@ -218,7 +233,9 @@ fn bench_with_cache(
             );
 
             let latest = reth_provider::LatestStateProvider::new(provider);
-            latest.state_root_from_nodes_with_updates(trie_input).unwrap()
+            latest
+                .state_root_from_nodes_with_updates(trie_input)
+                .unwrap()
         };
 
         prev_trie_updates = Some(trie_output);
@@ -243,7 +260,10 @@ fn bench_flashblocks_state_root(c: &mut Criterion) {
         let mut group = c.benchmark_group(format!("flashblocks_{}_txs", txs_per_flashblock));
         group.sample_size(10);
 
-        println!("--- Testing with {} transactions per flashblock ---", txs_per_flashblock);
+        println!(
+            "--- Testing with {} transactions per flashblock ---",
+            txs_per_flashblock
+        );
 
         // Generate 10 flashblocks worth of changes
         let mut flashblock_changes = Vec::new();
@@ -266,7 +286,8 @@ fn bench_flashblocks_state_root(c: &mut Criterion) {
 
         // Manual comparison run for detailed output
         println!("\n📊 Manual timing comparison:");
-        let (total_without, times_without) = bench_without_cache(&provider_factory, &flashblock_changes);
+        let (total_without, times_without) =
+            bench_without_cache(&provider_factory, &flashblock_changes);
         println!("  WITHOUT cache: {} μs total", total_without);
         println!("    Per-flashblock: {:?} μs", times_without);
 
