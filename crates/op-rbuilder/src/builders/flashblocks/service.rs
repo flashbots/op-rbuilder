@@ -125,6 +125,7 @@ impl FlashblocksServiceBuilder {
             OpEvmConfig::optimism(ctx.chain_spec()),
             pool,
             ctx.provider().clone(),
+            ctx.task_executor().clone(),
             self.0.clone(),
             builder_tx,
             built_fb_payload_tx,

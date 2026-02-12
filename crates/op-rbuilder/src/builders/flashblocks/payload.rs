@@ -20,13 +20,13 @@ use alloy_consensus::{
 };
 use alloy_eips::{Encodable2718, eip7685::EMPTY_REQUESTS_HASH, merge::BEACON_NONCE};
 use alloy_evm::block::BlockExecutionResult;
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{Address, B256, BlockHash, U256};
 use eyre::WrapErr as _;
 use op_alloy_rpc_types_engine::{
     OpFlashblockPayload, OpFlashblockPayloadBase, OpFlashblockPayloadDelta,
     OpFlashblockPayloadMetadata,
 };
-use reth::payload::PayloadBuilderAttributes;
+use reth::{payload::PayloadBuilderAttributes, tasks::TaskSpawner};
 use reth_basic_payload_builder::BuildOutcome;
 use reth_chainspec::EthChainSpec;
 use reth_evm::{ConfigureEvm, execute::BlockBuilder};
@@ -37,6 +37,7 @@ use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
 use reth_optimism_forks::OpHardforks;
 use reth_optimism_node::{OpBuiltPayload, OpPayloadBuilderAttributes};
 use reth_optimism_primitives::{OpReceipt, OpTransactionSigned};
+use reth_payload_primitives::BuiltPayload;
 use reth_payload_util::BestPayloadTransactions;
 use reth_primitives_traits::RecoveredBlock;
 use reth_provider::{
@@ -44,7 +45,9 @@ use reth_provider::{
     StorageRootProvider,
 };
 use reth_revm::{
-    State, database::StateProviderDatabase, db::states::bundle_state::BundleRetention,
+    State,
+    database::StateProviderDatabase,
+    db::{BundleState, states::bundle_state::BundleRetention},
 };
 use reth_transaction_pool::TransactionPool;
 use reth_trie::{HashedPostState, updates::TrieUpdates};
@@ -154,13 +157,15 @@ impl OpPayloadBuilderCtx<FlashblocksExtraCtx> {
 
 /// Optimism's payload builder
 #[derive(Debug, Clone)]
-pub(super) struct OpPayloadBuilder<Pool, Client, BuilderTx> {
+pub(super) struct OpPayloadBuilder<Pool, Client, BuilderTx, Tasks> {
     /// The type responsible for creating the evm.
     pub evm_config: OpEvmConfig,
     /// The transaction pool
     pub pool: Pool,
     /// Node client
     pub client: Client,
+    /// Task executor
+    pub task_executor: Tasks,
     /// Sender for sending built flashblock payloads to [`PayloadHandler`],
     /// which broadcasts outgoing flashblock payloads via p2p.
     pub built_fb_payload_tx: mpsc::Sender<OpBuiltPayload>,
@@ -182,13 +187,14 @@ pub(super) struct OpPayloadBuilder<Pool, Client, BuilderTx> {
     pub task_metrics: Arc<FlashblocksTaskMetrics>,
 }
 
-impl<Pool, Client, BuilderTx> OpPayloadBuilder<Pool, Client, BuilderTx> {
+impl<Pool, Client, BuilderTx, Tasks> OpPayloadBuilder<Pool, Client, BuilderTx, Tasks> {
     /// `OpPayloadBuilder` constructor.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn new(
         evm_config: OpEvmConfig,
         pool: Pool,
         client: Client,
+        task_executor: Tasks,
         config: BuilderConfig<FlashblocksConfig>,
         builder_tx: BuilderTx,
         built_fb_payload_tx: mpsc::Sender<OpBuiltPayload>,
@@ -202,6 +208,7 @@ impl<Pool, Client, BuilderTx> OpPayloadBuilder<Pool, Client, BuilderTx> {
             evm_config,
             pool,
             client,
+            task_executor,
             built_fb_payload_tx,
             built_payload_tx,
             ws_pub,
@@ -214,12 +221,13 @@ impl<Pool, Client, BuilderTx> OpPayloadBuilder<Pool, Client, BuilderTx> {
     }
 }
 
-impl<Pool, Client, BuilderTx> reth_basic_payload_builder::PayloadBuilder
-    for OpPayloadBuilder<Pool, Client, BuilderTx>
+impl<Pool, Client, BuilderTx, Tasks> reth_basic_payload_builder::PayloadBuilder
+    for OpPayloadBuilder<Pool, Client, BuilderTx, Tasks>
 where
     Pool: Clone + Send + Sync,
     Client: Clone + Send + Sync,
     BuilderTx: Clone + Send + Sync,
+    Tasks: Clone + Send + Sync,
 {
     type Attributes = OpPayloadBuilderAttributes<OpTransactionSigned>;
     type BuiltPayload = OpBuiltPayload;
@@ -242,11 +250,12 @@ where
     }
 }
 
-impl<Pool, Client, BuilderTx> OpPayloadBuilder<Pool, Client, BuilderTx>
+impl<Pool, Client, BuilderTx, Tasks> OpPayloadBuilder<Pool, Client, BuilderTx, Tasks>
 where
     Pool: PoolBounds,
     Client: ClientBounds,
     BuilderTx: BuilderTransactions<FlashblocksExtraCtx, FlashblocksExecutionInfo> + Send + Sync,
+    Tasks: TaskSpawner + Clone + Unpin + 'static,
 {
     fn get_op_payload_builder_ctx(
         &self,
@@ -322,7 +331,7 @@ where
     fn build_payload(
         &self,
         args: BuildArguments<OpPayloadBuilderAttributes<OpTransactionSigned>, OpBuiltPayload>,
-        best_payload: BlockCell<OpBuiltPayload>,
+        resolve_payload: BlockCell<OpBuiltPayload>,
     ) -> Result<(), PayloadBuilderError> {
         let block_build_start_time = Instant::now();
         let BuildArguments {
@@ -390,24 +399,13 @@ where
             );
         };
 
-        let (payload, fb_payload) = build_block(
-            &mut state,
-            &ctx,
-            &mut info,
-            !disable_state_root || ctx.attributes().no_tx_pool, // need to calculate state root for CL sync
-        )?;
-
+        // We should always calculate state root for fallback payload
+        let (fallback_payload, fb_payload, bundle_state) =
+            build_block(&mut state, &ctx, &mut info, true)?;
         self.built_fb_payload_tx
-            .try_send(payload.clone())
+            .try_send(fallback_payload.clone())
             .map_err(PayloadBuilderError::other)?;
-        if let Err(e) = self.built_payload_tx.try_send(payload.clone()) {
-            warn!(
-                target: "payload_builder",
-                error = %e,
-                "Failed to send updated payload"
-            );
-        }
-        best_payload.set(payload);
+        let mut best_payload = (fallback_payload.clone(), bundle_state);
 
         info!(
             target: "payload_builder",
@@ -447,6 +445,7 @@ where
                 .set(info.executed_transactions.len() as f64);
 
             // return early since we don't need to build a block with transactions from the pool
+            self.resolve_best_payload(&ctx, best_payload, fallback_payload, &resolve_payload);
             return Ok(());
         }
 
@@ -542,6 +541,7 @@ where
                 ctx = ctx.with_cancel(new_fb_cancel);
             } else {
                 // Channel closed - block building cancelled
+                self.resolve_best_payload(&ctx, best_payload, fallback_payload, &resolve_payload);
                 self.record_flashblocks_metrics(&ctx, &info, target_flashblocks, &span);
                 return Ok(());
             }
@@ -565,10 +565,16 @@ where
                 &state_provider,
                 &mut best_txs,
                 &block_cancel,
-                &best_payload,
+                &mut best_payload,
             ) {
                 Ok(Some(next_flashblocks_ctx)) => next_flashblocks_ctx,
                 Ok(None) => {
+                    self.resolve_best_payload(
+                        &ctx,
+                        best_payload,
+                        fallback_payload,
+                        &resolve_payload,
+                    );
                     self.record_flashblocks_metrics(&ctx, &info, target_flashblocks, &span);
                     return Ok(());
                 }
@@ -580,6 +586,12 @@ where
                         block_number = ctx.block_number(),
                         ?err,
                         "Failed to build flashblock",
+                    );
+                    self.resolve_best_payload(
+                        &ctx,
+                        best_payload,
+                        fallback_payload,
+                        &resolve_payload,
                     );
                     return Err(PayloadBuilderError::Other(err.into()));
                 }
@@ -601,7 +613,7 @@ where
         state_provider: impl reth::providers::StateProvider + Clone,
         best_txs: &mut NextBestFlashblocksTxs<Pool>,
         block_cancel: &CancellationToken,
-        best_payload: &BlockCell<OpBuiltPayload>,
+        best_payload: &mut (OpBuiltPayload, BundleState),
     ) -> eyre::Result<Option<FlashblocksExtraCtx>> {
         let flashblock_index = ctx.flashblock_index();
         let mut target_gas_for_batch = ctx.extra_ctx.target_gas_for_batch;
@@ -733,7 +745,7 @@ where
                 ctx.metrics.invalid_built_blocks_count.increment(1);
                 Err(err).wrap_err("failed to build payload")
             }
-            Ok((new_payload, mut fb_payload)) => {
+            Ok((new_payload, mut fb_payload, bundle_state)) => {
                 fb_payload.index = flashblock_index;
                 fb_payload.base = None;
 
@@ -749,14 +761,7 @@ where
                 self.built_fb_payload_tx
                     .try_send(new_payload.clone())
                     .wrap_err("failed to send built payload to handler")?;
-                if let Err(e) = self.built_payload_tx.try_send(new_payload.clone()) {
-                    warn!(
-                        target: "payload_builder",
-                        error = %e,
-                        "Failed to send updated payload"
-                    );
-                }
-                best_payload.set(new_payload);
+                *best_payload = (new_payload, bundle_state);
 
                 // Record flashblock build duration
                 ctx.metrics
@@ -812,6 +817,71 @@ where
         }
     }
 
+    fn resolve_best_payload(
+        &self,
+        ctx: &OpPayloadBuilderCtx<FlashblocksExtraCtx>,
+        best_payload: (OpBuiltPayload, BundleState),
+        fallback_payload: OpBuiltPayload,
+        resolve_payload: &BlockCell<OpBuiltPayload>,
+    ) {
+        if resolve_payload.get().is_some() {
+            return;
+        }
+
+        let payload = match best_payload.0.block().header().state_root {
+            B256::ZERO => {
+                // Get the fallback payload for payload resolution
+                let fallback_payload_for_resolve =
+                    if self.config.specific.disable_async_calculate_state_root {
+                        // Use the fallback payload with state root calculated to ensure the full payload is valid
+                        fallback_payload
+                    } else {
+                        // Use the best payload as empty state root payloads are acceptable
+                        best_payload.0.clone()
+                    };
+
+                let state_root_ctx = CalculateStateRootContext {
+                    best_payload,
+                    parent_hash: ctx.parent().hash(),
+                    built_payload_tx: self.built_payload_tx.clone(),
+                    metrics: self.metrics.clone(),
+                };
+
+                // Async calculate state root
+                match self.client.state_by_block_hash(ctx.parent().hash()) {
+                    Ok(state_provider) => {
+                        if self.config.specific.disable_async_calculate_state_root {
+                            resolve_zero_state_root(state_root_ctx, state_provider)
+                                .unwrap_or_else(|err| {
+                                    warn!(
+                                        target: "payload_builder",
+                                        error = %err,
+                                        "Failed to calculate state root, falling back to fallback payload"
+                                    );
+                                    fallback_payload_for_resolve
+                                })
+                        } else {
+                            self.task_executor.spawn_blocking(Box::pin(async move {
+                                let _ = resolve_zero_state_root(state_root_ctx, state_provider);
+                            }));
+                            fallback_payload_for_resolve
+                        }
+                    }
+                    Err(err) => {
+                        warn!(
+                            target: "payload_builder",
+                            error = %err,
+                            "Failed to calculate state root, parent block not found. Falling back to fallback payload"
+                        );
+                        fallback_payload_for_resolve
+                    }
+                }
+            }
+            _ => best_payload.0,
+        };
+        resolve_payload.set(payload);
+    }
+
     /// Do some logging and metric recording when we stop build flashblocks
     fn record_flashblocks_metrics(
         &self,
@@ -848,12 +918,14 @@ where
 }
 
 #[async_trait::async_trait]
-impl<Pool, Client, BuilderTx> PayloadBuilder for OpPayloadBuilder<Pool, Client, BuilderTx>
+impl<Pool, Client, BuilderTx, Tasks> PayloadBuilder
+    for OpPayloadBuilder<Pool, Client, BuilderTx, Tasks>
 where
     Pool: PoolBounds,
     Client: ClientBounds,
     BuilderTx:
         BuilderTransactions<FlashblocksExtraCtx, FlashblocksExecutionInfo> + Clone + Send + Sync,
+    Tasks: TaskSpawner + Clone + Unpin + 'static,
 {
     type Attributes = OpPayloadBuilderAttributes<OpTransactionSigned>;
     type BuiltPayload = OpBuiltPayload;
@@ -892,7 +964,7 @@ pub(super) fn build_block<DB, P, ExtraCtx>(
     ctx: &OpPayloadBuilderCtx<ExtraCtx>,
     info: &mut ExecutionInfo<FlashblocksExecutionInfo>,
     calculate_state_root: bool,
-) -> Result<(OpBuiltPayload, OpFlashblockPayload), PayloadBuilderError>
+) -> Result<(OpBuiltPayload, OpFlashblockPayload, BundleState), PayloadBuilderError>
 where
     DB: Database<Error = ProviderError> + AsRef<P>,
     P: StateRootProvider + HashedPostStateProvider + StorageRootProvider,
@@ -1160,7 +1232,7 @@ where
     };
 
     // We clean bundle and place initial state transaction back
-    state.take_bundle();
+    let bundle_state = state.take_bundle();
     state.transition_state = untouched_transition_state;
 
     Ok((
@@ -1171,5 +1243,91 @@ where
             Some(executed),
         ),
         fb_payload,
+        bundle_state,
     ))
+}
+
+struct CalculateStateRootContext {
+    best_payload: (OpBuiltPayload, BundleState),
+    parent_hash: BlockHash,
+    built_payload_tx: mpsc::Sender<OpBuiltPayload>,
+    metrics: Arc<OpRBuilderMetrics>,
+}
+
+fn resolve_zero_state_root(
+    ctx: CalculateStateRootContext,
+    state_provider: Box<dyn reth::providers::StateProvider>,
+) -> Result<OpBuiltPayload, PayloadBuilderError> {
+    let (state_root, trie_updates, hashed_state) =
+        calculate_state_root_on_resolve(&ctx, state_provider)?;
+
+    let payload_id = ctx.best_payload.0.id();
+    let fees = ctx.best_payload.0.fees();
+    let executed_block = ctx.best_payload.0.executed_block().ok_or_else(|| {
+        PayloadBuilderError::Other(
+            eyre::eyre!("No executed block available in best payload for payload resolution")
+                .into(),
+        )
+    })?;
+    let block = ctx.best_payload.0.into_sealed_block().into_block();
+    let (mut header, body) = block.split();
+    header.state_root = state_root;
+    let updated_block = alloy_consensus::Block::<OpTransactionSigned>::new(header, body);
+    let recovered_block = RecoveredBlock::new_unhashed(
+        updated_block.clone(),
+        executed_block.recovered_block.senders().to_vec(),
+    );
+    let sealed_block = Arc::new(updated_block.seal_slow());
+
+    let executed = BuiltPayloadExecutedBlock {
+        recovered_block: Arc::new(recovered_block),
+        execution_output: executed_block.execution_output.clone(),
+        trie_updates: either::Either::Left(Arc::new(trie_updates)),
+        hashed_state: either::Either::Left(Arc::new(hashed_state)),
+    };
+    let updated_payload = OpBuiltPayload::new(payload_id, sealed_block, fees, Some(executed));
+
+    // Send full built payload with state root calculated to pre-warm local engine state tree
+    if let Err(e) = ctx.built_payload_tx.try_send(updated_payload.clone()) {
+        warn!(
+            target: "payload_builder",
+            error = %e,
+            "Failed to send updated payload"
+        );
+    }
+    debug!(
+        target: "payload_builder",
+        state_root = %state_root,
+        "Updated payload with calculated state root"
+    );
+
+    Ok(updated_payload)
+}
+
+/// Calculates only the state root for an existing payload
+fn calculate_state_root_on_resolve(
+    ctx: &CalculateStateRootContext,
+    state_provider: Box<dyn reth::providers::StateProvider>,
+) -> Result<(B256, TrieUpdates, HashedPostState), PayloadBuilderError> {
+    let state_root_start_time = Instant::now();
+    let hashed_state = state_provider.hashed_post_state(&ctx.best_payload.1);
+    let state_root_updates = state_provider
+        .state_root_with_updates(hashed_state.clone())
+        .inspect_err(|err| {
+            warn!(target: "payload_builder",
+                parent_header=%ctx.parent_hash,
+                %err,
+                "failed to calculate state root for payload"
+            );
+        })?;
+
+    let state_root_calculation_time = state_root_start_time.elapsed();
+    ctx.metrics
+        .state_root_calculation_duration
+        .record(state_root_calculation_time);
+    ctx.metrics
+        .state_root_calculation_gauge
+        .set(state_root_calculation_time);
+
+    Ok((state_root_updates.0, state_root_updates.1, hashed_state))
 }
