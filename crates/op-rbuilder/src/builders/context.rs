@@ -644,7 +644,7 @@ impl<ExtraCtx: Debug + Default + MaybeFlashblockIndex> OpPayloadBuilderCtx<Extra
                 let mut target_backruns_considered = 0;
                 let mut target_backruns_landed = 0;
 
-                for bundle in &backruns {
+                for bundle in backruns {
                     if self.backrun_ctx.args.is_limit_reached(
                         num_backruns_considered,
                         num_backruns_successful,
@@ -681,13 +681,7 @@ impl<ExtraCtx: Debug + Default + MaybeFlashblockIndex> OpPayloadBuilderCtx<Extra
                     - [x] check backrun priority fee >= target priority fee
                             */
 
-                    // TODO: use recovered tx for backrun to skip this
-                    let Ok(recovered_backrun) = bundle.backrun_tx.clone().try_into_recovered()
-                    else {
-                        continue;
-                    };
-
-                    let br_hash = recovered_backrun.hash();
+                    let br_hash = bundle.backrun_tx.hash();
 
                     let log_br_txn = |result: TxnExecutionResult| {
                         debug!(
@@ -722,21 +716,21 @@ impl<ExtraCtx: Debug + Default + MaybeFlashblockIndex> OpPayloadBuilderCtx<Extra
                         continue;
                     }
 
-                    if recovered_backrun.is_eip4844() || recovered_backrun.is_deposit() {
+                    if bundle.backrun_tx.is_eip4844() || bundle.backrun_tx.is_deposit() {
                         log_br_txn(TxnExecutionResult::SequencerTransaction);
                         continue;
                     }
 
                     // TODO: do this estimation in backrun tx pool
                     let br_tx_da_size = op_alloy_flz::tx_estimated_size_fjord_bytes(
-                        recovered_backrun.encoded_2718().as_slice(),
+                        bundle.backrun_tx.encoded_2718().as_slice(),
                     );
                     if let Err(result) = info.is_tx_over_limits(
                         br_tx_da_size,
                         block_gas_limit,
                         tx_da_limit,
                         block_da_limit,
-                        recovered_backrun.gas_limit(),
+                        bundle.backrun_tx.gas_limit(),
                         info.da_footprint_scalar,
                         block_da_footprint_limit,
                     ) {
@@ -752,7 +746,7 @@ impl<ExtraCtx: Debug + Default + MaybeFlashblockIndex> OpPayloadBuilderCtx<Extra
                     let ResultAndState {
                         result: br_result,
                         state: br_state,
-                    } = match evm.transact(&recovered_backrun) {
+                    } = match evm.transact(&bundle.backrun_tx) {
                         Ok(res) => res,
                         Err(err) => {
                             if let Some(err) = err.as_invalid_tx_err() {
@@ -768,14 +762,14 @@ impl<ExtraCtx: Debug + Default + MaybeFlashblockIndex> OpPayloadBuilderCtx<Extra
                         .record(br_simulation_start.elapsed());
                     self.metrics
                         .tx_byte_size
-                        .record(recovered_backrun.inner().size() as f64);
+                        .record(bundle.backrun_tx.inner().size() as f64);
                     num_txs_simulated += 1;
 
                     let br_gas_used = br_result.gas_used();
 
                     if self
                         .address_gas_limiter
-                        .consume_gas(recovered_backrun.signer(), br_gas_used)
+                        .consume_gas(bundle.backrun_tx.signer(), br_gas_used)
                         .is_err()
                     {
                         log_br_txn(TxnExecutionResult::MaxGasUsageExceeded);
@@ -808,7 +802,7 @@ impl<ExtraCtx: Debug + Default + MaybeFlashblockIndex> OpPayloadBuilderCtx<Extra
                     info.cumulative_da_bytes_used += br_tx_da_size;
 
                     let br_ctx = ReceiptBuilderCtx {
-                        tx: recovered_backrun.inner(),
+                        tx: bundle.backrun_tx.inner(),
                         evm: &evm,
                         result: br_result,
                         state: &br_state,
@@ -819,9 +813,9 @@ impl<ExtraCtx: Debug + Default + MaybeFlashblockIndex> OpPayloadBuilderCtx<Extra
 
                     info.total_fees += U256::from(backrun_priority_fee) * U256::from(br_gas_used);
 
-                    info.executed_senders.push(recovered_backrun.signer());
+                    info.executed_senders.push(bundle.backrun_tx.signer());
                     info.executed_transactions
-                        .push(recovered_backrun.into_inner());
+                        .push(bundle.backrun_tx.into_inner());
 
                     target_backruns_landed += 1;
                 }

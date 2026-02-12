@@ -1,3 +1,4 @@
+use alloy_consensus::Transaction;
 use alloy_primitives::B256;
 use jsonrpsee::{core::RpcResult, proc_macros::rpc};
 use reth_optimism_primitives::OpTransactionSigned;
@@ -6,7 +7,7 @@ use reth_rpc_eth_types::{EthApiError, utils::recover_raw_transaction};
 
 use crate::primitives::bundle::{Bundle, BundleResult};
 
-use super::{global_pool::BackrunBundleGlobalPool, payload_pool::BackrunBundle};
+use super::{global_pool::BackrunBundleGlobalPool, payload_pool::StoredBackrunBundle};
 
 #[rpc(server, namespace = "eth")]
 pub trait BackrunBundleApi {
@@ -65,13 +66,18 @@ where
         let target_tx_hash = B256::from(*target_tx.tx_hash());
         let backrun_tx_hash = B256::from(*backrun_tx.tx_hash());
 
-        let backrun_bundle = BackrunBundle {
+        // TODO: using base_fee=0 for the estimate, should use a better estimate
+        let estimated_effective_priority_fee =
+            backrun_tx.effective_tip_per_gas(0).unwrap_or(0);
+
+        let backrun_bundle = StoredBackrunBundle {
             target_tx_hash,
-            backrun_tx: backrun_tx.into_inner(),
+            backrun_tx,
             block_number_min,
             block_number_max,
             flashblock_number_min: conditional.flashblock_number_min,
             flashblock_number_max: conditional.flashblock_number_max,
+            estimated_effective_priority_fee,
         };
 
         self.global_pool.add_bundle(backrun_bundle);

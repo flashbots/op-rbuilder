@@ -1,6 +1,6 @@
 use super::{
     args::BackrunBundleArgs,
-    payload_pool::{BackrunBundle, BackrunBundlePayloadPool},
+    payload_pool::{BackrunBundlePayloadPool, StoredBackrunBundle},
 };
 use alloy_consensus::BlockHeader;
 use dashmap::DashMap;
@@ -40,7 +40,7 @@ impl BackrunBundleGlobalPool {
             .clone()
     }
 
-    pub fn add_bundle(&self, bundle: BackrunBundle) {
+    pub fn add_bundle(&self, bundle: StoredBackrunBundle) {
         for block in bundle.block_number_min..=bundle.block_number_max {
             self.get_or_create_pool(block).add_bundle(bundle.clone());
         }
