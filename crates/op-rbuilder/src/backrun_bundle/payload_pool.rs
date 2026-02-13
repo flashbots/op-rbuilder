@@ -224,8 +224,7 @@ impl Default for BackrunBundlePayloadPool {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use super::super::test_utils::make_backrun_bundle;
+    use super::{super::test_utils::make_backrun_bundle, *};
     use crate::tx_signer::Signer;
 
     #[test]
@@ -272,11 +271,16 @@ mod tests {
         let block_range = (10, 10);
 
         let high = OrderedBackrunBundle(
-            make_backrun_bundle(&s, target, block_range).with_priority_fee(200).build(),
+            make_backrun_bundle(&s, target, block_range)
+                .with_priority_fee(200)
+                .build(),
         );
         // Different nonce so the signed tx hash differs (equality is by tx hash)
         let low = OrderedBackrunBundle(
-            make_backrun_bundle(&s, target, block_range).with_nonce(1).with_priority_fee(100).build(),
+            make_backrun_bundle(&s, target, block_range)
+                .with_nonce(1)
+                .with_priority_fee(100)
+                .build(),
         );
 
         // Higher priority fee sorts first (is "less" in Ord)
@@ -306,9 +310,13 @@ mod tests {
 
         let b1 = make_backrun_bundle(&s, target_a, (10, 12)).build();
         let b2 = make_backrun_bundle(&s, target_a, (10, 10))
-            .with_nonce(1).with_priority_fee(200).build();
+            .with_nonce(1)
+            .with_priority_fee(200)
+            .build();
         let b3 = make_backrun_bundle(&s, target_b, (10, 12))
-            .with_nonce(2).with_priority_fee(150).build();
+            .with_nonce(2)
+            .with_priority_fee(150)
+            .build();
 
         pool.add_bundle(b1.clone());
         pool.add_bundle(b2.clone());
@@ -343,15 +351,23 @@ mod tests {
         let max_backruns = 10;
 
         // s1/nonce=0/priority=200: should land
-        let b1 = make_backrun_bundle(&s1, target, block_range).with_priority_fee(200).build();
+        let b1 = make_backrun_bundle(&s1, target, block_range)
+            .with_priority_fee(200)
+            .build();
         // s1/nonce=0/priority=100: deduped (same sender+nonce, lower priority)
-        let b2 = make_backrun_bundle(&s1, target, block_range).with_priority_fee(100).build();
+        let b2 = make_backrun_bundle(&s1, target, block_range)
+            .with_priority_fee(100)
+            .build();
         // s2/nonce=0/fee=50: filtered (max_fee_per_gas < base_fee)
         let b3 = make_backrun_bundle(&s2, target, block_range)
-            .with_max_fee_per_gas(50).with_priority_fee(50).build();
+            .with_max_fee_per_gas(50)
+            .with_priority_fee(50)
+            .build();
         // s2/nonce=5/priority=150: filtered (nonce mismatch)
         let b4 = make_backrun_bundle(&s2, target, block_range)
-            .with_nonce(5).with_priority_fee(150).build();
+            .with_nonce(5)
+            .with_priority_fee(150)
+            .build();
 
         pool.add_bundle(b1);
         pool.add_bundle(b2);
@@ -375,12 +391,17 @@ mod tests {
         assert_eq!(results[0].estimated_effective_priority_fee, 200);
 
         // Unknown target returns empty
-        assert!(pool.get_backruns(&B256::random(), good_account, base_fee, max_backruns).is_empty());
+        assert!(
+            pool.get_backruns(&B256::random(), good_account, base_fee, max_backruns)
+                .is_empty()
+        );
 
         // max_count respected
         let s3 = Signer::random();
         pool.add_bundle(
-            make_backrun_bundle(&s3, target, block_range).with_priority_fee(180).build(),
+            make_backrun_bundle(&s3, target, block_range)
+                .with_priority_fee(180)
+                .build(),
         );
         let all_known = |_: Address| -> Option<AccountInfo> {
             Some(AccountInfo {
@@ -400,6 +421,9 @@ mod tests {
                 ..Default::default()
             })
         };
-        assert!(pool.get_backruns(&target, poor, base_fee, max_backruns).is_empty());
+        assert!(
+            pool.get_backruns(&target, poor, base_fee, max_backruns)
+                .is_empty()
+        );
     }
 }

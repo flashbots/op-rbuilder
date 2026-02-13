@@ -2,7 +2,7 @@ use super::payload_pool::StoredBackrunBundle;
 use crate::tx_signer::Signer;
 use alloy_consensus::TxEip1559;
 use alloy_eips::Encodable2718;
-use alloy_primitives::{Address, Bytes, TxKind, B256, U256};
+use alloy_primitives::{Address, B256, Bytes, TxKind, U256};
 use op_alloy_consensus::OpTypedTransaction;
 use std::sync::Arc;
 

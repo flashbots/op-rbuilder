@@ -9,7 +9,13 @@ use reth_basic_payload_builder::PayloadConfig;
 use reth_optimism_node::OpPayloadBuilderAttributes;
 use reth_optimism_primitives::OpTransactionSigned;
 use reth_primitives_traits::{Block, RecoveredBlock};
-use std::{fmt, sync::{Arc, atomic::{AtomicU64, Ordering}}};
+use std::{
+    fmt,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
+};
 use uuid::Uuid;
 
 struct BackrunBundleGlobalPoolInner {
@@ -118,7 +124,9 @@ impl BackrunBundleGlobalPool {
 
     /// Returns the estimated base fee per gas from the latest canonical tip.
     pub fn estimated_base_fee_per_gas(&self) -> u64 {
-        self.inner.estimated_base_fee_per_gas.load(Ordering::Relaxed)
+        self.inner
+            .estimated_base_fee_per_gas
+            .load(Ordering::Relaxed)
     }
 
     pub fn on_canonical_state_change<B: Block>(&self, tip: &RecoveredBlock<B>) {
@@ -168,9 +176,10 @@ impl Default for BackrunBundleGlobalPool {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use super::super::payload_pool::ReplacementKey;
-    use super::super::test_utils::make_backrun_bundle;
+    use super::{
+        super::{payload_pool::ReplacementKey, test_utils::make_backrun_bundle},
+        *,
+    };
     use crate::tx_signer::Signer;
     use alloy_primitives::{B256, U256};
     use reth_optimism_primitives::OpTransactionSigned;
@@ -192,7 +201,11 @@ mod tests {
 
         // Present in pools 5..=8, absent in 4 and 9
         for block in 5..=8 {
-            assert_eq!(pool_bundle_count(&gp.get_or_create_pool(block)), 1, "block {block}");
+            assert_eq!(
+                pool_bundle_count(&gp.get_or_create_pool(block)),
+                1,
+                "block {block}"
+            );
         }
         assert_eq!(pool_bundle_count(&gp.get_or_create_pool(4)), 0);
         assert_eq!(pool_bundle_count(&gp.get_or_create_pool(9)), 0);
@@ -200,7 +213,9 @@ mod tests {
         let last_block = 6;
         // With last_block_number=6, sealed blocks skipped: only 7-8 get the new bundle
         let b2 = make_backrun_bundle(&s, target, (5, 8))
-            .with_nonce(1).with_priority_fee(200).build();
+            .with_nonce(1)
+            .with_priority_fee(200)
+            .build();
         assert!(gp.add_bundle(b2, last_block));
         assert_eq!(pool_bundle_count(&gp.get_or_create_pool(5)), 1); // only b
         assert_eq!(pool_bundle_count(&gp.get_or_create_pool(7)), 2); // b + b2
@@ -217,14 +232,17 @@ mod tests {
 
         // First insert with UUID
         let mut b1 = make_backrun_bundle(&s, target, block_range)
-            .with_priority_fee(100).build();
+            .with_priority_fee(100)
+            .build();
         b1.replacement_key = Some(ReplacementKey { uuid, nonce: 1 });
         assert!(gp.add_bundle(b1, last_block));
         assert_eq!(pool_bundle_count(&gp.get_or_create_pool(block_range.0)), 1);
 
         // Replace with higher nonce — old removed, new inserted
         let mut b2 = make_backrun_bundle(&s, target, block_range)
-            .with_nonce(1).with_priority_fee(200).build();
+            .with_nonce(1)
+            .with_priority_fee(200)
+            .build();
         b2.replacement_key = Some(ReplacementKey { uuid, nonce: 2 });
         assert!(gp.add_bundle(b2, last_block));
         assert_eq!(pool_bundle_count(&gp.get_or_create_pool(block_range.0)), 1);
@@ -233,11 +251,13 @@ mod tests {
         let pp = gp.get_or_create_pool(block_range.0);
         let bundles = pp.get_backruns(
             &target,
-            |_| Some(revm::state::AccountInfo {
-                nonce: 1,
-                balance: U256::from(1_000_000_000u128),
-                ..Default::default()
-            }),
+            |_| {
+                Some(revm::state::AccountInfo {
+                    nonce: 1,
+                    balance: U256::from(1_000_000_000u128),
+                    ..Default::default()
+                })
+            },
             0,
             10,
         );
@@ -245,13 +265,17 @@ mod tests {
 
         // Stale nonce rejected
         let mut b3 = make_backrun_bundle(&s, target, block_range)
-            .with_nonce(2).with_priority_fee(300).build();
+            .with_nonce(2)
+            .with_priority_fee(300)
+            .build();
         b3.replacement_key = Some(ReplacementKey { uuid, nonce: 1 });
         assert!(!gp.add_bundle(b3, last_block));
 
         // Equal nonce also rejected
         let mut b4 = make_backrun_bundle(&s, target, block_range)
-            .with_nonce(3).with_priority_fee(300).build();
+            .with_nonce(3)
+            .with_priority_fee(300)
+            .build();
         b4.replacement_key = Some(ReplacementKey { uuid, nonce: 2 });
         assert!(!gp.add_bundle(b4, last_block));
     }
@@ -268,10 +292,13 @@ mod tests {
 
         // Add bundles across blocks 8-10 and 12-14
         let mut b1 = make_backrun_bundle(&s, target, (8, 10))
-            .with_priority_fee(100).build();
+            .with_priority_fee(100)
+            .build();
         b1.replacement_key = Some(ReplacementKey { uuid, nonce: 1 });
         let b2 = make_backrun_bundle(&s, target, (12, 14))
-            .with_nonce(1).with_priority_fee(200).build();
+            .with_nonce(1)
+            .with_priority_fee(200)
+            .build();
         gp.add_bundle(b1, last_block);
         gp.add_bundle(b2, last_block);
 

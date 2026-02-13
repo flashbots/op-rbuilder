@@ -171,8 +171,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use super::super::test_utils::make_raw_tx;
+    use super::{super::test_utils::make_raw_tx, *};
     use crate::tx_signer::Signer;
     use alloy_primitives::BlockNumber;
     use reth_chainspec::ChainInfo;
