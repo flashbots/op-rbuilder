@@ -142,6 +142,10 @@ impl BackrunBundlePayloadPool {
             .sum()
     }
 
+    /// Maximum number of candidates to iterate over when selecting backruns.
+    /// Its not used if user requests more than MAX_ITER_COUNT candidates.
+    const MAX_ITER_COUNT: usize = 50;
+
     pub fn get_backruns(
         &self,
         target_tx_hash: &B256,
@@ -157,7 +161,10 @@ impl BackrunBundlePayloadPool {
         let mut seen = HashSet::<(Address, u64)>::new();
         let base_fee = base_fee as u128;
 
-        for ordered in tx_backruns.bundles.iter() {
+        // limit loop size as its blocking for the block building
+        let max_iter = Self::MAX_ITER_COUNT.max(max_count);
+
+        for ordered in tx_backruns.bundles.iter().take(max_iter) {
             if result.len() >= max_count {
                 break;
             }
