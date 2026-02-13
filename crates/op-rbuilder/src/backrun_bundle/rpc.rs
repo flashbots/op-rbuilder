@@ -137,8 +137,10 @@ where
         let target_tx_hash = B256::from(*target_tx.tx_hash());
         let backrun_tx_hash = B256::from(*backrun_tx.tx_hash());
 
-        // TODO: using base_fee=0 for the estimate, should use a better estimate
-        let estimated_effective_priority_fee = backrun_tx.effective_tip_per_gas(0).unwrap_or(0);
+        let estimated_base_fee = self.global_pool.estimated_base_fee_per_gas();
+        let estimated_effective_priority_fee = backrun_tx
+            .effective_tip_per_gas(estimated_base_fee)
+            .unwrap_or(0);
         let estimated_da_size =
             op_alloy_flz::tx_estimated_size_fjord_bytes(&bundle.transactions[1]);
 

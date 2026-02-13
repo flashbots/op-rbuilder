@@ -22,7 +22,6 @@ pub struct StoredBackrunBundle {
     pub block_number_max: u64,
     pub flashblock_number_min: Option<u64>,
     pub flashblock_number_max: Option<u64>,
-    // TODO: using base_fee=0 for the estimate, should use a better estimate
     pub estimated_effective_priority_fee: u128,
     pub estimated_da_size: u64,
     pub replacement_key: Option<ReplacementKey>,

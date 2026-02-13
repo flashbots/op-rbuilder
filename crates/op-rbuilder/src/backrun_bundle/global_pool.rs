@@ -9,13 +9,14 @@ use reth_basic_payload_builder::PayloadConfig;
 use reth_optimism_node::OpPayloadBuilderAttributes;
 use reth_optimism_primitives::OpTransactionSigned;
 use reth_primitives_traits::{Block, RecoveredBlock};
-use std::{fmt, sync::Arc};
+use std::{fmt, sync::{Arc, atomic::{AtomicU64, Ordering}}};
 use uuid::Uuid;
 
 struct BackrunBundleGlobalPoolInner {
     payload_pools: DashMap<u64, BackrunBundlePayloadPool>,
     replacements: DashMap<Uuid, StoredBackrunBundle>,
     metrics: BackrunPoolMetrics,
+    estimated_base_fee_per_gas: AtomicU64,
 }
 
 impl fmt::Debug for BackrunBundleGlobalPoolInner {
@@ -39,6 +40,7 @@ impl BackrunBundleGlobalPool {
                 payload_pools: DashMap::new(),
                 replacements: DashMap::new(),
                 metrics: Default::default(),
+                estimated_base_fee_per_gas: AtomicU64::new(0),
             }),
         }
     }
@@ -112,8 +114,19 @@ impl BackrunBundleGlobalPool {
         self.get_or_create_pool(block_number)
     }
 
+    /// Returns the estimated base fee per gas from the latest canonical tip.
+    pub fn estimated_base_fee_per_gas(&self) -> u64 {
+        self.inner.estimated_base_fee_per_gas.load(Ordering::Relaxed)
+    }
+
     pub fn on_canonical_state_change<B: Block>(&self, tip: &RecoveredBlock<B>) {
         let block_number = tip.number();
+
+        if let Some(base_fee) = tip.base_fee_per_gas() {
+            self.inner
+                .estimated_base_fee_per_gas
+                .store(base_fee, Ordering::Relaxed);
+        }
 
         // Remove stale pools from the map, then record metrics outside the lock.
         let removed_pools: Vec<_> = self
