@@ -159,9 +159,13 @@ impl BackrunBundlePayloadPool {
     }
 
     /// Maximum number of candidates to iterate over when selecting backruns.
-    /// Its not used if user requests more than MAX_ITER_COUNT candidates.
+    /// It's not used if the user requests more than MAX_ITER_COUNT candidates.
     const MAX_ITER_COUNT: usize = 50;
 
+    /// Returns up to `max_count` backrun candidates for the given target tx, sorted by
+    /// descending `estimated_effective_priority_fee`. Note that this ordering uses the
+    /// estimated priority fee computed at bundle submission time (based on the then-current
+    /// base fee), which may differ from the actual priority fee at block-building time.
     pub fn get_backruns(
         &self,
         target_tx_hash: &B256,

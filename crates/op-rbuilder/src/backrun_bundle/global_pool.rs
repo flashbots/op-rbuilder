@@ -1,5 +1,4 @@
 use super::{
-    args::BackrunBundleArgs,
     metrics::BackrunPoolMetrics,
     payload_pool::{BackrunBundlePayloadPool, StoredBackrunBundle},
 };
@@ -60,7 +59,7 @@ pub struct BackrunBundleGlobalPool {
 }
 
 impl BackrunBundleGlobalPool {
-    pub fn new(_args: BackrunBundleArgs) -> Self {
+    pub fn new() -> Self {
         Self {
             inner: Arc::new(BackrunBundleGlobalPoolInner {
                 payload_pools: DashMap::new(),
@@ -83,9 +82,11 @@ impl BackrunBundleGlobalPool {
     }
 
     /// Add a bundle to the global pool. Returns `false` if the bundle was rejected
-    /// due to a stale replacement nonce. Pools for blocks `<= last_block_number`
-    /// are skipped since those blocks are already sealed.
+    /// due to a stale replacement nonce or an already-expired block range.
     pub fn add_bundle(&self, bundle: StoredBackrunBundle, last_block_number: u64) -> bool {
+        if bundle.block_number_max <= last_block_number {
+            return false;
+        }
         let metrics = &self.inner.metrics;
         let first_pool_block = (last_block_number + 1).max(bundle.block_number);
         if let Some(ref key) = bundle.replacement_key {
@@ -190,7 +191,7 @@ impl BackrunBundleGlobalPool {
 
 impl Default for BackrunBundleGlobalPool {
     fn default() -> Self {
-        Self::new(BackrunBundleArgs::default())
+        Self::new()
     }
 }
 

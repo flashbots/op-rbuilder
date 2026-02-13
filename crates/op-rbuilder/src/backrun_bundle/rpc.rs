@@ -60,7 +60,7 @@ pub struct BackrunBundleRPCArgs {
     )]
     pub replacement_uuid: Option<Uuid>,
 
-    /// Replacment nonce must be set if `replacement_uuid` is set
+    /// Replacement nonce must be set if `replacement_uuid` is set
     #[serde(
         default,
         rename = "replacementNonce",
@@ -104,6 +104,13 @@ where
 
         let block_number = bundle.block_number;
         let block_number_max = bundle.block_number_max.unwrap_or(block_number);
+
+        if block_number_max < block_number {
+            return Err(EthApiError::InvalidParams(format!(
+                "maxBlockNumber ({block_number_max}) must be >= blockNumber ({block_number})"
+            ))
+            .into());
+        }
 
         if block_number_max.saturating_sub(block_number) > MAX_BLOCK_RANGE {
             return Err(EthApiError::InvalidParams(format!(
@@ -160,6 +167,7 @@ where
             replacement_key,
         };
 
+        // Silently drop bundles rejected due to stale replacement nonce
         self.global_pool
             .add_bundle(backrun_bundle, last_block_number);
 
@@ -247,6 +255,22 @@ mod tests {
         // 0 txs
         let mut args = valid_args(tx.clone(), tx.clone(), 10);
         args.transactions = vec![];
+        assert!(rpc.send_backrun_bundle(args).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_rejects_max_block_below_block_number() {
+        let rpc = make_rpc(5);
+        let s = Signer::random();
+        let args = BackrunBundleRPCArgs {
+            transactions: vec![make_raw_tx(&s, 0), make_raw_tx(&s, 1)],
+            block_number: 10,
+            block_number_max: Some(5),
+            flashblock_number_min: None,
+            flashblock_number_max: None,
+            replacement_uuid: None,
+            replacement_nonce: None,
+        };
         assert!(rpc.send_backrun_bundle(args).await.is_err());
     }
 

@@ -199,7 +199,7 @@ where
             sampling_ratio: args.telemetry.sampling_ratio,
             max_gas_per_txn: args.max_gas_per_txn,
             gas_limiter_config: args.gas_limiter.clone(),
-            backrun_bundle_pool: BackrunBundleGlobalPool::new(args.backrun_bundle.clone()),
+            backrun_bundle_pool: BackrunBundleGlobalPool::new(),
             backrun_bundle_args: args.backrun_bundle.clone(),
             specific: S::try_from(args)?,
         })
