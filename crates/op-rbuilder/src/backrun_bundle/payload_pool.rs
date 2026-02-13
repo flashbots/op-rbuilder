@@ -28,16 +28,26 @@ pub struct StoredBackrunBundle {
 }
 
 impl StoredBackrunBundle {
+    /// Checks if this bundle is valid for the given block and flashblock.
+    ///
+    /// Flashblock constraints are scoped to the edges of the block range:
+    /// - `flashblock_number_min` is only enforced on the first block (`block_number`)
+    /// - `flashblock_number_max` is only enforced on the last block (`block_number_max`)
+    /// - On intermediate blocks all flashblocks are valid
     pub fn is_valid(&self, block_number: u64, flashblock_number: Option<u64>) -> bool {
         if block_number < self.block_number || block_number > self.block_number_max {
             return false;
         }
 
         if let Some(fb) = flashblock_number {
-            if self.flashblock_number_min.is_some_and(|min| fb < min) {
+            if block_number == self.block_number
+                && self.flashblock_number_min.is_some_and(|min| fb < min)
+            {
                 return false;
             }
-            if self.flashblock_number_max.is_some_and(|max| fb > max) {
+            if block_number == self.block_number_max
+                && self.flashblock_number_max.is_some_and(|max| fb > max)
+            {
                 return false;
             }
         }

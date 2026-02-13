@@ -33,6 +33,8 @@ pub struct BackrunBundleRPCArgs {
     )]
     pub block_number_max: Option<u64>,
 
+    /// Earliest flashblock index the bundle is valid for. Only enforced on the first block
+    /// in the range (`blockNumber`); on later blocks all flashblocks are eligible.
     #[serde(
         default,
         rename = "minFlashblockNumber",
@@ -41,6 +43,8 @@ pub struct BackrunBundleRPCArgs {
     )]
     pub flashblock_number_min: Option<u64>,
 
+    /// Latest flashblock index the bundle is valid for. Only enforced on the last block
+    /// in the range (`maxBlockNumber`); on earlier blocks all flashblocks are eligible.
     #[serde(
         default,
         rename = "maxFlashblockNumber",
