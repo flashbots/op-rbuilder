@@ -16,6 +16,7 @@ use super::{
 };
 
 const MAX_BLOCK_RANGE: u64 = 10;
+const MAX_FUTURE_BLOCK_ADD: u64 = 10;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct BackrunBundleRPCArgs {
@@ -138,6 +139,13 @@ where
         if block_number_max <= last_block_number {
             return Err(EthApiError::InvalidParams(format!(
                 "maxBlockNumber ({block_number_max}) is in the past (current: {last_block_number})"
+            ))
+            .into());
+        }
+
+        if block_number > last_block_number + MAX_FUTURE_BLOCK_ADD {
+            return Err(EthApiError::InvalidParams(format!(
+                "blockNumber ({block_number}) is too far in the future (current: {last_block_number}, max: +{MAX_FUTURE_BLOCK_ADD})"
             ))
             .into());
         }
@@ -306,6 +314,15 @@ mod tests {
         let s = Signer::random();
         let args = valid_args(make_raw_tx(&s, 0), make_raw_tx(&s, 1), 99);
         // block_number_max defaults to block_number = 99 <= 100
+        assert!(rpc.send_backrun_bundle(args).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_rejects_too_far_in_future() {
+        let rpc = make_rpc(5); // best block = 5
+        let s = Signer::random();
+        // block_number = 16, which is 5 + 11 > 5 + MAX_FUTURE_BLOCK_ADD (10)
+        let args = valid_args(make_raw_tx(&s, 0), make_raw_tx(&s, 1), 16);
         assert!(rpc.send_backrun_bundle(args).await.is_err());
     }
 

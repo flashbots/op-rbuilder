@@ -658,7 +658,7 @@ impl<ExtraCtx: Debug + Default + MaybeFlashblockIndex> OpPayloadBuilderCtx<Extra
                     }
 
                     /* Backrun tx commit checklist:
-                    This is a set of steps that are performed for normal transactsions above that we need to
+                    This is a set of steps that are performed for normal transactions above that we need to
                     replicate for backrun transactions
                     - [x] num_txs_considered inc
                     - [x] check conditional (block and flashblock number)
