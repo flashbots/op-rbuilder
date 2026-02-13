@@ -34,6 +34,26 @@ impl fmt::Debug for BackrunBundleGlobalPoolInner {
     }
 }
 
+/// Long-lived, shared pool that stores all pending backrun bundles.
+///
+/// Created once at node startup and shared (via `Arc`) between the RPC layer
+/// (which inserts bundles) and the payload builder (which reads them).
+/// A background [`super::maintain`] task listens to canonical state
+/// notifications and calls [`Self::on_canonical_state_change`] for every new
+/// tip, which:
+///
+/// 1. Removes per-block payload pools that are at or below the new tip
+///    (their blocks are already sealed).
+/// 2. Evicts replacement-tracking entries whose `block_number_max` is in the
+///    past.
+/// 3. Updates the estimated base fee used for priority-fee estimation on
+///    incoming bundles.
+///
+/// Bundles are stored in per-block [`BackrunBundlePayloadPool`]s. A single
+/// bundle whose block range spans N blocks appears in N payload pools.
+/// Bundles with a `replacement_key` are additionally tracked in a separate
+/// map so that newer submissions (higher replacement nonce) atomically
+/// replace older ones.
 #[derive(Debug, Clone)]
 pub struct BackrunBundleGlobalPool {
     inner: Arc<BackrunBundleGlobalPoolInner>,

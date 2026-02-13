@@ -97,6 +97,16 @@ impl TxBackruns {
     }
 }
 
+/// Per-block pool of backrun bundles, keyed by target transaction hash.
+///
+/// Each block number in [`super::global_pool::BackrunBundleGlobalPool`] maps to
+/// one `BackrunBundlePayloadPool`. During block building the payload builder
+/// calls [`Self::get_backruns`] after each successfully committed transaction
+/// to retrieve candidate backruns sorted by descending priority fee.
+///
+/// `get_backruns` performs lightweight pre-filtering (base fee, sender nonce,
+/// balance, dedup by `(address, nonce)`) so the builder only simulates
+/// plausible candidates.
 #[derive(Debug, Clone)]
 pub struct BackrunBundlePayloadPool {
     inner: Arc<DashMap<B256, TxBackruns>>,
