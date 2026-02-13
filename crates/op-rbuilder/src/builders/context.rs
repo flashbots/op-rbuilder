@@ -418,6 +418,7 @@ impl<ExtraCtx: Debug + Default + MaybeFlashblockIndex> OpPayloadBuilderCtx<Extra
         let mut reverted_gas_used = 0;
         let mut num_backruns_considered = 0usize;
         let mut num_backruns_successful = 0usize;
+        let mut backrun_processing_time = std::time::Duration::ZERO;
         let base_fee = self.base_fee();
 
         let tx_da_limit = self.da_config.max_da_tx_size();
@@ -634,6 +635,7 @@ impl<ExtraCtx: Debug + Default + MaybeFlashblockIndex> OpPayloadBuilderCtx<Extra
                 );
 
             if can_backrun {
+                let backrun_start_time = Instant::now();
                 let backruns = self.backrun_ctx.pool.get_backruns(
                     &target_hash,
                     |addr| evm.db_mut().basic(addr).ok().flatten(),
@@ -816,6 +818,7 @@ impl<ExtraCtx: Debug + Default + MaybeFlashblockIndex> OpPayloadBuilderCtx<Extra
 
                     target_backruns_landed += 1;
                 }
+                backrun_processing_time += backrun_start_time.elapsed();
             }
         }
 
@@ -830,6 +833,7 @@ impl<ExtraCtx: Debug + Default + MaybeFlashblockIndex> OpPayloadBuilderCtx<Extra
             reverted_gas_used,
             num_backruns_considered as f64,
             num_backruns_successful as f64,
+            backrun_processing_time,
         );
 
         debug!(

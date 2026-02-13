@@ -169,6 +169,10 @@ pub struct OpRBuilderMetrics {
     pub payload_num_backruns_successful: Histogram,
     /// Latest number of backrun bundles successfully included
     pub payload_num_backruns_successful_gauge: Gauge,
+    /// Histogram of the duration of backrun transaction processing
+    pub backrun_transaction_processing_duration: Histogram,
+    /// Latest backrun transaction processing duration
+    pub backrun_transaction_processing_gauge: Gauge,
 }
 
 impl OpRBuilderMetrics {
@@ -184,6 +188,7 @@ impl OpRBuilderMetrics {
         reverted_gas_used: impl IntoF64,
         num_backruns_considered: impl IntoF64 + Copy,
         num_backruns_successful: impl IntoF64 + Copy,
+        backrun_transaction_processing_time: impl IntoF64 + Copy,
     ) {
         self.payload_transaction_simulation_duration
             .record(payload_transaction_simulation_time);
@@ -211,6 +216,10 @@ impl OpRBuilderMetrics {
             .record(num_backruns_successful);
         self.payload_num_backruns_successful_gauge
             .set(num_backruns_successful);
+        self.backrun_transaction_processing_duration
+            .record(backrun_transaction_processing_time);
+        self.backrun_transaction_processing_gauge
+            .set(backrun_transaction_processing_time);
     }
 }
 
