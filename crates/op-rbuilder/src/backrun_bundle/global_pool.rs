@@ -57,9 +57,11 @@ impl BackrunBundleGlobalPool {
     }
 
     /// Add a bundle to the global pool. Returns `false` if the bundle was rejected
-    /// due to a stale replacement nonce.
-    pub fn add_bundle(&self, bundle: StoredBackrunBundle) -> bool {
+    /// due to a stale replacement nonce. Pools for blocks `<= last_block_number`
+    /// are skipped since those blocks are already sealed.
+    pub fn add_bundle(&self, bundle: StoredBackrunBundle, last_block_number: u64) -> bool {
         let metrics = &self.inner.metrics;
+        let first_pool_block = (last_block_number + 1).max(bundle.block_number);
         if let Some(ref key) = bundle.replacement_key {
             // We use the entry API as a per-UUID write lock: payload pool
             // insertion happens inside the guard so that remove-old + insert-new
@@ -84,21 +86,21 @@ impl BackrunBundleGlobalPool {
                     }
                     metrics.bundle_count.decrement(1.0);
                     entry.insert(bundle.clone());
-                    for block in bundle.block_number..=bundle.block_number_max {
+                    for block in first_pool_block..=bundle.block_number_max {
                         self.get_or_create_pool(block).add_bundle(bundle.clone());
                     }
                     metrics.bundle_count.increment(1.0);
                 }
                 dashmap::mapref::entry::Entry::Vacant(entry) => {
                     entry.insert(bundle.clone());
-                    for block in bundle.block_number..=bundle.block_number_max {
+                    for block in first_pool_block..=bundle.block_number_max {
                         self.get_or_create_pool(block).add_bundle(bundle.clone());
                     }
                     metrics.bundle_count.increment(1.0);
                 }
             }
         } else {
-            for block in bundle.block_number..=bundle.block_number_max {
+            for block in first_pool_block..=bundle.block_number_max {
                 self.get_or_create_pool(block).add_bundle(bundle.clone());
             }
             metrics.bundle_count.increment(1.0);

@@ -160,7 +160,8 @@ where
             replacement_key,
         };
 
-        self.global_pool.add_bundle(backrun_bundle);
+        self.global_pool
+            .add_bundle(backrun_bundle, last_block_number);
 
         Ok(BundleResult {
             bundle_hash: backrun_tx_hash,
