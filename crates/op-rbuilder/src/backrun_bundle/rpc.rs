@@ -105,7 +105,7 @@ where
         let block_number = bundle.block_number;
         let block_number_max = bundle.block_number_max.unwrap_or(block_number);
 
-        if block_number_max.saturating_sub(block_number) >= MAX_BLOCK_RANGE {
+        if block_number_max.saturating_sub(block_number) > MAX_BLOCK_RANGE {
             return Err(EthApiError::InvalidParams(format!(
                 "block range too large: {block_number}..{block_number_max} (max range: {MAX_BLOCK_RANGE})"
             ))
@@ -153,8 +153,8 @@ where
             backrun_tx: Arc::new(backrun_tx),
             block_number,
             block_number_max,
-            flashblock_number_min: bundle.flashblock_number_min,
-            flashblock_number_max: bundle.flashblock_number_max,
+            flashblock_number_min: bundle.flashblock_number_min.unwrap_or(0),
+            flashblock_number_max: bundle.flashblock_number_max.unwrap_or(u64::MAX),
             estimated_effective_priority_fee,
             estimated_da_size,
             replacement_key,
@@ -166,5 +166,134 @@ where
         Ok(BundleResult {
             bundle_hash: backrun_tx_hash,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use super::super::test_utils::make_raw_tx;
+    use crate::tx_signer::Signer;
+    use alloy_primitives::BlockNumber;
+    use reth_chainspec::ChainInfo;
+    use reth_provider::ProviderResult;
+    use reth_storage_api::BlockHashReader;
+
+    /// Mock provider that returns a fixed best block number.
+    struct MockProvider(u64);
+
+    impl BlockHashReader for MockProvider {
+        fn block_hash(&self, _number: BlockNumber) -> ProviderResult<Option<B256>> {
+            Ok(None)
+        }
+        fn canonical_hashes_range(
+            &self,
+            _start: BlockNumber,
+            _end: BlockNumber,
+        ) -> ProviderResult<Vec<B256>> {
+            Ok(vec![])
+        }
+    }
+
+    impl BlockNumReader for MockProvider {
+        fn chain_info(&self) -> ProviderResult<ChainInfo> {
+            Ok(ChainInfo {
+                best_number: self.0,
+                best_hash: B256::ZERO,
+            })
+        }
+        fn best_block_number(&self) -> ProviderResult<BlockNumber> {
+            Ok(self.0)
+        }
+        fn last_block_number(&self) -> ProviderResult<BlockNumber> {
+            Ok(self.0)
+        }
+        fn block_number(&self, _hash: B256) -> ProviderResult<Option<BlockNumber>> {
+            Ok(None)
+        }
+    }
+
+    fn make_rpc(best_block: u64) -> BackrunBundleRpc<MockProvider> {
+        BackrunBundleRpc::new(BackrunBundleGlobalPool::default(), MockProvider(best_block))
+    }
+
+    fn valid_args(target: Bytes, backrun: Bytes, block_number: u64) -> BackrunBundleRPCArgs {
+        BackrunBundleRPCArgs {
+            transactions: vec![target, backrun],
+            block_number,
+            block_number_max: None,
+            flashblock_number_min: None,
+            flashblock_number_max: None,
+            replacement_uuid: None,
+            replacement_nonce: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_rejects_wrong_tx_count() {
+        let rpc = make_rpc(5);
+        let s = Signer::random();
+        let tx = make_raw_tx(&s, 0);
+
+        // 1 tx
+        let mut args = valid_args(tx.clone(), tx.clone(), 10);
+        args.transactions = vec![tx.clone()];
+        assert!(rpc.send_backrun_bundle(args).await.is_err());
+
+        // 3 txs
+        let mut args = valid_args(tx.clone(), tx.clone(), 10);
+        args.transactions = vec![tx.clone(), tx.clone(), tx.clone()];
+        assert!(rpc.send_backrun_bundle(args).await.is_err());
+
+        // 0 txs
+        let mut args = valid_args(tx.clone(), tx.clone(), 10);
+        args.transactions = vec![];
+        assert!(rpc.send_backrun_bundle(args).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_rejects_block_range_too_large() {
+        let rpc = make_rpc(5);
+        let s = Signer::random();
+        let args = BackrunBundleRPCArgs {
+            transactions: vec![make_raw_tx(&s, 0), make_raw_tx(&s, 1)],
+            block_number: 10,
+            block_number_max: Some(21), // range = 11, max allowed is 10
+            flashblock_number_min: None,
+            flashblock_number_max: None,
+            replacement_uuid: None,
+            replacement_nonce: None,
+        };
+        assert!(rpc.send_backrun_bundle(args).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_rejects_uuid_without_nonce() {
+        let rpc = make_rpc(5);
+        let s = Signer::random();
+        let mut args = valid_args(make_raw_tx(&s, 0), make_raw_tx(&s, 1), 10);
+        args.replacement_uuid = Some(Uuid::new_v4());
+        // replacement_nonce left as None
+        assert!(rpc.send_backrun_bundle(args).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_rejects_past_block_number_max() {
+        let rpc = make_rpc(100); // best block = 100
+        let s = Signer::random();
+        let args = valid_args(make_raw_tx(&s, 0), make_raw_tx(&s, 1), 99);
+        // block_number_max defaults to block_number = 99 <= 100
+        assert!(rpc.send_backrun_bundle(args).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_accepts_valid_bundle() {
+        let rpc = make_rpc(5);
+        let s = Signer::random();
+        let target = make_raw_tx(&s, 0);
+        let backrun = make_raw_tx(&s, 1);
+        let args = valid_args(target, backrun, 10);
+        let result = rpc.send_backrun_bundle(args).await;
+        assert!(result.is_ok());
     }
 }
