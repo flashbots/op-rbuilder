@@ -1,4 +1,7 @@
 use crate::{
+    backrun_bundle::{
+        BackrunBundlesPayloadCtx, args::BackrunBundleArgs, global_pool::BackrunBundleGlobalPool,
+    },
     builders::{BuilderConfig, OpPayloadBuilderCtx, flashblocks::FlashblocksConfig},
     gas_limiter::{AddressGasLimiter, args::GasLimiterArgs},
     metrics::OpRBuilderMetrics,
@@ -30,6 +33,10 @@ pub(super) struct OpPayloadSyncerCtx {
     max_gas_per_txn: Option<u64>,
     /// The metrics for the builder
     metrics: Arc<OpRBuilderMetrics>,
+    /// Global backrun bundle pool
+    backrun_bundle_pool: BackrunBundleGlobalPool,
+    /// Backrun bundle configuration
+    backrun_bundle_args: BackrunBundleArgs,
 }
 
 impl OpPayloadSyncerCtx {
@@ -49,6 +56,8 @@ impl OpPayloadSyncerCtx {
             chain_spec,
             max_gas_per_txn: builder_config.max_gas_per_txn,
             metrics,
+            backrun_bundle_pool: builder_config.backrun_bundle_pool.clone(),
+            backrun_bundle_args: builder_config.backrun_bundle_args.clone(),
         })
     }
 
@@ -77,6 +86,10 @@ impl OpPayloadSyncerCtx {
         block_env_attributes: OpNextBlockEnvAttributes,
         cancel: CancellationToken,
     ) -> OpPayloadBuilderCtx {
+        let backrun_ctx = BackrunBundlesPayloadCtx {
+            pool: self.backrun_bundle_pool.payload_pool(&payload_config),
+            args: self.backrun_bundle_args,
+        };
         OpPayloadBuilderCtx {
             evm_config: self.evm_config,
             da_config: self.da_config,
@@ -91,6 +104,7 @@ impl OpPayloadSyncerCtx {
             extra_ctx: (),
             max_gas_per_txn: self.max_gas_per_txn,
             address_gas_limiter: AddressGasLimiter::new(GasLimiterArgs::default()),
+            backrun_ctx,
         }
     }
 }
