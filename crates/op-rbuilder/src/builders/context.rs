@@ -721,10 +721,7 @@ impl<ExtraCtx: Debug + Default + MaybeFlashblockIndex> OpPayloadBuilderCtx<Extra
                         continue;
                     }
 
-                    // TODO: do this estimation in backrun tx pool
-                    let br_tx_da_size = op_alloy_flz::tx_estimated_size_fjord_bytes(
-                        bundle.backrun_tx.encoded_2718().as_slice(),
-                    );
+                    let br_tx_da_size = bundle.estimated_da_size;
                     if let Err(result) = info.is_tx_over_limits(
                         br_tx_da_size,
                         block_gas_limit,

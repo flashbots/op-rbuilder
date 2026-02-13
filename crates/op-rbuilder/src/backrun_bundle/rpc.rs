@@ -139,6 +139,8 @@ where
 
         // TODO: using base_fee=0 for the estimate, should use a better estimate
         let estimated_effective_priority_fee = backrun_tx.effective_tip_per_gas(0).unwrap_or(0);
+        let estimated_da_size =
+            op_alloy_flz::tx_estimated_size_fjord_bytes(&bundle.transactions[1]);
 
         let backrun_bundle = StoredBackrunBundle {
             target_tx_hash,
@@ -148,6 +150,7 @@ where
             flashblock_number_min: bundle.flashblock_number_min,
             flashblock_number_max: bundle.flashblock_number_max,
             estimated_effective_priority_fee,
+            estimated_da_size,
             replacement_key,
         };
 
