@@ -643,10 +643,9 @@ impl<ExtraCtx: Debug + Default + MaybeFlashblockIndex> OpPayloadBuilderCtx<Extra
                     self.backrun_ctx.args.max_considered_backruns_per_target,
                 );
 
-                let mut target_backruns_considered = 0;
                 let mut target_backruns_landed = 0;
 
-                for bundle in backruns {
+                for (target_backruns_considered, bundle) in backruns.into_iter().enumerate() {
                     if self.backrun_ctx.args.is_limit_reached(
                         num_backruns_considered,
                         num_backruns_successful,
@@ -696,7 +695,6 @@ impl<ExtraCtx: Debug + Default + MaybeFlashblockIndex> OpPayloadBuilderCtx<Extra
 
                     num_txs_considered += 1;
                     num_backruns_considered += 1;
-                    target_backruns_considered += 1;
 
                     if !bundle.is_valid(block_attr.number, self.extra_ctx.flashblock_index()) {
                         log_br_txn(TxnExecutionResult::ConditionalCheckFailed);
