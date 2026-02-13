@@ -1,6 +1,7 @@
 pub mod args;
 pub mod global_pool;
 pub mod maintain;
+mod metrics;
 pub mod payload_pool;
 pub mod rpc;
 

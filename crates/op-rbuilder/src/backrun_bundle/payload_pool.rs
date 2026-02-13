@@ -111,12 +111,35 @@ impl BackrunBundlePayloadPool {
             .insert(OrderedBackrunBundle(bundle));
     }
 
-    pub fn remove_bundle(&self, bundle: &StoredBackrunBundle) {
+    pub fn remove_bundle(&self, bundle: &StoredBackrunBundle) -> bool {
         if let Some(mut tx_backruns) = self.inner.get_mut(&bundle.target_tx_hash) {
             tx_backruns
                 .bundles
-                .remove(&OrderedBackrunBundle(bundle.clone()));
+                .remove(&OrderedBackrunBundle(bundle.clone()))
+        } else {
+            false
         }
+    }
+
+    /// Returns an iterator over the bundle count for each target tx in this pool.
+    pub fn per_tx_bundle_counts(&self) -> impl Iterator<Item = usize> + '_ {
+        self.inner.iter().map(|entry| entry.value().bundles.len())
+    }
+
+    /// Count bundles whose `block_number_max` equals the given block number.
+    /// These are bundles for which this pool is the last one they appear in.
+    pub fn count_final_bundles(&self, block_number: u64) -> usize {
+        self.inner
+            .iter()
+            .map(|entry| {
+                entry
+                    .value()
+                    .bundles
+                    .iter()
+                    .filter(|b| b.0.block_number_max == block_number)
+                    .count()
+            })
+            .sum()
     }
 
     pub fn get_backruns(
