@@ -44,9 +44,11 @@ use reth_provider::{
     StorageRootProvider,
 };
 use reth_revm::{
-    State, database::StateProviderDatabase, db::states::bundle_state::BundleRetention,
+    State,
+    database::StateProviderDatabase,
+    db::{CacheState, TransitionState, states::bundle_state::BundleRetention},
 };
-use reth_transaction_pool::TransactionPool;
+use reth_transaction_pool::{BestTransactions, TransactionPool};
 use reth_trie::{HashedPostState, updates::TrieUpdates};
 use revm::Database;
 use std::{collections::BTreeMap, sync::Arc, time::Instant};
@@ -128,6 +130,27 @@ impl FlashblocksExtraCtx {
             ..self
         }
     }
+}
+
+/// A candidate flashblock payload with its associated simulation state.
+/// Contains the built payload, the flashblock message, execution info,
+/// and the simulation state (cache + transition) that can be applied
+/// to the real state if this candidate is selected as the best.
+type FlashblockCandidate = (
+    OpBuiltPayload,
+    OpFlashblockPayload,
+    ExecutionInfo<FlashblocksExecutionInfo>,
+    CacheState,
+    Option<TransitionState>,
+);
+
+/// Compares two flashblock candidates to determine if the new one is better.
+/// Maximize cumulative gas used
+fn is_better_candidate(
+    current: &ExecutionInfo<FlashblocksExecutionInfo>,
+    new: &ExecutionInfo<FlashblocksExecutionInfo>,
+) -> bool {
+    new.cumulative_gas_used > current.cumulative_gas_used
 }
 
 impl OpPayloadBuilderCtx<FlashblocksExtraCtx> {
@@ -558,15 +581,28 @@ where
             let _entered = fb_span.enter();
 
             // Build flashblock after receiving signal
-            let next_flashblocks_ctx = match self.build_next_flashblock(
-                &ctx,
-                &mut info,
-                &mut state,
-                &state_provider,
-                &mut best_txs,
-                &block_cancel,
-                &best_payload,
-            ) {
+            let build_result = if self.config.specific.enable_continuous_building {
+                self.build_next_flashblock_continuous(
+                    &ctx,
+                    &mut info,
+                    &mut state,
+                    &state_provider,
+                    &mut best_txs,
+                    &block_cancel,
+                    &best_payload,
+                )
+            } else {
+                self.build_next_flashblock(
+                    &ctx,
+                    &mut info,
+                    &mut state,
+                    &state_provider,
+                    &mut best_txs,
+                    &block_cancel,
+                    &best_payload,
+                )
+            };
+            let next_flashblocks_ctx = match build_result {
                 Ok(Some(next_flashblocks_ctx)) => next_flashblocks_ctx,
                 Ok(None) => {
                     self.record_flashblocks_metrics(&ctx, &info, target_flashblocks, &span);
@@ -810,6 +846,338 @@ where
                 Ok(Some(next_extra_ctx))
             }
         }
+    }
+
+    /// Builds a new flashblock candidate on a simulation state and compares it to the current
+    /// best. Returns `Ok(Some(candidate))` if the new candidate is better, `Ok(None)` if no
+    /// improvement was possible (caller should stop trying).
+    ///
+    /// No active state is mutated: all execution happens on a cloned simulation state.
+    /// The caller can apply the winning candidate's state later.
+    #[allow(clippy::too_many_arguments)]
+    fn refresh_best_flashblock_candidate<
+        DB: Database<Error = ProviderError> + std::fmt::Debug + AsRef<P>,
+        P: StateRootProvider + HashedPostStateProvider + StorageRootProvider,
+    >(
+        &self,
+        current: &Option<FlashblockCandidate>,
+        ctx: &OpPayloadBuilderCtx<FlashblocksExtraCtx>,
+        info: &ExecutionInfo<FlashblocksExecutionInfo>,
+        state: &State<DB>,
+        state_provider: impl reth::providers::StateProvider + Clone,
+        best_txs: &mut NextBestFlashblocksTxs<Pool>,
+        target_gas_for_batch: u64,
+        target_da_for_batch: Option<u64>,
+        target_da_footprint_for_batch: Option<u64>,
+    ) -> eyre::Result<Option<FlashblockCandidate>> {
+        // Create simulation state by cloning the active state's cache and transition
+        let mut simulation_info = info.clone();
+        let simulation_cache = state.cache.clone();
+        let simulation_transition_state = state.transition_state.clone();
+        let mut simulation_state = State::builder()
+            .with_database(StateProviderDatabase::new(&state_provider))
+            .with_cached_prestate(simulation_cache)
+            .with_bundle_update()
+            .build();
+        simulation_state.transition_state = simulation_transition_state;
+
+        // Refresh pool txs (without_updates to avoid iterator invalidation during tight loop)
+        let best_txs_start_time = Instant::now();
+        best_txs.refresh_iterator(
+            BestPayloadTransactions::new(
+                self.pool
+                    .best_transactions_with_attributes(ctx.best_transaction_attributes())
+                    .without_updates(),
+            ),
+            ctx.flashblock_index(),
+        );
+        let transaction_pool_fetch_time = best_txs_start_time.elapsed();
+        ctx.metrics
+            .transaction_pool_fetch_duration
+            .record(transaction_pool_fetch_time);
+        ctx.metrics
+            .transaction_pool_fetch_gauge
+            .set(transaction_pool_fetch_time);
+
+        // Execute transactions on simulation state
+        let tx_execution_start_time = Instant::now();
+        ctx.execute_best_transactions(
+            &mut simulation_info,
+            &mut simulation_state,
+            best_txs,
+            target_gas_for_batch.min(ctx.block_gas_limit()),
+            target_da_for_batch,
+            target_da_footprint_for_batch,
+        )
+        .wrap_err("failed to execute best transactions")?;
+        let payload_transaction_simulation_time = tx_execution_start_time.elapsed();
+        ctx.metrics
+            .payload_transaction_simulation_duration
+            .record(payload_transaction_simulation_time);
+        ctx.metrics
+            .payload_transaction_simulation_gauge
+            .set(payload_transaction_simulation_time);
+
+        // Add bottom-of-block builder txs to simulation
+        if let Err(e) = self.builder_tx.add_builder_txs(
+            &state_provider,
+            &mut simulation_info,
+            ctx,
+            &mut simulation_state,
+            false,
+        ) {
+            error!(target: "payload_builder", "Error simulating builder txs: {}", e);
+        };
+
+        // Compare with current best: if no better we can return early
+        if current
+            .as_ref()
+            .is_some_and(|(_, _, cur, _, _)| !is_better_candidate(cur, &simulation_info))
+        {
+            return Ok(None);
+        }
+
+        // Build block from simulation state
+        let total_block_built_duration = Instant::now();
+        let build_result = build_block(
+            &mut simulation_state,
+            ctx,
+            &mut simulation_info,
+            !ctx.extra_ctx.disable_state_root || ctx.attributes().no_tx_pool,
+        );
+        let total_block_built_duration = total_block_built_duration.elapsed();
+        ctx.metrics
+            .total_block_built_duration
+            .record(total_block_built_duration);
+        ctx.metrics
+            .total_block_built_gauge
+            .set(total_block_built_duration);
+
+        match build_result {
+            Err(err) => {
+                ctx.metrics.invalid_built_blocks_count.increment(1);
+                Err(err).wrap_err("failed to build payload")
+            }
+            Ok((payload, mut fb)) => {
+                fb.index = ctx.flashblock_index();
+                fb.base = None;
+
+                Ok(Some((
+                    payload,
+                    fb,
+                    simulation_info,
+                    simulation_state.cache,
+                    simulation_state.transition_state,
+                )))
+            }
+        }
+    }
+
+    /// Builds the next flashblock using continuous building: repeatedly builds candidate
+    /// flashblocks within the interval, keeping only the best one, and publishes it when
+    /// the interval timer fires (ctx.cancel is cancelled).
+    #[allow(clippy::too_many_arguments)]
+    fn build_next_flashblock_continuous<
+        DB: Database<Error = ProviderError> + std::fmt::Debug + AsRef<P>,
+        P: StateRootProvider + HashedPostStateProvider + StorageRootProvider,
+    >(
+        &self,
+        ctx: &OpPayloadBuilderCtx<FlashblocksExtraCtx>,
+        info: &mut ExecutionInfo<FlashblocksExecutionInfo>,
+        state: &mut State<DB>,
+        state_provider: impl reth::providers::StateProvider + Clone,
+        best_txs: &mut NextBestFlashblocksTxs<Pool>,
+        block_cancel: &CancellationToken,
+        best_payload: &BlockCell<OpBuiltPayload>,
+    ) -> eyre::Result<Option<FlashblocksExtraCtx>> {
+        // --- 1. Prepare shared context (same as build_next_flashblock) ---
+
+        let flashblock_index = ctx.flashblock_index();
+        let mut target_gas_for_batch = ctx.extra_ctx.target_gas_for_batch;
+        let mut target_da_for_batch = ctx.extra_ctx.target_da_for_batch;
+        let mut target_da_footprint_for_batch = ctx.extra_ctx.target_da_footprint_for_batch;
+
+        info!(
+            target: "payload_builder",
+            block_number = ctx.block_number(),
+            flashblock_index,
+            target_gas = target_gas_for_batch,
+            gas_used = info.cumulative_gas_used,
+            target_da = target_da_for_batch,
+            da_used = info.cumulative_da_bytes_used,
+            block_gas_used = ctx.block_gas_limit(),
+            target_da_footprint = target_da_footprint_for_batch,
+            "Building flashblock (continuous)",
+        );
+        let flashblock_build_start_time = Instant::now();
+
+        // Add top-of-block builder txns
+        let builder_txs = self
+            .builder_tx
+            .add_builder_txs(&state_provider, info, ctx, state, true)
+            .unwrap_or_else(|e| {
+                error!(target: "payload_builder", "Error simulating builder txs: {}", e);
+                vec![]
+            });
+
+        // Reserve builder tx gas / da size that has not been committed yet
+        let builder_tx_gas = builder_txs
+            .iter()
+            .filter(|tx| !tx.is_top_of_block)
+            .fold(0, |acc, tx| acc + tx.gas_used);
+        let builder_tx_da_size: u64 = builder_txs
+            .iter()
+            .filter(|tx| !tx.is_top_of_block)
+            .fold(0, |acc, tx| acc + tx.da_size);
+        target_gas_for_batch = target_gas_for_batch.saturating_sub(builder_tx_gas);
+
+        if let Some(da_limit) = target_da_for_batch.as_mut() {
+            *da_limit = da_limit.saturating_sub(builder_tx_da_size);
+        }
+
+        if let (Some(footprint), Some(scalar)) = (
+            target_da_footprint_for_batch.as_mut(),
+            info.da_footprint_scalar,
+        ) {
+            *footprint = footprint.saturating_sub(builder_tx_da_size.saturating_mul(scalar as u64));
+        }
+
+        // --- 2. Candidate loop: build candidates until interval ends or no improvement ---
+
+        let mut best: Option<FlashblockCandidate> = None;
+
+        loop {
+            // Block cancel: new FCU received, stop building new candidates
+            // Flashblock interval ended: stop building, publish current best
+            if block_cancel.is_cancelled() || ctx.cancel.is_cancelled() {
+                break;
+            }
+
+            // Build one candidate -- returns Some if better than current best, None if no improvement
+            match self.refresh_best_flashblock_candidate(
+                &best,
+                ctx,
+                info,
+                state,
+                &state_provider,
+                best_txs,
+                target_gas_for_batch,
+                target_da_for_batch,
+                target_da_footprint_for_batch,
+            )? {
+                Some(new_best) => best = Some(new_best),
+                None => break, // No improvement possible, publish what we have
+            }
+        }
+
+        // --- 3. Publish the best candidate ---
+
+        if best.is_none() {
+            if block_cancel.is_cancelled() {
+                return Ok(None);
+            }
+            warn!(
+                target: "payload_builder",
+                flashblock_index,
+                "No candidate built during continuous building interval"
+            );
+            return Ok(None);
+        }
+
+        let (payload, fb_payload, execution_info, cache_state, transition_state) =
+            best.expect("checked is_none above");
+
+        // Apply simulation state to the real state
+        state.cache = cache_state;
+        state.transition_state = transition_state;
+
+        // If block cancel fired while we were finishing, don't publish
+        if block_cancel.is_cancelled() {
+            return Ok(None);
+        }
+
+        // Publish flashblock
+        let flashblock_byte_size = self
+            .ws_pub
+            .publish(&fb_payload)
+            .wrap_err("failed to publish flashblock via websocket")?;
+        self.built_fb_payload_tx
+            .try_send(payload.clone())
+            .wrap_err("failed to send built payload to handler")?;
+        if let Err(e) = self.built_payload_tx.try_send(payload.clone()) {
+            warn!(
+                target: "payload_builder",
+                error = %e,
+                "Failed to send updated payload"
+            );
+        }
+        best_payload.set(payload);
+
+        // Mark selected transactions as committed.
+        // We must capture last_flashblock_index BEFORE overwriting info, because
+        // build_block updates last_flashblock_index to execution_info.executed_transactions.len().
+        // Using the old index gives us the slice of NEW transactions in this flashblock,
+        // matching the non-continuous path which calls mark_commited before build_block.
+        let prev_last_flashblock_index = info.extra.last_flashblock_index;
+        *info = execution_info;
+
+        let batch_new_transactions = info.executed_transactions[prev_last_flashblock_index..]
+            .to_vec()
+            .iter()
+            .map(|tx| tx.tx_hash())
+            .collect::<Vec<_>>();
+        best_txs.mark_commited(batch_new_transactions);
+
+        // Record metrics
+        ctx.metrics
+            .flashblock_build_duration
+            .record(flashblock_build_start_time.elapsed());
+        ctx.metrics
+            .flashblock_byte_size_histogram
+            .record(flashblock_byte_size as f64);
+        ctx.metrics
+            .flashblock_num_tx_histogram
+            .record(info.executed_transactions.len() as f64);
+
+        // --- 4. Compute next flashblock context ---
+
+        if let Some(da_limit) = ctx.extra_ctx.da_per_batch {
+            if let Some(da) = target_da_for_batch.as_mut() {
+                *da += da_limit;
+            } else {
+                error!(
+                    "Builder end up in faulty invariant, if da_per_batch is set then total_da_per_batch must be set"
+                );
+            }
+        }
+
+        let target_gas_for_batch = ctx.extra_ctx.target_gas_for_batch + ctx.extra_ctx.gas_per_batch;
+
+        if let (Some(footprint), Some(da_footprint_limit)) = (
+            target_da_footprint_for_batch.as_mut(),
+            ctx.extra_ctx.da_footprint_per_batch,
+        ) {
+            *footprint += da_footprint_limit;
+        }
+
+        let next_extra_ctx = ctx.extra_ctx.clone().next(
+            target_gas_for_batch,
+            target_da_for_batch,
+            target_da_footprint_for_batch,
+        );
+
+        info!(
+            target: "payload_builder",
+            event = "flashblock_built",
+            id = %ctx.payload_id(),
+            flashblock_index,
+            current_gas = info.cumulative_gas_used,
+            current_da = info.cumulative_da_bytes_used,
+            target_flashblocks = ctx.target_flashblock_count(),
+            "Flashblock built (continuous)"
+        );
+
+        Ok(Some(next_extra_ctx))
     }
 
     /// Do some logging and metric recording when we stop build flashblocks
