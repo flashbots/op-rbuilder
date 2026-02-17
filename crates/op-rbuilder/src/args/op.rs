@@ -136,6 +136,14 @@ pub struct FlashblocksArgs {
     )]
     pub flashblocks_disable_state_root: bool,
 
+    /// Whether to enable continuous flashblock building within each interval
+    #[arg(
+        long = "flashblocks.enable-continuous-building",
+        default_value = "true",
+        env = "FLASHBLOCKS_ENABLE_CONTINUOUS_BUILDING"
+    )]
+    pub flashblocks_enable_continuous_building: bool,
+
     /// Flashblocks number contract address
     ///
     /// This is the address of the contract that will be used to increment the flashblock number.
