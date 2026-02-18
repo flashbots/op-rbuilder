@@ -1128,7 +1128,7 @@ where
         },
         metadata,
     };
-
+    // Need to ensure `state.bundle = None`, was done previously with  `state.take_bundle()`
     state.transition_state = untouched_transition_state;
 
     Ok((
