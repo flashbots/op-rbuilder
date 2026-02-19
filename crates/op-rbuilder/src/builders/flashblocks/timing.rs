@@ -1,7 +1,8 @@
 use core::time::Duration;
-use std::{ops::Rem, sync::mpsc::SyncSender};
+use std::ops::Rem;
 
 use reth_payload_builder::PayloadId;
+use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, warn};
 
@@ -61,7 +62,7 @@ impl FlashblockScheduler {
     /// Runs the scheduler, sending flashblock triggers at the scheduled times.
     pub(super) async fn run(
         self,
-        tx: SyncSender<CancellationToken>,
+        tx: mpsc::Sender<CancellationToken>,
         block_cancel: CancellationToken,
         mut fb_cancel: CancellationToken,
         payload_id: PayloadId,
@@ -89,7 +90,7 @@ impl FlashblockScheduler {
                         "Sending flashblock trigger"
                     );
 
-                    if tx.send(fb_cancel.clone()).is_err() {
+                    if tx.send(fb_cancel.clone()).await.is_err() {
                         // receiver channel was dropped, return. this will only
                         // happen if the `build_payload` function returns, due
                         // to payload building error or the main cancellation

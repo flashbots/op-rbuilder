@@ -53,7 +53,7 @@ pub(super) trait PayloadBuilder: Send + Sync + Clone {
     /// # Returns
     ///
     /// A `Result` indicating the build outcome or an error.
-    fn try_build(
+    async fn try_build(
         &self,
         args: BuildArguments<Self::Attributes, Self::BuiltPayload>,
         best_payload: BlockCell<Self::BuiltPayload>,
@@ -330,7 +330,7 @@ where
                 cancel,
             };
 
-            let result = builder.try_build(args, cell);
+            let result = builder.try_build(args, cell).await;
             let _ = tx.send(result);
         }));
     }
@@ -614,7 +614,7 @@ mod tests {
         type Attributes = OpPayloadBuilderAttributes<N::SignedTx>;
         type BuiltPayload = MockPayload;
 
-        fn try_build(
+        async fn try_build(
             &self,
             args: BuildArguments<Self::Attributes, Self::BuiltPayload>,
             _best_payload: BlockCell<Self::BuiltPayload>,
