@@ -1,6 +1,6 @@
 use crate::{
     args::OpRbuilderArgs,
-    backrun_bundle::rpc::{BackrunBundleApiServer, BackrunBundleRpc},
+    backrun_bundle::{BackrunBundleApiServer, BackrunBundleRpc},
     builders::{BuilderConfig, FlashblocksBuilder, PayloadBuilder, StandardBuilder},
     primitives::reth::engine_api_builder::OpEngineApiBuilder,
     revert_protection::{EthApiExtServer, RevertProtectionExt},

@@ -1,5 +1,5 @@
 use crate::{
-    backrun_bundle::rpc::BackrunBundleRPCArgs,
+    backrun_bundle::BackrunBundleRPCArgs,
     primitives::bundle::{Bundle, BundleResult},
     tests::funded_signer,
     tx::FBPooledTransaction,

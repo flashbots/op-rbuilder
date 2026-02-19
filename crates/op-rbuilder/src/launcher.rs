@@ -4,8 +4,7 @@ use reth_optimism_rpc::OpEthApiBuilder;
 use crate::{
     args::*,
     backrun_bundle::{
-        maintain::maintain_backrun_bundle_pool_future,
-        rpc::{BackrunBundleApiServer, BackrunBundleRpc},
+        BackrunBundleApiServer, BackrunBundleRpc, maintain_backrun_bundle_pool_future,
     },
     builders::{BuilderConfig, BuilderMode, FlashblocksBuilder, PayloadBuilder, StandardBuilder},
     metrics::{VERSION, record_flag_gauge_metrics},

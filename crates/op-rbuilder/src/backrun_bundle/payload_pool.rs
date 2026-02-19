@@ -54,7 +54,7 @@ impl StoredBackrunBundle {
 
 /// Ord impl: highest `estimated_effective_priority_fee` first, backrun tx hash as tiebreaker.
 #[derive(Debug, Clone)]
-pub struct OrderedBackrunBundle(pub StoredBackrunBundle);
+pub(super) struct OrderedBackrunBundle(StoredBackrunBundle);
 
 impl OrderedBackrunBundle {
     fn backrun_tx_hash(&self) -> B256 {
@@ -87,14 +87,8 @@ impl Ord for OrderedBackrunBundle {
 }
 
 #[derive(Debug, Clone, Default)]
-pub struct TxBackruns {
-    pub bundles: std::collections::BTreeSet<OrderedBackrunBundle>,
-}
-
-impl TxBackruns {
-    pub fn iter(&self) -> impl Iterator<Item = &OrderedBackrunBundle> {
-        self.bundles.iter()
-    }
+pub(super) struct TxBackruns {
+    pub(super) bundles: std::collections::BTreeSet<OrderedBackrunBundle>,
 }
 
 /// Per-block pool of backrun bundles, keyed by target transaction hash.
@@ -113,13 +107,13 @@ pub struct BackrunBundlePayloadPool {
 }
 
 impl BackrunBundlePayloadPool {
-    pub fn new() -> Self {
+    pub(super) fn new() -> Self {
         Self {
             inner: Arc::new(DashMap::new()),
         }
     }
 
-    pub fn add_bundle(&self, bundle: StoredBackrunBundle) {
+    pub(super) fn add_bundle(&self, bundle: StoredBackrunBundle) {
         self.inner
             .entry(bundle.target_tx_hash)
             .or_default()
@@ -127,7 +121,7 @@ impl BackrunBundlePayloadPool {
             .insert(OrderedBackrunBundle(bundle));
     }
 
-    pub fn remove_bundle(&self, bundle: &StoredBackrunBundle) -> bool {
+    pub(super) fn remove_bundle(&self, bundle: &StoredBackrunBundle) -> bool {
         if let Some(mut tx_backruns) = self.inner.get_mut(&bundle.target_tx_hash) {
             tx_backruns
                 .bundles
@@ -138,13 +132,13 @@ impl BackrunBundlePayloadPool {
     }
 
     /// Returns an iterator over the bundle count for each target tx in this pool.
-    pub fn per_tx_bundle_counts(&self) -> impl Iterator<Item = usize> + '_ {
+    pub(super) fn per_tx_bundle_counts(&self) -> impl Iterator<Item = usize> + '_ {
         self.inner.iter().map(|entry| entry.value().bundles.len())
     }
 
     /// Count bundles whose `block_number_max` equals the given block number.
     /// These are bundles for which this pool is the last one they appear in.
-    pub fn count_final_bundles(&self, block_number: u64) -> usize {
+    pub(super) fn count_final_bundles(&self, block_number: u64) -> usize {
         self.inner
             .iter()
             .map(|entry| {

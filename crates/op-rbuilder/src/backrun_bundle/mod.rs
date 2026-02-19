@@ -59,17 +59,20 @@
 //! (`num_txs_considered`, `num_txs_simulated_success`, `num_bundles_reverted`,
 //! etc.) so they are reflected in overall payload build statistics.
 
-pub mod args;
-pub mod global_pool;
-pub mod maintain;
+mod args;
+mod global_pool;
+mod maintain;
 mod metrics;
-pub mod payload_pool;
-pub mod rpc;
+mod payload_pool;
+mod rpc;
 #[cfg(test)]
 mod test_utils;
 
-use args::BackrunBundleArgs;
-use payload_pool::BackrunBundlePayloadPool;
+pub use args::BackrunBundleArgs;
+pub use global_pool::BackrunBundleGlobalPool;
+pub use maintain::maintain_backrun_bundle_pool_future;
+pub use payload_pool::{BackrunBundlePayloadPool, ReplacementKey, StoredBackrunBundle};
+pub use rpc::{BackrunBundleApiServer, BackrunBundleRPCArgs, BackrunBundleRpc};
 
 #[derive(Debug, Clone)]
 pub struct BackrunBundlesPayloadCtx {

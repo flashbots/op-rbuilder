@@ -1,6 +1,6 @@
 use crate::{
     args::OpRbuilderArgs,
-    backrun_bundle::args::BackrunBundleArgs,
+    backrun_bundle::BackrunBundleArgs,
     tests::{
         BlockTransactionsExt, BundleOpts, ChainDriverExt, LocalInstance, ONE_ETH,
         TransactionBuilderExt, send_backrun_bundle,

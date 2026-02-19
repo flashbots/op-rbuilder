@@ -83,7 +83,7 @@ impl BackrunBundleGlobalPool {
 
     /// Add a bundle to the global pool. Returns `false` if the bundle was rejected
     /// due to a stale replacement nonce or an already-expired block range.
-    pub fn add_bundle(&self, bundle: StoredBackrunBundle, last_block_number: u64) -> bool {
+    pub(super) fn add_bundle(&self, bundle: StoredBackrunBundle, last_block_number: u64) -> bool {
         if bundle.block_number_max <= last_block_number {
             return false;
         }
@@ -144,13 +144,13 @@ impl BackrunBundleGlobalPool {
     }
 
     /// Returns the estimated base fee per gas from the latest canonical tip.
-    pub fn estimated_base_fee_per_gas(&self) -> u64 {
+    pub(super) fn estimated_base_fee_per_gas(&self) -> u64 {
         self.inner
             .estimated_base_fee_per_gas
             .load(Ordering::Relaxed)
     }
 
-    pub fn on_canonical_state_change<B: Block>(&self, tip: &RecoveredBlock<B>) {
+    pub(super) fn on_canonical_state_change<B: Block>(&self, tip: &RecoveredBlock<B>) {
         let block_number = tip.number();
 
         if let Some(base_fee) = tip.base_fee_per_gas() {
