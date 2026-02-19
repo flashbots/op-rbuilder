@@ -76,7 +76,7 @@ impl BundleOpts {
 
 #[derive(Clone)]
 pub struct TransactionBuilder {
-    pub(crate) provider: RootProvider<Optimism>,
+    provider: RootProvider<Optimism>,
     signer: Option<Signer>,
     nonce: Option<u64>,
     base_fee: Option<u128>,
