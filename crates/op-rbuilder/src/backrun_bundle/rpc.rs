@@ -19,7 +19,7 @@ const MAX_BLOCK_RANGE: u64 = 10;
 const MAX_FUTURE_BLOCK_ADD: u64 = 10;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct BackrunBundleRPCArgs {
+pub struct BackrunBundleRpcArgs {
     #[serde(rename = "txs")]
     pub transactions: Vec<Bytes>,
 
@@ -73,7 +73,7 @@ pub struct BackrunBundleRPCArgs {
 #[rpc(server, namespace = "eth")]
 pub trait BackrunBundleApi {
     #[method(name = "sendBackrunBundle")]
-    async fn send_backrun_bundle(&self, bundle: BackrunBundleRPCArgs) -> RpcResult<BundleResult>;
+    async fn send_backrun_bundle(&self, bundle: BackrunBundleRpcArgs) -> RpcResult<BundleResult>;
 }
 
 pub struct BackrunBundleRpc<Provider> {
@@ -95,7 +95,7 @@ impl<Provider> BackrunBundleApiServer for BackrunBundleRpc<Provider>
 where
     Provider: BlockNumReader + Send + Sync + 'static,
 {
-    async fn send_backrun_bundle(&self, bundle: BackrunBundleRPCArgs) -> RpcResult<BundleResult> {
+    async fn send_backrun_bundle(&self, bundle: BackrunBundleRpcArgs) -> RpcResult<BundleResult> {
         if bundle.transactions.len() != 2 {
             return Err(EthApiError::InvalidParams(
                 "backrun bundle must contain exactly 2 transactions".into(),
@@ -232,8 +232,8 @@ mod tests {
         BackrunBundleRpc::new(BackrunBundleGlobalPool::default(), MockProvider(best_block))
     }
 
-    fn valid_args(target: Bytes, backrun: Bytes, block_number: u64) -> BackrunBundleRPCArgs {
-        BackrunBundleRPCArgs {
+    fn valid_args(target: Bytes, backrun: Bytes, block_number: u64) -> BackrunBundleRpcArgs {
+        BackrunBundleRpcArgs {
             transactions: vec![target, backrun],
             block_number,
             block_number_max: None,
@@ -270,7 +270,7 @@ mod tests {
     async fn test_rejects_max_block_below_block_number() {
         let rpc = make_rpc(5);
         let s = Signer::random();
-        let args = BackrunBundleRPCArgs {
+        let args = BackrunBundleRpcArgs {
             transactions: vec![make_raw_tx(&s, 0), make_raw_tx(&s, 1)],
             block_number: 10,
             block_number_max: Some(5),
@@ -286,7 +286,7 @@ mod tests {
     async fn test_rejects_block_range_too_large() {
         let rpc = make_rpc(5);
         let s = Signer::random();
-        let args = BackrunBundleRPCArgs {
+        let args = BackrunBundleRpcArgs {
             transactions: vec![make_raw_tx(&s, 0), make_raw_tx(&s, 1)],
             block_number: 10,
             block_number_max: Some(21), // range = 11, max allowed is 10

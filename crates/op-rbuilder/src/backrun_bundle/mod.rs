@@ -72,7 +72,7 @@ pub use args::BackrunBundleArgs;
 pub use global_pool::BackrunBundleGlobalPool;
 pub use maintain::maintain_backrun_bundle_pool_future;
 pub use payload_pool::{BackrunBundlePayloadPool, ReplacementKey, StoredBackrunBundle};
-pub use rpc::{BackrunBundleApiServer, BackrunBundleRPCArgs, BackrunBundleRpc};
+pub use rpc::{BackrunBundleApiServer, BackrunBundleRpc, BackrunBundleRpcArgs};
 
 #[derive(Debug, Clone)]
 pub struct BackrunBundlesPayloadCtx {

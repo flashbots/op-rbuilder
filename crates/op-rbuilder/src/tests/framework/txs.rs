@@ -1,5 +1,5 @@
 use crate::{
-    backrun_bundle::BackrunBundleRPCArgs,
+    backrun_bundle::BackrunBundleRpcArgs,
     primitives::bundle::{Bundle, BundleResult},
     tests::funded_signer,
     tx::FBPooledTransaction,
@@ -425,7 +425,7 @@ pub async fn send_backrun_bundle(
         None => provider.get_block_number().await? + 1,
     };
 
-    let bundle = BackrunBundleRPCArgs {
+    let bundle = BackrunBundleRpcArgs {
         transactions: vec![target_raw_tx.into(), backrun_encoded.into()],
         block_number,
         block_number_max: bundle_opts.block_number_max,
