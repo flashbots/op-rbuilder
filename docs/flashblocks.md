@@ -136,8 +136,8 @@ function build_payload(build_arguments, best_payload_cell):
 The `FlashblockScheduler` handles timing coordination for flashblock production:
 
 - **Scheduler**: Pre-computes all send times at initialization based on remaining time until the payload deadline
-- **First Offset**: Aligned to `(remaining_time - 1) % interval + 1` to produce evenly spaced flashblocks
-- **Trigger Clamping**: The number of triggers is clamped to `block_time / flashblock_interval` to maintain backwards compatibility
+- **Offset**: Applied to interval timings to ensure evenly spaced flashblocks
+- **Trigger Clamping**: The number of triggers is set from the target_flashblocks count, which is computed based on remaining time and the configured flashblocks interval
 - **Cancellation Tokens**: When a flashblock trigger fires, the current flashblock building is cancelled and published
 
 ### Configuration Parameters
@@ -149,7 +149,7 @@ The `FlashblockScheduler` handles timing coordination for flashblock production:
 | `flashblocks.end-buffer-ms` | Time reserved at end of slot for final processing | 0 |
 
 ### Caveats
-- If the payload timestamp is in the past or remaining time is 0, the scheduler falls back to using the full block_time
+- If the payload timestamp is in the past or remaining time is 0, the scheduler will not trigger any flashblocks.
 - Late FCU arrivals result in fewer flashblocks being produced (proportional to remaining time)
 
 ## Block building flow
