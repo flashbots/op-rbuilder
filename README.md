@@ -128,34 +128,11 @@ cargo test --package op-rbuilder --lib
 
 ## Local Devnet
 
-1. Clone [flashbots/builder-playground](https://github.com/flashbots/builder-playground) and start an OPStack chain.
+1. Install [flashbots/builder-playground](https://github.com/flashbots/builder-playground).
 
-```bash
-git clone https://github.com/flashbots/builder-playground.git
-cd builder-playground
-go run main.go cook opstack --external-builder http://host.docker.internal:4444
-```
+2. `builder-playground start playground.yaml` (use `--skip-setup` if you need to skip `cargo build` every time).
 
-2. Remove any existing `reth` chain db. The following are the default data directories:
-
--   Linux: `$XDG_DATA_HOME/reth/` or `$HOME/.local/share/reth/`
--   Windows: `{FOLDERID_RoamingAppData}/reth/`
--   macOS: `$HOME/Library/Application Support/reth/`
-
-3. Run `op-rbuilder` in the `rbuilder` repo on port 4444:
-
-```bash
-cargo run -p op-rbuilder --bin op-rbuilder -- node \
-    --chain $HOME/.playground/devnet/l2-genesis.json \
-    --http --http.port 2222 \
-    --authrpc.addr 0.0.0.0 --authrpc.port 4444 --authrpc.jwtsecret $HOME/.playground/devnet/jwtsecret \
-    --port 30333 --disable-discovery \
-    --metrics 127.0.0.1:9011 \
-    --rollup.builder-secret-key ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80 \
-    --trusted-peers enode://79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798483ada7726a3c4655da4fbfc0e1108a8fd17b448a68554199c47d08ffb10d4b8@127.0.0.1:30304
-```
-
-4. Run `contender`:
+3. Run `contender`:
 
 ```bash
 cargo run -- spam --tps 10 -r http://localhost:2222 --optimism --min-balance 0.14
@@ -163,40 +140,15 @@ cargo run -- spam --tps 10 -r http://localhost:2222 --optimism --min-balance 0.1
 
 And you should start to see blocks being built and landed on-chain with `contender` transactions.
 
-## Builder playground
+Alternatively, you can send a single test transaction like:
 
-You can quickly spin up an op-stack devnet using [builder-playground](https://github.com/flashbots/builder-playground). The quickest workflow to get op-stack running against your local `op-rbuilder` instance is:
-
-1. Check out the builder playground repo
-
-```
-git clone git@github.com:flashbots/builder-playground.git
+```bash
+builder-playground test http://localhost:2222 --timeout 30s --retries 10
 ```
 
-2. In the builder-playgound spin up an l2 opstack setup specifying that it should use an external block builder:
+op-rbuilder will automatically try to detect all settings and ports from the currently running playground thanks to the `--builder.playground` flag.
 
-```
-go run main.go cook opstack --external-builder http://host.docker.internal:4444
-```
-
-3. Run rbuilder in playground mode:
-
-```
-cargo run --bin op-rbuilder -- node --builder.playground
-```
-
-You could also run it using:
-
-```
-just run-playground
-```
-
-This will automatically try to detect all settings and ports from the currently running playground. Sometimes you might need to clean up the builder-playground state between runs. This can be done using:
-
-```
-rm -rf ~/.local/share/reth
-sudo rm -rf ~/.playground
-```
+Make sure to check out `playground.yaml` if you need to inspect or modify the configuration for your local test environment!
 
 ## Running GitHub actions locally
 

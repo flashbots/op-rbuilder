@@ -53,7 +53,7 @@ pub struct OpRbuilderArgs {
     #[arg(
         long = "builder.playground",
         num_args = 0..=1,
-        default_missing_value = "$HOME/.playground/devnet/",
+        default_missing_value = "$HOME/.local/state/builder-playground/devnet",
         value_parser = expand_path,
         env = "PLAYGROUND_DIR",
     )]
