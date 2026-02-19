@@ -5,8 +5,8 @@
 //! clap [Args](clap::Args) for optimism rollup configuration
 
 use crate::{
-    flashtestations::args::FlashtestationsArgs, gas_limiter::args::GasLimiterArgs,
-    tx_signer::Signer,
+    backrun_bundle::BackrunBundleArgs, flashtestations::args::FlashtestationsArgs,
+    gas_limiter::args::GasLimiterArgs, tx_signer::Signer,
 };
 use alloy_primitives::Address;
 use anyhow::{Result, anyhow};
@@ -66,6 +66,8 @@ pub struct OpRbuilderArgs {
     pub flashtestations: FlashtestationsArgs,
     #[command(flatten)]
     pub gas_limiter: GasLimiterArgs,
+    #[command(flatten)]
+    pub backrun_bundle: BackrunBundleArgs,
 }
 
 impl Default for OpRbuilderArgs {
