@@ -18,6 +18,7 @@ use super::{
 const MAX_BLOCK_RANGE: u64 = 10;
 const MAX_FUTURE_BLOCK_ADD: u64 = 10;
 
+#[serde_with::skip_serializing_none]
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct BackrunBundleRpcArgs {
     #[serde(rename = "txs")]
@@ -29,8 +30,7 @@ pub struct BackrunBundleRpcArgs {
     #[serde(
         default,
         rename = "maxBlockNumber",
-        with = "alloy_serde::quantity::opt",
-        skip_serializing_if = "Option::is_none"
+        with = "alloy_serde::quantity::opt"
     )]
     pub block_number_max: Option<u64>,
 
@@ -39,8 +39,7 @@ pub struct BackrunBundleRpcArgs {
     #[serde(
         default,
         rename = "minFlashblockNumber",
-        with = "alloy_serde::quantity::opt",
-        skip_serializing_if = "Option::is_none"
+        with = "alloy_serde::quantity::opt"
     )]
     pub flashblock_number_min: Option<u64>,
 
@@ -49,24 +48,15 @@ pub struct BackrunBundleRpcArgs {
     #[serde(
         default,
         rename = "maxFlashblockNumber",
-        with = "alloy_serde::quantity::opt",
-        skip_serializing_if = "Option::is_none"
+        with = "alloy_serde::quantity::opt"
     )]
     pub flashblock_number_max: Option<u64>,
 
-    #[serde(
-        default,
-        rename = "replacementUuid",
-        skip_serializing_if = "Option::is_none"
-    )]
+    #[serde(default, rename = "replacementUuid")]
     pub replacement_uuid: Option<Uuid>,
 
     /// Replacement nonce must be set if `replacement_uuid` is set
-    #[serde(
-        default,
-        rename = "replacementNonce",
-        skip_serializing_if = "Option::is_none"
-    )]
+    #[serde(default, rename = "replacementNonce")]
     pub replacement_nonce: Option<u64>,
 }
 
