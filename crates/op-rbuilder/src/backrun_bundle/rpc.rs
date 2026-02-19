@@ -90,7 +90,7 @@ impl<Provider> BackrunBundleRpc<Provider> {
     }
 }
 
-#[jsonrpsee::core::async_trait]
+#[async_trait::async_trait]
 impl<Provider> BackrunBundleApiServer for BackrunBundleRpc<Provider>
 where
     Provider: BlockNumReader + Send + Sync + 'static,
