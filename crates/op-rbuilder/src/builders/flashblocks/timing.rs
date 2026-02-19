@@ -167,40 +167,35 @@ fn compute_scheduler_intervals(
     target_flashblocks: u64,
 ) -> Vec<Duration> {
     // Align flashblocks to remaining_time
-    let first_flashblock_offset =
-        calculate_first_flashblock_offset(remaining_time, flashblock_interval);
-
-    let first_flashblock_offset = apply_offset(first_flashblock_offset, send_offset_ms);
-    let flashblocks_deadline = apply_offset(
-        remaining_time.saturating_sub(Duration::from_millis(end_buffer_ms)),
-        send_offset_ms,
-    );
-
+    let first_flashblock_timing =
+        calculate_first_flashblock_timing(remaining_time, flashblock_interval);
     compute_send_time_intervals(
-        first_flashblock_offset,
+        first_flashblock_timing,
         flashblock_interval,
-        flashblocks_deadline,
+        send_offset_ms,
+        remaining_time.saturating_sub(Duration::from_millis(end_buffer_ms)),
         target_flashblocks,
     )
 }
 
 /// Generates the actual send time intervals given timing parameters.
 fn compute_send_time_intervals(
-    first_flashblock_offset: Duration,
+    first_flashblock_timing: Duration,
     interval: Duration,
+    send_offset_ms: i64,
     deadline: Duration,
     target_flashblocks: u64,
 ) -> Vec<Duration> {
     let mut send_times = vec![];
 
-    // Add triggers at first_flashblock_offset, then every interval until
-    // deadline
-    let mut next_time = first_flashblock_offset;
+    // Add triggers (with offset) at first_flashblock_timing, then every interval
+    // until deadline.
+    let mut next_time = first_flashblock_timing;
     while next_time < deadline {
-        send_times.push(next_time);
+        send_times.push(apply_offset(next_time, send_offset_ms, deadline));
         next_time += interval;
     }
-    send_times.push(deadline);
+    send_times.push(apply_offset(deadline, send_offset_ms, deadline));
 
     // Clamp the number of triggers. Some of the calculation strategies end up
     // with more triggers concentrated towards the start of the block and so
@@ -213,17 +208,21 @@ fn compute_send_time_intervals(
 /// Durations cannot be negative values so we need to store the offset value as
 /// an int. This is a helper function to apply the signed millisecond offset to
 /// a duration.
-fn apply_offset(duration: Duration, offset_ms: i64) -> Duration {
+fn apply_offset(duration: Duration, offset_ms: i64, deadline: Duration) -> Duration {
     let offset_delta = offset_ms.unsigned_abs();
     if offset_ms >= 0 {
-        duration.saturating_add(Duration::from_millis(offset_delta))
+        duration
+            .saturating_add(Duration::from_millis(offset_delta))
+            .min(deadline)
     } else {
-        duration.saturating_sub(Duration::from_millis(offset_delta))
+        duration
+            .saturating_sub(Duration::from_millis(offset_delta))
+            .min(deadline)
     }
 }
 
 /// Calculates when the first flashblock should be triggered.
-fn calculate_first_flashblock_offset(remaining_time: Duration, interval: Duration) -> Duration {
+fn calculate_first_flashblock_timing(remaining_time: Duration, interval: Duration) -> Duration {
     let remaining_time_ms = remaining_time.as_millis() as u64;
     let interval_ms = interval.as_millis() as u64;
 
@@ -255,7 +254,7 @@ mod tests {
     use super::*;
 
     struct ComputeSendTimesTestCase {
-        first_flashblock_offset_ms: u64,
+        first_flashblock_timing_ms: u64,
         deadline_ms: u64,
         expected_send_times_ms: Vec<u64>,
     }
@@ -263,11 +262,13 @@ mod tests {
     fn check_compute_send_times(
         test_case: ComputeSendTimesTestCase,
         interval: Duration,
+        send_offset_ms: i64,
         target_flashblocks: u64,
     ) {
         let send_times = compute_send_time_intervals(
-            Duration::from_millis(test_case.first_flashblock_offset_ms),
+            Duration::from_millis(test_case.first_flashblock_timing_ms),
             interval,
+            send_offset_ms,
             Duration::from_millis(test_case.deadline_ms),
             target_flashblocks,
         );
@@ -278,51 +279,74 @@ mod tests {
             .collect();
         assert_eq!(
             send_times, expected_send_times,
-            "Failed for test case: first_flashblock_offset_ms: {}, interval: {:?}, deadline_ms: {}",
-            test_case.first_flashblock_offset_ms, interval, test_case.deadline_ms,
+            "Failed for test case: first_flashblock_timing_ms: {}, interval: {:?}, deadline_ms: {}",
+            test_case.first_flashblock_timing_ms, interval, test_case.deadline_ms,
         );
     }
 
     #[test]
     fn test_compute_send_times() {
         let test_cases = vec![ComputeSendTimesTestCase {
-            first_flashblock_offset_ms: 150,
+            first_flashblock_timing_ms: 150,
             deadline_ms: 880,
             expected_send_times_ms: vec![150, 350, 550, 750, 880],
         }];
 
         for test_case in test_cases {
-            check_compute_send_times(test_case, Duration::from_millis(200), 5);
+            check_compute_send_times(test_case, Duration::from_millis(200), 0, 5);
+        }
+    }
+
+    #[test]
+    fn test_compute_send_times_with_send_offset() {
+        let test_cases = vec![ComputeSendTimesTestCase {
+            first_flashblock_timing_ms: 150,
+            deadline_ms: 880,
+            expected_send_times_ms: vec![140, 340, 540, 740, 870],
+        }];
+
+        for test_case in test_cases {
+            check_compute_send_times(test_case, Duration::from_millis(200), 10, 5);
         }
     }
 
     #[test]
     fn test_apply_offset() {
         assert_eq!(
-            apply_offset(Duration::from_millis(100), 50),
+            apply_offset(Duration::from_millis(100), 50, Duration::from_millis(200)),
             Duration::from_millis(150)
         );
         assert_eq!(
-            apply_offset(Duration::from_millis(100), -30),
+            apply_offset(Duration::from_millis(100), -30, Duration::from_millis(200)),
             Duration::from_millis(70)
         );
         assert_eq!(
-            apply_offset(Duration::from_millis(100), 0),
+            apply_offset(Duration::from_millis(100), 0, Duration::from_millis(200)),
             Duration::from_millis(100)
         );
         // Should not underflow - saturates at zero
         assert_eq!(
-            apply_offset(Duration::from_millis(50), -100),
+            apply_offset(Duration::from_millis(50), -100, Duration::from_millis(200)),
             Duration::ZERO
+        );
+        // Should not overflow target time - saturates at target time
+        assert_eq!(
+            apply_offset(Duration::from_millis(100), 200, Duration::from_millis(200)),
+            Duration::from_millis(200)
+        );
+        // Should not underflow target time - saturates at target time
+        assert_eq!(
+            apply_offset(Duration::from_millis(300), -50, Duration::from_millis(200)),
+            Duration::from_millis(200)
         );
     }
 
     #[test]
-    fn test_calculate_first_flashblock_offset() {
+    fn test_calculate_first_flashblock_timing() {
         // remaining_time exactly divisible by interval so we get the full
         // interval
         assert_eq!(
-            calculate_first_flashblock_offset(
+            calculate_first_flashblock_timing(
                 Duration::from_millis(400),
                 Duration::from_millis(200)
             ),
@@ -331,7 +355,7 @@ mod tests {
 
         // remaining_time with partial interval
         assert_eq!(
-            calculate_first_flashblock_offset(
+            calculate_first_flashblock_timing(
                 Duration::from_millis(350),
                 Duration::from_millis(200)
             ),
@@ -340,7 +364,7 @@ mod tests {
 
         // remaining_time less than interval
         assert_eq!(
-            calculate_first_flashblock_offset(
+            calculate_first_flashblock_timing(
                 Duration::from_millis(140),
                 Duration::from_millis(200)
             ),
@@ -349,7 +373,7 @@ mod tests {
 
         // remaining_time equals interval
         assert_eq!(
-            calculate_first_flashblock_offset(
+            calculate_first_flashblock_timing(
                 Duration::from_millis(200),
                 Duration::from_millis(200)
             ),
