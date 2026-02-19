@@ -1,24 +1,30 @@
 use clap::Args;
 
+const DEFAULT_BACKRUNS_ENABLED: bool = false;
+const DEFAULT_MAX_CONSIDERED_PER_BLOCK: usize = 100;
+const DEFAULT_MAX_LANDED_PER_BLOCK: usize = 100;
+const DEFAULT_MAX_CONSIDERED_PER_TRANSACTION: usize = 10;
+const DEFAULT_MAX_LANDED_PER_TRANSACTION: usize = 1;
+
 #[derive(Debug, Clone, PartialEq, Eq, Args)]
 pub struct BackrunBundleArgs {
-    #[arg(long = "backruns.enabled", default_value = "false")]
+    #[arg(long = "backruns.enabled", default_value_t = DEFAULT_BACKRUNS_ENABLED)]
     pub backruns_enabled: bool,
     #[arg(
         long = "backruns.max_considered_backruns_per_block",
-        default_value = "100"
+        default_value_t = DEFAULT_MAX_CONSIDERED_PER_BLOCK
     )]
     pub max_considered_backruns_per_block: usize,
-    #[arg(long = "backruns.max_landed_backruns_per_block", default_value = "100")]
+    #[arg(long = "backruns.max_landed_backruns_per_block", default_value_t = DEFAULT_MAX_LANDED_PER_BLOCK)]
     pub max_landed_backruns_per_block: usize,
     #[arg(
         long = "backruns.max_considered_backruns_per_transaction",
-        default_value = "10"
+        default_value_t = DEFAULT_MAX_CONSIDERED_PER_TRANSACTION
     )]
     pub max_considered_backruns_per_transaction: usize,
     #[arg(
         long = "backruns.max_landed_backruns_per_transaction",
-        default_value = "1"
+        default_value_t = DEFAULT_MAX_LANDED_PER_TRANSACTION
     )]
     pub max_landed_backruns_per_transaction: usize,
 }
@@ -41,11 +47,11 @@ impl BackrunBundleArgs {
 impl Default for BackrunBundleArgs {
     fn default() -> Self {
         Self {
-            backruns_enabled: false,
-            max_considered_backruns_per_block: 100,
-            max_landed_backruns_per_block: 100,
-            max_considered_backruns_per_transaction: 10,
-            max_landed_backruns_per_transaction: 1,
+            backruns_enabled: DEFAULT_BACKRUNS_ENABLED,
+            max_considered_backruns_per_block: DEFAULT_MAX_CONSIDERED_PER_BLOCK,
+            max_landed_backruns_per_block: DEFAULT_MAX_LANDED_PER_BLOCK,
+            max_considered_backruns_per_transaction: DEFAULT_MAX_CONSIDERED_PER_TRANSACTION,
+            max_landed_backruns_per_transaction: DEFAULT_MAX_LANDED_PER_TRANSACTION,
         }
     }
 }
