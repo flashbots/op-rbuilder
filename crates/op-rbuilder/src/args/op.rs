@@ -139,7 +139,7 @@ pub struct FlashblocksArgs {
     /// Whether to enable continuous flashblock building within each interval
     #[arg(
         long = "flashblocks.enable-continuous-building",
-        default_value = "true",
+        default_value = "false",
         env = "FLASHBLOCKS_ENABLE_CONTINUOUS_BUILDING"
     )]
     pub flashblocks_enable_continuous_building: bool,

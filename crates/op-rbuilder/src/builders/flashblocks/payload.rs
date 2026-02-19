@@ -658,17 +658,13 @@ where
         );
         let flashblock_build_start_time = Instant::now();
 
-        let builder_txs =
-            match self
-                .builder_tx
-                .add_builder_txs(&state_provider, info, ctx, state, true)
-            {
-                Ok(builder_txs) => builder_txs,
-                Err(e) => {
-                    error!(target: "payload_builder", "Error simulating builder txs: {}", e);
-                    vec![]
-                }
-            };
+        let builder_txs = self
+            .builder_tx
+            .add_builder_txs(&state_provider, info, ctx, state, true)
+            .unwrap_or_else(|e| {
+                error!(target: "payload_builder", "Error simulating builder txs: {}", e);
+                vec![]
+            });
 
         // only reserve builder tx gas / da size that has not been committed yet
         // committed builder txs would have counted towards the gas / da used
@@ -869,6 +865,7 @@ where
         target_gas_for_batch: u64,
         target_da_for_batch: Option<u64>,
         target_da_footprint_for_batch: Option<u64>,
+        block_cancel: &CancellationToken,
     ) -> eyre::Result<Option<FlashblockCandidate>> {
         // Create simulation state by cloning the active state's cache and transition
         let mut simulation_info = info.clone();
@@ -881,7 +878,8 @@ where
             .build();
         simulation_state.transition_state = simulation_transition_state;
 
-        // Refresh pool txs (without_updates to avoid iterator invalidation during tight loop)
+        // Refresh pool txs
+        // without_updates to not consider new transactions (will be in the next candidate)
         let best_txs_start_time = Instant::now();
         best_txs.refresh_iterator(
             BestPayloadTransactions::new(
@@ -892,12 +890,6 @@ where
             ctx.flashblock_index(),
         );
         let transaction_pool_fetch_time = best_txs_start_time.elapsed();
-        ctx.metrics
-            .transaction_pool_fetch_duration
-            .record(transaction_pool_fetch_time);
-        ctx.metrics
-            .transaction_pool_fetch_gauge
-            .set(transaction_pool_fetch_time);
 
         // Execute transactions on simulation state
         let tx_execution_start_time = Instant::now();
@@ -911,12 +903,6 @@ where
         )
         .wrap_err("failed to execute best transactions")?;
         let payload_transaction_simulation_time = tx_execution_start_time.elapsed();
-        ctx.metrics
-            .payload_transaction_simulation_duration
-            .record(payload_transaction_simulation_time);
-        ctx.metrics
-            .payload_transaction_simulation_gauge
-            .set(payload_transaction_simulation_time);
 
         // Add bottom-of-block builder txs to simulation
         if let Err(e) = self.builder_tx.add_builder_txs(
@@ -937,6 +923,12 @@ where
             return Ok(None);
         }
 
+        // Early return if canceled to publish asap
+        // Note/TODO: We should make this whole refresh async and race against the cancel token
+        if ctx.cancel.is_cancelled() || block_cancel.is_cancelled() {
+            return Ok(None);
+        }
+
         // Build block from simulation state
         let total_block_built_duration = Instant::now();
         let build_result = build_block(
@@ -946,12 +938,6 @@ where
             !ctx.extra_ctx.disable_state_root || ctx.attributes().no_tx_pool,
         );
         let total_block_built_duration = total_block_built_duration.elapsed();
-        ctx.metrics
-            .total_block_built_duration
-            .record(total_block_built_duration);
-        ctx.metrics
-            .total_block_built_gauge
-            .set(total_block_built_duration);
 
         match build_result {
             Err(err) => {
@@ -961,6 +947,27 @@ where
             Ok((payload, mut fb)) => {
                 fb.index = ctx.flashblock_index();
                 fb.base = None;
+
+                // Records metrics
+                // TODO: consider recording them before publishing, when we are sure no new candidate may become best
+                ctx.metrics
+                    .transaction_pool_fetch_duration
+                    .record(transaction_pool_fetch_time);
+                ctx.metrics
+                    .transaction_pool_fetch_gauge
+                    .set(transaction_pool_fetch_time);
+                ctx.metrics
+                    .payload_transaction_simulation_duration
+                    .record(payload_transaction_simulation_time);
+                ctx.metrics
+                    .payload_transaction_simulation_gauge
+                    .set(payload_transaction_simulation_time);
+                ctx.metrics
+                    .total_block_built_duration
+                    .record(total_block_built_duration);
+                ctx.metrics
+                    .total_block_built_gauge
+                    .set(total_block_built_duration);
 
                 Ok(Some((
                     payload,
@@ -990,7 +997,7 @@ where
         block_cancel: &CancellationToken,
         best_payload: &BlockCell<OpBuiltPayload>,
     ) -> eyre::Result<Option<FlashblocksExtraCtx>> {
-        // --- 1. Prepare shared context (same as build_next_flashblock) ---
+        // --- 1. Prepare shared context ---
 
         let flashblock_index = ctx.flashblock_index();
         let mut target_gas_for_batch = ctx.extra_ctx.target_gas_for_batch;
@@ -1042,19 +1049,20 @@ where
             *footprint = footprint.saturating_sub(builder_tx_da_size.saturating_mul(scalar as u64));
         }
 
-        // --- 2. Candidate loop: build candidates until interval ends or no improvement ---
+        // --- 2. Candidate loop: build candidates until interval ends ---
 
         let mut best: Option<FlashblockCandidate> = None;
+        let mut attempt = 0_u64;
+
+        // early return
+        if block_cancel.is_cancelled() || ctx.cancel.is_cancelled() {
+            return Ok(None);
+        }
 
         loop {
-            // Block cancel: new FCU received, stop building new candidates
-            // Flashblock interval ended: stop building, publish current best
-            if block_cancel.is_cancelled() || ctx.cancel.is_cancelled() {
-                break;
-            }
-
             // Build one candidate -- returns Some if better than current best, None if no improvement
-            match self.refresh_best_flashblock_candidate(
+            let candidate_refresh_start_time = Instant::now();
+            if let Some(new_best) = self.refresh_best_flashblock_candidate(
                 &best,
                 ctx,
                 info,
@@ -1064,10 +1072,27 @@ where
                 target_gas_for_batch,
                 target_da_for_batch,
                 target_da_footprint_for_batch,
+                block_cancel,
             )? {
-                Some(new_best) => best = Some(new_best),
-                None => break, // No improvement possible, publish what we have
+                best = Some(new_best)
             }
+            let candidate_refresh_duration = candidate_refresh_start_time.elapsed();
+
+            // Block cancel: new FCU received, return early
+            if block_cancel.is_cancelled() {
+                if best.is_some() {
+                    warn!(target: "payload_builder", "Block cancel received while we have unpublished best flashblock. We may miss flashblocks because of slow candidate building.");
+                }
+                return Ok(None);
+            }
+
+            // Flashblock interval ended: stop building new candidates and publish current best
+            if ctx.cancel.is_cancelled() {
+                debug!(target: "payload_builder", build_duration = candidate_refresh_duration.as_millis(), attempt, "Flashblock interval ended, stopping candidate building.");
+                break;
+            }
+
+            attempt = attempt.saturating_add(1);
         }
 
         // --- 3. Publish the best candidate ---
@@ -1085,16 +1110,11 @@ where
         }
 
         let (payload, fb_payload, execution_info, cache_state, transition_state) =
-            best.expect("checked is_none above");
+            best.expect("best is some asserted above");
 
         // Apply simulation state to the real state
         state.cache = cache_state;
         state.transition_state = transition_state;
-
-        // If block cancel fired while we were finishing, don't publish
-        if block_cancel.is_cancelled() {
-            return Ok(None);
-        }
 
         // Publish flashblock
         let flashblock_byte_size = self
