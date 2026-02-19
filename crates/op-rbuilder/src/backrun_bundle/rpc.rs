@@ -279,7 +279,7 @@ mod tests {
         let args = BackrunBundleRpcArgs {
             transactions: vec![make_raw_tx(&s, 0), make_raw_tx(&s, 1)],
             block_number: 10,
-            block_number_max: Some(21), // range = 11, max allowed is 10
+            block_number_max: Some(10 + super::MAX_BLOCK_RANGE + 1),
             flashblock_number_min: None,
             flashblock_number_max: None,
             replacement_uuid: None,
@@ -311,8 +311,11 @@ mod tests {
     async fn test_rejects_too_far_in_future() {
         let rpc = make_rpc(5); // best block = 5
         let s = Signer::random();
-        // block_number = 16, which is 5 + 11 > 5 + MAX_FUTURE_BLOCK_ADD (10)
-        let args = valid_args(make_raw_tx(&s, 0), make_raw_tx(&s, 1), 16);
+        let args = valid_args(
+            make_raw_tx(&s, 0),
+            make_raw_tx(&s, 1),
+            5 + super::MAX_FUTURE_BLOCK_ADD + 1,
+        );
         assert!(rpc.send_backrun_bundle(args).await.is_err());
     }
 
