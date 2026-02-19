@@ -11,13 +11,14 @@ where
     T: PoolTransaction,
     I: Iterator<Item = Arc<ValidPoolTransaction<T>>>,
 {
-    inner: reth_payload_util::BestPayloadTransactions<T, I>,
+    inner: Option<reth_payload_util::BestPayloadTransactions<T, I>>,
     current_flashblock_number: u64,
     // Transactions that were already commited to the state. Using them again would cause NonceTooLow
     // so we skip them
     commited_transactions: HashSet<TxHash>,
 }
 
+#[allow(dead_code)]
 impl<T, I> BestFlashblocksTxs<T, I>
 where
     T: PoolTransaction,
@@ -25,7 +26,17 @@ where
 {
     pub(super) fn new(inner: reth_payload_util::BestPayloadTransactions<T, I>) -> Self {
         Self {
-            inner,
+            inner: Some(inner),
+            current_flashblock_number: 0,
+            commited_transactions: Default::default(),
+        }
+    }
+
+    /// Creates an empty instance with no inner iterator. Useful for pre-populating
+    /// committed transactions before fetching from the pool via `refresh_iterator`.
+    pub(super) fn empty() -> Self {
+        Self {
+            inner: None,
             current_flashblock_number: 0,
             commited_transactions: Default::default(),
         }
@@ -38,13 +49,18 @@ where
         inner: reth_payload_util::BestPayloadTransactions<T, I>,
         current_flashblock_number: u64,
     ) {
-        self.inner = inner;
+        self.inner = Some(inner);
         self.current_flashblock_number = current_flashblock_number;
     }
 
     /// Remove transaction from next iteration and it already in the state
     pub(super) fn mark_commited(&mut self, txs: Vec<TxHash>) {
         self.commited_transactions.extend(txs);
+    }
+
+    /// Returns the set of already committed transaction hashes
+    pub(super) fn commited_transactions(&self) -> &HashSet<TxHash> {
+        &self.commited_transactions
     }
 }
 
@@ -56,8 +72,9 @@ where
     type Transaction = T;
 
     fn next(&mut self, ctx: ()) -> Option<Self::Transaction> {
+        let inner = self.inner.as_mut()?;
         loop {
-            let tx = self.inner.next(ctx)?;
+            let tx = inner.next(ctx)?;
             // Skip transaction we already included
             if self.commited_transactions.contains(tx.hash()) {
                 continue;
@@ -86,7 +103,7 @@ where
                     max_flashblock = max,
                     "Bundle flashblock max exceeded"
                 );
-                self.inner.mark_invalid(tx.sender(), tx.nonce());
+                inner.mark_invalid(tx.sender(), tx.nonce());
                 continue;
             }
 
@@ -96,7 +113,9 @@ where
 
     /// Proxy to inner iterator
     fn mark_invalid(&mut self, sender: Address, nonce: u64) {
-        self.inner.mark_invalid(sender, nonce);
+        if let Some(inner) = self.inner.as_mut() {
+            inner.mark_invalid(sender, nonce);
+        }
     }
 }
 
