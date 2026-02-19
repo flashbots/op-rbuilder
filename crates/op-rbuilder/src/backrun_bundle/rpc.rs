@@ -133,7 +133,7 @@ where
             .into());
         }
 
-        if block_number_min > last_block_number + MAX_FUTURE_BLOCK_ADD {
+        if block_number_min.saturating_sub(last_block_number) > MAX_FUTURE_BLOCK_ADD {
             return Err(EthApiError::InvalidParams(format!(
                 "blockNumber ({block_number_min}) is too far in the future (current: {last_block_number}, max: +{MAX_FUTURE_BLOCK_ADD})"
             ))
