@@ -7,7 +7,7 @@ use crate::{
     traits::{ClientBounds, PayloadTxsBounds, PoolBounds},
 };
 use alloy_consensus::{
-    BlockBody, EMPTY_OMMER_ROOT_HASH, Header, constants::EMPTY_WITHDRAWALS, proofs,
+    BlockBody, EMPTY_OMMER_ROOT_HASH, Header, TxReceipt, constants::EMPTY_WITHDRAWALS, proofs,
 };
 use alloy_eips::{eip7685::EMPTY_REQUESTS_HASH, merge::BEACON_NONCE};
 use alloy_evm::{Database, block::BlockExecutionResult};
@@ -26,7 +26,7 @@ use reth_payload_primitives::BuiltPayloadExecutedBlock;
 use reth_payload_util::{BestPayloadTransactions, NoopPayloadTransactions, PayloadTransactions};
 use reth_primitives::RecoveredBlock;
 use reth_primitives_traits::InMemorySize;
-use reth_provider::{ExecutionOutcome, StateProvider};
+use reth_provider::StateProvider;
 use reth_revm::{
     State, database::StateProviderDatabase, db::states::bundle_state::BundleRetention,
 };
@@ -478,45 +478,24 @@ impl<Txs: PayloadTxsBounds> OpBuilder<'_, Txs> {
                 }
             };
 
-        let block_number = ctx.block_number();
         // OP doesn't support blobs/EIP-4844.
         // https://specs.optimism.io/protocol/exec-engine.html#ecotone-disable-blob-transactions
         // Need [Some] or [None] based on hardfork to match block hash.
         let (excess_blob_gas, blob_gas_used) = ctx.blob_fields(&info);
 
         let bundle_state = db.take_bundle();
-        let execution_outcome = ExecutionOutcome::new(
-            bundle_state.clone(),
-            vec![info.receipts.clone()],
-            block_number,
-            Vec::new(),
+
+        let receipts_root = calculate_receipt_root_no_memo_optimism(
+            &info.receipts,
+            &ctx.chain_spec,
+            ctx.attributes().timestamp(),
         );
-        let execution_output = BlockExecutionOutput {
-            state: bundle_state,
-            result: BlockExecutionResult {
-                receipts: info.receipts,
-                requests: Default::default(),
-                gas_used: info.cumulative_gas_used,
-                blob_gas_used: blob_gas_used.unwrap_or_default(),
-            },
-        };
-        let receipts_root = execution_outcome
-            .generic_receipts_root_slow(block_number, |receipts| {
-                calculate_receipt_root_no_memo_optimism(
-                    receipts,
-                    &ctx.chain_spec,
-                    ctx.attributes().timestamp(),
-                )
-            })
-            .expect("Number is in range");
-        let logs_bloom = execution_outcome
-            .block_logs_bloom(block_number)
-            .expect("Number is in range");
+        let logs_bloom = alloy_primitives::logs_bloom(info.receipts.iter().flat_map(|r| r.logs()));
 
         // calculate the state root
         let state_root_start_time = Instant::now();
 
-        let hashed_state = state_provider.hashed_post_state(execution_outcome.state());
+        let hashed_state = state_provider.hashed_post_state(&bundle_state);
         let (state_root, trie_output) = {
             state_provider
                 .state_root_with_updates(hashed_state.clone())
@@ -542,7 +521,7 @@ impl<Txs: PayloadTxsBounds> OpBuilder<'_, Txs> {
             // `l2tol1-message-passer`
             (
                 Some(
-                    isthmus::withdrawals_root(execution_outcome.state(), state_provider)
+                    isthmus::withdrawals_root(&bundle_state, state_provider)
                         .map_err(PayloadBuilderError::other)?,
                 ),
                 Some(EMPTY_REQUESTS_HASH),
@@ -551,6 +530,16 @@ impl<Txs: PayloadTxsBounds> OpBuilder<'_, Txs> {
             (Some(EMPTY_WITHDRAWALS), None)
         } else {
             (None, None)
+        };
+
+        let execution_output = BlockExecutionOutput {
+            state: bundle_state,
+            result: BlockExecutionResult {
+                receipts: info.receipts,
+                requests: Default::default(),
+                gas_used: info.cumulative_gas_used,
+                blob_gas_used: blob_gas_used.unwrap_or_default(),
+            },
         };
 
         // create the block header
