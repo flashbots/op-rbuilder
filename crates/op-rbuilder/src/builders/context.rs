@@ -53,12 +53,14 @@ use crate::{
     tx_signer::Signer,
 };
 
+/// Extra context trait that optionally provides the current flashblock index within a block.
 pub trait MaybeFlashblockIndex {
     fn flashblock_index(&self) -> Option<u64> {
         None
     }
 }
 
+/// Standard (non-flashblock) builds have no flashblock index.
 impl MaybeFlashblockIndex for () {}
 
 /// Container type that holds all necessities to build a new payload.
