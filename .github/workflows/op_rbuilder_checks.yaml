@@ -74,3 +74,13 @@ jobs:
         run: make test
         env:
           TESTS_TEMP_DIR: ${{ github.workspace }}
+
+      - name: Run op-rbuilder with builder-playground
+        uses: flashbots/builder-playground-action@v1
+        with:
+          version: v0.3.2-alpha.4
+          recipe: playground.yaml
+          args: --skip-setup
+
+      - name: Send test tx to op-rbuilder
+        run: builder-playground test http://localhost:2222 --timeout 30s --retries 10
