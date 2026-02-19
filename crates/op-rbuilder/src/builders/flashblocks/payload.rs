@@ -562,6 +562,11 @@ where
             };
             let _entered = fb_span.enter();
 
+            if ctx.flashblock_index() > ctx.target_flashblock_count() {
+                self.record_flashblocks_metrics(&ctx, &info, target_flashblocks, &span);
+                return Ok(());
+            }
+
             // Build flashblock after receiving signal
             let next_flashblocks_ctx = match self.build_next_flashblock(
                 &ctx,
