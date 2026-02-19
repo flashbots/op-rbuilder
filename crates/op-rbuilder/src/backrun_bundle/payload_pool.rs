@@ -4,7 +4,11 @@ use dashmap::DashMap;
 use reth_optimism_primitives::OpTransactionSigned;
 use reth_primitives::Recovered;
 use revm::state::AccountInfo;
-use std::{cmp::Ordering, collections::HashSet, sync::Arc};
+use std::{
+    cmp::Ordering,
+    collections::{BTreeSet, HashSet},
+    sync::Arc,
+};
 use uuid::Uuid;
 
 #[derive(Debug, Clone)]
@@ -88,7 +92,7 @@ impl Ord for OrderedBackrunBundle {
 
 #[derive(Debug, Clone, Default)]
 pub(super) struct TxBackruns {
-    pub(super) bundles: std::collections::BTreeSet<OrderedBackrunBundle>,
+    pub(super) bundles: BTreeSet<OrderedBackrunBundle>,
 }
 
 /// Per-block pool of backrun bundles, keyed by target transaction hash.
