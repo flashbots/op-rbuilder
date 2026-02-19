@@ -88,7 +88,7 @@ impl BackrunBundleGlobalPool {
             return false;
         }
         let metrics = &self.inner.metrics;
-        let first_pool_block = (last_block_number + 1).max(bundle.block_number);
+        let first_pool_block = (last_block_number + 1).max(bundle.block_number_min);
         if let Some(ref key) = bundle.replacement_key {
             // We use the entry API as a per-UUID write lock: payload pool
             // insertion happens inside the guard so that remove-old + insert-new
@@ -106,7 +106,7 @@ impl BackrunBundleGlobalPool {
                     }
                     // Remove old bundle from all its payload pools
                     let old = entry.get().clone();
-                    for block in old.block_number..=old.block_number_max {
+                    for block in old.block_number_min..=old.block_number_max {
                         if let Some(pool) = self.inner.payload_pools.get(&block) {
                             pool.remove_bundle(&old);
                         }

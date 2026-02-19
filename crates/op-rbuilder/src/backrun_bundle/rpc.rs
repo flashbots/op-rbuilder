@@ -103,19 +103,19 @@ where
             .into());
         }
 
-        let block_number = bundle.block_number;
-        let block_number_max = bundle.block_number_max.unwrap_or(block_number);
+        let block_number_min = bundle.block_number;
+        let block_number_max = bundle.block_number_max.unwrap_or(block_number_min);
 
-        if block_number_max < block_number {
+        if block_number_max < block_number_min {
             return Err(EthApiError::InvalidParams(format!(
-                "maxBlockNumber ({block_number_max}) must be >= blockNumber ({block_number})"
+                "maxBlockNumber ({block_number_max}) must be >= blockNumber ({block_number_min})"
             ))
             .into());
         }
 
-        if block_number_max.saturating_sub(block_number) > MAX_BLOCK_RANGE {
+        if block_number_max.saturating_sub(block_number_min) >= MAX_BLOCK_RANGE {
             return Err(EthApiError::InvalidParams(format!(
-                "block range too large: {block_number}..{block_number_max} (max range: {MAX_BLOCK_RANGE})"
+                "block range too large: {block_number_min}..{block_number_max} (max range: {MAX_BLOCK_RANGE})"
             ))
             .into());
         }
@@ -143,9 +143,9 @@ where
             .into());
         }
 
-        if block_number > last_block_number + MAX_FUTURE_BLOCK_ADD {
+        if block_number_min > last_block_number + MAX_FUTURE_BLOCK_ADD {
             return Err(EthApiError::InvalidParams(format!(
-                "blockNumber ({block_number}) is too far in the future (current: {last_block_number}, max: +{MAX_FUTURE_BLOCK_ADD})"
+                "blockNumber ({block_number_min}) is too far in the future (current: {last_block_number}, max: +{MAX_FUTURE_BLOCK_ADD})"
             ))
             .into());
         }
@@ -166,7 +166,7 @@ where
         let backrun_bundle = StoredBackrunBundle {
             target_tx_hash,
             backrun_tx: Arc::new(backrun_tx),
-            block_number,
+            block_number_min,
             block_number_max,
             flashblock_number_min: bundle.flashblock_number_min.unwrap_or(0),
             flashblock_number_max: bundle.flashblock_number_max.unwrap_or(u64::MAX),

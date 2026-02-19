@@ -22,7 +22,7 @@ pub struct StoredBackrunBundle {
     /// Hash of the target tx; we assume it's in the txpool.
     pub target_tx_hash: B256,
     pub backrun_tx: Arc<Recovered<OpTransactionSigned>>,
-    pub block_number: u64,
+    pub block_number_min: u64,
     pub block_number_max: u64,
     pub flashblock_number_min: u64,
     pub flashblock_number_max: u64,
@@ -39,12 +39,12 @@ impl StoredBackrunBundle {
     /// - `flashblock_number_max` is only enforced on the last block (`block_number_max`)
     /// - On intermediate blocks all flashblocks are valid
     pub fn is_valid(&self, block_number: u64, flashblock_number: Option<u64>) -> bool {
-        if block_number < self.block_number || block_number > self.block_number_max {
+        if block_number < self.block_number_min || block_number > self.block_number_max {
             return false;
         }
 
         if let Some(fb) = flashblock_number {
-            if block_number == self.block_number && fb < self.flashblock_number_min {
+            if block_number == self.block_number_min && fb < self.flashblock_number_min {
                 return false;
             }
             if block_number == self.block_number_max && fb > self.flashblock_number_max {

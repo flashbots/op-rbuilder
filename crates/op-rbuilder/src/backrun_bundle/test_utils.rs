@@ -64,7 +64,7 @@ impl<'a> BackrunBundleBuilder<'a> {
         StoredBackrunBundle {
             target_tx_hash: self.target,
             backrun_tx: Arc::new(self.signer.sign_tx(tx).unwrap()),
-            block_number: self.block_range.0,
+            block_number_min: self.block_range.0,
             block_number_max: self.block_range.1,
             flashblock_number_min: 0,
             flashblock_number_max: u64::MAX,
