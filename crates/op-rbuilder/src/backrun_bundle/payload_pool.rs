@@ -175,56 +175,46 @@ impl BackrunBundlePayloadPool {
             return Vec::new();
         };
 
-        let mut result = Vec::new();
         let mut seen = HashSet::<(Address, u64)>::new();
         let base_fee = base_fee as u128;
 
         // limit loop size as its blocking for the block building
         let max_iter = Self::MAX_ITER_COUNT.max(max_count);
 
-        for ordered in tx_backruns.bundles.iter().take(max_iter) {
-            if result.len() >= max_count {
-                break;
-            }
+        tx_backruns
+            .bundles
+            .iter()
+            .take(max_iter)
+            .filter(|ordered| {
+                let backrun_tx = &ordered.0.backrun_tx;
 
-            let bundle = &ordered.0;
-            let backrun_tx = &bundle.backrun_tx;
+                if backrun_tx.max_fee_per_gas() < base_fee {
+                    return false;
+                }
 
-            // Base fee check
-            if backrun_tx.max_fee_per_gas() < base_fee {
-                continue;
-            }
+                let sender = backrun_tx.signer();
+                let nonce = backrun_tx.nonce();
 
-            let sender = backrun_tx.signer();
-            let nonce = backrun_tx.nonce();
+                if !seen.insert((sender, nonce)) {
+                    return false;
+                }
 
-            // Dedup by (address, nonce) — first seen wins (highest priority fee)
-            if !seen.insert((sender, nonce)) {
-                continue;
-            }
+                let Some(account) = account_info(sender) else {
+                    return false;
+                };
 
-            // Account state checks
-            let Some(account) = account_info(sender) else {
-                continue;
-            };
+                if account.nonce != nonce {
+                    return false;
+                }
 
-            // Nonce check
-            if account.nonce != nonce {
-                continue;
-            }
-
-            // Balance check: max_fee_per_gas * gas_limit + value
-            let max_cost = U256::from(backrun_tx.max_fee_per_gas())
-                * U256::from(backrun_tx.gas_limit())
-                + U256::from(backrun_tx.value());
-            if account.balance < max_cost {
-                continue;
-            }
-
-            result.push(bundle.clone());
-        }
-
-        result
+                let max_cost = U256::from(backrun_tx.max_fee_per_gas())
+                    * U256::from(backrun_tx.gas_limit())
+                    + U256::from(backrun_tx.value());
+                account.balance >= max_cost
+            })
+            .take(max_count)
+            .map(|ordered| ordered.0.clone())
+            .collect()
     }
 }
 
