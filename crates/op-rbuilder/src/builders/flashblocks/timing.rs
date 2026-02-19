@@ -67,6 +67,14 @@ impl FlashblockScheduler {
         payload_id: PayloadId,
     ) {
         let start = tokio::time::Instant::now();
+        // Send immediate signal to build first flashblock right away.
+        if tx.send(fb_cancel.clone()).is_err() {
+            error!(
+                target: "payload_builder",
+                "Did not trigger first flashblock build due to payload building error or block building being cancelled"
+            );
+            return;
+        }
 
         let target_flashblocks = self.send_times.len();
         for (i, send_time) in self.send_times.into_iter().enumerate() {
