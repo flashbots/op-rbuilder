@@ -39,6 +39,8 @@ pub struct RulesMetrics {
     pub registries_count: Gauge,
     /// Last successful rules refresh (unix timestamp)
     pub last_refresh_timestamp: Gauge,
+    /// Active ruleset hash (Keccak-256 truncated to u64)
+    pub active_ruleset_hash: Gauge,
 }
 
 impl RulesMetrics {
@@ -52,7 +54,7 @@ impl RulesMetrics {
         self.registry_fetch_duration.record(duration.as_secs_f64());
     }
 
-    pub fn update_rules_state(&self, deny_count: usize, boost_count: usize) {
+    pub fn update_rules_state(&self, deny_count: usize, boost_count: usize, hash: Option<u64>) {
         self.active_deny_rules.set(deny_count as f64);
         self.active_boost_rules.set(boost_count as f64);
         self.last_refresh_timestamp.set(
@@ -61,6 +63,9 @@ impl RulesMetrics {
                 .unwrap_or_default()
                 .as_secs() as f64,
         );
+        if let Some(h) = hash {
+            self.active_ruleset_hash.set(h as f64);
+        }
     }
 
     pub fn record_external_validation(&self, success: bool, rejected: bool, duration: Duration) {
@@ -107,5 +112,20 @@ mod tests {
         let metrics = RulesMetrics::default();
         metrics.record_registry_fetch_success(Duration::from_millis(100));
         metrics.record_registry_fetch_failure(Duration::from_millis(50));
+    }
+
+    #[test]
+    fn test_update_rules_state_sets_hash() {
+        let metrics = RulesMetrics::default();
+        metrics.update_rules_state(3, 5, Some(123456789));
+        // Verify no panic and gauge is set (Gauge doesn't expose a getter,
+        // but calling set without panic confirms the field exists and works)
+    }
+
+    #[test]
+    fn test_update_rules_state_none_hash() {
+        let metrics = RulesMetrics::default();
+        // Should not panic when hash is None
+        metrics.update_rules_state(1, 2, None);
     }
 }

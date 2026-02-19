@@ -137,11 +137,13 @@ impl RuleFetcher {
             result.ruleset.prepare();
 
             set_global_ruleset(result.ruleset.clone());
-            self.metrics.update_rules_state(deny_count, boost_count);
+            self.metrics
+                .update_rules_state(deny_count, boost_count, result.ruleset.hash);
 
             tracing::info!(
                 deny_rules = deny_count,
                 boost_rules = boost_count,
+                ruleset_hash = ?result.ruleset.hash,
                 "Global ruleset updated"
             );
         } else {
@@ -196,5 +198,58 @@ impl RuleFetcher {
 impl Default for RuleFetcher {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::rules::types::compute_rule_hash;
+
+    /// A test registry that returns a RuleSet with a predetermined hash.
+    struct MockRegistry {
+        name: String,
+        yaml: String,
+    }
+
+    #[async_trait::async_trait]
+    impl RuleRegistry for MockRegistry {
+        async fn get_rules(&self) -> anyhow::Result<RuleSet> {
+            let mut rs: RuleSet = serde_yaml::from_str(&self.yaml)?;
+            rs.hash = Some(compute_rule_hash(self.yaml.as_bytes()));
+            Ok(rs)
+        }
+
+        fn name(&self) -> &str {
+            &self.name
+        }
+    }
+
+    #[tokio::test]
+    async fn test_fetch_all_merges_hashes() {
+        let yaml_a = "version: 1\nrules:\n  deny: []\n  boost: []";
+        let yaml_b = "version: 2\nrules:\n  deny: []\n  boost: []";
+
+        let ha = compute_rule_hash(yaml_a.as_bytes());
+        let hb = compute_rule_hash(yaml_b.as_bytes());
+
+        let mut fetcher = RuleFetcher::new();
+        fetcher.add_registry(Arc::new(MockRegistry {
+            name: "a".into(),
+            yaml: yaml_a.into(),
+        }));
+        fetcher.add_registry(Arc::new(MockRegistry {
+            name: "b".into(),
+            yaml: yaml_b.into(),
+        }));
+
+        let result = fetcher.fetch_all().await;
+        assert!(result.is_success());
+        assert_eq!(
+            result.ruleset.hash,
+            Some(compute_rule_hash(
+                &[ha.to_be_bytes(), hb.to_be_bytes()].concat()
+            ))
+        );
     }
 }

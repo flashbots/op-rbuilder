@@ -1,4 +1,7 @@
-use crate::rules::{registry::RuleRegistry, types::RuleSet};
+use crate::rules::{
+    registry::RuleRegistry,
+    types::{RuleSet, compute_rule_hash},
+};
 use std::time::Duration;
 
 /// Registry that loads rules from a remote HTTP/HTTPS endpoint
@@ -58,8 +61,10 @@ impl RuleRegistry for RemoteRuleRegistry {
             anyhow::anyhow!("Failed to read response body from {}: {}", self.url, e)
         })?;
 
-        let ruleset: RuleSet = serde_yaml::from_str(&content)
+        let mut ruleset: RuleSet = serde_yaml::from_str(&content)
             .map_err(|e| anyhow::anyhow!("Failed to parse YAML from {}: {}", self.url, e))?;
+
+        ruleset.hash = Some(compute_rule_hash(content.as_bytes()));
 
         tracing::debug!(
             url = %self.url,

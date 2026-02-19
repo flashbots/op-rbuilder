@@ -2128,6 +2128,7 @@ fn test_deny_rule_with_empty_addrs_denies_nothing() {
             boost: vec![],
         },
         aliases: AddressAliases::default(),
+        hash: None,
     };
 
     // Should not deny any random address

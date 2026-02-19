@@ -2,11 +2,18 @@ use alloy_consensus::Transaction as ConsensusTx;
 use alloy_primitives::{Address, TxKind};
 use reth_transaction_pool::PoolTransaction;
 use serde::{Deserialize, Serialize};
+use sha3::{Digest, Keccak256};
 use std::{
     cmp::Ordering,
     collections::{HashMap, HashSet},
 };
 use tracing::warn;
+
+/// Compute a rule hash from raw bytes (Keccak-256 truncated to u64).
+pub fn compute_rule_hash(content: &[u8]) -> u64 {
+    let digest = Keccak256::digest(content);
+    u64::from_be_bytes(digest[..8].try_into().expect("digest is 32 bytes"))
+}
 
 /// A set of addresses that can be specified directly or via aliases.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -292,6 +299,10 @@ pub struct RuleSet {
     /// Address aliases used by rules
     #[serde(default)]
     pub aliases: AddressAliases,
+    /// Deterministic rule hash (Keccak-256 truncated to u64).
+    /// `None` for default/uninitialized rulesets.
+    #[serde(skip)]
+    pub hash: Option<u64>,
 }
 
 impl RuleSet {
@@ -380,6 +391,17 @@ impl RuleSet {
         self.rules.deny.extend(other.rules.deny.clone());
         self.rules.boost.extend(other.rules.boost.clone());
         self.aliases.merge(&other.aliases);
+
+        // Merge hash
+        match (self.hash, other.hash) {
+            (None, other_hash) => self.hash = other_hash,
+            (Some(_), None) => {} // keep self.hash
+            (Some(h1), Some(h2)) => {
+                self.hash = Some(compute_rule_hash(
+                    &[h1.to_be_bytes(), h2.to_be_bytes()].concat(),
+                ));
+            }
+        }
     }
 
     /// Pre-parse all boost rule targets for faster matching.
@@ -476,4 +498,159 @@ impl RuleSet {
 pub enum DenyMatchReason {
     Sender(Address),
     Receiver(Address),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_compute_rule_hash_golden_value() {
+        // Keccak-256("test") first 8 bytes as u64 big-endian.
+        // Pinned to detect accidental hash function changes.
+        assert_eq!(compute_rule_hash(b"test"), 11250835603181320219);
+    }
+
+    #[test]
+    fn test_compute_rule_hash_deterministic() {
+        let content = b"version: 1\nrules:\n  deny: []";
+        let h1 = compute_rule_hash(content);
+        let h2 = compute_rule_hash(content);
+        assert_eq!(h1, h2);
+    }
+
+    #[test]
+    fn test_compute_rule_hash_changes_on_different_input() {
+        let h1 = compute_rule_hash(b"version: 1");
+        let h2 = compute_rule_hash(b"version: 2");
+        assert_ne!(h1, h2);
+    }
+
+    #[test]
+    fn test_default_ruleset_hash_is_none() {
+        let rs = RuleSet::default();
+        assert!(rs.hash.is_none());
+    }
+
+    #[test]
+    fn test_merge_both_none() {
+        let mut merged = RuleSet::default();
+        let other = RuleSet::default();
+        merged.merge(&other);
+        assert!(merged.hash.is_none());
+    }
+
+    #[test]
+    fn test_merge_into_none_hash() {
+        let mut merged = RuleSet::default();
+        assert!(merged.hash.is_none());
+
+        let other = RuleSet {
+            hash: Some(42),
+            ..Default::default()
+        };
+        merged.merge(&other);
+
+        assert_eq!(merged.hash, Some(42));
+    }
+
+    #[test]
+    fn test_merge_some_with_none() {
+        let mut merged = RuleSet {
+            hash: Some(42),
+            ..Default::default()
+        };
+        let other = RuleSet::default();
+        merged.merge(&other);
+
+        assert_eq!(merged.hash, Some(42));
+    }
+
+    #[test]
+    fn test_merge_both_some() {
+        let h1 = compute_rule_hash(b"ruleset A");
+        let h2 = compute_rule_hash(b"ruleset B");
+
+        let mut merged = RuleSet {
+            hash: Some(h1),
+            ..Default::default()
+        };
+        let other = RuleSet {
+            hash: Some(h2),
+            ..Default::default()
+        };
+        merged.merge(&other);
+
+        assert_eq!(
+            merged.hash,
+            Some(compute_rule_hash(
+                &[h1.to_be_bytes(), h2.to_be_bytes()].concat()
+            ))
+        );
+    }
+
+    #[test]
+    fn test_merge_hash_order_sensitive() {
+        let ha = compute_rule_hash(b"ruleset A");
+        let hb = compute_rule_hash(b"ruleset B");
+
+        // Merge A then B
+        let mut ab = RuleSet {
+            hash: Some(ha),
+            ..Default::default()
+        };
+        ab.merge(&RuleSet {
+            hash: Some(hb),
+            ..Default::default()
+        });
+
+        // Merge B then A
+        let mut ba = RuleSet {
+            hash: Some(hb),
+            ..Default::default()
+        };
+        ba.merge(&RuleSet {
+            hash: Some(ha),
+            ..Default::default()
+        });
+
+        assert_ne!(ab.hash, ba.hash);
+    }
+
+    #[test]
+    fn test_merge_hash_incremental_consistency() {
+        let ha = compute_rule_hash(b"ruleset A");
+        let hb = compute_rule_hash(b"ruleset B");
+        let hc = compute_rule_hash(b"ruleset C");
+
+        // Path 1: merge A → B → C
+        let mut path1 = RuleSet {
+            hash: Some(ha),
+            ..Default::default()
+        };
+        path1.merge(&RuleSet {
+            hash: Some(hb),
+            ..Default::default()
+        });
+        path1.merge(&RuleSet {
+            hash: Some(hc),
+            ..Default::default()
+        });
+
+        // Path 2: merge (A+B) → C
+        let mut ab = RuleSet {
+            hash: Some(ha),
+            ..Default::default()
+        };
+        ab.merge(&RuleSet {
+            hash: Some(hb),
+            ..Default::default()
+        });
+        ab.merge(&RuleSet {
+            hash: Some(hc),
+            ..Default::default()
+        });
+
+        assert_eq!(path1.hash, ab.hash);
+    }
 }

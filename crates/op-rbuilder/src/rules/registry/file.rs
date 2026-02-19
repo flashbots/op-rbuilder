@@ -1,4 +1,7 @@
-use crate::rules::{registry::RuleRegistry, types::RuleSet};
+use crate::rules::{
+    registry::RuleRegistry,
+    types::{RuleSet, compute_rule_hash},
+};
 use std::path::PathBuf;
 
 /// Registry that loads rules from a YAML file
@@ -19,7 +22,8 @@ impl FileRuleRegistry {
 impl RuleRegistry for FileRuleRegistry {
     async fn get_rules(&self) -> anyhow::Result<RuleSet> {
         let content = tokio::fs::read_to_string(&self.path).await?;
-        let ruleset: RuleSet = serde_yaml::from_str(&content)?;
+        let mut ruleset: RuleSet = serde_yaml::from_str(&content)?;
+        ruleset.hash = Some(compute_rule_hash(content.as_bytes()));
         Ok(ruleset)
     }
 
@@ -91,6 +95,7 @@ rules:
         assert_eq!(ruleset.rules.deny.len(), 1);
         assert_eq!(ruleset.rules.boost.len(), 1);
         assert_eq!(ruleset.rules.boost[0].weight, 100);
+        assert!(ruleset.hash.is_some());
 
         // Cleanup
         std::fs::remove_file(&rules_path).ok();
@@ -135,6 +140,8 @@ rules:
         assert_eq!(ruleset.version, 0);
         assert!(ruleset.rules.deny.is_empty());
         assert!(ruleset.rules.boost.is_empty());
+        // Empty file still produces a hash (hash of empty content)
+        assert!(ruleset.hash.is_some());
 
         // Cleanup
         std::fs::remove_file(&rules_path).ok();
@@ -176,6 +183,54 @@ rules:
         assert_eq!(ruleset.rules.boost[0].aliases, vec!["vip_users"]);
 
         // Cleanup
+        std::fs::remove_file(&rules_path).ok();
+    }
+
+    #[tokio::test]
+    async fn test_get_rules_hash_deterministic() {
+        use std::io::Write;
+        let temp_dir = std::env::temp_dir();
+        let rules_path = temp_dir.join("test_hash_deterministic.yaml");
+
+        let yaml_content = b"version: 1\nrules:\n  deny: []\n  boost: []";
+        {
+            let mut file = std::fs::File::create(&rules_path).unwrap();
+            file.write_all(yaml_content).unwrap();
+        }
+
+        let registry = FileRuleRegistry::new(&rules_path);
+        let h1 = registry.get_rules().await.unwrap().hash;
+        let h2 = registry.get_rules().await.unwrap().hash;
+        assert_eq!(h1, h2);
+
+        std::fs::remove_file(&rules_path).ok();
+    }
+
+    #[tokio::test]
+    async fn test_get_rules_hash_changes_on_content_change() {
+        use std::io::Write;
+        let temp_dir = std::env::temp_dir();
+        let rules_path = temp_dir.join("test_hash_content_change.yaml");
+
+        // Write initial content
+        {
+            let mut file = std::fs::File::create(&rules_path).unwrap();
+            file.write_all(b"version: 1\nrules:\n  deny: []\n  boost: []")
+                .unwrap();
+        }
+        let registry = FileRuleRegistry::new(&rules_path);
+        let h1 = registry.get_rules().await.unwrap().hash;
+
+        // Overwrite with different content
+        {
+            let mut file = std::fs::File::create(&rules_path).unwrap();
+            file.write_all(b"version: 2\nrules:\n  deny: []\n  boost: []")
+                .unwrap();
+        }
+        let h2 = registry.get_rules().await.unwrap().hash;
+
+        assert_ne!(h1, h2);
+
         std::fs::remove_file(&rules_path).ok();
     }
 }
