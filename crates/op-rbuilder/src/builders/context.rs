@@ -642,17 +642,19 @@ impl<ExtraCtx: Debug + Default + MaybeFlashblockIndex> OpPayloadBuilderCtx<Extra
                     &target_hash,
                     |addr| evm.db_mut().basic(addr).ok().flatten(),
                     base_fee,
-                    self.backrun_ctx.args.max_considered_backruns_per_target,
+                    self.backrun_ctx
+                        .args
+                        .max_considered_backruns_per_transaction,
                 );
 
-                let mut target_backruns_landed = 0;
+                let mut tx_backruns_landed = 0;
 
-                for (target_backruns_considered, bundle) in backruns.into_iter().enumerate() {
+                for (tx_backruns_considered, bundle) in backruns.into_iter().enumerate() {
                     if self.backrun_ctx.args.is_limit_reached(
                         num_backruns_considered,
                         num_backruns_successful,
-                        target_backruns_considered,
-                        target_backruns_landed,
+                        tx_backruns_considered,
+                        tx_backruns_landed,
                     ) {
                         break;
                     }
@@ -816,7 +818,7 @@ impl<ExtraCtx: Debug + Default + MaybeFlashblockIndex> OpPayloadBuilderCtx<Extra
                     info.executed_transactions
                         .push(bundle.backrun_tx.inner().clone());
 
-                    target_backruns_landed += 1;
+                    tx_backruns_landed += 1;
                 }
                 backrun_processing_time += backrun_start_time.elapsed();
             }

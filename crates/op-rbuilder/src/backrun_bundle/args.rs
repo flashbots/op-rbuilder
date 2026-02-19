@@ -12,12 +12,15 @@ pub struct BackrunBundleArgs {
     #[arg(long = "backruns.max_landed_backruns_per_block", default_value = "100")]
     pub max_landed_backruns_per_block: usize,
     #[arg(
-        long = "backruns.max_considered_backruns_per_target",
+        long = "backruns.max_considered_backruns_per_transaction",
         default_value = "10"
     )]
-    pub max_considered_backruns_per_target: usize,
-    #[arg(long = "backruns.max_landed_backruns_per_target", default_value = "1")]
-    pub max_landed_backruns_per_target: usize,
+    pub max_considered_backruns_per_transaction: usize,
+    #[arg(
+        long = "backruns.max_landed_backruns_per_transaction",
+        default_value = "1"
+    )]
+    pub max_landed_backruns_per_transaction: usize,
 }
 
 impl BackrunBundleArgs {
@@ -25,11 +28,11 @@ impl BackrunBundleArgs {
         &self,
         block_backruns_considered: usize,
         block_backruns_landed: usize,
-        target_backruns_considered: usize,
-        target_backruns_landed: usize,
+        tx_backruns_considered: usize,
+        tx_backruns_landed: usize,
     ) -> bool {
-        target_backruns_considered >= self.max_considered_backruns_per_target
-            || target_backruns_landed >= self.max_landed_backruns_per_target
+        tx_backruns_considered >= self.max_considered_backruns_per_transaction
+            || tx_backruns_landed >= self.max_landed_backruns_per_transaction
             || block_backruns_considered >= self.max_considered_backruns_per_block
             || block_backruns_landed >= self.max_landed_backruns_per_block
     }
@@ -41,8 +44,8 @@ impl Default for BackrunBundleArgs {
             backruns_enabled: false,
             max_considered_backruns_per_block: 100,
             max_landed_backruns_per_block: 100,
-            max_considered_backruns_per_target: 10,
-            max_landed_backruns_per_target: 1,
+            max_considered_backruns_per_transaction: 10,
+            max_landed_backruns_per_transaction: 1,
         }
     }
 }

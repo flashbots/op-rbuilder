@@ -229,17 +229,17 @@ async fn backrun_block_number_constraints(rbuilder: LocalInstance) -> eyre::Resu
     Ok(())
 }
 
-/// Tests that max_landed_backruns_per_target=1 limits to only one backrun per target.
+/// Tests that max_landed_backruns_per_transaction=1 limits to only one backrun per transaction.
 #[rb_test(args = OpRbuilderArgs {
     backrun_bundle: BackrunBundleArgs {
         backruns_enabled: true,
-        max_landed_backruns_per_target: 1,
-        max_considered_backruns_per_target: 10,
+        max_landed_backruns_per_transaction: 1,
+        max_considered_backruns_per_transaction: 10,
         ..Default::default()
     },
     ..Default::default()
 })]
-async fn backrun_per_target_landing_limit(rbuilder: LocalInstance) -> eyre::Result<()> {
+async fn backrun_per_transaction_landing_limit(rbuilder: LocalInstance) -> eyre::Result<()> {
     let driver = rbuilder.driver().await?;
     // 1 target + 3 backrun signers
     let accounts = driver.fund_accounts(4, ONE_ETH).await?;
@@ -276,11 +276,11 @@ async fn backrun_per_target_landing_limit(rbuilder: LocalInstance) -> eyre::Resu
     // Target should be included
     assert!(block.includes(&target_hash), "Target tx should be in block");
 
-    // Only 1 backrun should land (max_landed_backruns_per_target = 1)
+    // Only 1 backrun should land (max_landed_backruns_per_transaction = 1)
     let backruns_included = backrun_hashes.iter().filter(|h| block.includes(*h)).count();
     assert_eq!(
         backruns_included, 1,
-        "Only 1 backrun should land per target (limit=1), but {} landed",
+        "Only 1 backrun should land per transaction (limit=1), but {} landed",
         backruns_included
     );
 
@@ -292,7 +292,7 @@ async fn backrun_per_target_landing_limit(rbuilder: LocalInstance) -> eyre::Resu
     backrun_bundle: BackrunBundleArgs {
         backruns_enabled: true,
         max_landed_backruns_per_block: 1,
-        max_landed_backruns_per_target: 1,
+        max_landed_backruns_per_transaction: 1,
         ..Default::default()
     },
     ..Default::default()
@@ -351,8 +351,8 @@ async fn backrun_per_block_limit(rbuilder: LocalInstance) -> eyre::Result<()> {
 #[rb_test(args = OpRbuilderArgs {
     backrun_bundle: BackrunBundleArgs {
         backruns_enabled: true,
-        max_landed_backruns_per_target: 2,
-        max_considered_backruns_per_target: 10,
+        max_landed_backruns_per_transaction: 2,
+        max_considered_backruns_per_transaction: 10,
         ..Default::default()
     },
     ..Default::default()
@@ -404,8 +404,8 @@ async fn multiple_backruns_land(rbuilder: LocalInstance) -> eyre::Result<()> {
 #[rb_test(args = OpRbuilderArgs {
     backrun_bundle: BackrunBundleArgs {
         backruns_enabled: true,
-        max_landed_backruns_per_target: 2,
-        max_considered_backruns_per_target: 10,
+        max_landed_backruns_per_transaction: 2,
+        max_considered_backruns_per_transaction: 10,
         ..Default::default()
     },
     ..Default::default()
@@ -533,8 +533,8 @@ async fn backrun_not_triggered_when_target_reverts(rbuilder: LocalInstance) -> e
 #[rb_test(args = OpRbuilderArgs {
     backrun_bundle: BackrunBundleArgs {
         backruns_enabled: true,
-        max_landed_backruns_per_target: 1,
-        max_considered_backruns_per_target: 10,
+        max_landed_backruns_per_transaction: 1,
+        max_considered_backruns_per_transaction: 10,
         ..Default::default()
     },
     ..Default::default()
@@ -600,8 +600,8 @@ async fn backrun_replacement_lower_fee_replaces_higher(
 #[rb_test(args = OpRbuilderArgs {
     backrun_bundle: BackrunBundleArgs {
         backruns_enabled: true,
-        max_landed_backruns_per_target: 1,
-        max_considered_backruns_per_target: 10,
+        max_landed_backruns_per_transaction: 1,
+        max_considered_backruns_per_transaction: 10,
         ..Default::default()
     },
     ..Default::default()

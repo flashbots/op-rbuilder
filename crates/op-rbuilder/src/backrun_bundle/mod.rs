@@ -9,15 +9,15 @@
 //!
 //! Backrun processing is **off by default**. Pass `--backruns.enabled` to turn it on.
 //! Additional CLI flags control how many backruns the builder will evaluate and
-//! include per block and per target transaction:
+//! include per block and per transaction:
 //!
 //! | Flag | Default | Description |
 //! |------|---------|-------------|
 //! | `--backruns.enabled` | `false` | Master switch |
 //! | `--backruns.max_considered_backruns_per_block` | `100` | Candidates evaluated per block |
 //! | `--backruns.max_landed_backruns_per_block` | `100` | Included backruns per block |
-//! | `--backruns.max_considered_backruns_per_target` | `10` | Candidates evaluated per target tx |
-//! | `--backruns.max_landed_backruns_per_target` | `1` | Included backruns per target tx |
+//! | `--backruns.max_considered_backruns_per_transaction` | `10` | Candidates evaluated per tx |
+//! | `--backruns.max_landed_backruns_per_transaction` | `1` | Included backruns per tx |
 //!
 //! See [`args::BackrunBundleArgs`] for the full definition.
 //!
@@ -46,7 +46,7 @@
 //!
 //! **Pool metrics** (`op_rbuilder.backrun_pool.*`):
 //! - `bundle_count` — current number of bundles across all payload pools.
-//! - `backruns_per_tx` — distribution of backrun candidates per target tx
+//! - `backruns_per_tx` — distribution of backrun candidates per tx
 //!
 //! **Builder metrics** (`op_rbuilder.*`):
 //! - `payload_num_backruns_considered` / `_gauge` — how many backrun candidates
