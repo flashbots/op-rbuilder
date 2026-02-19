@@ -298,11 +298,24 @@ mod tests {
     }
 
     #[test]
-    fn test_compute_send_times_with_send_offset() {
+    fn test_compute_send_times_with_negative_send_offset() {
         let test_cases = vec![ComputeSendTimesTestCase {
             first_flashblock_timing_ms: 150,
             deadline_ms: 880,
             expected_send_times_ms: vec![140, 340, 540, 740, 870],
+        }];
+
+        for test_case in test_cases {
+            check_compute_send_times(test_case, Duration::from_millis(200), -10, 5);
+        }
+    }
+
+    #[test]
+    fn test_compute_send_times_with_positive_send_offset() {
+        let test_cases = vec![ComputeSendTimesTestCase {
+            first_flashblock_timing_ms: 150,
+            deadline_ms: 880,
+            expected_send_times_ms: vec![160, 360, 560, 760, 880],
         }];
 
         for test_case in test_cases {
