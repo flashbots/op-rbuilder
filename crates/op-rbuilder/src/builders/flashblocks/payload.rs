@@ -460,7 +460,12 @@ where
             schedule = ?flashblock_scheduler,
             "Computed flashblock timing schedule"
         );
-        let target_flashblocks = flashblock_scheduler.target_flashblocks();
+
+        // Get target number of flashblocks to build. If no flashblocks are scheduled, return early.
+        let Some(target_flashblocks) = flashblock_scheduler.target_flashblocks() else {
+            self.record_flashblocks_metrics(&ctx, &info, 0, &span);
+            return Ok(());
+        };
 
         let expected_flashblocks = self.config.flashblocks_per_block();
         if target_flashblocks < expected_flashblocks {

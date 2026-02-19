@@ -16,7 +16,7 @@ pub(super) struct FlashblockScheduler {
     /// Monotonic instant when this scheduler was created.
     reference_instant: tokio::time::Instant,
     /// Absolute times at which to trigger flashblock builds.
-    send_times: Vec<tokio::time::Instant>,
+    send_times: Option<Vec<tokio::time::Instant>>,
 }
 
 impl FlashblockScheduler {
@@ -29,27 +29,32 @@ impl FlashblockScheduler {
         let reference_system = std::time::SystemTime::now();
         let reference_instant = tokio::time::Instant::now();
 
-        let target_flashblocks = (block_time.as_millis() / config.interval.as_millis()) as u64;
-
         // Calculate how much time remains until the payload deadline
         let remaining_time =
             compute_remaining_time(block_time, payload_timestamp, reference_system);
 
-        // Compute the schedule as relative durations from now
-        let intervals = compute_scheduler_intervals(
-            config.interval,
-            config.send_offset_ms,
-            config.end_buffer_ms,
-            remaining_time,
-            target_flashblocks,
-        );
+        let send_times = remaining_time.map(|remaining_time| {
+            // Calculate the target flashblocks based on the remaining time
+            let target_flashblocks = remaining_time
+                .as_millis()
+                .div_ceil(config.interval.as_millis()) as u64;
 
-        // Convert relative durations to absolute instants for
-        // tokio::time::sleep_until
-        let send_times = intervals
-            .into_iter()
-            .map(|d| reference_instant + d)
-            .collect();
+            // Compute the schedule as relative durations from now
+            let intervals = compute_scheduler_intervals(
+                config.interval,
+                config.send_offset_ms,
+                config.end_buffer_ms,
+                remaining_time,
+                target_flashblocks,
+            );
+
+            // Convert relative durations to absolute instants for
+            // tokio::time::sleep_until
+            intervals
+                .into_iter()
+                .map(|d| reference_instant + d)
+                .collect()
+        });
 
         Self {
             reference_system,
@@ -66,6 +71,11 @@ impl FlashblockScheduler {
         mut fb_cancel: CancellationToken,
         payload_id: PayloadId,
     ) {
+        let Some(send_times) = self.send_times else {
+            // No flashblocks to schedule, return early.
+            return;
+        };
+
         let start = tokio::time::Instant::now();
         // Send immediate signal to build first flashblock right away.
         if tx.send(fb_cancel.clone()).is_err() {
@@ -76,8 +86,8 @@ impl FlashblockScheduler {
             return;
         }
 
-        let target_flashblocks = self.send_times.len();
-        for (i, send_time) in self.send_times.into_iter().enumerate() {
+        let target_flashblocks = send_times.len();
+        for (i, send_time) in send_times.into_iter().enumerate() {
             tokio::select! {
                 _ = tokio::time::sleep_until(send_time) => {
                     // Cancel current flashblock building job
@@ -124,44 +134,46 @@ impl FlashblockScheduler {
         }
     }
 
-    /// Returns the total number of flashblocks that will be triggered.
-    pub(super) fn target_flashblocks(&self) -> u64 {
-        self.send_times.len() as u64
+    /// Returns the total number of flashblocks that will be triggered, or
+    /// `None` if no flashblocks are scheduled.
+    pub(super) fn target_flashblocks(&self) -> Option<u64> {
+        self.send_times
+            .as_ref()
+            .map(|send_times| send_times.len() as u64)
+            .filter(|&count| count > 0)
     }
 }
 
 /// Computes the remaining time until the payload deadline. Calculates remaining
 /// time as `payload_timestamp - now`. The result is capped at `block_time`. If
-/// the timestamp is in the past (late FCU), sets remaining time to 0 to try to
-/// emit one flashblock.
+/// the timestamp is in the past (late FCU), returns `None`.
 fn compute_remaining_time(
     block_time: Duration,
     payload_timestamp: u64,
     reference_system: std::time::SystemTime,
-) -> Duration {
+) -> Option<Duration> {
     let target_time = std::time::SystemTime::UNIX_EPOCH + Duration::from_secs(payload_timestamp);
 
     target_time
         .duration_since(reference_system)
         .ok()
-        .filter(|duration| duration.as_millis() > 0)
+        .filter(|d| !d.is_zero())
         .map(|d| d.min(block_time))
-        .unwrap_or_else(|| {
+        .or_else(|| {
             // If we're here then the payload timestamp is in the past. This
             // happens when the FCU is really late and it also means we're
             // expecting a getPayload call basically right away, so we don't
             // have any time to build.
             let delay_ms = reference_system
                 .duration_since(target_time)
-                .map(|d| d.as_millis())
-                .unwrap_or(0);
+                .map_or(0, |d| d.as_millis());
             warn!(
                 target: "payload_builder",
                 payload_timestamp,
                 delay_ms,
                 "Late FCU: payload timestamp is in the past"
             );
-            Duration::ZERO
+            None
         })
 }
 
@@ -194,21 +206,13 @@ fn compute_send_time_intervals(
     deadline: Duration,
     target_flashblocks: u64,
 ) -> Vec<Duration> {
-    let mut send_times = vec![];
+    let mut send_times = Vec::with_capacity(target_flashblocks as usize);
 
-    // Add triggers (with offset) at first_flashblock_timing, then every interval
-    // until deadline.
-    let mut next_time = first_flashblock_timing;
-    while next_time < deadline {
-        send_times.push(apply_offset(next_time, send_offset_ms, deadline));
-        next_time += interval;
+    let mut timing = first_flashblock_timing;
+    for _ in 0..target_flashblocks {
+        send_times.push(apply_offset(timing.min(deadline), send_offset_ms).min(deadline));
+        timing = timing.saturating_add(interval);
     }
-    send_times.push(apply_offset(deadline, send_offset_ms, deadline));
-
-    // Clamp the number of triggers. Some of the calculation strategies end up
-    // with more triggers concentrated towards the start of the block and so
-    // this is needed to preserve backwards compatibility.
-    send_times.truncate(target_flashblocks as usize);
 
     send_times
 }
@@ -216,16 +220,12 @@ fn compute_send_time_intervals(
 /// Durations cannot be negative values so we need to store the offset value as
 /// an int. This is a helper function to apply the signed millisecond offset to
 /// a duration.
-fn apply_offset(duration: Duration, offset_ms: i64, deadline: Duration) -> Duration {
+fn apply_offset(duration: Duration, offset_ms: i64) -> Duration {
     let offset_delta = offset_ms.unsigned_abs();
     if offset_ms >= 0 {
-        duration
-            .saturating_add(Duration::from_millis(offset_delta))
-            .min(deadline)
+        duration.saturating_add(Duration::from_millis(offset_delta))
     } else {
-        duration
-            .saturating_sub(Duration::from_millis(offset_delta))
-            .min(deadline)
+        duration.saturating_sub(Duration::from_millis(offset_delta))
     }
 }
 
@@ -242,7 +242,7 @@ fn calculate_first_flashblock_timing(remaining_time: Duration, interval: Duratio
 impl std::fmt::Debug for FlashblockScheduler {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_list()
-            .entries(self.send_times.iter().map(|t| {
+            .entries(self.send_times.iter().flatten().map(|t| {
                 let offset = *t - self.reference_instant;
                 let wall_time = self.reference_system + offset;
                 let duration = wall_time.duration_since(std::time::UNIX_EPOCH).unwrap();
@@ -334,31 +334,21 @@ mod tests {
     #[test]
     fn test_apply_offset() {
         assert_eq!(
-            apply_offset(Duration::from_millis(100), 50, Duration::from_millis(200)),
+            apply_offset(Duration::from_millis(100), 50),
             Duration::from_millis(150)
         );
         assert_eq!(
-            apply_offset(Duration::from_millis(100), -30, Duration::from_millis(200)),
+            apply_offset(Duration::from_millis(100), -30),
             Duration::from_millis(70)
         );
         assert_eq!(
-            apply_offset(Duration::from_millis(100), 0, Duration::from_millis(200)),
+            apply_offset(Duration::from_millis(100), 0),
             Duration::from_millis(100)
         );
         // Should not underflow - saturates at zero
         assert_eq!(
-            apply_offset(Duration::from_millis(50), -100, Duration::from_millis(200)),
+            apply_offset(Duration::from_millis(50), -100),
             Duration::ZERO
-        );
-        // Should not overflow target time - saturates at target time
-        assert_eq!(
-            apply_offset(Duration::from_millis(100), 200, Duration::from_millis(200)),
-            Duration::from_millis(200)
-        );
-        // Should not underflow target time - saturates at target time
-        assert_eq!(
-            apply_offset(Duration::from_millis(300), -50, Duration::from_millis(200)),
-            Duration::from_millis(200)
         );
     }
 
@@ -415,7 +405,6 @@ mod tests {
         send_offset_ms: i64,
         end_buffer_ms: u64,
         remaining_time_ms: u64,
-        target_flashblocks: u64,
         expected_intervals_ms: Vec<u64>,
     }
 
@@ -425,7 +414,7 @@ mod tests {
             test_case.send_offset_ms,
             test_case.end_buffer_ms,
             Duration::from_millis(test_case.remaining_time_ms),
-            test_case.target_flashblocks,
+            test_case.remaining_time_ms.div_ceil(test_case.interval_ms),
         );
         assert_eq!(
             intervals,
@@ -449,7 +438,6 @@ mod tests {
                 send_offset_ms: 0,
                 end_buffer_ms: 0,
                 remaining_time_ms: 880,
-                target_flashblocks: 5,
                 expected_intervals_ms: vec![80, 280, 480, 680, 880],
             },
             SchedulerIntervalsTestCase {
@@ -458,7 +446,6 @@ mod tests {
                 send_offset_ms: -20,
                 end_buffer_ms: 50,
                 remaining_time_ms: 800,
-                target_flashblocks: 5,
                 expected_intervals_ms: vec![180, 380, 580, 730],
             },
             SchedulerIntervalsTestCase {
@@ -467,7 +454,6 @@ mod tests {
                 send_offset_ms: 0,
                 end_buffer_ms: 0,
                 remaining_time_ms: 300,
-                target_flashblocks: 5,
                 expected_intervals_ms: vec![100, 300],
             },
             SchedulerIntervalsTestCase {
@@ -476,7 +462,6 @@ mod tests {
                 send_offset_ms: 0,
                 end_buffer_ms: 200,
                 remaining_time_ms: 200,
-                target_flashblocks: 5,
                 expected_intervals_ms: vec![0],
             },
             SchedulerIntervalsTestCase {
@@ -485,7 +470,6 @@ mod tests {
                 send_offset_ms: -30,
                 end_buffer_ms: 50,
                 remaining_time_ms: 400,
-                target_flashblocks: 5,
                 expected_intervals_ms: vec![170, 320],
             },
             SchedulerIntervalsTestCase {
@@ -494,7 +478,6 @@ mod tests {
                 send_offset_ms: 0,
                 end_buffer_ms: 0,
                 remaining_time_ms: 1000,
-                target_flashblocks: 5,
                 expected_intervals_ms: vec![200, 400, 600, 800, 1000],
             },
         ];
@@ -509,7 +492,7 @@ mod tests {
         block_time_ms: u64,
         reference_ms: u64,
         payload_timestamp: u64,
-        expected_remaining_ms: u64,
+        expected_remaining_ms: Option<Duration>,
     }
 
     fn check_remaining_time(test_case: RemainingTimeTestCase) {
@@ -522,7 +505,7 @@ mod tests {
 
         assert_eq!(
             remaining,
-            Duration::from_millis(test_case.expected_remaining_ms),
+            test_case.expected_remaining_ms,
             "Failed test case '{}': block_time={}ms, reference={}ms, timestamp={}",
             test_case.name,
             test_case.block_time_ms,
@@ -539,28 +522,28 @@ mod tests {
                 block_time_ms: 2000,
                 reference_ms: 1_000_000,
                 payload_timestamp: 1002,
-                expected_remaining_ms: 2000,
+                expected_remaining_ms: Some(Duration::from_millis(2000)),
             },
             RemainingTimeTestCase {
                 name: "remaining exceeds block time (capped)",
                 block_time_ms: 1000,
                 reference_ms: 1_000_000,
                 payload_timestamp: 1005,
-                expected_remaining_ms: 1000,
+                expected_remaining_ms: Some(Duration::from_millis(1000)),
             },
             RemainingTimeTestCase {
                 name: "late FCU (844ms past timestamp)",
                 block_time_ms: 1000,
                 reference_ms: 1_000_844, // 1000.844 seconds
                 payload_timestamp: 1000,
-                expected_remaining_ms: 0,
+                expected_remaining_ms: None,
             },
             RemainingTimeTestCase {
                 name: "late FCU (1ms past timestamp)",
                 block_time_ms: 1000,
                 reference_ms: 1_000_001, // 1000.001 seconds
                 payload_timestamp: 1000,
-                expected_remaining_ms: 0,
+                expected_remaining_ms: None,
             },
         ];
 
