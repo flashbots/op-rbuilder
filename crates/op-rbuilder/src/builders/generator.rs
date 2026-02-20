@@ -318,7 +318,9 @@ where
         let (watch_tx, watch_rx) = watch::channel(None);
         self.payload_rx = Some(watch_rx);
         let cached_reads = self.cached_reads.take().unwrap_or_default();
-        self.executor.spawn_blocking(Box::pin(async move {
+        // try_build is not in a blocking task!
+        // We have to make sure any blocking work is handled individually within payload builder
+        self.executor.spawn(Box::pin(async move {
             let args = BuildArguments {
                 cached_reads,
                 config: payload_config,
@@ -432,7 +434,7 @@ mod tests {
     use alloy_eips::eip7685::Requests;
     use alloy_primitives::U256;
     use rand::rng;
-    use reth::tasks::TokioTaskExecutor;
+    use reth::tasks::{TaskSpawner, TokioTaskExecutor};
     use reth_node_api::NodePrimitives;
     use reth_optimism_payload_builder::{OpPayloadPrimitives, payload::OpPayloadBuilderAttributes};
     use reth_optimism_primitives::OpPrimitives;
@@ -440,7 +442,58 @@ mod tests {
     use reth_primitives::SealedBlock;
     use reth_provider::test_utils::MockEthProvider;
     use reth_testing_utils::generators::{BlockRangeParams, random_block_range};
-    use tokio::time::{Duration, sleep, timeout};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use tokio::{
+        task::JoinHandle,
+        time::{Duration, sleep, timeout},
+    };
+
+    #[derive(Debug, Clone, Default)]
+    struct CountingTaskExecutor {
+        spawn_calls: Arc<AtomicUsize>,
+        spawn_blocking_calls: Arc<AtomicUsize>,
+    }
+
+    impl CountingTaskExecutor {
+        fn spawn_calls(&self) -> usize {
+            self.spawn_calls.load(Ordering::Relaxed)
+        }
+
+        fn spawn_blocking_calls(&self) -> usize {
+            self.spawn_blocking_calls.load(Ordering::Relaxed)
+        }
+    }
+
+    impl TaskSpawner for CountingTaskExecutor {
+        fn spawn(&self, fut: futures_util::future::BoxFuture<'static, ()>) -> JoinHandle<()> {
+            self.spawn_calls.fetch_add(1, Ordering::Relaxed);
+            tokio::task::spawn(fut)
+        }
+
+        fn spawn_critical(
+            &self,
+            _name: &'static str,
+            fut: futures_util::future::BoxFuture<'static, ()>,
+        ) -> JoinHandle<()> {
+            self.spawn(fut)
+        }
+
+        fn spawn_blocking(
+            &self,
+            fut: futures_util::future::BoxFuture<'static, ()>,
+        ) -> JoinHandle<()> {
+            self.spawn_blocking_calls.fetch_add(1, Ordering::Relaxed);
+            tokio::task::spawn_blocking(move || tokio::runtime::Handle::current().block_on(fut))
+        }
+
+        fn spawn_critical_blocking(
+            &self,
+            _name: &'static str,
+            fut: futures_util::future::BoxFuture<'static, ()>,
+        ) -> JoinHandle<()> {
+            self.spawn_blocking(fut)
+        }
+    }
 
     #[derive(Debug, Clone)]
     struct MockBuilder<N> {
@@ -599,6 +652,48 @@ mod tests {
             let events = builder.get_events();
             assert_eq!(events, vec![BlockEvent::Started, BlockEvent::Cancelled]);
         }
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_spawn_build_job_uses_async_executor() -> eyre::Result<()> {
+        let mut rng = rng();
+
+        let client = MockEthProvider::default();
+        let executor = CountingTaskExecutor::default();
+        let config = BasicPayloadJobGeneratorConfig::default();
+        let builder = MockBuilder::<OpPrimitives>::new();
+
+        let blocks = random_block_range(
+            &mut rng,
+            1..=1,
+            BlockRangeParams {
+                tx_count: 0..1,
+                ..Default::default()
+            },
+        );
+        client.extend_blocks(blocks.iter().cloned().map(|b| (b.hash(), b.unseal())));
+
+        let generator = BlockPayloadJobGenerator::with_builder(
+            client.clone(),
+            executor.clone(),
+            config,
+            builder,
+            false,
+            Duration::from_secs(1),
+        );
+
+        let mut attr = OpPayloadBuilderAttributes::default();
+        attr.payload_attributes.parent = client.latest_header()?.unwrap().hash();
+
+        let mut job = generator.new_payload_job(attr)?;
+
+        assert_eq!(executor.spawn_calls(), 1);
+        assert_eq!(executor.spawn_blocking_calls(), 0);
+
+        let _ = job.resolve();
+        let _ = job.await;
 
         Ok(())
     }

@@ -26,7 +26,7 @@ use op_alloy_rpc_types_engine::{
     OpFlashblockPayload, OpFlashblockPayloadBase, OpFlashblockPayloadDelta,
     OpFlashblockPayloadMetadata,
 };
-use reth::payload::PayloadBuilderAttributes;
+use reth::{payload::PayloadBuilderAttributes, tasks::TaskSpawner};
 use reth_basic_payload_builder::BuildOutcome;
 use reth_chainspec::EthChainSpec;
 use reth_evm::{ConfigureEvm, execute::BlockBuilder};
@@ -51,10 +51,11 @@ use reth_trie::{HashedPostState, updates::TrieUpdates};
 use revm::Database;
 use std::{
     collections::{BTreeMap, HashSet},
+    ops::Deref,
     sync::Arc,
     time::Instant,
 };
-use tokio::sync::{mpsc, watch};
+use tokio::sync::{mpsc, oneshot, watch};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, metadata::Level, span, warn};
 
@@ -93,6 +94,24 @@ type NextBestFlashblocksTxs<Pool> = BestFlashblocksTxs<
 pub(super) struct FlashblocksExecutionInfo {
     /// Index of the last consumed flashblock
     last_flashblock_index: usize,
+}
+
+struct FallbackBuildOutput<Cache, Transition> {
+    ctx: OpPayloadBuilderCtx<FlashblocksExtraCtx>,
+    info: ExecutionInfo<FlashblocksExecutionInfo>,
+    payload: OpBuiltPayload,
+    fb_payload: OpFlashblockPayload,
+    cache: Cache,
+    transition: Transition,
+}
+
+struct FlashblockBuildOutput<Cache, Transition> {
+    ctx: OpPayloadBuilderCtx<FlashblocksExtraCtx>,
+    build_result: eyre::Result<Option<(FlashblocksExtraCtx, OpBuiltPayload)>>,
+    cache: Cache,
+    transition: Transition,
+    committed_txs: HashSet<B256>,
+    info: ExecutionInfo<FlashblocksExecutionInfo>,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -157,36 +176,59 @@ impl OpPayloadBuilderCtx<FlashblocksExtraCtx> {
 }
 
 /// Optimism's payload builder
-#[derive(Debug, Clone)]
-pub(super) struct OpPayloadBuilder<Pool, Client, BuilderTx> {
-    /// The type responsible for creating the evm.
-    pub evm_config: OpEvmConfig,
-    /// The transaction pool
-    pub pool: Pool,
-    /// Node client
-    pub client: Client,
-    /// Sender for sending built flashblock payloads to [`PayloadHandler`],
-    /// which broadcasts outgoing flashblock payloads via p2p.
-    pub built_fb_payload_tx: mpsc::Sender<OpBuiltPayload>,
-    /// Sender for sending built full block payloads to [`PayloadHandler`],
-    /// which updates the engine tree state.
-    pub built_payload_tx: mpsc::Sender<OpBuiltPayload>,
-    /// WebSocket publisher for broadcasting flashblocks
-    /// to all connected subscribers.
-    pub ws_pub: Arc<WebSocketPublisher>,
-    /// System configuration for the builder
-    pub config: BuilderConfig<FlashblocksConfig>,
-    /// The metrics for the builder
-    pub metrics: Arc<OpRBuilderMetrics>,
-    /// The end of builder transaction type
-    pub builder_tx: BuilderTx,
-    /// Rate limiting based on gas. This is an optional feature.
-    pub address_gas_limiter: AddressGasLimiter,
-    /// Tokio task metrics for monitoring spawned tasks
-    pub task_metrics: Arc<FlashblocksTaskMetrics>,
+#[derive(Debug)]
+pub(super) struct OpPayloadBuilder<Pool, Client, BuilderTx, Tasks> {
+    inner: Arc<OpPayloadBuilderInner<Pool, Client, BuilderTx, Tasks>>,
 }
 
-impl<Pool, Client, BuilderTx> OpPayloadBuilder<Pool, Client, BuilderTx> {
+#[derive(Debug)]
+pub(super) struct OpPayloadBuilderInner<Pool, Client, BuilderTx, Tasks> {
+    /// The type responsible for creating the evm.
+    evm_config: OpEvmConfig,
+    /// The transaction pool
+    pool: Pool,
+    /// Node client
+    client: Client,
+    /// Sender for sending built flashblock payloads to [`PayloadHandler`],
+    /// which broadcasts outgoing flashblock payloads via p2p.
+    built_fb_payload_tx: mpsc::Sender<OpBuiltPayload>,
+    /// Sender for sending built full block payloads to [`PayloadHandler`],
+    /// which updates the engine tree state.
+    built_payload_tx: mpsc::Sender<OpBuiltPayload>,
+    /// WebSocket publisher for broadcasting flashblocks
+    /// to all connected subscribers.
+    ws_pub: Arc<WebSocketPublisher>,
+    /// System configuration for the builder
+    config: BuilderConfig<FlashblocksConfig>,
+    /// The metrics for the builder
+    metrics: Arc<OpRBuilderMetrics>,
+    /// The end of builder transaction type
+    builder_tx: BuilderTx,
+    /// Rate limiting based on gas. This is an optional feature.
+    address_gas_limiter: AddressGasLimiter,
+    /// Tokio task metrics for monitoring spawned tasks
+    task_metrics: Arc<FlashblocksTaskMetrics>,
+    /// Task executor used to offload blocking work.
+    executor: Tasks,
+}
+
+impl<Pool, Client, BuilderTx, Tasks> Deref for OpPayloadBuilder<Pool, Client, BuilderTx, Tasks> {
+    type Target = OpPayloadBuilderInner<Pool, Client, BuilderTx, Tasks>;
+
+    fn deref(&self) -> &Self::Target {
+        self.inner.as_ref()
+    }
+}
+
+impl<Pool, Client, BuilderTx, Tasks> Clone for OpPayloadBuilder<Pool, Client, BuilderTx, Tasks> {
+    fn clone(&self) -> Self {
+        Self {
+            inner: Arc::clone(&self.inner),
+        }
+    }
+}
+
+impl<Pool, Client, BuilderTx, Tasks> OpPayloadBuilder<Pool, Client, BuilderTx, Tasks> {
     /// `OpPayloadBuilder` constructor.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn new(
@@ -200,30 +242,35 @@ impl<Pool, Client, BuilderTx> OpPayloadBuilder<Pool, Client, BuilderTx> {
         ws_pub: Arc<WebSocketPublisher>,
         metrics: Arc<OpRBuilderMetrics>,
         task_metrics: Arc<FlashblocksTaskMetrics>,
+        executor: Tasks,
     ) -> Self {
         let address_gas_limiter = AddressGasLimiter::new(config.gas_limiter_config.clone());
         Self {
-            evm_config,
-            pool,
-            client,
-            built_fb_payload_tx,
-            built_payload_tx,
-            ws_pub,
-            config,
-            metrics,
-            builder_tx,
-            address_gas_limiter,
-            task_metrics,
+            inner: Arc::new(OpPayloadBuilderInner {
+                evm_config,
+                pool,
+                client,
+                built_fb_payload_tx,
+                built_payload_tx,
+                ws_pub,
+                config,
+                metrics,
+                builder_tx,
+                address_gas_limiter,
+                task_metrics,
+                executor,
+            }),
         }
     }
 }
 
-impl<Pool, Client, BuilderTx> reth_basic_payload_builder::PayloadBuilder
-    for OpPayloadBuilder<Pool, Client, BuilderTx>
+impl<Pool, Client, BuilderTx, Tasks> reth_basic_payload_builder::PayloadBuilder
+    for OpPayloadBuilder<Pool, Client, BuilderTx, Tasks>
 where
-    Pool: Clone + Send + Sync,
-    Client: Clone + Send + Sync,
-    BuilderTx: Clone + Send + Sync,
+    Pool: Clone + Send + Sync + 'static,
+    Client: Clone + Send + Sync + 'static,
+    BuilderTx: Send + Sync + 'static,
+    Tasks: Clone + Send + Sync + 'static,
 {
     type Attributes = OpPayloadBuilderAttributes<OpTransactionSigned>;
     type BuiltPayload = OpBuiltPayload;
@@ -246,12 +293,29 @@ where
     }
 }
 
-impl<Pool, Client, BuilderTx> OpPayloadBuilder<Pool, Client, BuilderTx>
+impl<Pool, Client, BuilderTx, Tasks> OpPayloadBuilder<Pool, Client, BuilderTx, Tasks>
 where
-    Pool: PoolBounds,
-    Client: ClientBounds,
-    BuilderTx: BuilderTransactions<FlashblocksExtraCtx, FlashblocksExecutionInfo> + Send + Sync,
+    Pool: PoolBounds + 'static,
+    Client: ClientBounds + 'static,
+    BuilderTx:
+        BuilderTransactions<FlashblocksExtraCtx, FlashblocksExecutionInfo> + Send + Sync + 'static,
+    Tasks: TaskSpawner + Clone + Send + Sync + Unpin + 'static,
 {
+    /// Helper to spawn a blocking task that returns T in a oneshot channel
+    async fn run_blocking_task<T, F>(&self, task: F) -> Result<T, PayloadBuilderError>
+    where
+        T: Send + 'static,
+        F: FnOnce() -> Result<T, PayloadBuilderError> + Send + 'static,
+    {
+        let (tx, rx) = oneshot::channel();
+        self.executor.spawn_blocking(Box::pin(async move {
+            let _ = tx.send(task());
+        }));
+
+        rx.await
+            .map_err(|_| PayloadBuilderError::Other("blocking task dropped".into()))?
+    }
+
     fn get_op_payload_builder_ctx(
         &self,
         config: reth_basic_payload_builder::PayloadConfig<
@@ -330,7 +394,7 @@ where
     ) -> Result<(), PayloadBuilderError> {
         let block_build_start_time = Instant::now();
         let BuildArguments {
-            mut cached_reads,
+            cached_reads,
             config,
             cancel: block_cancel,
         } = args;
@@ -367,53 +431,73 @@ where
 
         self.address_gas_limiter.refresh(ctx.block_number());
 
-        // Phase 1: Build the fallback block. state_provider and State<DB> are
-        // scoped here so they do not live across await points
-        let (mut info, payload, fb_payload, mut cache, mut transition) = {
-            let state_provider = self.client.state_by_block_hash(ctx.parent().hash())?;
-            let db = StateProviderDatabase::new(&state_provider);
+        // Phase 1: Build the fallback block.
+        let FallbackBuildOutput {
+            ctx,
+            mut info,
+            payload,
+            fb_payload,
+            mut cache,
+            mut transition,
+        } = self
+            .run_blocking_task({
+                let builder = self.clone();
+                let ctx = ctx;
+                move || {
+                    let state_provider = builder.client.state_by_block_hash(ctx.parent().hash())?;
+                    let db = StateProviderDatabase::new(&state_provider);
 
-            // 1. execute the pre steps and seal an early block with that
-            let sequencer_tx_start_time = Instant::now();
-            let mut state = State::builder()
-                .with_database(cached_reads.as_db_mut(db))
-                .with_bundle_update()
-                .build();
+                    // 1. execute the pre steps and seal an early block with that
+                    let sequencer_tx_start_time = Instant::now();
+                    let mut cached_reads = cached_reads;
+                    let mut state = State::builder()
+                        .with_database(cached_reads.as_db_mut(db))
+                        .with_bundle_update()
+                        .build();
 
-            let mut info = execute_pre_steps(&mut state, &ctx)?;
-            let sequencer_tx_time = sequencer_tx_start_time.elapsed();
-            ctx.metrics.sequencer_tx_duration.record(sequencer_tx_time);
-            ctx.metrics.sequencer_tx_gauge.set(sequencer_tx_time);
+                    let mut info = execute_pre_steps(&mut state, &ctx)?;
+                    let sequencer_tx_time = sequencer_tx_start_time.elapsed();
+                    ctx.metrics.sequencer_tx_duration.record(sequencer_tx_time);
+                    ctx.metrics.sequencer_tx_gauge.set(sequencer_tx_time);
 
-            // We add first builder tx right after deposits
-            if !ctx.attributes().no_tx_pool
-                && let Err(e) = self.builder_tx.add_builder_txs(
-                    &state_provider,
-                    &mut info,
-                    &ctx,
-                    &mut state,
-                    false,
-                )
-            {
-                error!(
-                    target: "payload_builder",
-                    "Error adding builder txs to fallback block: {}",
-                    e
-                );
-            };
+                    // We add first builder tx right after deposits
+                    if !ctx.attributes().no_tx_pool
+                        && let Err(e) = builder.builder_tx.add_builder_txs(
+                            &state_provider,
+                            &mut info,
+                            &ctx,
+                            &mut state,
+                            false,
+                        )
+                    {
+                        error!(
+                            target: "payload_builder",
+                            "Error adding builder txs to fallback block: {}",
+                            e
+                        );
+                    };
 
-            let (payload, fb_payload) = build_block(
-                &mut state,
-                &ctx,
-                &mut info,
-                !disable_state_root || ctx.attributes().no_tx_pool, // need to calculate state root for CL sync
-            )?;
+                    let (payload, fb_payload) = build_block(
+                        &mut state,
+                        &ctx,
+                        &mut info,
+                        !disable_state_root || ctx.attributes().no_tx_pool, // need to calculate state root for CL sync
+                    )?;
 
-            // we can safely take from state as we drop it at the end of the scope
-            let cache = std::mem::take(&mut state.cache);
-            let transition = state.transition_state.take();
-            (info, payload, fb_payload, cache, transition)
-        };
+                    // we can safely take from state as we drop it at the end of the scope
+                    let cache = std::mem::take(&mut state.cache);
+                    let transition = state.transition_state.take();
+                    Ok(FallbackBuildOutput {
+                        ctx,
+                        info,
+                        payload,
+                        fb_payload,
+                        cache,
+                        transition,
+                    })
+                }
+            })
+            .await?;
 
         self.built_fb_payload_tx
             .try_send(payload.clone())
@@ -576,35 +660,62 @@ where
             };
             let _entered = fb_span.enter();
 
-            // Build flashblock after receiving signal
-            let (build_result, new_cache, new_transition, new_committed) = {
-                // reconstruct state
-                let state_provider = self.client.state_by_block_hash(parent_hash)?;
-                let mut state = State::builder()
-                    .with_database(StateProviderDatabase::new(&state_provider))
-                    .with_cached_prestate(cache)
-                    .with_bundle_update()
-                    .build();
-                state.transition_state = transition;
+            let FlashblockBuildOutput {
+                ctx: returned_ctx,
+                build_result,
+                cache: new_cache,
+                transition: new_transition,
+                committed_txs: new_committed,
+                info: new_info,
+            } = self
+                .run_blocking_task({
+                    let builder = self.clone();
+                    let ctx = ctx;
+                    let block_cancel = block_cancel.clone();
+                    let info = info;
+                    let cache = cache;
+                    let transition = transition;
+                    let committed_txs = committed_txs;
+                    move || {
+                        // reconstruct state
+                        let state_provider = builder.client.state_by_block_hash(parent_hash)?;
+                        let mut state = State::builder()
+                            .with_database(StateProviderDatabase::new(&state_provider))
+                            .with_cached_prestate(cache)
+                            .with_bundle_update()
+                            .build();
+                        state.transition_state = transition;
 
-                let mut best_txs = BestFlashblocksTxs::empty();
-                best_txs.mark_commited(committed_txs.into_iter().collect());
+                        let mut best_txs = BestFlashblocksTxs::empty();
+                        best_txs.mark_commited(committed_txs.into_iter().collect());
 
-                let result = self.build_next_flashblock(
-                    &ctx,
-                    &mut info,
-                    &mut state,
-                    &state_provider,
-                    &mut best_txs,
-                    &block_cancel,
-                );
+                        let mut info = info;
+                        let result = builder.build_next_flashblock(
+                            &ctx,
+                            &mut info,
+                            &mut state,
+                            &state_provider,
+                            &mut best_txs,
+                            &block_cancel,
+                        );
 
-                let committed_txs = best_txs.commited_transactions().clone();
-                let cache = std::mem::take(&mut state.cache);
-                let transition_state = state.transition_state.take();
-                (result, cache, transition_state, committed_txs)
-            }; // provider and state dropped
+                        let committed_txs = best_txs.commited_transactions().clone();
+                        let cache = std::mem::take(&mut state.cache);
+                        let transition_state = state.transition_state.take();
+                        Ok(FlashblockBuildOutput {
+                            ctx,
+                            build_result: result,
+                            cache,
+                            transition: transition_state,
+                            committed_txs,
+                            info,
+                        })
+                    }
+                })
+                .await?;
 
+            ctx = returned_ctx;
+            info = new_info;
             cache = new_cache;
             transition = new_transition;
             committed_txs = new_committed;
@@ -888,12 +999,14 @@ where
 }
 
 #[async_trait::async_trait]
-impl<Pool, Client, BuilderTx> PayloadBuilder for OpPayloadBuilder<Pool, Client, BuilderTx>
+impl<Pool, Client, BuilderTx, Tasks> PayloadBuilder
+    for OpPayloadBuilder<Pool, Client, BuilderTx, Tasks>
 where
-    Pool: PoolBounds,
-    Client: ClientBounds,
+    Pool: PoolBounds + 'static,
+    Client: ClientBounds + 'static,
     BuilderTx:
-        BuilderTransactions<FlashblocksExtraCtx, FlashblocksExecutionInfo> + Clone + Send + Sync,
+        BuilderTransactions<FlashblocksExtraCtx, FlashblocksExecutionInfo> + Send + Sync + 'static,
+    Tasks: TaskSpawner + Clone + Send + Sync + Unpin + 'static,
 {
     type Attributes = OpPayloadBuilderAttributes<OpTransactionSigned>;
     type BuiltPayload = OpBuiltPayload;
