@@ -240,7 +240,7 @@ where
         if let Err(e) = self.validate_against_rules(&transaction) {
             return TransactionValidationOutcome::Invalid(
                 transaction,
-                InvalidPoolTransactionError::other(RuleValidationError::new(e, true)),
+                InvalidPoolTransactionError::other(RuleValidationError::new(e, false)),
             );
         }
 

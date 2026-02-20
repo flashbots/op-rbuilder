@@ -527,6 +527,39 @@ fn test_rule_based_validator_blocks_denied_sender() {
 
 #[test]
 #[serial]
+fn test_rule_based_validator_denied_tx_does_not_mark_as_bad() {
+    use reth_transaction_pool::error::InvalidPoolTransactionError;
+
+    reset_global_rules();
+
+    let blocked = Address::random();
+    add_deny_rule(DenyRule {
+        name: None,
+        description: None,
+        addrs: AddrSet {
+            addresses: vec![blocked],
+            aliases: vec![],
+        },
+        remote_endpoint: None,
+    });
+
+    let validator = RuleBasedValidator::new(PassthroughValidator::default());
+    let tx = make_mock_tx(blocked, Address::random(), []);
+    let outcome = block_on(validator.validate_transaction(TransactionOrigin::External, tx));
+
+    match outcome {
+        TransactionValidationOutcome::Invalid(_, InvalidPoolTransactionError::Other(err)) => {
+            assert!(
+                !err.is_bad_transaction(),
+                "Denied transactions must not be marked as bad - this causes peer penalties and P2P disconnects"
+            );
+        }
+        other => panic!("Expected Invalid(Other) outcome for denied transaction, got: {other:?}"),
+    }
+}
+
+#[test]
+#[serial]
 fn test_rule_based_validator_allows_non_blocked_sender() {
     reset_global_rules();
 
