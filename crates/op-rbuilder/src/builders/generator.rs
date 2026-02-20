@@ -20,7 +20,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 use tokio::{
-    sync::oneshot,
+    sync::watch,
     time::{Duration, Sleep},
 };
 use tokio_util::sync::CancellationToken;
@@ -56,7 +56,8 @@ pub(super) trait PayloadBuilder: Send + Sync + Clone {
     async fn try_build(
         &self,
         args: BuildArguments<Self::Attributes, Self::BuiltPayload>,
-    ) -> Result<Option<Self::BuiltPayload>, PayloadBuilderError>;
+        best_payload_tx: watch::Sender<Option<Self::BuiltPayload>>,
+    ) -> Result<(), PayloadBuilderError>;
 }
 
 /// The generator type that creates new jobs that builds empty blocks.
@@ -197,7 +198,6 @@ where
             payload_rx: None,
             cancel: cancel_token,
             deadline,
-            build_complete: None,
             cached_reads: self.maybe_pre_cached(parent_header.hash()),
         };
 
@@ -250,12 +250,11 @@ where
     ///
     /// See [PayloadBuilder]
     pub(crate) builder: Builder,
-    /// Receiver for the final payload from the builder task.
-    pub(crate) payload_rx: Option<oneshot::Receiver<Option<Builder::BuiltPayload>>>,
+    /// Receiver for the latest payload from the builder task.
+    pub(crate) payload_rx: Option<watch::Receiver<Option<Builder::BuiltPayload>>>,
     /// Cancellation token for the running job
     pub(crate) cancel: CancellationToken,
     pub(crate) deadline: Pin<Box<Sleep>>, // Add deadline
-    pub(crate) build_complete: Option<oneshot::Receiver<Result<(), PayloadBuilderError>>>,
     /// Caches all disk reads for the state the new payloads builds on
     ///
     /// This is used to avoid reading the same state over and over again when new attempts are
@@ -291,7 +290,8 @@ where
         self.cancel.cancel();
 
         let rx = self.payload_rx.take().expect("payload_rx must exist");
-        (ResolvePayload { rx }, KeepPayloadJobAlive::No)
+        let payload = rx.borrow().clone();
+        (ResolvePayload { payload }, KeepPayloadJobAlive::No)
     }
 }
 
@@ -317,10 +317,8 @@ where
         let payload_config = self.config.clone();
         let cancel = self.cancel.clone();
 
-        let (build_tx, build_rx) = oneshot::channel();
-        let (payload_tx, payload_rx) = oneshot::channel();
-        self.build_complete = Some(build_rx);
-        self.payload_rx = Some(payload_rx);
+        let (watch_tx, watch_rx) = watch::channel(None);
+        self.payload_rx = Some(watch_rx);
         let cached_reads = self.cached_reads.take().unwrap_or_default();
         self.executor.spawn_blocking(Box::pin(async move {
             let args = BuildArguments {
@@ -329,16 +327,9 @@ where
                 cancel,
             };
 
-            let result = builder.try_build(args).await;
-            match result {
-                Ok(payload) => {
-                    let _ = payload_tx.send(payload);
-                    let _ = build_tx.send(Ok(()));
-                }
-                Err(e) => {
-                    let _ = build_tx.send(Err(e));
-                }
-            }
+            // watch_tx is passed to try_build; builder sends progress via it.
+            // Errors are logged inside build_payload; we don't propagate them here
+            let _ = builder.try_build(args, watch_tx).await;
         }));
     }
 }
@@ -374,31 +365,26 @@ where
     }
 }
 
-/// A future that resolves when the builder task sends back its best payload
-/// via a oneshot channel.
+/// A future that resolves immediately with a pre-fetched payload value
+/// read from the watch channel via `borrow()`.
 pub(super) struct ResolvePayload<T> {
-    rx: oneshot::Receiver<Option<T>>,
+    payload: Option<T>,
 }
 
-impl<T> Future for ResolvePayload<T> {
+impl<T: Unpin> Future for ResolvePayload<T> {
     type Output = Result<T, PayloadBuilderError>;
 
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        match Pin::new(&mut self.get_mut().rx).poll(cx) {
-            Poll::Ready(Ok(Some(payload))) => Poll::Ready(Ok(payload)),
-            Poll::Ready(Ok(None)) => Poll::Ready(Err(PayloadBuilderError::Other(
+    fn poll(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Self::Output> {
+        match self.get_mut().payload.take() {
+            Some(payload) => Poll::Ready(Ok(payload)),
+            None => Poll::Ready(Err(PayloadBuilderError::Other(
                 "builder produced no payload".into(),
             ))),
-            Poll::Ready(Err(_)) => Poll::Ready(Err(PayloadBuilderError::Other(
-                "builder task dropped".into(),
-            ))),
-            Poll::Pending => Poll::Pending,
         }
     }
 }
 
-
-fn job_deadline(unix_timestamp_secs: u64) -> std::time::Duration {
+fn job_deadline(unix_timestamp_secs: u64) -> Duration {
     let unix_now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
@@ -499,13 +485,14 @@ mod tests {
         async fn try_build(
             &self,
             args: BuildArguments<Self::Attributes, Self::BuiltPayload>,
-        ) -> Result<Option<Self::BuiltPayload>, PayloadBuilderError> {
+            _best_payload_tx: watch::Sender<Option<Self::BuiltPayload>>,
+        ) -> Result<(), PayloadBuilderError> {
             self.new_event(BlockEvent::Started);
 
             loop {
                 if args.cancel.is_cancelled() {
                     self.new_event(BlockEvent::Cancelled);
-                    return Ok(None);
+                    return Ok(());
                 }
 
                 // Small sleep to prevent tight loop

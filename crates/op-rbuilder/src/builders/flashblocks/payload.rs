@@ -54,7 +54,7 @@ use std::{
     sync::Arc,
     time::Instant,
 };
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, metadata::Level, span, warn};
 
@@ -326,7 +326,8 @@ where
     async fn build_payload(
         &self,
         args: BuildArguments<OpPayloadBuilderAttributes<OpTransactionSigned>, OpBuiltPayload>,
-    ) -> Result<Option<OpBuiltPayload>, PayloadBuilderError> {
+        best_payload_tx: watch::Sender<Option<OpBuiltPayload>>,
+    ) -> Result<(), PayloadBuilderError> {
         let block_build_start_time = Instant::now();
         let BuildArguments {
             mut cached_reads,
@@ -425,6 +426,7 @@ where
             );
         }
         let mut best_payload = payload;
+        best_payload_tx.send_replace(Some(best_payload.clone()));
 
         info!(
             target: "payload_builder",
@@ -464,7 +466,7 @@ where
                 .set(info.executed_transactions.len() as f64);
 
             // return early since we don't need to build a block with transactions from the pool
-            return Ok(Some(best_payload));
+            return Ok(());
         }
 
         // We adjust our flashblocks timings based on time the fcu block building signal arrived
@@ -551,7 +553,7 @@ where
             let Some(new_fb_cancel) = rx.recv().await else {
                 // Channel closed - block building cancelled
                 self.record_flashblocks_metrics(&ctx, &info, target_flashblocks, &span);
-                return Ok(Some(best_payload));
+                return Ok(());
             };
 
             debug!(
@@ -610,11 +612,12 @@ where
             let next_flashblocks_ctx = match build_result {
                 Ok(Some((next_flashblocks_ctx, new_payload))) => {
                     best_payload = new_payload;
+                    best_payload_tx.send_replace(Some(best_payload.clone()));
                     next_flashblocks_ctx
                 }
                 Ok(None) => {
                     self.record_flashblocks_metrics(&ctx, &info, target_flashblocks, &span);
-                    return Ok(Some(best_payload));
+                    return Ok(());
                 }
                 Err(err) => {
                     error!(
@@ -665,17 +668,13 @@ where
         );
         let flashblock_build_start_time = Instant::now();
 
-        let builder_txs =
-            match self
-                .builder_tx
-                .add_builder_txs(&state_provider, info, ctx, state, true)
-            {
-                Ok(builder_txs) => builder_txs,
-                Err(e) => {
-                    error!(target: "payload_builder", "Error simulating builder txs: {}", e);
-                    vec![]
-                }
-            };
+        let builder_txs = self
+            .builder_tx
+            .add_builder_txs(&state_provider, info, ctx, state, true)
+            .unwrap_or_else(|e| {
+                error!(target: "payload_builder", "Error simulating builder txs: {}", e);
+                vec![]
+            });
 
         // only reserve builder tx gas / da size that has not been committed yet
         // committed builder txs would have counted towards the gas / da used
@@ -902,8 +901,9 @@ where
     async fn try_build(
         &self,
         args: BuildArguments<Self::Attributes, Self::BuiltPayload>,
-    ) -> Result<Option<Self::BuiltPayload>, PayloadBuilderError> {
-        self.build_payload(args).await
+        best_payload_tx: watch::Sender<Option<Self::BuiltPayload>>,
+    ) -> Result<(), PayloadBuilderError> {
+        self.build_payload(args, best_payload_tx).await
     }
 }
 
