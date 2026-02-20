@@ -54,8 +54,8 @@ pub(crate) struct PayloadHandler<Client, Tasks> {
     // task executor
     task_executor: Tasks,
     cancel: tokio_util::sync::CancellationToken,
-    p2p_send_full_payload_flag: bool,
-    p2p_process_full_payload_flag: bool,
+    p2p_send_payload: bool,
+    p2p_process_payload: bool,
 }
 
 impl<Client, Tasks> PayloadHandler<Client, Tasks>
@@ -75,8 +75,8 @@ where
         client: Client,
         task_executor: Tasks,
         cancel: tokio_util::sync::CancellationToken,
-        p2p_send_full_payload_flag: bool,
-        p2p_process_full_payload_flag: bool,
+        p2p_send_payload: bool,
+        p2p_process_payload: bool,
     ) -> Self {
         Self {
             built_fb_payload_rx,
@@ -89,8 +89,8 @@ where
             client,
             task_executor,
             cancel,
-            p2p_send_full_payload_flag,
-            p2p_process_full_payload_flag,
+            p2p_send_payload,
+            p2p_process_payload,
         }
     }
 
@@ -106,8 +106,8 @@ where
             client,
             task_executor,
             cancel,
-            p2p_send_full_payload_flag,
-            p2p_process_full_payload_flag,
+            p2p_send_payload,
+            p2p_process_payload,
         } = self;
 
         tracing::info!(target: "payload_builder", "flashblocks payload handler started");
@@ -116,22 +116,22 @@ where
             tokio::select! {
                 Some(payload) = built_fb_payload_rx.recv() => {
                     // ignore error here; if p2p was disabled, the channel will be closed.
-                    let _ = p2p_tx.send(Message::from_flashblock_payload(payload)).await;
+                    let _ = p2p_tx.send(payload.into()).await;
                 }
                 Some(payload) = built_payload_rx.recv() => {
                     // Update engine tree state with locally built block payloads
                     if let Err(e) = payload_events_handle.send(Events::BuiltPayload(payload.clone())) {
                         warn!(target: "payload_builder", e = ?e, "failed to send BuiltPayload event");
                     }
-                    if p2p_send_full_payload_flag {
+                    if p2p_send_payload {
                         // ignore error here; if p2p was disabled, the channel will be closed.
-                        let _ = p2p_tx.send(Message::from_built_payload(payload)).await;
+                        let _ = p2p_tx.send(payload.into()).await;
                     }
                 }
                 Some(message) = p2p_rx.recv() => {
                     match message {
                         Message::OpBuiltPayload(payload) => {
-                            if !p2p_process_full_payload_flag {
+                            if !p2p_process_payload {
                                 continue;
                             }
 
@@ -178,6 +178,7 @@ where
                             }));
                         }
                         Message::OpFlashblockPayload(fb_payload) => {
+                            // Skip validation as flashblock builder p2p is trusted
                             if let Err(e) = ws_pub.publish(&fb_payload) {
                                 warn!(target: "payload_builder", e = ?e, "failed to publish flashblock to websocket publisher");
                             }

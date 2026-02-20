@@ -33,12 +33,14 @@ pub(crate) struct OpBuiltPayload {
     pub(crate) fees: U256,
 }
 
-impl Message {
-    pub(super) fn from_built_payload(value: RethOpBuiltPayload) -> Self {
+impl From<RethOpBuiltPayload> for Message {
+    fn from(value: RethOpBuiltPayload) -> Self {
         Message::OpBuiltPayload(value.into())
     }
+}
 
-    pub(super) fn from_flashblock_payload(value: OpFlashblockPayload) -> Self {
+impl From<OpFlashblockPayload> for Message {
+    fn from(value: OpFlashblockPayload) -> Self {
         Message::OpFlashblockPayload(value)
     }
 }
