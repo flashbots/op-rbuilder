@@ -3,10 +3,7 @@ use alloy_primitives::{Address, TxKind};
 use reth_transaction_pool::PoolTransaction;
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Keccak256};
-use std::{
-    cmp::Ordering,
-    collections::{HashMap, HashSet},
-};
+use std::collections::{HashMap, HashSet};
 use tracing::warn;
 
 /// Compute a rule hash from raw bytes (Keccak-256 truncated to u64).
@@ -27,14 +24,6 @@ pub struct AddrSet {
 }
 
 impl AddrSet {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.addresses.is_empty() && self.aliases.is_empty()
-    }
-
     /// Check if an address matches (directly or via alias).
     pub fn contains(&self, addr: &Address, alias_table: &AddressAliases) -> bool {
         // Check direct addresses (O(n) linear scan)
@@ -255,10 +244,6 @@ impl AddressAliases {
         self.groups.get(name).is_some_and(|set| set.contains(addr))
     }
 
-    pub fn get_group(&self, name: &str) -> Option<&HashSet<Address>> {
-        self.groups.get(name)
-    }
-
     pub fn merge(&mut self, other: &AddressAliases) {
         for (name, addrs) in &other.groups {
             self.groups.entry(name.clone()).or_default().extend(addrs);
@@ -275,16 +260,6 @@ pub struct Rules {
     /// Boost rules (applied at sorting)
     #[serde(default)]
     pub boost: Vec<BoostRule>,
-}
-
-impl Rules {
-    pub fn len(&self) -> usize {
-        self.deny.len() + self.boost.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.deny.is_empty() && self.boost.is_empty()
-    }
 }
 
 /// A collection of rules organized by phase
@@ -328,28 +303,6 @@ impl RuleSet {
         }
 
         score
-    }
-
-    /// Sort transactions by descending score while preserving stability.
-    pub fn sort_transactions<T>(&self, txs: Vec<T>) -> Vec<T>
-    where
-        T: PoolTransaction + ConsensusTx + Clone,
-    {
-        let mut scored: Vec<(i64, usize, T)> = txs
-            .into_iter()
-            .enumerate()
-            .map(|(idx, tx)| {
-                let score = self.score_transaction(&tx);
-                (score, idx, tx)
-            })
-            .collect();
-
-        scored.sort_by(|a, b| match b.0.cmp(&a.0) {
-            Ordering::Equal => a.1.cmp(&b.1),
-            other => other,
-        });
-
-        scored.into_iter().map(|(_, _, tx)| tx).collect()
     }
 
     pub fn new() -> Self {

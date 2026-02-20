@@ -3,7 +3,7 @@
 //! This module provides a system for:
 //! - **Denying** transactions at ingress or build time
 //! - **Boosting** transactions for priority ordering
-//! - **Fetching** rules from multiple sources (file, remote)
+//! - **Fetching** rules from multiple sources (file)
 //!
 //! # Architecture
 //!
@@ -14,10 +14,8 @@
 //! ## Rule Sources
 //! - `RuleRegistry`: Trait for sources that provide rules
 //!   - `FileRuleRegistry`: Load from YAML files
-//!   - `RemoteRuleRegistry`: Fetch from HTTP endpoints
 //!
 //! ## Application
-//! - `RuleEngine`: Orchestrates rule fetching and application
 //! - `RuleFetcher`: Aggregates rules from multiple registries
 //! - Global state: `global_ruleset()` / `set_global_ruleset()`
 //!
@@ -27,7 +25,6 @@
 
 pub mod args;
 pub mod config;
-pub mod engine;
 pub mod metrics;
 pub mod ordering;
 pub mod registry;
@@ -36,15 +33,14 @@ pub mod types;
 pub mod validator;
 
 // Re-export main types
-pub use config::{FileRegistryConfig, RulesRegistryConfig};
-pub use engine::RuleEngine;
+pub use config::RulesRegistryConfig;
 pub use metrics::RulesMetrics;
 pub use ordering::{ScoreOrdering, ScorePriority};
-pub use registry::{FetchResult, RuleFetcher, RuleRegistry, file::FileRuleRegistry};
+pub use registry::RuleFetcher;
 pub use state::{
     add_deny_rule, add_scoring_rule, add_to_alias_group, clear_rules, get_alias_group,
     get_tx_score, global_ruleset, insert_tx_score, list_alias_groups, remove_tx_score,
-    set_global_ruleset, update_global_ruleset,
+    set_global_ruleset,
 };
 pub use types::{AddrSet, AddressAliases, BoostRule, DenyRule, MatchType, RuleSet, Rules};
 pub use validator::RuleBasedValidator;

@@ -1,6 +1,6 @@
 //! Configuration for rule registries
 //!
-//! Defines the structure for configuring multiple rule sources (file, HTTP, onchain)
+//! Defines the structure for configuring multiple rule sources (file, onchain)
 //! via a YAML configuration file.
 
 use serde::{Deserialize, Serialize};
@@ -12,9 +12,6 @@ pub struct RulesRegistryConfig {
     /// File-based rule registries
     #[serde(default)]
     pub file: Vec<FileRegistryConfig>,
-    /// Remote HTTP/HTTPS-based rule registries
-    #[serde(default)]
-    pub remote: Vec<RemoteRegistryConfig>,
     /// Interval in seconds for refreshing rules from registries (defaults to 60)
     #[serde(default = "default_refresh_interval")]
     pub refresh_interval: u64,
@@ -31,15 +28,13 @@ impl RulesRegistryConfig {
 
     /// Check if any registries are configured
     pub fn is_registry_config_empty(&self) -> bool {
-        self.file.is_empty() && self.remote.is_empty()
+        self.file.is_empty()
     }
 
     /// Build a RuleFetcher from this configuration
     pub fn build_fetcher(&self) -> anyhow::Result<crate::rules::registry::RuleFetcher> {
-        use crate::rules::registry::{
-            RuleFetcher, file::FileRuleRegistry, remote::RemoteRuleRegistry,
-        };
-        use std::{sync::Arc, time::Duration};
+        use crate::rules::registry::{RuleFetcher, file::FileRuleRegistry};
+        use std::sync::Arc;
 
         let mut fetcher = RuleFetcher::new();
 
@@ -62,27 +57,6 @@ impl RulesRegistryConfig {
             fetcher.add_registry(Arc::new(registry));
         }
 
-        // Add remote registries
-        for remote_config in &self.remote {
-            if !remote_config.enabled {
-                tracing::debug!(
-                    url = %remote_config.url,
-                    "Skipping disabled remote registry"
-                );
-                continue;
-            }
-
-            let timeout = Duration::from_secs(remote_config.timeout_secs.unwrap_or(30));
-            let registry = RemoteRuleRegistry::with_timeout(&remote_config.url, timeout);
-            tracing::info!(
-                url = %remote_config.url,
-                name = ?remote_config.name,
-                timeout_secs = timeout.as_secs(),
-                "Added remote registry"
-            );
-            fetcher.add_registry(Arc::new(registry));
-        }
-
         Ok(fetcher)
     }
 }
@@ -91,7 +65,6 @@ impl Default for RulesRegistryConfig {
     fn default() -> Self {
         Self {
             file: Vec::new(),
-            remote: Vec::new(),
             refresh_interval: default_refresh_interval(),
         }
     }
@@ -119,25 +92,6 @@ fn default_true() -> bool {
 /// Default refresh interval for rule registries (60 seconds).
 pub fn default_refresh_interval() -> u64 {
     60
-}
-
-/// Configuration for a remote HTTP/HTTPS-based rule registry
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RemoteRegistryConfig {
-    /// URL to fetch rules from (e.g., S3 presigned URL, GCS public URL, etc.)
-    pub url: String,
-
-    /// Optional name for this registry (defaults to URL)
-    #[serde(default)]
-    pub name: Option<String>,
-
-    /// Whether this registry is enabled
-    #[serde(default = "default_true")]
-    pub enabled: bool,
-
-    /// Timeout in seconds for HTTP requests (defaults to 30)
-    #[serde(default)]
-    pub timeout_secs: Option<u64>,
 }
 
 #[cfg(test)]
@@ -221,22 +175,9 @@ file:
                 name: None,
                 enabled: true,
             }],
-            remote: Vec::new(),
             refresh_interval: 60,
         };
         assert!(!with_file.is_registry_config_empty());
-
-        let with_remote = RulesRegistryConfig {
-            file: Vec::new(),
-            remote: vec![RemoteRegistryConfig {
-                url: "https://example.com/rules.yaml".to_string(),
-                name: None,
-                enabled: true,
-                timeout_secs: None,
-            }],
-            refresh_interval: 60,
-        };
-        assert!(!with_remote.is_registry_config_empty());
     }
 
     #[test]
@@ -254,7 +195,6 @@ file:
                     enabled: false,
                 },
             ],
-            remote: Vec::new(),
             refresh_interval: 60,
         };
 
@@ -284,7 +224,6 @@ file:
                     enabled: false,
                 },
             ],
-            remote: Vec::new(),
             refresh_interval: 120,
         };
 
@@ -401,42 +340,6 @@ file:
 
         // Cleanup
         std::fs::remove_file(&config_path).ok();
-    }
-
-    #[test]
-    fn test_parse_remote_config() {
-        let yaml = r#"
-remote:
-  - url: https://s3.amazonaws.com/bucket/rules.yaml
-    name: "S3 Rules"
-    timeout_secs: 60
-  - url: https://storage.googleapis.com/bucket/rules.yaml
-    enabled: false
-"#;
-        let config: RulesRegistryConfig = serde_yaml::from_str(yaml).unwrap();
-        assert_eq!(config.remote.len(), 2);
-        assert_eq!(
-            config.remote[0].url,
-            "https://s3.amazonaws.com/bucket/rules.yaml"
-        );
-        assert_eq!(config.remote[0].name, Some("S3 Rules".to_string()));
-        assert_eq!(config.remote[0].timeout_secs, Some(60));
-        assert!(config.remote[0].enabled);
-        assert!(!config.remote[1].enabled);
-    }
-
-    #[test]
-    fn test_parse_remote_config_defaults() {
-        let yaml = r#"
-remote:
-  - url: https://example.com/rules.yaml
-"#;
-        let config: RulesRegistryConfig = serde_yaml::from_str(yaml).unwrap();
-        assert_eq!(config.remote.len(), 1);
-        assert_eq!(config.remote[0].url, "https://example.com/rules.yaml");
-        assert_eq!(config.remote[0].name, None);
-        assert!(config.remote[0].enabled); // defaults to true
-        assert_eq!(config.remote[0].timeout_secs, None); // defaults to None (will use 30 in builder)
     }
 
     #[test]

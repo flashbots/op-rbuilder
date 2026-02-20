@@ -210,7 +210,7 @@ custom-engine-api = []
 
 # Enables rule-based transaction filtering (deny lists) and scoring (boost/nerf priority).
 # When enabled, transactions can be blocked at pool ingress and ordered during block building
-# based on configurable rules loaded from file or remote sources.
+# based on configurable rules loaded from file sources.
 rules = []
 
 [[bin]]

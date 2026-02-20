@@ -4,16 +4,17 @@
 use crate::{
     mock_tx::MockFbTransaction,
     rules::{
-        AddrSet, AddressAliases, BoostRule, DenyRule, MatchType, RuleFetcher, RuleRegistry,
-        RuleSet, add_deny_rule, add_scoring_rule, add_to_alias_group, clear_rules, get_alias_group,
-        global_ruleset, list_alias_groups, set_global_ruleset, validator::RuleBasedValidator,
+        AddrSet, AddressAliases, BoostRule, DenyRule, MatchType, RuleFetcher, RuleSet,
+        add_deny_rule, add_scoring_rule, add_to_alias_group, clear_rules, get_alias_group,
+        global_ruleset, list_alias_groups, registry::RuleRegistry, set_global_ruleset,
+        validator::RuleBasedValidator,
     },
 };
 use alloy_primitives::{Address, Bytes, TxKind, U256};
 use async_trait::async_trait;
 use futures::executor::block_on;
 use reth_transaction_pool::{
-    PoolTransaction, TransactionOrigin, TransactionValidationOutcome, TransactionValidator,
+    TransactionOrigin, TransactionValidationOutcome, TransactionValidator,
     test_utils::MockTransaction, validate::ValidTransaction,
 };
 use serial_test::serial;
@@ -206,51 +207,6 @@ fn test_ruleset_score_transaction_to_alias() {
 
     assert_eq!(ruleset.score_transaction(&boosted_tx), 17);
     assert_eq!(ruleset.score_transaction(&other_tx), 0);
-}
-
-#[test]
-fn test_ruleset_sort_transactions_by_score() {
-    let sender_high = Address::random();
-    let sender_medium = Address::random();
-    let sender_low = Address::random();
-
-    let mut ruleset = RuleSet::default();
-    ruleset.rules.boost.push(BoostRule {
-        name: Some("high".into()),
-        description: None,
-        match_type: MatchType::From,
-        target: vec![format!("{sender_high:#x}")],
-        aliases: vec![],
-        weight: 50,
-        ..Default::default()
-    });
-    ruleset.rules.boost.push(BoostRule {
-        name: Some("medium".into()),
-        description: None,
-        match_type: MatchType::From,
-        target: vec![format!("{sender_medium:#x}")],
-        aliases: vec![],
-        weight: 10,
-        ..Default::default()
-    });
-
-    let high = make_mock_tx(sender_high, Address::random(), []);
-    let medium = make_mock_tx(sender_medium, Address::random(), []);
-    let low = make_mock_tx(sender_low, Address::random(), []);
-
-    let sorted = ruleset.sort_transactions(vec![medium.clone(), low.clone(), high.clone()]);
-    assert_eq!(sorted, vec![high, medium, low]);
-}
-
-#[test]
-fn test_ruleset_sort_transactions_stable_for_equal_scores() {
-    let ruleset = RuleSet::default();
-    let tx1 = make_mock_tx(Address::random(), Address::random(), []);
-    let tx2 = make_mock_tx(Address::random(), Address::random(), []);
-    let tx3 = make_mock_tx(Address::random(), Address::random(), []);
-
-    let sorted = ruleset.sort_transactions(vec![tx1.clone(), tx2.clone(), tx3.clone()]);
-    assert_eq!(sorted, vec![tx1, tx2, tx3]);
 }
 
 #[test]
@@ -800,57 +756,6 @@ fn test_ruleset_multiple_selectors_match_any() {
 }
 
 #[test]
-fn test_ruleset_sort_with_negative_weights() {
-    let sender_high = Address::random();
-    let sender_medium = Address::random();
-    let sender_low = Address::random();
-    let sender_penalty = Address::random();
-
-    let mut ruleset = RuleSet::default();
-    ruleset.rules.boost.push(BoostRule {
-        name: Some("high".into()),
-        description: None,
-        match_type: MatchType::From,
-        target: vec![format!("{sender_high:#x}")],
-        aliases: vec![],
-        weight: 100,
-        ..Default::default()
-    });
-    ruleset.rules.boost.push(BoostRule {
-        name: Some("medium".into()),
-        description: None,
-        match_type: MatchType::From,
-        target: vec![format!("{sender_medium:#x}")],
-        aliases: vec![],
-        weight: 10,
-        ..Default::default()
-    });
-    ruleset.rules.boost.push(BoostRule {
-        name: Some("penalty".into()),
-        description: None,
-        match_type: MatchType::From,
-        target: vec![format!("{sender_penalty:#x}")],
-        aliases: vec![],
-        weight: -50,
-        ..Default::default()
-    });
-
-    let high = make_mock_tx(sender_high, Address::random(), []);
-    let medium = make_mock_tx(sender_medium, Address::random(), []);
-    let low = make_mock_tx(sender_low, Address::random(), []);
-    let penalty = make_mock_tx(sender_penalty, Address::random(), []);
-
-    let sorted = ruleset.sort_transactions(vec![
-        penalty.clone(),
-        low.clone(),
-        medium.clone(),
-        high.clone(),
-    ]);
-    // Order should be: high (100) > medium (10) > low (0) > penalty (-50)
-    assert_eq!(sorted, vec![high, medium, low, penalty]);
-}
-
-#[test]
 fn test_ruleset_empty_ruleset_behavior() {
     let ruleset = RuleSet::default();
     let tx = make_mock_tx(Address::random(), Address::random(), []);
@@ -1148,7 +1053,7 @@ fn test_ruleset_denied_match_reason() {
 fn test_addr_set_empty() {
     let addr_set = AddrSet::default();
     let aliases = AddressAliases::default();
-    assert!(addr_set.is_empty());
+    assert!(addr_set.addresses.is_empty() && addr_set.aliases.is_empty());
     assert!(!addr_set.contains(&Address::random(), &aliases));
 }
 
@@ -1267,31 +1172,6 @@ fn test_ruleset_version_preserved() {
     let json = serde_json::to_string(&ruleset).unwrap();
     let decoded: RuleSet = serde_json::from_str(&json).unwrap();
     assert_eq!(decoded.version, 42);
-}
-
-#[test]
-fn test_ruleset_rules_len() {
-    let mut rules = crate::rules::Rules::default();
-    assert_eq!(rules.len(), 0);
-
-    rules.deny.push(DenyRule {
-        name: None,
-        description: None,
-        addrs: AddrSet::default(),
-        remote_endpoint: None,
-    });
-    assert_eq!(rules.len(), 1);
-
-    rules.boost.push(BoostRule {
-        name: None,
-        description: None,
-        match_type: MatchType::From,
-        target: vec![],
-        aliases: vec![],
-        weight: 0,
-        ..Default::default()
-    });
-    assert_eq!(rules.len(), 2);
 }
 
 // ==================== Additional Edge Case Tests ====================
@@ -1631,11 +1511,11 @@ fn test_address_aliases_merge_extends_existing_group() {
 
     aliases1.merge(&aliases2);
 
-    let group = aliases1.get_group("group").unwrap();
+    let group = aliases1.groups.get("group").unwrap();
     assert!(group.contains(&addr1));
     assert!(group.contains(&addr2));
     assert!(group.contains(&addr3));
-    assert_eq!(group.len(), 3); // No duplicates
+    assert_eq!(group.len(), 3);
 }
 
 #[test]
@@ -2060,9 +1940,8 @@ fn test_rule_fetcher_default() {
 }
 
 #[test]
-fn test_addr_set_new() {
-    let addr_set = AddrSet::new();
-    assert!(addr_set.is_empty());
+fn test_addr_set_default() {
+    let addr_set = AddrSet::default();
     assert!(addr_set.addresses.is_empty());
     assert!(addr_set.aliases.is_empty());
 }
@@ -2085,7 +1964,7 @@ fn test_address_aliases_new() {
 #[test]
 fn test_address_aliases_get_group_nonexistent() {
     let aliases = AddressAliases::new();
-    assert!(aliases.get_group("nonexistent").is_none());
+    assert!(aliases.groups.get("nonexistent").is_none());
 }
 
 #[test]
@@ -2193,212 +2072,4 @@ fn test_is_restricted_fields_delegates_to_is_denied() {
         &TxKind::Call(Address::random()),
         &[]
     ));
-}
-
-#[test]
-fn test_sort_transactions_preserves_order_for_equal_scores() {
-    // All transactions have score 0, should preserve insertion order
-    let ruleset = RuleSet::default();
-
-    let tx1 = make_mock_tx(Address::random(), Address::random(), []);
-    let tx2 = make_mock_tx(Address::random(), Address::random(), []);
-    let tx3 = make_mock_tx(Address::random(), Address::random(), []);
-    let tx4 = make_mock_tx(Address::random(), Address::random(), []);
-    let tx5 = make_mock_tx(Address::random(), Address::random(), []);
-
-    let original_hashes: Vec<_> = vec![&tx1, &tx2, &tx3, &tx4, &tx5]
-        .iter()
-        .map(|tx| tx.hash().clone())
-        .collect();
-
-    let sorted = ruleset.sort_transactions(vec![tx1, tx2, tx3, tx4, tx5]);
-    let sorted_hashes: Vec<_> = sorted.iter().map(|tx| tx.hash().clone()).collect();
-
-    assert_eq!(original_hashes, sorted_hashes);
-}
-
-#[test]
-fn test_sort_transactions_descending_by_score() {
-    let sender_high = Address::random();
-    let sender_medium = Address::random();
-    let sender_low = Address::random();
-
-    let mut ruleset = RuleSet::default();
-    ruleset.rules.boost.push(BoostRule {
-        name: Some("high".into()),
-        description: None,
-        match_type: MatchType::From,
-        target: vec![format!("{sender_high:#x}")],
-        aliases: vec![],
-        weight: 300,
-        ..Default::default()
-    });
-    ruleset.rules.boost.push(BoostRule {
-        name: Some("medium".into()),
-        description: None,
-        match_type: MatchType::From,
-        target: vec![format!("{sender_medium:#x}")],
-        aliases: vec![],
-        weight: 200,
-        ..Default::default()
-    });
-    ruleset.rules.boost.push(BoostRule {
-        name: Some("low".into()),
-        description: None,
-        match_type: MatchType::From,
-        target: vec![format!("{sender_low:#x}")],
-        aliases: vec![],
-        weight: 100,
-        ..Default::default()
-    });
-
-    let tx_low = make_mock_tx(sender_low, Address::random(), []);
-    let tx_medium = make_mock_tx(sender_medium, Address::random(), []);
-    let tx_high = make_mock_tx(sender_high, Address::random(), []);
-
-    // Insert in reverse order
-    let sorted =
-        ruleset.sort_transactions(vec![tx_low.clone(), tx_medium.clone(), tx_high.clone()]);
-
-    // Should be sorted by descending score
-    assert_eq!(sorted[0].hash(), tx_high.hash());
-    assert_eq!(sorted[1].hash(), tx_medium.hash());
-    assert_eq!(sorted[2].hash(), tx_low.hash());
-}
-
-#[test]
-fn test_sort_transactions_ties_broken_by_insertion_order() {
-    // When multiple transactions have the same score, they should be ordered
-    // by their original insertion order (stable sort)
-    let sender1 = Address::random();
-    let sender2 = Address::random();
-    let sender3 = Address::random();
-
-    let mut ruleset = RuleSet::default();
-    // All three senders get the same boost weight
-    ruleset.rules.boost.push(BoostRule {
-        name: Some("same boost for all".into()),
-        description: None,
-        match_type: MatchType::From,
-        target: vec![
-            format!("{sender1:#x}"),
-            format!("{sender2:#x}"),
-            format!("{sender3:#x}"),
-        ],
-        aliases: vec![],
-        weight: 500,
-        ..Default::default()
-    });
-
-    let tx1 = make_mock_tx(sender1, Address::random(), []);
-    let tx2 = make_mock_tx(sender2, Address::random(), []);
-    let tx3 = make_mock_tx(sender3, Address::random(), []);
-
-    // Original order: tx1, tx2, tx3
-    let sorted = ruleset.sort_transactions(vec![tx1.clone(), tx2.clone(), tx3.clone()]);
-
-    // All have score=500, so insertion order should be preserved
-    assert_eq!(
-        sorted[0].hash(),
-        tx1.hash(),
-        "First inserted should be first"
-    );
-    assert_eq!(
-        sorted[1].hash(),
-        tx2.hash(),
-        "Second inserted should be second"
-    );
-    assert_eq!(
-        sorted[2].hash(),
-        tx3.hash(),
-        "Third inserted should be third"
-    );
-
-    // Now test with different insertion order
-    let sorted_reversed = ruleset.sort_transactions(vec![tx3.clone(), tx2.clone(), tx1.clone()]);
-
-    // All have score=500, insertion order is tx3, tx2, tx1
-    assert_eq!(
-        sorted_reversed[0].hash(),
-        tx3.hash(),
-        "tx3 was inserted first"
-    );
-    assert_eq!(
-        sorted_reversed[1].hash(),
-        tx2.hash(),
-        "tx2 was inserted second"
-    );
-    assert_eq!(
-        sorted_reversed[2].hash(),
-        tx1.hash(),
-        "tx1 was inserted third"
-    );
-}
-
-#[test]
-fn test_sort_transactions_mixed_scores_with_ties() {
-    // Test that ties within a score tier preserve insertion order,
-    // while different tiers are properly ordered by score
-    let high1 = Address::random();
-    let high2 = Address::random();
-    let low1 = Address::random();
-    let low2 = Address::random();
-
-    let mut ruleset = RuleSet::default();
-    ruleset.rules.boost.push(BoostRule {
-        name: Some("high tier".into()),
-        description: None,
-        match_type: MatchType::From,
-        target: vec![format!("{high1:#x}"), format!("{high2:#x}")],
-        aliases: vec![],
-        weight: 1000,
-        ..Default::default()
-    });
-    ruleset.rules.boost.push(BoostRule {
-        name: Some("low tier".into()),
-        description: None,
-        match_type: MatchType::From,
-        target: vec![format!("{low1:#x}"), format!("{low2:#x}")],
-        aliases: vec![],
-        weight: 100,
-        ..Default::default()
-    });
-
-    let tx_high1 = make_mock_tx(high1, Address::random(), []);
-    let tx_high2 = make_mock_tx(high2, Address::random(), []);
-    let tx_low1 = make_mock_tx(low1, Address::random(), []);
-    let tx_low2 = make_mock_tx(low2, Address::random(), []);
-
-    // Insert in mixed order: low2, high1, low1, high2
-    let sorted = ruleset.sort_transactions(vec![
-        tx_low2.clone(),
-        tx_high1.clone(),
-        tx_low1.clone(),
-        tx_high2.clone(),
-    ]);
-
-    // High tier (1000) should come first, within tier preserve insertion order
-    // high1 was inserted before high2, so high1 first
-    assert_eq!(
-        sorted[0].hash(),
-        tx_high1.hash(),
-        "high1 first (high tier, inserted first)"
-    );
-    assert_eq!(
-        sorted[1].hash(),
-        tx_high2.hash(),
-        "high2 second (high tier, inserted second)"
-    );
-    // Low tier (100) should come after, within tier preserve insertion order
-    // low2 was inserted before low1, so low2 first
-    assert_eq!(
-        sorted[2].hash(),
-        tx_low2.hash(),
-        "low2 third (low tier, inserted first)"
-    );
-    assert_eq!(
-        sorted[3].hash(),
-        tx_low1.hash(),
-        "low1 fourth (low tier, inserted second)"
-    );
 }

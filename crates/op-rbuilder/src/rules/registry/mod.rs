@@ -1,5 +1,4 @@
 pub mod file;
-pub mod remote;
 
 use crate::rules::{config::default_refresh_interval, metrics::RulesMetrics, types::RuleSet};
 use std::{sync::Arc, time::Instant};
@@ -21,16 +20,6 @@ impl FetchResult {
     /// Returns true if all registries succeeded (no failures).
     pub fn is_success(&self) -> bool {
         self.failure_count == 0
-    }
-
-    /// Returns true if at least one registry succeeded.
-    pub fn has_any_success(&self) -> bool {
-        self.success_count > 0
-    }
-
-    /// Returns true if all registries failed.
-    pub fn is_total_failure(&self) -> bool {
-        self.success_count == 0 && self.failure_count > 0
     }
 }
 
@@ -89,7 +78,8 @@ impl RuleFetcher {
 
                     tracing::info!(
                         source = registry.name(),
-                        rules = ruleset.rules.len(),
+                        deny_rules = ruleset.rules.deny.len(),
+                        boost_rules = ruleset.rules.boost.len(),
                         duration_ms = duration.as_millis(),
                         "Fetched rules from registry"
                     );
