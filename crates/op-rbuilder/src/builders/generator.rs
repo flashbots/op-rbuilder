@@ -1,5 +1,5 @@
 use alloy_primitives::B256;
-use futures_util::Future;
+use futures_util::{Future, FutureExt};
 use reth::{
     providers::{BlockReaderIdExt, StateProviderFactory},
     tasks::TaskSpawner,
@@ -267,7 +267,7 @@ where
     Tasks: TaskSpawner + Clone + 'static,
     Builder: PayloadBuilder + Unpin + 'static,
     Builder::Attributes: Unpin + Clone,
-    Builder::BuiltPayload: Unpin + Clone,
+    Builder::BuiltPayload: Unpin + Clone + Send + Sync + 'static,
 {
     type PayloadAttributes = Builder::Attributes;
     type ResolvePayloadFuture = ResolvePayload<Self::BuiltPayload>;
@@ -287,11 +287,9 @@ where
     ) -> (Self::ResolvePayloadFuture, KeepPayloadJobAlive) {
         info!("Resolve kind {:?}", kind);
 
-        self.cancel.cancel();
-
-        let rx = self.payload_rx.take().expect("payload_rx must exist");
-        let payload = rx.borrow().clone();
-        (ResolvePayload { payload }, KeepPayloadJobAlive::No)
+        let rx = self.payload_rx.take();
+        let cancel = self.cancel.clone();
+        (ResolvePayload::new(rx, cancel), KeepPayloadJobAlive::No)
     }
 }
 
@@ -365,22 +363,49 @@ where
     }
 }
 
-/// A future that resolves immediately with a pre-fetched payload value
-/// read from the watch channel via `borrow()`.
+/// A future that resolves with the latest payload value, waiting for the first publish if needed.
+/// We wrap the inner future in this one to have a concrete type we can easily instantiate it.
 pub(super) struct ResolvePayload<T> {
-    payload: Option<T>,
+    future: futures_util::future::BoxFuture<'static, Result<T, PayloadBuilderError>>,
+}
+
+impl<T: Clone + Send + Sync + 'static> ResolvePayload<T> {
+    fn new(payload_rx: Option<watch::Receiver<Option<T>>>, cancel: CancellationToken) -> Self {
+        let future = async move {
+            let Some(mut rx) = payload_rx else {
+                return Err(PayloadBuilderError::Other(
+                    "payload receiver missing".into(),
+                ));
+            };
+
+            if let Some(payload) = rx.borrow().clone() {
+                cancel.cancel();
+                return Ok(payload);
+            }
+
+            // No value yet -> wait for one
+            loop {
+                rx.changed().await.map_err(|_| {
+                    PayloadBuilderError::Other("builder exited before producing payload".into())
+                })?;
+
+                if let Some(payload) = rx.borrow().clone() {
+                    cancel.cancel();
+                    return Ok(payload);
+                }
+            }
+        }
+        .boxed();
+
+        Self { future }
+    }
 }
 
 impl<T: Unpin> Future for ResolvePayload<T> {
     type Output = Result<T, PayloadBuilderError>;
 
-    fn poll(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Self::Output> {
-        match self.get_mut().payload.take() {
-            Some(payload) => Poll::Ready(Ok(payload)),
-            None => Poll::Ready(Err(PayloadBuilderError::Other(
-                "builder produced no payload".into(),
-            ))),
-        }
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        self.get_mut().future.as_mut().poll(cx)
     }
 }
 
@@ -415,7 +440,7 @@ mod tests {
     use reth_primitives::SealedBlock;
     use reth_provider::test_utils::MockEthProvider;
     use reth_testing_utils::generators::{BlockRangeParams, random_block_range};
-    use tokio::time::Duration;
+    use tokio::time::{Duration, sleep, timeout};
 
     #[derive(Debug, Clone)]
     struct MockBuilder<N> {
@@ -442,8 +467,8 @@ mod tests {
         }
     }
 
-    #[derive(Clone, Debug, Default)]
-    struct MockPayload;
+    #[derive(Clone, Debug, Default, PartialEq, Eq)]
+    struct MockPayload(u64);
 
     impl BuiltPayload for MockPayload {
         type Primitives = OpPrimitives;
@@ -485,19 +510,14 @@ mod tests {
         async fn try_build(
             &self,
             args: BuildArguments<Self::Attributes, Self::BuiltPayload>,
-            _best_payload_tx: watch::Sender<Option<Self::BuiltPayload>>,
+            best_payload_tx: watch::Sender<Option<Self::BuiltPayload>>,
         ) -> Result<(), PayloadBuilderError> {
             self.new_event(BlockEvent::Started);
+            best_payload_tx.send_replace(Some(MockPayload(1)));
 
-            loop {
-                if args.cancel.is_cancelled() {
-                    self.new_event(BlockEvent::Cancelled);
-                    return Ok(());
-                }
-
-                // Small sleep to prevent tight loop
-                std::thread::sleep(Duration::from_millis(10));
-            }
+            args.cancel.cancelled().await;
+            self.new_event(BlockEvent::Cancelled);
+            Ok(())
         }
     }
 
@@ -550,7 +570,7 @@ mod tests {
             config,
             builder.clone(),
             false,
-            std::time::Duration::from_secs(1),
+            Duration::from_secs(1),
         );
 
         // this is not nice but necessary
@@ -581,5 +601,76 @@ mod tests {
         }
 
         Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_resolve_payload_waits_for_first_value() {
+        let (tx, rx) = watch::channel::<Option<MockPayload>>(None);
+        let cancel = CancellationToken::new();
+        let resolve = ResolvePayload::new(Some(rx), cancel.clone());
+
+        tokio::spawn(async move {
+            sleep(Duration::from_millis(50)).await;
+            tx.send_replace(Some(MockPayload(7)));
+        });
+
+        let payload = timeout(Duration::from_secs(1), resolve)
+            .await
+            .expect("resolve should complete")
+            .expect("resolve should return payload");
+        assert_eq!(payload, MockPayload(7));
+        assert!(cancel.is_cancelled());
+    }
+
+    #[tokio::test]
+    async fn test_resolve_payload_returns_latest_value() {
+        let (tx, rx) = watch::channel::<Option<MockPayload>>(None);
+        tx.send_replace(Some(MockPayload(1)));
+        tx.send_replace(Some(MockPayload(2)));
+
+        let cancel = CancellationToken::new();
+        let payload = ResolvePayload::new(Some(rx), cancel.clone())
+            .await
+            .expect("resolve should return payload");
+
+        assert_eq!(payload, MockPayload(2));
+        assert!(cancel.is_cancelled());
+    }
+
+    #[tokio::test]
+    async fn test_resolve_payload_errors_if_builder_exits_without_payload() {
+        let (tx, rx) = watch::channel::<Option<MockPayload>>(None);
+        drop(tx);
+
+        let _ = ResolvePayload::new(Some(rx), CancellationToken::new())
+            .await
+            .expect_err("resolve should error when sender closes before value");
+    }
+
+    #[tokio::test]
+    async fn test_resolve_payload_errors_if_receiver_missing() {
+        let _ = ResolvePayload::<MockPayload>::new(None, CancellationToken::new())
+            .await
+            .expect_err("resolve should error when receiver is missing");
+    }
+
+    #[tokio::test]
+    async fn test_resolve_payload_cancels_after_payload_arrives() {
+        let (tx, rx) = watch::channel::<Option<MockPayload>>(None);
+        let cancel = CancellationToken::new();
+        let handle = tokio::spawn(ResolvePayload::new(Some(rx), cancel.clone()));
+
+        sleep(Duration::from_millis(20)).await;
+        assert!(!cancel.is_cancelled());
+
+        tx.send_replace(Some(MockPayload(9)));
+        let payload = timeout(Duration::from_secs(1), handle)
+            .await
+            .expect("task should finish")
+            .expect("task should not panic")
+            .expect("resolve should return payload");
+
+        assert_eq!(payload, MockPayload(9));
+        assert!(cancel.is_cancelled());
     }
 }
