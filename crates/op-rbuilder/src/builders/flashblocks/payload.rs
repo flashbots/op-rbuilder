@@ -51,11 +51,7 @@ use reth_revm::{
 use reth_transaction_pool::TransactionPool;
 use reth_trie::{HashedPostState, updates::TrieUpdates};
 use revm::Database;
-use std::{
-    collections::{BTreeMap, HashSet},
-    sync::Arc,
-    time::Instant,
-};
+use std::{collections::BTreeMap, sync::Arc, time::Instant};
 use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, metadata::Level, span, warn};
@@ -503,8 +499,7 @@ where
                 "Failed to send updated payload"
             );
         }
-        let mut best_payload = payload;
-        best_payload_tx.send_replace(Some(best_payload.clone()));
+        best_payload_tx.send_replace(Some(payload));
 
         info!(
             target: "payload_builder",
@@ -689,8 +684,7 @@ where
 
             let next_flashblock_state = match build_result {
                 Ok(Some((next_flashblock_state, new_payload))) => {
-                    best_payload = new_payload;
-                    best_payload_tx.send_replace(Some(best_payload.clone()));
+                    best_payload_tx.send_replace(Some(new_payload));
                     next_flashblock_state
                 }
                 Ok(None) => {
