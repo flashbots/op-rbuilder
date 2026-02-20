@@ -14,8 +14,8 @@ use testcontainers::bollard::{
     exec::{CreateExecOptions, StartExecResults},
     models::{ContainerCreateBody, ContainerCreateResponse, HostConfig},
     query_parameters::{
-        AttachContainerOptions, CreateContainerOptions, CreateImageOptions,
-        RemoveContainerOptions, StartContainerOptions, StopContainerOptions,
+        AttachContainerOptions, CreateContainerOptions, CreateImageOptions, RemoveContainerOptions,
+        StartContainerOptions, StopContainerOptions,
     },
 };
 use tokio::signal;
@@ -320,10 +320,7 @@ async fn create_container(
     };
 
     Ok(docker
-        .create_container(
-            Some(CreateContainerOptions::default()),
-            container_config,
-        )
+        .create_container(Some(CreateContainerOptions::default()), container_config)
         .await?)
 }
 
