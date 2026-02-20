@@ -132,6 +132,7 @@ impl FlashblocksServiceBuilder {
             ws_pub.clone(),
             metrics.clone(),
             task_metrics.clone(),
+            ctx.task_executor().clone(),
         );
         let payload_job_config = BasicPayloadJobGeneratorConfig::default();
 
