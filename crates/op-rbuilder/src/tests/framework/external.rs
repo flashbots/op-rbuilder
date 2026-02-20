@@ -11,13 +11,12 @@ use op_alloy_rpc_types_engine::OpExecutionPayloadV4;
 use std::path::{Path, PathBuf};
 use testcontainers::bollard::{
     Docker,
-    container::{
-        AttachContainerOptions, Config, CreateContainerOptions, RemoveContainerOptions,
-        StartContainerOptions, StopContainerOptions,
-    },
     exec::{CreateExecOptions, StartExecResults},
-    image::CreateImageOptions,
-    secret::{ContainerCreateResponse, HostConfig},
+    models::{ContainerCreateBody, ContainerCreateResponse, HostConfig},
+    query_parameters::{
+        AttachContainerOptions, CreateContainerOptions, CreateImageOptions,
+        RemoveContainerOptions, StartContainerOptions, StopContainerOptions,
+    },
 };
 use tokio::signal;
 use tracing::{debug, warn};
@@ -71,7 +70,7 @@ impl ExternalNode {
         let container = create_container(&tempdir, &docker, version_tag).await?;
 
         docker
-            .start_container(&container.id, None::<StartContainerOptions<String>>)
+            .start_container(&container.id, None::<StartContainerOptions>)
             .await?;
 
         // Wait for the container to be ready and IPCs to be created
@@ -280,8 +279,8 @@ async fn create_container(
     // first pull the image locally
     let mut pull_stream = docker.create_image(
         Some(CreateImageOptions {
-            from_image: "ghcr.io/paradigmxyz/op-reth".to_string(),
-            tag: version_tag.into(),
+            from_image: Some("ghcr.io/paradigmxyz/op-reth".to_string()),
+            tag: Some(version_tag.to_string()),
             ..Default::default()
         }),
         None,
@@ -296,7 +295,7 @@ async fn create_container(
     }
 
     // Don't expose any ports, as we will only use IPC for communication.
-    let container_config = Config {
+    let container_config = ContainerCreateBody {
         image: Some(format!("ghcr.io/paradigmxyz/op-reth:{version_tag}")),
         entrypoint: Some(vec!["op-reth".to_string()]),
         cmd: Some(
@@ -322,7 +321,7 @@ async fn create_container(
 
     Ok(docker
         .create_container(
-            Some(CreateContainerOptions::<String>::default()),
+            Some(CreateContainerOptions::default()),
             container_config,
         )
         .await?)
@@ -366,11 +365,11 @@ async fn await_ipc_readiness(docker: &Docker, container: &str) -> eyre::Result<(
     let mut attach_stream = docker
         .attach_container(
             container,
-            Some(AttachContainerOptions::<String> {
-                stdout: Some(true),
-                stderr: Some(true),
-                stream: Some(true),
-                logs: Some(true),
+            Some(AttachContainerOptions {
+                stdout: true,
+                stderr: true,
+                stream: true,
+                logs: true,
                 ..Default::default()
             }),
         )
