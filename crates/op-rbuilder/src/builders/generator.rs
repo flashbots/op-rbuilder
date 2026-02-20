@@ -1,5 +1,5 @@
 use alloy_primitives::B256;
-use futures_util::{Future, FutureExt};
+use futures_util::Future;
 use reth::{
     providers::{BlockReaderIdExt, StateProviderFactory},
     tasks::TaskSpawner,
@@ -20,7 +20,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 use tokio::{
-    sync::{Notify, oneshot},
+    sync::oneshot,
     time::{Duration, Sleep},
 };
 use tokio_util::sync::CancellationToken;
@@ -56,8 +56,7 @@ pub(super) trait PayloadBuilder: Send + Sync + Clone {
     async fn try_build(
         &self,
         args: BuildArguments<Self::Attributes, Self::BuiltPayload>,
-        best_payload: BlockCell<Self::BuiltPayload>,
-    ) -> Result<(), PayloadBuilderError>;
+    ) -> Result<Option<Self::BuiltPayload>, PayloadBuilderError>;
 }
 
 /// The generator type that creates new jobs that builds empty blocks.
@@ -195,7 +194,7 @@ where
             executor: self.executor.clone(),
             builder: self.builder.clone(),
             config,
-            cell: BlockCell::new(),
+            payload_rx: None,
             cancel: cancel_token,
             deadline,
             build_complete: None,
@@ -251,8 +250,8 @@ where
     ///
     /// See [PayloadBuilder]
     pub(crate) builder: Builder,
-    /// The cell that holds the built payload.
-    pub(crate) cell: BlockCell<Builder::BuiltPayload>,
+    /// Receiver for the final payload from the builder task.
+    pub(crate) payload_rx: Option<oneshot::Receiver<Option<Builder::BuiltPayload>>>,
     /// Cancellation token for the running job
     pub(crate) cancel: CancellationToken,
     pub(crate) deadline: Pin<Box<Sleep>>, // Add deadline
@@ -287,13 +286,12 @@ where
         &mut self,
         kind: PayloadKind,
     ) -> (Self::ResolvePayloadFuture, KeepPayloadJobAlive) {
-        tracing::info!("Resolve kind {:?}", kind);
+        info!("Resolve kind {:?}", kind);
 
-        // check if self.cell has a payload
         self.cancel.cancel();
 
-        let resolve_future = ResolvePayload::new(self.cell.wait_for_value());
-        (resolve_future, KeepPayloadJobAlive::No)
+        let rx = self.payload_rx.take().expect("payload_rx must exist");
+        (ResolvePayload { rx }, KeepPayloadJobAlive::No)
     }
 }
 
@@ -317,11 +315,12 @@ where
     pub(super) fn spawn_build_job(&mut self) {
         let builder = self.builder.clone();
         let payload_config = self.config.clone();
-        let cell = self.cell.clone();
         let cancel = self.cancel.clone();
 
-        let (tx, rx) = oneshot::channel();
-        self.build_complete = Some(rx);
+        let (build_tx, build_rx) = oneshot::channel();
+        let (payload_tx, payload_rx) = oneshot::channel();
+        self.build_complete = Some(build_rx);
+        self.payload_rx = Some(payload_rx);
         let cached_reads = self.cached_reads.take().unwrap_or_default();
         self.executor.spawn_blocking(Box::pin(async move {
             let args = BuildArguments {
@@ -330,8 +329,16 @@ where
                 cancel,
             };
 
-            let result = builder.try_build(args, cell).await;
-            let _ = tx.send(result);
+            let result = builder.try_build(args).await;
+            match result {
+                Ok(payload) => {
+                    let _ = payload_tx.send(payload);
+                    let _ = build_tx.send(Ok(()));
+                }
+                Err(e) => {
+                    let _ = build_tx.send(Err(e));
+                }
+            }
         }));
     }
 }
@@ -367,84 +374,29 @@ where
     }
 }
 
-// A future that resolves when a payload becomes available in the BlockCell
+/// A future that resolves when the builder task sends back its best payload
+/// via a oneshot channel.
 pub(super) struct ResolvePayload<T> {
-    future: WaitForValue<T>,
+    rx: oneshot::Receiver<Option<T>>,
 }
 
-impl<T> ResolvePayload<T> {
-    pub(super) fn new(future: WaitForValue<T>) -> Self {
-        Self { future }
-    }
-}
-
-impl<T: Clone> Future for ResolvePayload<T> {
+impl<T> Future for ResolvePayload<T> {
     type Output = Result<T, PayloadBuilderError>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        match self.get_mut().future.poll_unpin(cx) {
-            Poll::Ready(value) => Poll::Ready(Ok(value)),
+        match Pin::new(&mut self.get_mut().rx).poll(cx) {
+            Poll::Ready(Ok(Some(payload))) => Poll::Ready(Ok(payload)),
+            Poll::Ready(Ok(None)) => Poll::Ready(Err(PayloadBuilderError::Other(
+                "builder produced no payload".into(),
+            ))),
+            Poll::Ready(Err(_)) => Poll::Ready(Err(PayloadBuilderError::Other(
+                "builder task dropped".into(),
+            ))),
             Poll::Pending => Poll::Pending,
         }
     }
 }
 
-#[derive(Clone)]
-pub(super) struct BlockCell<T> {
-    inner: Arc<Mutex<Option<T>>>,
-    notify: Arc<Notify>,
-}
-
-impl<T: Clone> BlockCell<T> {
-    pub(super) fn new() -> Self {
-        Self {
-            inner: Arc::new(Mutex::new(None)),
-            notify: Arc::new(Notify::new()),
-        }
-    }
-
-    pub(super) fn set(&self, value: T) {
-        let mut inner = self.inner.lock().unwrap();
-        *inner = Some(value);
-        self.notify.notify_one();
-    }
-
-    pub(super) fn get(&self) -> Option<T> {
-        let inner = self.inner.lock().unwrap();
-        inner.clone()
-    }
-
-    // Return a future that resolves when value is set
-    pub(super) fn wait_for_value(&self) -> WaitForValue<T> {
-        WaitForValue { cell: self.clone() }
-    }
-}
-
-#[derive(Clone)]
-// Future that resolves when a value is set in BlockCell
-pub(super) struct WaitForValue<T> {
-    cell: BlockCell<T>,
-}
-
-impl<T: Clone> Future for WaitForValue<T> {
-    type Output = T;
-
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        if let Some(value) = self.cell.get() {
-            Poll::Ready(value)
-        } else {
-            // Instead of register, we use notified() to get a future
-            cx.waker().wake_by_ref();
-            Poll::Pending
-        }
-    }
-}
-
-impl<T: Clone> Default for BlockCell<T> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
 
 fn job_deadline(unix_timestamp_secs: u64) -> std::time::Duration {
     let unix_now = SystemTime::now()
@@ -477,77 +429,7 @@ mod tests {
     use reth_primitives::SealedBlock;
     use reth_provider::test_utils::MockEthProvider;
     use reth_testing_utils::generators::{BlockRangeParams, random_block_range};
-    use tokio::{
-        task,
-        time::{Duration, sleep},
-    };
-
-    #[tokio::test]
-    async fn test_block_cell_wait_for_value() {
-        let cell = BlockCell::new();
-
-        // Spawn a task that will set the value after a delay
-        let cell_clone = cell.clone();
-        task::spawn(async move {
-            sleep(Duration::from_millis(100)).await;
-            cell_clone.set(42);
-        });
-
-        // Wait for the value and verify
-        let wait_future = cell.wait_for_value();
-        let result = wait_future.await;
-        assert_eq!(result, 42);
-    }
-
-    #[tokio::test]
-    async fn test_block_cell_immediate_value() {
-        let cell = BlockCell::new();
-        cell.set(42);
-
-        // Value should be immediately available
-        let wait_future = cell.wait_for_value();
-        let result = wait_future.await;
-        assert_eq!(result, 42);
-    }
-
-    #[tokio::test]
-    async fn test_block_cell_multiple_waiters() {
-        let cell = BlockCell::new();
-
-        // Spawn multiple waiters
-        let wait1 = task::spawn({
-            let cell = cell.clone();
-            async move { cell.wait_for_value().await }
-        });
-
-        let wait2 = task::spawn({
-            let cell = cell.clone();
-            async move { cell.wait_for_value().await }
-        });
-
-        // Set value after a delay
-        sleep(Duration::from_millis(100)).await;
-        cell.set(42);
-
-        // All waiters should receive the value
-        assert_eq!(wait1.await.unwrap(), 42);
-        assert_eq!(wait2.await.unwrap(), 42);
-    }
-
-    #[tokio::test]
-    async fn test_block_cell_update_value() {
-        let cell = BlockCell::new();
-
-        // Set initial value
-        cell.set(42);
-
-        // Set new value
-        cell.set(43);
-
-        // Waiter should get the latest value
-        let result = cell.wait_for_value().await;
-        assert_eq!(result, 43);
-    }
+    use tokio::time::Duration;
 
     #[derive(Debug, Clone)]
     struct MockBuilder<N> {
@@ -617,14 +499,13 @@ mod tests {
         async fn try_build(
             &self,
             args: BuildArguments<Self::Attributes, Self::BuiltPayload>,
-            _best_payload: BlockCell<Self::BuiltPayload>,
-        ) -> Result<(), PayloadBuilderError> {
+        ) -> Result<Option<Self::BuiltPayload>, PayloadBuilderError> {
             self.new_event(BlockEvent::Started);
 
             loop {
                 if args.cancel.is_cancelled() {
                     self.new_event(BlockEvent::Cancelled);
-                    return Ok(());
+                    return Ok(None);
                 }
 
                 // Small sleep to prevent tight loop
