@@ -10,7 +10,7 @@ use crate::{
             config::FlashBlocksConfigExt,
             timing::FlashblockScheduler,
         },
-        generator::{BlockCell, BuildArguments, PayloadBuilder},
+        generator::{BuildArguments, PayloadBuilder},
     },
     gas_limiter::AddressGasLimiter,
     metrics::OpRBuilderMetrics,
@@ -405,8 +405,7 @@ where
     async fn build_payload(
         &self,
         args: BuildArguments<OpPayloadBuilderAttributes<OpTransactionSigned>, OpBuiltPayload>,
-        best_payload: BlockCell<OpBuiltPayload>,
-    ) -> Result<(), PayloadBuilderError> {
+    ) -> Result<Option<OpBuiltPayload>, PayloadBuilderError> {
         let block_build_start_time = Instant::now();
         let BuildArguments {
             mut cached_reads,
@@ -503,7 +502,7 @@ where
                 "Failed to send updated payload"
             );
         }
-        best_payload.set(payload);
+        let mut best_payload = payload;
 
         info!(
             target: "payload_builder",
@@ -543,7 +542,7 @@ where
                 .set(info.executed_transactions.len() as f64);
 
             // return early since we don't need to build a block with transactions from the pool
-            return Ok(());
+            return Ok(Some(best_payload));
         }
 
         // We adjust our flashblocks timings based on time the fcu block building signal arrived
@@ -632,7 +631,7 @@ where
             let Some(new_fb_cancel) = rx.recv().await else {
                 // Channel closed - block building cancelled
                 self.record_flashblocks_metrics(&ctx, &fb_state, &info, target_flashblocks, &span);
-                return Ok(());
+                return Ok(Some(best_payload));
             };
 
             debug!(
@@ -676,7 +675,6 @@ where
                     &state_provider,
                     &mut best_txs,
                     &block_cancel,
-                    &best_payload,
                 );
 
                 let cache = std::mem::take(&mut state.cache);
@@ -688,7 +686,10 @@ where
             transition = new_transition;
 
             let next_flashblock_state = match build_result {
-                Ok(Some(next_flashblock_state)) => next_flashblock_state,
+                Ok(Some((next_flashblock_state, new_payload))) => {
+                    best_payload = new_payload;
+                    next_flashblock_state
+                }
                 Ok(None) => {
                     self.record_flashblocks_metrics(
                         &ctx,
@@ -697,7 +698,7 @@ where
                         target_flashblocks,
                         &span,
                     );
-                    return Ok(());
+                    return Ok(Some(best_payload));
                 }
                 Err(err) => {
                     error!(
@@ -730,8 +731,7 @@ where
         state_provider: impl reth::providers::StateProvider + Clone,
         best_txs: &mut NextFlashblockPoolTxCursor<'a, Pool>,
         block_cancel: &CancellationToken,
-        best_payload: &BlockCell<OpBuiltPayload>,
-    ) -> eyre::Result<Option<FlashblocksState>> {
+    ) -> eyre::Result<Option<(FlashblocksState, OpBuiltPayload)>> {
         let flashblock_index = fb_state.flashblock_index();
         let mut target_gas_for_batch = fb_state.target_gas_for_batch();
         let mut target_da_for_batch = fb_state.target_da_for_batch();
@@ -897,8 +897,6 @@ where
                         "Failed to send updated payload"
                     );
                 }
-                best_payload.set(new_payload);
-
                 // Record flashblock build duration
                 ctx.metrics
                     .flashblock_build_duration
@@ -948,7 +946,7 @@ where
                     "Flashblock built"
                 );
 
-                Ok(Some(next_flashblock_state))
+                Ok(Some((next_flashblock_state, new_payload)))
             }
         }
     }
@@ -1002,9 +1000,8 @@ where
     async fn try_build(
         &self,
         args: BuildArguments<Self::Attributes, Self::BuiltPayload>,
-        best_payload: BlockCell<Self::BuiltPayload>,
-    ) -> Result<(), PayloadBuilderError> {
-        self.build_payload(args, best_payload).await
+    ) -> Result<Option<Self::BuiltPayload>, PayloadBuilderError> {
+        self.build_payload(args).await
     }
 }
 
