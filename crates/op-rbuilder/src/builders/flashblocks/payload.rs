@@ -7,7 +7,7 @@ use crate::{
         flashblocks::{
             best_txs::BestFlashblocksTxs, config::FlashBlocksConfigExt, timing::FlashblockScheduler,
         },
-        generator::{BlockCell, BuildArguments, PayloadBuilder},
+        generator::{BuildArguments, PayloadBuilder},
     },
     gas_limiter::AddressGasLimiter,
     metrics::OpRBuilderMetrics,
@@ -54,7 +54,7 @@ use std::{
     sync::Arc,
     time::Instant,
 };
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, metadata::Level, span, warn};
 
@@ -326,7 +326,7 @@ where
     async fn build_payload(
         &self,
         args: BuildArguments<OpPayloadBuilderAttributes<OpTransactionSigned>, OpBuiltPayload>,
-        best_payload: BlockCell<OpBuiltPayload>,
+        best_payload_tx: watch::Sender<Option<OpBuiltPayload>>,
     ) -> Result<(), PayloadBuilderError> {
         let block_build_start_time = Instant::now();
         let BuildArguments {
@@ -425,7 +425,8 @@ where
                 "Failed to send updated payload"
             );
         }
-        best_payload.set(payload);
+        let mut best_payload = payload;
+        best_payload_tx.send_replace(Some(best_payload.clone()));
 
         info!(
             target: "payload_builder",
@@ -596,7 +597,6 @@ where
                     &state_provider,
                     &mut best_txs,
                     &block_cancel,
-                    &best_payload,
                 );
 
                 let committed_txs = best_txs.commited_transactions().clone();
@@ -610,7 +610,11 @@ where
             committed_txs = new_committed;
 
             let next_flashblocks_ctx = match build_result {
-                Ok(Some(next_flashblocks_ctx)) => next_flashblocks_ctx,
+                Ok(Some((next_flashblocks_ctx, new_payload))) => {
+                    best_payload = new_payload;
+                    best_payload_tx.send_replace(Some(best_payload.clone()));
+                    next_flashblocks_ctx
+                }
                 Ok(None) => {
                     self.record_flashblocks_metrics(&ctx, &info, target_flashblocks, &span);
                     return Ok(());
@@ -644,8 +648,7 @@ where
         state_provider: impl reth::providers::StateProvider + Clone,
         best_txs: &mut NextBestFlashblocksTxs<Pool>,
         block_cancel: &CancellationToken,
-        best_payload: &BlockCell<OpBuiltPayload>,
-    ) -> eyre::Result<Option<FlashblocksExtraCtx>> {
+    ) -> eyre::Result<Option<(FlashblocksExtraCtx, OpBuiltPayload)>> {
         let flashblock_index = ctx.flashblock_index();
         let mut target_gas_for_batch = ctx.extra_ctx.target_gas_for_batch;
         let mut target_da_for_batch = ctx.extra_ctx.target_da_for_batch;
@@ -665,17 +668,13 @@ where
         );
         let flashblock_build_start_time = Instant::now();
 
-        let builder_txs =
-            match self
-                .builder_tx
-                .add_builder_txs(&state_provider, info, ctx, state, true)
-            {
-                Ok(builder_txs) => builder_txs,
-                Err(e) => {
-                    error!(target: "payload_builder", "Error simulating builder txs: {}", e);
-                    vec![]
-                }
-            };
+        let builder_txs = self
+            .builder_tx
+            .add_builder_txs(&state_provider, info, ctx, state, true)
+            .unwrap_or_else(|e| {
+                error!(target: "payload_builder", "Error simulating builder txs: {}", e);
+                vec![]
+            });
 
         // only reserve builder tx gas / da size that has not been committed yet
         // committed builder txs would have counted towards the gas / da used
@@ -799,8 +798,6 @@ where
                         "Failed to send updated payload"
                     );
                 }
-                best_payload.set(new_payload);
-
                 // Record flashblock build duration
                 ctx.metrics
                     .flashblock_build_duration
@@ -850,7 +847,7 @@ where
                     "Flashblock built"
                 );
 
-                Ok(Some(next_extra_ctx))
+                Ok(Some((next_extra_ctx, new_payload)))
             }
         }
     }
@@ -904,9 +901,9 @@ where
     async fn try_build(
         &self,
         args: BuildArguments<Self::Attributes, Self::BuiltPayload>,
-        best_payload: BlockCell<Self::BuiltPayload>,
+        best_payload_tx: watch::Sender<Option<Self::BuiltPayload>>,
     ) -> Result<(), PayloadBuilderError> {
-        self.build_payload(args, best_payload).await
+        self.build_payload(args, best_payload_tx).await
     }
 }
 
