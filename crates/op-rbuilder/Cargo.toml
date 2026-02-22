@@ -90,6 +90,8 @@ op-alloy-flz.workspace = true
 revm.workspace = true
 op-revm.workspace = true
 
+base-access-lists.workspace = true
+
 tracing.workspace = true
 eyre.workspace = true
 serde_with.workspace = true

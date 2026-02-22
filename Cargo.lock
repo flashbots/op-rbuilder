@@ -1814,6 +1814,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-access-lists"
+version = "0.0.0"
+source = "git+https://github.com/base/base.git#264ae1ca69ed19d938c4207a0a3a8940ab4abd3f"
+dependencies = [
+ "alloy-eip7928",
+ "alloy-primitives 1.5.2",
+ "alloy-rlp",
+ "revm",
+ "serde",
+ "tracing",
+]
+
+[[package]]
 name = "base-x"
 version = "0.2.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6974,6 +6987,7 @@ dependencies = [
  "alloy-transport-http",
  "anyhow",
  "async-trait",
+ "base-access-lists",
  "chrono",
  "clap",
  "clap_builder",
