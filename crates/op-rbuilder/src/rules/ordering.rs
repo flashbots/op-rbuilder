@@ -1,4 +1,4 @@
-use crate::rules::state::get_tx_score;
+use crate::rules::{metrics::RulesMetrics, state::get_tx_score};
 use reth_transaction_pool::{CoinbaseTipOrdering, PoolTransaction, Priority, TransactionOrdering};
 use std::cmp::Ordering;
 
@@ -52,12 +52,14 @@ impl<P: Ord + Clone> PartialOrd for ScorePriority<P> {
 #[derive(Debug)]
 pub struct ScoreOrdering<T> {
     inner: CoinbaseTipOrdering<T>,
+    metrics: RulesMetrics,
 }
 
 impl<T> Default for ScoreOrdering<T> {
     fn default() -> Self {
         Self {
             inner: CoinbaseTipOrdering::<T>::default(),
+            metrics: RulesMetrics::default(),
         }
     }
 }
@@ -81,7 +83,13 @@ where
         transaction: &Self::Transaction,
         base_fee: u64,
     ) -> Priority<Self::PriorityValue> {
-        let score = get_tx_score(transaction.hash()).unwrap_or(0);
+        let score = match get_tx_score(transaction.hash()) {
+            Some(s) => s,
+            None => {
+                self.metrics.record_score_cache_miss();
+                0
+            }
+        };
         Priority::Value(ScorePriority {
             score,
             effective_tip: self.inner.priority(transaction, base_fee),

@@ -41,6 +41,8 @@ pub struct RulesMetrics {
     pub last_refresh_timestamp: Gauge,
     /// Active ruleset hash (Keccak-256 truncated to u64)
     pub active_ruleset_hash: Gauge,
+    /// Score cache misses during transaction ordering
+    pub score_cache_misses: Counter,
 }
 
 impl RulesMetrics {
@@ -94,6 +96,11 @@ impl RulesMetrics {
     pub fn set_registries_count(&self, count: usize) {
         self.registries_count.set(count as f64);
     }
+
+    #[inline]
+    pub fn record_score_cache_miss(&self) {
+        self.score_cache_misses.increment(1);
+    }
 }
 
 #[cfg(test)]
@@ -127,5 +134,13 @@ mod tests {
         let metrics = RulesMetrics::default();
         // Should not panic when hash is None
         metrics.update_rules_state(1, 2, None);
+    }
+
+    #[test]
+    fn test_record_score_cache_miss() {
+        let metrics = RulesMetrics::default();
+        // Should not panic and counter increments
+        metrics.record_score_cache_miss();
+        metrics.record_score_cache_miss();
     }
 }

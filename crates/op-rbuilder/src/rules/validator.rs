@@ -259,12 +259,14 @@ where
         } = outcome
         {
             let ruleset = global_ruleset();
+            let tx = valid_tx.transaction();
+            let tx_hash = *tx.hash();
             if ruleset.has_scoring_rules() {
-                let tx = valid_tx.transaction();
-                let tx_hash = *tx.hash();
                 let score = ruleset.score_transaction(tx);
                 insert_tx_score(tx_hash, score);
                 self.metrics.score_cache_size.set(score_cache_len() as f64);
+            } else {
+                insert_tx_score(tx_hash, 0);
             }
         }
 

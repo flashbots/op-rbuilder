@@ -6,15 +6,15 @@ use crate::{
     rules::{
         AddrSet, AddressAliases, BoostRule, DenyRule, MatchType, RuleFetcher, RuleSet,
         add_deny_rule, add_scoring_rule, add_to_alias_group, clear_rules, get_alias_group,
-        global_ruleset, list_alias_groups, registry::RuleRegistry, set_global_ruleset,
-        validator::RuleBasedValidator,
+        get_tx_score, global_ruleset, list_alias_groups, registry::RuleRegistry, remove_tx_score,
+        set_global_ruleset, validator::RuleBasedValidator,
     },
 };
 use alloy_primitives::{Address, Bytes, TxKind, U256};
 use async_trait::async_trait;
 use futures::executor::block_on;
 use reth_transaction_pool::{
-    TransactionOrigin, TransactionValidationOutcome, TransactionValidator,
+    PoolTransaction, TransactionOrigin, TransactionValidationOutcome, TransactionValidator,
     test_utils::MockTransaction, validate::ValidTransaction,
 };
 use serial_test::serial;
@@ -2072,4 +2072,31 @@ fn test_is_restricted_fields_delegates_to_is_denied() {
         &TxKind::Call(Address::random()),
         &[]
     ));
+}
+
+#[test]
+#[serial]
+fn test_validator_inserts_default_score_without_scoring_rules() {
+    reset_global_rules();
+    // No boost rules → has_scoring_rules() returns false
+
+    let validator = RuleBasedValidator::new(PassthroughValidator::default());
+    let tx = make_mock_tx(Address::random(), Address::random(), []);
+    let tx_hash = *tx.hash();
+
+    let outcome = block_on(validator.validate_transaction(TransactionOrigin::External, tx));
+    assert!(
+        matches!(outcome, TransactionValidationOutcome::Valid { .. }),
+        "transaction should be valid"
+    );
+
+    // The new else branch should insert score 0 for valid txs without scoring rules
+    assert_eq!(
+        get_tx_score(&tx_hash),
+        Some(0),
+        "validator should insert score 0 when no scoring rules exist"
+    );
+
+    // Cleanup
+    remove_tx_score(&tx_hash);
 }
