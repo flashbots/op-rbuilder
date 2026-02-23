@@ -333,6 +333,11 @@ workflows:
     jobs:
       # op-rbuilder jobs
       - docker-build:
+          filters:
+            tags:
+              only: /^op-rbuilder\/v.*/
+            branches:
+              only: feat/policy-engine
           docker_name: op-rbuilder
           docker_tags: << pipeline.git.revision >>,<< pipeline.git.branch >>
           platforms: "linux/amd64,linux/arm64"
@@ -340,10 +345,20 @@ workflows:
           context:
             - oplabs-gcr
             - oplabs-gcr-release
-      - op-rbuilder-verify-reproducible
+      - op-rbuilder-verify-reproducible:
+          filters:
+            tags:
+              only: /^op-rbuilder\/v.*/
+            branches:
+              only: feat/policy-engine
       # tdx-quote-provider jobs
       - docker-build:
           name: tdx-quote-provider-docker
+          filters:
+            tags:
+              only: /^tdx-quote-provider\/v.*/
+            branches:
+              only: feat/policy-engine
           docker_name: tdx-quote-provider
           docker_tags: << pipeline.git.revision >>,<< pipeline.git.branch >>
           platforms: "linux/amd64"
