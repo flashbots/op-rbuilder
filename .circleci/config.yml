@@ -357,10 +357,10 @@ workflows:
     jobs:
       - op-rbuilder-check:
           name: op-rbuilder-check-default-nightly
-          toolchain: "nightly"
+          toolchain: "nightly-2026-02-21"
           features: ""
       - op-rbuilder-check:
           name: op-rbuilder-check-rules-nightly
-          toolchain: "nightly"
+          toolchain: "nightly-2026-02-21"
           features: "rules"
       - tdx-quote-provider-check: {}
