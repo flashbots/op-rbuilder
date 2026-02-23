@@ -6,7 +6,6 @@ use crate::{
         flashblocks::{
             builder_tx::{FlashblocksBuilderTx, FlashblocksNumberBuilderTx},
             p2p::{AGENT_VERSION, FLASHBLOCKS_STREAM_PROTOCOL, Message},
-            payload::{FlashblocksExecutionInfo, FlashblocksExtraCtx},
             payload_handler::PayloadHandler,
             wspub::WebSocketPublisher,
         },
@@ -38,12 +37,7 @@ impl FlashblocksServiceBuilder {
     where
         Node: NodeBounds,
         Pool: PoolBounds,
-        BuilderTx: BuilderTransactions<FlashblocksExtraCtx, FlashblocksExecutionInfo>
-            + Unpin
-            + Clone
-            + Send
-            + Sync
-            + 'static,
+        BuilderTx: BuilderTransactions + Unpin + Clone + Send + Sync + 'static,
     {
         // TODO: is there a different global token?
         // this is effectively unused right now due to the usage of reth's `task_executor`.

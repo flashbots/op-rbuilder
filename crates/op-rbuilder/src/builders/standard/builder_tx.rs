@@ -43,6 +43,8 @@ impl BuilderTransactions for StandardBuilderTx {
         ctx: &OpPayloadBuilderCtx,
         db: &mut State<impl Database + DatabaseRef>,
         top_of_block: bool,
+        is_first_flashblock: bool,
+        is_last_flashblock: bool,
     ) -> Result<Vec<BuilderTransactionCtx>, BuilderTransactionError> {
         let mut builder_txs = Vec::<BuilderTransactionCtx>::new();
         let standard_builder_tx = self.base_builder_tx.simulate_builder_tx(ctx, &mut *db)?;
@@ -57,6 +59,8 @@ impl BuilderTransactions for StandardBuilderTx {
                 ctx,
                 db,
                 top_of_block,
+                is_first_flashblock,
+                is_last_flashblock,
             ) {
                 Ok(flashtestations_builder_txs) => builder_txs.extend(flashtestations_builder_txs),
                 Err(e) => {
