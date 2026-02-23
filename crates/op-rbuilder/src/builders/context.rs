@@ -640,10 +640,12 @@ impl<ExtraCtx: Debug + Default + MaybeFlashblockIndex> OpPayloadBuilderCtx<Extra
 
             if can_backrun {
                 let backrun_start_time = Instant::now();
+                let gas_left = block_gas_limit.saturating_sub(info.cumulative_gas_used);
                 let backruns = self.backrun_ctx.pool.get_backruns(
                     &target_hash,
                     |addr| evm.db_mut().basic(addr).ok().flatten(),
                     base_fee,
+                    gas_left,
                     self.backrun_ctx
                         .args
                         .max_considered_backruns_per_transaction,

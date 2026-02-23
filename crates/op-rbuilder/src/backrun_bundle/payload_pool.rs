@@ -169,6 +169,7 @@ impl BackrunBundlePayloadPool {
         target_tx_hash: &B256,
         mut account_info: impl FnMut(Address) -> Option<AccountInfo>,
         base_fee: u64,
+        gas_left: u64,
         max_count: usize,
     ) -> Vec<StoredBackrunBundle> {
         let Some(tx_backruns) = self.inner.get(target_tx_hash) else {
@@ -189,6 +190,10 @@ impl BackrunBundlePayloadPool {
                 let backrun_tx = &ordered.0.backrun_tx;
 
                 if backrun_tx.max_fee_per_gas() < base_fee {
+                    return false;
+                }
+
+                if backrun_tx.gas_limit() > gas_left {
                     return false;
                 }
 
@@ -388,14 +393,20 @@ mod tests {
             }
         };
 
-        let results = pool.get_backruns(&target, good_account, base_fee, max_backruns);
+        let results = pool.get_backruns(&target, good_account, base_fee, u64::MAX, max_backruns);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].estimated_effective_priority_fee, 200);
 
         // Unknown target returns empty
         assert!(
-            pool.get_backruns(&B256::random(), good_account, base_fee, max_backruns)
-                .is_empty()
+            pool.get_backruns(
+                &B256::random(),
+                good_account,
+                base_fee,
+                u64::MAX,
+                max_backruns
+            )
+            .is_empty()
         );
 
         // max_count respected
@@ -412,7 +423,7 @@ mod tests {
                 ..Default::default()
             })
         };
-        let results = pool.get_backruns(&target, all_known, base_fee, 1);
+        let results = pool.get_backruns(&target, all_known, base_fee, u64::MAX, 1);
         assert_eq!(results.len(), 1, "max_count=1");
 
         // Balance check: no balance filters all
@@ -424,7 +435,7 @@ mod tests {
             })
         };
         assert!(
-            pool.get_backruns(&target, poor, base_fee, max_backruns)
+            pool.get_backruns(&target, poor, base_fee, u64::MAX, max_backruns)
                 .is_empty()
         );
     }

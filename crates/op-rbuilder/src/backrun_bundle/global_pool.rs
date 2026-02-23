@@ -280,6 +280,7 @@ mod tests {
                 })
             },
             0,
+            u64::MAX,
             10,
         );
         assert_eq!(bundles[0].estimated_effective_priority_fee, 200);
