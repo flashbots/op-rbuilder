@@ -1,4 +1,4 @@
-use alloy_consensus::Transaction;
+use alloy_consensus::{Transaction, Typed2718};
 use alloy_primitives::{B256, Bytes};
 use jsonrpsee::{core::RpcResult, proc_macros::rpc};
 use reth_optimism_primitives::OpTransactionSigned;
@@ -142,6 +142,13 @@ where
 
         let target_tx = recover_raw_transaction::<OpTransactionSigned>(&bundle.transactions[0])?;
         let backrun_tx = recover_raw_transaction::<OpTransactionSigned>(&bundle.transactions[1])?;
+
+        if backrun_tx.is_eip4844() || backrun_tx.is_deposit() {
+            return Err(EthApiError::InvalidParams(
+                "backrun transaction must not be a blob or deposit transaction".into(),
+            )
+            .into());
+        }
 
         let target_tx_hash = B256::from(*target_tx.tx_hash());
         let backrun_tx_hash = B256::from(*backrun_tx.tx_hash());
