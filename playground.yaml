@@ -1,0 +1,54 @@
+base: opstack
+base_args:
+  - --external-builder
+  - op-rbuilder
+
+setup:
+  - make op-rbuilder
+
+recipe:
+  op-rbuilder:
+    services:
+      op-rbuilder:
+        host_path: ./target/debug/op-rbuilder
+        args:
+          - node
+          - --builder.playground # enabling op-rbuilder to detect playground environment and service configurations
+          - --authrpc.port
+          - '{{Port "authrpc" 8551}}'
+          - --authrpc.addr
+          - 0.0.0.0
+          - --authrpc.jwtsecret
+          - /data/jwtsecret
+          - --http
+          - --http.addr
+          - 0.0.0.0
+          - --http.port
+          - '{{Port "http" 8545}}'
+          - --chain
+          - /data/l2-genesis.json
+          - --datadir
+          - /data_op_rbuilder
+          - --disable-discovery
+          - --color
+          - never
+          - --metrics
+          - 0.0.0.0:{{Port "metrics" 9090}}
+          - --port
+          - '{{Port "rpc" 30303}}'
+          - --builder.enable-revert-protection
+          - --rollup.builder-secret-key
+          - 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+          - --bootnodes
+          - '{{Service "bootnode" "rpc" "enode" "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798483ada7726a3c4655da4fbfc0e1108a8fd17b448a68554199c47d08ffb10d4b8"}}'
+        ports:
+          authrpc: 4444
+          http: 2222
+          metrics: 9011
+          rpc: 30303
+        files:
+          /data/jwtsecret: artifact:jwtsecret
+          /data/l2-genesis.json: artifact:l2-genesis.json
+        volumes:
+          /data_op_rbuilder:
+            name: data # $HOME/.local/state/builder-playground/devnet/volume-op-rbuilder-data
