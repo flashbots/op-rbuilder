@@ -20,7 +20,7 @@ jobs:
     strategy:
       matrix:
         toolchain:
-          - nightly
+          - nightly-2026-02-21
         features:
           - ""
 

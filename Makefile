@@ -76,8 +76,8 @@ docker-image-rbuilder: ## Build a rbuilder Docker image
 
 .PHONY: lint
 lint: ## Run the linters
-	cargo +nightly fmt -- --check
-	cargo +nightly clippy --all-features -- -D warnings
+	cargo +nightly-2026-02-21 fmt -- --check
+	cargo +nightly-2026-02-21 clippy --all-features -- -D warnings
 
 .PHONY: test
 test: ## Run the tests for rbuilder and op-rbuilder
@@ -90,9 +90,9 @@ lt: lint test ## Run "lint" and "test"
 
 .PHONY: fmt
 fmt: ## Format the code
-	cargo +nightly fmt
-	cargo +nightly clippy --all-features --fix --allow-staged --allow-dirty
-	cargo +nightly fix --allow-staged --allow-dirty
+	cargo +nightly-2026-02-21 fmt
+	cargo +nightly-2026-02-21 clippy --all-features --fix --allow-staged --allow-dirty
+	cargo +nightly-2026-02-21 fix --allow-staged --allow-dirty
 
 .PHONY: bench
 bench: ## Run benchmarks
