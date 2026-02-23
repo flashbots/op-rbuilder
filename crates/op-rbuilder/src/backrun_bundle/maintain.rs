@@ -29,7 +29,7 @@ async fn maintain_backrun_bundle_pool<N, St>(
 {
     loop {
         let Some(event) = events.next().await else {
-            tracing::debug!(target: "op-rbuilder::backrun_bundle", "canonical state stream ended");
+            tracing::debug!(target: "backrun_bundle", "canonical state stream ended");
             break;
         };
         let pool = pool.clone();
