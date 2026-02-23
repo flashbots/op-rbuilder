@@ -63,18 +63,18 @@ where
                 continue;
             }
 
-            let flashblock_number_min = tx.flashblock_number_min();
-            let flashblock_number_max = tx.flashblock_number_max();
+            let min_flashblock_number = tx.min_flashblock_number();
+            let max_flashblock_number = tx.max_flashblock_number();
 
             // Check min flashblock requirement
-            if let Some(min) = flashblock_number_min
+            if let Some(min) = min_flashblock_number
                 && self.current_flashblock_number < min
             {
                 continue;
             }
 
             // Check max flashblock requirement
-            if let Some(max) = flashblock_number_max
+            if let Some(max) = max_flashblock_number
                 && self.current_flashblock_number > max
             {
                 debug!(

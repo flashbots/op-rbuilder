@@ -24,32 +24,32 @@ use alloy_eips::eip1559::MIN_PROTOCOL_BASE_FEE;
 
 #[derive(Clone, Copy, Default)]
 pub struct BundleOpts {
-    block_number_min: Option<u64>,
-    block_number_max: Option<u64>,
-    flashblock_number_min: Option<u64>,
-    flashblock_number_max: Option<u64>,
+    min_block_number: Option<u64>,
+    max_block_number: Option<u64>,
+    min_flashblock_number: Option<u64>,
+    max_flashblock_number: Option<u64>,
     min_timestamp: Option<u64>,
     max_timestamp: Option<u64>,
 }
 
 impl BundleOpts {
-    pub fn with_block_number_min(mut self, block_number_min: u64) -> Self {
-        self.block_number_min = Some(block_number_min);
+    pub fn with_min_block_number(mut self, min_block_number: u64) -> Self {
+        self.min_block_number = Some(min_block_number);
         self
     }
 
-    pub fn with_block_number_max(mut self, block_number_max: u64) -> Self {
-        self.block_number_max = Some(block_number_max);
+    pub fn with_max_block_number(mut self, max_block_number: u64) -> Self {
+        self.max_block_number = Some(max_block_number);
         self
     }
 
-    pub fn with_flashblock_number_min(mut self, flashblock_number_min: u64) -> Self {
-        self.flashblock_number_min = Some(flashblock_number_min);
+    pub fn with_min_flashblock_number(mut self, min_flashblock_number: u64) -> Self {
+        self.min_flashblock_number = Some(min_flashblock_number);
         self
     }
 
-    pub fn with_flashblock_number_max(mut self, flashblock_number_max: u64) -> Self {
-        self.flashblock_number_max = Some(flashblock_number_max);
+    pub fn with_max_flashblock_number(mut self, max_flashblock_number: u64) -> Self {
+        self.max_flashblock_number = Some(max_flashblock_number);
         self
     }
 
@@ -209,16 +209,16 @@ impl TransactionBuilder {
         if let Some(bundle_opts) = bundle_opts {
             // Send the transaction as a bundle with the bundle options
             let bundle = Bundle {
-                transactions: vec![transaction_encoded.into()],
-                reverting_hashes: if with_reverted_hash {
+                txs: vec![transaction_encoded.into()],
+                reverting_tx_hashes: if with_reverted_hash {
                     Some(vec![txn_hash])
                 } else {
                     None
                 },
-                block_number_min: bundle_opts.block_number_min,
-                block_number_max: bundle_opts.block_number_max,
-                flashblock_number_min: bundle_opts.flashblock_number_min,
-                flashblock_number_max: bundle_opts.flashblock_number_max,
+                min_block_number: bundle_opts.min_block_number,
+                max_block_number: bundle_opts.max_block_number,
+                min_flashblock_number: bundle_opts.min_flashblock_number,
+                max_flashblock_number: bundle_opts.max_flashblock_number,
                 min_timestamp: bundle_opts.min_timestamp,
                 max_timestamp: bundle_opts.max_timestamp,
             };
