@@ -5,7 +5,9 @@ use crate::{
         builder_tx::BuilderTransactions,
         context::OpPayloadBuilderCtx,
         flashblocks::{
-            best_txs::BestFlashblocksTxs, config::FlashBlocksConfigExt, timing::FlashblockScheduler,
+            best_txs::{FlashblockCommittedTxs, FlashblockPoolTxCursor},
+            config::FlashBlocksConfigExt,
+            timing::FlashblockScheduler,
         },
         generator::{BlockCell, BuildArguments, PayloadBuilder},
     },
@@ -49,11 +51,7 @@ use reth_revm::{
 use reth_transaction_pool::TransactionPool;
 use reth_trie::{HashedPostState, updates::TrieUpdates};
 use revm::Database;
-use std::{
-    collections::{BTreeMap, HashSet},
-    sync::Arc,
-    time::Instant,
-};
+use std::{collections::BTreeMap, sync::Arc, time::Instant};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, metadata::Level, span, warn};
@@ -76,7 +74,8 @@ fn convert_receipt(receipt: &OpReceipt) -> op_alloy_consensus::OpReceipt {
     }
 }
 
-type NextBestFlashblocksTxs<Pool> = BestFlashblocksTxs<
+type NextFlashblockPoolTxCursor<'a, Pool> = FlashblockPoolTxCursor<
+    'a,
     <Pool as TransactionPool>::Transaction,
     Box<
         dyn reth_transaction_pool::BestTransactions<
@@ -543,7 +542,7 @@ where
         // State data was extracted in Phase 1 block scope above.
         // We carry (CacheState, Option<TransitionState>) between iterations
         // and reconstruct State<DB> inside each sync scope.
-        let mut committed_txs: HashSet<B256> = HashSet::new();
+        let mut committed_txs = FlashblockCommittedTxs::default();
         let parent_hash = ctx.parent_hash();
 
         // Process flashblocks - async channel receive
@@ -576,7 +575,7 @@ where
             let _entered = fb_span.enter();
 
             // Build flashblock after receiving signal
-            let (build_result, new_cache, new_transition, new_committed) = {
+            let (build_result, new_cache, new_transition) = {
                 // reconstruct state
                 let state_provider = self.client.state_by_block_hash(parent_hash)?;
                 let mut state = State::builder()
@@ -586,8 +585,7 @@ where
                     .build();
                 state.transition_state = transition;
 
-                let mut best_txs = BestFlashblocksTxs::empty();
-                best_txs.mark_commited(committed_txs.into_iter().collect());
+                let mut best_txs = FlashblockPoolTxCursor::new(&mut committed_txs);
 
                 let result = self.build_next_flashblock(
                     &ctx,
@@ -599,15 +597,13 @@ where
                     &best_payload,
                 );
 
-                let committed_txs = best_txs.commited_transactions().clone();
                 let cache = std::mem::take(&mut state.cache);
                 let transition_state = state.transition_state.take();
-                (result, cache, transition_state, committed_txs)
+                (result, cache, transition_state)
             }; // provider and state dropped
 
             cache = new_cache;
             transition = new_transition;
-            committed_txs = new_committed;
 
             let next_flashblocks_ctx = match build_result {
                 Ok(Some(next_flashblocks_ctx)) => next_flashblocks_ctx,
@@ -634,6 +630,7 @@ where
 
     #[allow(clippy::too_many_arguments)]
     fn build_next_flashblock<
+        'a,
         DB: Database<Error = ProviderError> + std::fmt::Debug + AsRef<P>,
         P: StateRootProvider + HashedPostStateProvider + StorageRootProvider,
     >(
@@ -642,7 +639,7 @@ where
         info: &mut ExecutionInfo<FlashblocksExecutionInfo>,
         state: &mut State<DB>,
         state_provider: impl reth::providers::StateProvider + Clone,
-        best_txs: &mut NextBestFlashblocksTxs<Pool>,
+        best_txs: &mut NextFlashblockPoolTxCursor<'a, Pool>,
         block_cancel: &CancellationToken,
         best_payload: &BlockCell<OpBuiltPayload>,
     ) -> eyre::Result<Option<FlashblocksExtraCtx>> {
@@ -733,7 +730,7 @@ where
             .iter()
             .map(|tx| tx.tx_hash())
             .collect::<Vec<_>>();
-        best_txs.mark_commited(new_transactions);
+        best_txs.mark_committed(new_transactions);
 
         // We got block cancelled, we won't need anything from the block at this point
         // Caution: this assume that block cancel token only cancelled when new FCU is received
