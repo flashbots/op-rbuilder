@@ -81,9 +81,9 @@ ARG RBUILDER_BIN
 ARG FEATURES
 ARG TARGETPLATFORM
 
-ARG CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS="-C target-feature=+crt-static -C link-arg=-static-libgcc -C link-arg=-Wl,--build-id=none -C metadata=target --remap-path-prefix=/app=."
+ARG CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS="-C link-arg=-Wl,--build-id=none -C metadata=target --remap-path-prefix=/app=."
 
-ARG CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_RUSTFLAGS="-C target-feature=+crt-static -C link-arg=-static-libgcc -C link-arg=-Wl,--build-id=none -C metadata=target --remap-path-prefix=/app=."
+ARG CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_RUSTFLAGS="-C link-arg=-Wl,--build-id=none -C metadata=target --remap-path-prefix=/app=."
 
 WORKDIR /app
 COPY . .
@@ -96,7 +96,7 @@ RUN case "$TARGETPLATFORM" in \
         ;; \
     esac; \
     SOURCE_DATE_EPOCH=$(git log -1 --pretty=%ct) \
-    RUSTFLAGS="-C target-feature=+crt-static -C link-arg=-static-libgcc -C link-arg=-lz -C link-arg=-Wl,--build-id=none -C metadata='' --remap-path-prefix=/app=." \
+    RUSTFLAGS="-C link-arg=-lz -C link-arg=-Wl,--build-id=none -C metadata='' --remap-path-prefix=/app=." \
     CARGO_INCREMENTAL=0 \
     LC_ALL=C \
     TZ=UTC \
