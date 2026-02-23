@@ -111,26 +111,30 @@ impl BackrunBundleGlobalPool {
                             pool.remove_bundle(&old);
                         }
                     }
-                    metrics.bundle_count.decrement(1.0);
+                    metrics.backrun_bundle_count.decrement(1.0);
+                    metrics.backrun_bundles_removed.increment(1);
                     entry.insert(bundle.clone());
                     for block in first_pool_block..=bundle.block_number_max {
                         self.get_or_create_pool(block).add_bundle(bundle.clone());
                     }
-                    metrics.bundle_count.increment(1.0);
+                    metrics.backrun_bundle_count.increment(1.0);
+                    metrics.backrun_bundles_added.increment(1);
                 }
                 dashmap::mapref::entry::Entry::Vacant(entry) => {
                     entry.insert(bundle.clone());
                     for block in first_pool_block..=bundle.block_number_max {
                         self.get_or_create_pool(block).add_bundle(bundle.clone());
                     }
-                    metrics.bundle_count.increment(1.0);
+                    metrics.backrun_bundle_count.increment(1.0);
+                    metrics.backrun_bundles_added.increment(1);
                 }
             }
         } else {
             for block in first_pool_block..=bundle.block_number_max {
                 self.get_or_create_pool(block).add_bundle(bundle.clone());
             }
-            metrics.bundle_count.increment(1.0);
+            metrics.backrun_bundle_count.increment(1.0);
+            metrics.backrun_bundles_added.increment(1);
         }
         true
     }
@@ -181,7 +185,10 @@ impl BackrunBundleGlobalPool {
             // so each unique bundle is counted exactly once.
             unique_removed += pool.count_final_bundles(*block) as u64;
         }
-        metrics.bundle_count.decrement(unique_removed as f64);
+        metrics
+            .backrun_bundle_count
+            .decrement(unique_removed as f64);
+        metrics.backrun_bundles_removed.increment(unique_removed);
 
         self.inner
             .replacements

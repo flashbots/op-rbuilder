@@ -30,7 +30,9 @@
 //! # Metrics
 //!
 //! **Pool metrics** (`op_rbuilder.backrun_pool.*`):
-//! - `bundle_count` — current number of bundles across all payload pools.
+//! - `backrun_bundle_count` — current number of bundles across all payload pools.
+//! - `backrun_bundles_added` — total bundles added to the pool.
+//! - `backrun_bundles_removed` — total bundles removed from the pool (expiry and replacement).
 //! - `backruns_per_tx` — distribution of backrun candidates per tx
 //!
 //! **Builder metrics** (`op_rbuilder.*`):
