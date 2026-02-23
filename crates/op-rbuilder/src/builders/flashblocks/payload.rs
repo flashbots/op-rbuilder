@@ -575,8 +575,13 @@ where
                 }
             };
 
+            let wait_start = Instant::now();
             tokio::select! {
                 Some(fb_cancel) = rx.recv() => {
+                    ctx.metrics.record_flashblock_wait_for_next_tick(
+                        next_flashblocks_ctx.flashblock_index,
+                        wait_start.elapsed(),
+                    );
                     ctx = ctx.with_cancel(fb_cancel).with_extra_ctx(next_flashblocks_ctx);
                 },
                 _ = block_cancel.cancelled() => {
@@ -772,15 +777,18 @@ where
                 best_payload.set(new_payload);
 
                 // Record flashblock build duration
+                let flashblock_build_duration = flashblock_build_start_time.elapsed();
                 ctx.metrics
                     .flashblock_build_duration
-                    .record(flashblock_build_start_time.elapsed());
+                    .record(flashblock_build_duration);
                 ctx.metrics
                     .flashblock_byte_size_histogram
                     .record(flashblock_byte_size as f64);
                 ctx.metrics
                     .flashblock_num_tx_histogram
                     .record(info.executed_transactions.len() as f64);
+                ctx.metrics
+                    .record_flashblock_indexed_metrics(flashblock_index, flashblock_build_duration);
 
                 // Update bundle_state for next iteration
                 if let Some(da_limit) = ctx.extra_ctx.da_per_batch {
