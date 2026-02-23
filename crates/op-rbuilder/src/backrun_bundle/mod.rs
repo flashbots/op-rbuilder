@@ -5,21 +5,6 @@
 //! in a block. Searchers submit bundles via the [`rpc`] module's
 //! `eth_sendBackrunBundle` RPC method.
 //!
-//! # Enabling backruns
-//!
-//! Backrun processing is **off by default**. Pass `--backruns.enabled` to turn it on.
-//! Additional CLI flags control how many backruns the builder will evaluate and
-//! include per block and per transaction:
-//!
-//! | Flag | Default | Description |
-//! |------|---------|-------------|
-//! | `--backruns.enabled` | `false` | Master switch |
-//! | `--backruns.max_considered_backruns_per_block` | `100` | Candidates evaluated per block |
-//! | `--backruns.max_landed_backruns_per_block` | `100` | Included backruns per block |
-//! | `--backruns.max_considered_backruns_per_transaction` | `10` | Candidates evaluated per tx |
-//! | `--backruns.max_landed_backruns_per_transaction` | `1` | Included backruns per tx |
-//!
-//! See [`args::BackrunBundleArgs`] for the full definition.
 //!
 //! # Bundle commit semantics
 //!
