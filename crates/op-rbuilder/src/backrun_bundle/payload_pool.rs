@@ -58,7 +58,7 @@ impl StoredBackrunBundle {
 
 /// Ord impl: highest `estimated_effective_priority_fee` first, backrun tx hash as tiebreaker.
 #[derive(Debug, Clone)]
-pub(super) struct OrderedBackrunBundle(StoredBackrunBundle);
+struct OrderedBackrunBundle(StoredBackrunBundle);
 
 impl OrderedBackrunBundle {
     fn backrun_tx_hash(&self) -> B256 {
@@ -91,8 +91,8 @@ impl Ord for OrderedBackrunBundle {
 }
 
 #[derive(Debug, Clone, Default)]
-pub(super) struct TxBackruns {
-    pub(super) bundles: BTreeSet<OrderedBackrunBundle>,
+struct TxBackruns {
+    bundles: BTreeSet<OrderedBackrunBundle>,
 }
 
 /// Per-block pool of backrun bundles, keyed by target transaction hash.
@@ -111,7 +111,7 @@ pub struct BackrunBundlePayloadPool {
 }
 
 impl BackrunBundlePayloadPool {
-    pub(super) fn new() -> Self {
+    fn new() -> Self {
         Self {
             inner: Arc::new(DashMap::new()),
         }
