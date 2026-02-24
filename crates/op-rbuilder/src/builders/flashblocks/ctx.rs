@@ -85,7 +85,9 @@ impl OpPayloadSyncerCtx {
         cancel: CancellationToken,
     ) -> OpPayloadBuilderCtx {
         let backrun_ctx = BackrunBundlesPayloadCtx {
-            pool: self.backrun_bundle_pool.payload_pool(&payload_config),
+            pool: self
+                .backrun_bundle_pool
+                .block_pool(payload_config.parent_header.number + 1),
             args: self.backrun_bundle_args,
         };
         OpPayloadBuilderCtx {

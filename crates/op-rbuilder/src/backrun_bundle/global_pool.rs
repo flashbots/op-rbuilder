@@ -4,9 +4,6 @@ use super::{
 };
 use alloy_consensus::BlockHeader;
 use dashmap::DashMap;
-use reth_basic_payload_builder::PayloadConfig;
-use reth_optimism_node::OpPayloadBuilderAttributes;
-use reth_optimism_primitives::OpTransactionSigned;
 use reth_primitives_traits::{Block, RecoveredBlock};
 use std::{
     fmt,
@@ -70,18 +67,6 @@ impl BackrunBundleGlobalPool {
         }
     }
 
-    fn get_or_create_pool(&self, block_number: u64) -> BackrunBundlePayloadPool {
-        // avoid write lock from entry call below.
-        if let Some(pool) = self.inner.payload_pools.get(&block_number) {
-            return pool.clone();
-        }
-        self.inner
-            .payload_pools
-            .entry(block_number)
-            .or_default()
-            .clone()
-    }
-
     /// Add a bundle to the global pool. Returns `false` if the bundle was rejected
     /// due to a stale replacement nonce or an already-expired block range.
     pub(super) fn add_bundle(&self, bundle: StoredBackrunBundle, last_block_number: u64) -> bool {
@@ -116,7 +101,7 @@ impl BackrunBundleGlobalPool {
                     metrics.backrun_bundles_removed.increment(1);
                     entry.insert(bundle.clone());
                     for block in first_pool_block..=bundle.block_number_max {
-                        self.get_or_create_pool(block).add_bundle(bundle.clone());
+                        self.block_pool(block).add_bundle(bundle.clone());
                     }
                     metrics.backrun_bundle_count.increment(1.0);
                     metrics.backrun_bundles_added.increment(1);
@@ -124,7 +109,7 @@ impl BackrunBundleGlobalPool {
                 dashmap::mapref::entry::Entry::Vacant(entry) => {
                     entry.insert(bundle.clone());
                     for block in first_pool_block..=bundle.block_number_max {
-                        self.get_or_create_pool(block).add_bundle(bundle.clone());
+                        self.block_pool(block).add_bundle(bundle.clone());
                     }
                     metrics.backrun_bundle_count.increment(1.0);
                     metrics.backrun_bundles_added.increment(1);
@@ -132,7 +117,7 @@ impl BackrunBundleGlobalPool {
             }
         } else {
             for block in first_pool_block..=bundle.block_number_max {
-                self.get_or_create_pool(block).add_bundle(bundle.clone());
+                self.block_pool(block).add_bundle(bundle.clone());
             }
             metrics.backrun_bundle_count.increment(1.0);
             metrics.backrun_bundles_added.increment(1);
@@ -140,12 +125,16 @@ impl BackrunBundleGlobalPool {
         true
     }
 
-    pub fn payload_pool(
-        &self,
-        config: &PayloadConfig<OpPayloadBuilderAttributes<OpTransactionSigned>>,
-    ) -> BackrunBundlePayloadPool {
-        let block_number = config.parent_header.number + 1;
-        self.get_or_create_pool(block_number)
+    pub fn block_pool(&self, block_number: u64) -> BackrunBundlePayloadPool {
+        // avoid write lock from entry call below.
+        if let Some(pool) = self.inner.payload_pools.get(&block_number) {
+            return pool.clone();
+        }
+        self.inner
+            .payload_pools
+            .entry(block_number)
+            .or_default()
+            .clone()
     }
 
     /// Returns the estimated base fee per gas from the latest canonical tip.
@@ -230,14 +219,10 @@ mod tests {
 
         // Present in pools 5..=8, absent in 4 and 9
         for block in 5..=8 {
-            assert_eq!(
-                pool_bundle_count(&gp.get_or_create_pool(block)),
-                1,
-                "block {block}"
-            );
+            assert_eq!(pool_bundle_count(&gp.block_pool(block)), 1, "block {block}");
         }
-        assert_eq!(pool_bundle_count(&gp.get_or_create_pool(4)), 0);
-        assert_eq!(pool_bundle_count(&gp.get_or_create_pool(9)), 0);
+        assert_eq!(pool_bundle_count(&gp.block_pool(4)), 0);
+        assert_eq!(pool_bundle_count(&gp.block_pool(9)), 0);
 
         let last_block = 6;
         // With last_block_number=6, sealed blocks skipped: only 7-8 get the new bundle
@@ -246,8 +231,8 @@ mod tests {
             .with_priority_fee(200)
             .build();
         assert!(gp.add_bundle(b2, last_block));
-        assert_eq!(pool_bundle_count(&gp.get_or_create_pool(5)), 1); // only b
-        assert_eq!(pool_bundle_count(&gp.get_or_create_pool(7)), 2); // b + b2
+        assert_eq!(pool_bundle_count(&gp.block_pool(5)), 1); // only b
+        assert_eq!(pool_bundle_count(&gp.block_pool(7)), 2); // b + b2
     }
 
     #[test]
@@ -265,7 +250,7 @@ mod tests {
             .build();
         b1.replacement_key = Some(ReplacementKey { uuid, nonce: 1 });
         assert!(gp.add_bundle(b1, last_block));
-        assert_eq!(pool_bundle_count(&gp.get_or_create_pool(block_range.0)), 1);
+        assert_eq!(pool_bundle_count(&gp.block_pool(block_range.0)), 1);
 
         // Replace with higher nonce — old removed, new inserted
         let mut b2 = make_backrun_bundle(&s, target, block_range)
@@ -274,10 +259,10 @@ mod tests {
             .build();
         b2.replacement_key = Some(ReplacementKey { uuid, nonce: 2 });
         assert!(gp.add_bundle(b2, last_block));
-        assert_eq!(pool_bundle_count(&gp.get_or_create_pool(block_range.0)), 1);
+        assert_eq!(pool_bundle_count(&gp.block_pool(block_range.0)), 1);
 
         // Verify the surviving bundle is b2 (priority_fee=200)
-        let pp = gp.get_or_create_pool(block_range.0);
+        let pp = gp.block_pool(block_range.0);
         let bundles = pp.get_backruns(
             &target,
             |_| {

@@ -302,7 +302,10 @@ where
             .wrap_err("failed to create next evm env")?;
 
         let backrun_ctx = BackrunBundlesPayloadCtx {
-            pool: self.config.backrun_bundle_pool.payload_pool(&config),
+            pool: self
+                .config
+                .backrun_bundle_pool
+                .block_pool(config.parent_header.number + 1),
             args: self.config.backrun_bundle_args.clone(),
         };
 
