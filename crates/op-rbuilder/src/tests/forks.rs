@@ -1,21 +1,10 @@
-use crate::{
-    args::{FlashblocksArgs, OpRbuilderArgs},
-    tests::{BlockTransactionsExt, LocalInstance},
-};
+use crate::tests::{BlockTransactionsExt, LocalInstance};
 use alloy_eips::{BlockNumberOrTag::Latest, Encodable2718, eip1559::MIN_PROTOCOL_BASE_FEE};
 use alloy_primitives::bytes;
 use macros::{if_flashblocks, if_standard, rb_test};
 use std::time::Duration;
 
-#[rb_test(args = OpRbuilderArgs {
-    flashblocks: FlashblocksArgs {
-        enabled: true,
-        flashblocks_port: 0,
-        flashblocks_end_buffer_ms: 50,
-        ..Default::default()
-    },
-    ..Default::default()
-})]
+#[rb_test]
 async fn jovian_block_parameters_set(rbuilder: LocalInstance) -> eyre::Result<()> {
     let driver = rbuilder.driver().await?;
     let tx_one = driver.create_transaction().send().await?;
