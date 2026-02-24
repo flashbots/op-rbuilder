@@ -264,10 +264,10 @@ where
             if ruleset.has_scoring_rules() {
                 let score = ruleset.score_transaction(tx);
                 insert_tx_score(tx_hash, score);
-                self.metrics.score_cache_size.set(score_cache_len() as f64);
             } else {
                 insert_tx_score(tx_hash, 0);
             }
+            self.metrics.score_cache_size.set(score_cache_len() as f64);
         }
 
         outcome
