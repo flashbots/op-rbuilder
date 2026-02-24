@@ -214,7 +214,7 @@ async fn backrun_block_number_constraints(rbuilder: LocalInstance) -> eyre::Resu
             .with_signer(accounts[1])
             .random_valid_transfer()
             .with_max_priority_fee_per_gas(10),
-        BundleOpts::default().with_block_number_min(current_block + 2),
+        BundleOpts::default().with_min_block_number(current_block + 2),
     )
     .await?;
 
