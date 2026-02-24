@@ -71,6 +71,7 @@ impl BackrunBundleGlobalPool {
     }
 
     fn get_or_create_pool(&self, block_number: u64) -> BackrunBundlePayloadPool {
+        // avoid write lock from entry call below.
         if let Some(pool) = self.inner.payload_pools.get(&block_number) {
             return pool.clone();
         }

@@ -11,21 +11,11 @@
 //! During block building, after each successfully committed pool transaction the
 //! builder checks whether any backrun bundles target that transaction. Candidates
 //! are retrieved from the per-block [`payload_pool::BackrunBundlePayloadPool`],
-//! ordered by descending effective priority fee, and filtered by:
-//!
-//! 1. **Block & flashblock validity** — the bundle must be valid for the current
-//!    block number and flashblock index (`StoredBackrunBundle::is_valid`).
-//! 2. **Priority fee floor** — the backrun's effective priority fee must be at
-//!    least as high as the target transaction's miner fee.
-//! 3. **EVM execution** — the backrun transaction is executed against the
-//!    post-target state. If it reverts it is excluded.
-//! 4. **Gas & DA limits** — standard per-transaction and per-block gas/DA limits
-//!    apply, as well as per-address gas limits.
+//! ordered by descending effective priority fee.
 //!
 //! A successfully committed backrun is appended to the block right after its
-//! target transaction. Its fees contribute to `total_fees` and it counts
-//! toward the shared `num_txs_considered` / `num_txs_simulated` counters just
-//! like any other transaction.
+//! target transaction. The backrun's effective priority fee must be at least as
+//! high as the target transaction's priority fee.
 //!
 //! # Metrics
 //!

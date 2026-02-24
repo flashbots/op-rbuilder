@@ -20,43 +20,32 @@ const MAX_FUTURE_BLOCK_ADD: u64 = 10;
 
 #[serde_with::skip_serializing_none]
 #[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct BackrunBundleRpcArgs {
     #[serde(rename = "txs")]
     pub transactions: Vec<Bytes>,
 
-    #[serde(rename = "blockNumber", with = "alloy_serde::quantity")]
+    #[serde(with = "alloy_serde::quantity")]
     pub block_number: u64,
 
-    #[serde(
-        default,
-        rename = "maxBlockNumber",
-        with = "alloy_serde::quantity::opt"
-    )]
-    pub block_number_max: Option<u64>,
+    #[serde(default, with = "alloy_serde::quantity::opt")]
+    pub max_block_number: Option<u64>,
 
     /// Earliest flashblock index the bundle is valid for. Only enforced on the first block
     /// in the range (`blockNumber`); on later blocks all flashblocks are eligible.
-    #[serde(
-        default,
-        rename = "minFlashblockNumber",
-        with = "alloy_serde::quantity::opt"
-    )]
-    pub flashblock_number_min: Option<u64>,
+    #[serde(default, with = "alloy_serde::quantity::opt")]
+    pub min_flashblock_number: Option<u64>,
 
     /// Latest flashblock index the bundle is valid for. Only enforced on the last block
     /// in the range (`maxBlockNumber`); on earlier blocks all flashblocks are eligible.
-    #[serde(
-        default,
-        rename = "maxFlashblockNumber",
-        with = "alloy_serde::quantity::opt"
-    )]
-    pub flashblock_number_max: Option<u64>,
+    #[serde(default, with = "alloy_serde::quantity::opt")]
+    pub max_flashblock_number: Option<u64>,
 
-    #[serde(default, rename = "replacementUuid")]
+    #[serde(default)]
     pub replacement_uuid: Option<Uuid>,
 
     /// Replacement nonce must be set if `replacement_uuid` is set
-    #[serde(default, rename = "replacementNonce")]
+    #[serde(default)]
     pub replacement_nonce: Option<u64>,
 }
 
@@ -94,7 +83,7 @@ where
         }
 
         let block_number_min = bundle.block_number;
-        let block_number_max = bundle.block_number_max.unwrap_or(block_number_min);
+        let block_number_max = bundle.max_block_number.unwrap_or(block_number_min);
 
         if block_number_max < block_number_min {
             return Err(EthApiError::InvalidParams(format!(
@@ -165,8 +154,8 @@ where
             backrun_tx: Arc::new(backrun_tx),
             block_number_min,
             block_number_max,
-            flashblock_number_min: bundle.flashblock_number_min.unwrap_or(0),
-            flashblock_number_max: bundle.flashblock_number_max.unwrap_or(u64::MAX),
+            flashblock_number_min: bundle.min_flashblock_number.unwrap_or(0),
+            flashblock_number_max: bundle.max_flashblock_number.unwrap_or(u64::MAX),
             estimated_effective_priority_fee,
             estimated_da_size,
             replacement_key,
@@ -233,9 +222,9 @@ mod tests {
         BackrunBundleRpcArgs {
             transactions: vec![target, backrun],
             block_number,
-            block_number_max: None,
-            flashblock_number_min: None,
-            flashblock_number_max: None,
+            max_block_number: None,
+            min_flashblock_number: None,
+            max_flashblock_number: None,
             replacement_uuid: None,
             replacement_nonce: None,
         }
@@ -270,9 +259,9 @@ mod tests {
         let args = BackrunBundleRpcArgs {
             transactions: vec![make_raw_tx(&s, 0), make_raw_tx(&s, 1)],
             block_number: 10,
-            block_number_max: Some(5),
-            flashblock_number_min: None,
-            flashblock_number_max: None,
+            max_block_number: Some(5),
+            min_flashblock_number: None,
+            max_flashblock_number: None,
             replacement_uuid: None,
             replacement_nonce: None,
         };
@@ -286,9 +275,9 @@ mod tests {
         let args = BackrunBundleRpcArgs {
             transactions: vec![make_raw_tx(&s, 0), make_raw_tx(&s, 1)],
             block_number: 10,
-            block_number_max: Some(10 + super::MAX_BLOCK_RANGE + 1),
-            flashblock_number_min: None,
-            flashblock_number_max: None,
+            max_block_number: Some(10 + super::MAX_BLOCK_RANGE + 1),
+            min_flashblock_number: None,
+            max_flashblock_number: None,
             replacement_uuid: None,
             replacement_nonce: None,
         };

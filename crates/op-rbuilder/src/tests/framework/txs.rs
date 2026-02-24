@@ -428,9 +428,9 @@ pub async fn send_backrun_bundle(
     let bundle = BackrunBundleRpcArgs {
         transactions: vec![target_raw_tx.into(), backrun_encoded.into()],
         block_number,
-        block_number_max: bundle_opts.block_number_max,
-        flashblock_number_min: bundle_opts.flashblock_number_min,
-        flashblock_number_max: bundle_opts.flashblock_number_max,
+        max_block_number: bundle_opts.block_number_max,
+        min_flashblock_number: bundle_opts.flashblock_number_min,
+        max_flashblock_number: bundle_opts.flashblock_number_max,
         replacement_uuid: bundle_opts.replacement_uuid,
         replacement_nonce: bundle_opts.replacement_nonce,
     };
