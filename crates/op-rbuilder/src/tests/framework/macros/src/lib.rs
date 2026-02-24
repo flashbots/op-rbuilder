@@ -6,7 +6,6 @@ use syn::{Expr, ItemFn, Meta, Token, parse_macro_input, punctuated::Punctuated};
 struct VariantInfo {
     name: &'static str,
     builder_type: &'static str,
-    default_instance_call: &'static str,
     args_modifier: fn(&proc_macro2::TokenStream) -> proc_macro2::TokenStream,
     default_args_factory: fn() -> proc_macro2::TokenStream,
 }
@@ -15,14 +14,12 @@ const BUILDER_VARIANTS: &[VariantInfo] = &[
     VariantInfo {
         name: "standard",
         builder_type: "crate::builders::StandardBuilder",
-        default_instance_call: "crate::tests::LocalInstance::standard().await?",
         args_modifier: |args| quote! { #args },
         default_args_factory: || quote! { Default::default() },
     },
     VariantInfo {
         name: "flashblocks",
         builder_type: "crate::builders::FlashblocksBuilder",
-        default_instance_call: "crate::tests::LocalInstance::flashblocks().await?",
         args_modifier: |args| {
             quote! {
                 {
@@ -176,11 +173,12 @@ fn generate_instance_init(
         get_variant_info(variant).unwrap_or_else(|| panic!("Unknown variant: {variant}"));
 
     let builder_type: proc_macro2::TokenStream = variant_info.builder_type.parse().unwrap();
-    let default_call: proc_macro2::TokenStream =
-        variant_info.default_instance_call.parse().unwrap();
 
     match (args, config) {
-        (None, None) => default_call,
+        (None, None) => {
+            let default_args = (variant_info.default_args_factory)();
+            quote! { crate::tests::LocalInstance::new::<#builder_type>(#default_args).await? }
+        }
         (Some(args_expr), None) => {
             let modified_args = (variant_info.args_modifier)(&quote! { #args_expr });
             quote! { crate::tests::LocalInstance::new::<#builder_type>(#modified_args).await? }

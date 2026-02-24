@@ -1,7 +1,4 @@
-use crate::{
-    args::{FlashblocksArgs, OpRbuilderArgs},
-    tests::{BlockTransactionsExt, ChainDriverExt, LocalInstance, TransactionBuilderExt},
-};
+use crate::tests::{BlockTransactionsExt, ChainDriverExt, LocalInstance, TransactionBuilderExt};
 use alloy_provider::Provider;
 use macros::{if_flashblocks, if_standard, rb_test};
 
@@ -126,15 +123,7 @@ async fn block_fill(rbuilder: LocalInstance) -> eyre::Result<()> {
 /// to the DA footprint limit. The DA footprint is calculated as:
 /// total_da_bytes_used * da_footprint_gas_scalar (stored in blob_gas_used).
 /// This must not exceed the block gas limit, accounting for the builder transaction.
-#[rb_test(args = OpRbuilderArgs {
-    flashblocks: FlashblocksArgs {
-        enabled: true,
-        flashblocks_port: 0,
-        flashblocks_end_buffer_ms: 50,
-        ..Default::default()
-    },
-    ..Default::default()
-})]
+#[rb_test]
 async fn da_footprint_fills_to_limit(rbuilder: LocalInstance) -> eyre::Result<()> {
     let driver = rbuilder.driver().await?;
 

@@ -1,7 +1,4 @@
-use crate::{
-    args::{FlashblocksArgs, OpRbuilderArgs},
-    tests::{BlockTransactionsExt, LocalInstance},
-};
+use crate::tests::{BlockTransactionsExt, LocalInstance};
 use alloy_provider::Provider;
 use macros::{if_flashblocks, if_standard, rb_test};
 
@@ -35,15 +32,7 @@ async fn miner_gas_limit(rbuilder: LocalInstance) -> eyre::Result<()> {
 ///
 /// Standard = (785,000 - 182,706 - 21,600) / 53,000 = 10.95 = 10 transactions can fit
 /// Flashblocks = (785,000 - 182,706 - 21,600 - 21,600) / 53,000 = 10.54 = 10 transactions can fit
-#[rb_test(args = OpRbuilderArgs {
-    flashblocks: FlashblocksArgs {
-        enabled: true,
-        flashblocks_port: 0,
-        flashblocks_end_buffer_ms: 50,
-        ..Default::default()
-    },
-    ..Default::default()
-})]
+#[rb_test]
 async fn block_fill(rbuilder: LocalInstance) -> eyre::Result<()> {
     let driver = rbuilder.driver().await?;
 
