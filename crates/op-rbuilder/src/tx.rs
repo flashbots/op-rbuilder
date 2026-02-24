@@ -27,8 +27,8 @@ pub struct FBPooledTransaction {
     /// transaction is not a bundle, this is `None`.
     pub reverted_hashes: Option<Vec<B256>>,
 
-    pub flashblock_number_min: Option<u64>,
-    pub flashblock_number_max: Option<u64>,
+    pub min_flashblock_number: Option<u64>,
+    pub max_flashblock_number: Option<u64>,
 }
 
 impl FBPoolTransaction for FBPooledTransaction {}
@@ -56,29 +56,29 @@ impl MaybeRevertingTransaction for FBPooledTransaction {
 }
 
 pub trait MaybeFlashblockFilter {
-    fn with_flashblock_number_min(self, flashblock_number_min: Option<u64>) -> Self;
-    fn with_flashblock_number_max(self, flashblock_number_max: Option<u64>) -> Self;
-    fn flashblock_number_min(&self) -> Option<u64>;
-    fn flashblock_number_max(&self) -> Option<u64>;
+    fn with_min_flashblock_number(self, min_flashblock_number: Option<u64>) -> Self;
+    fn with_max_flashblock_number(self, max_flashblock_number: Option<u64>) -> Self;
+    fn min_flashblock_number(&self) -> Option<u64>;
+    fn max_flashblock_number(&self) -> Option<u64>;
 }
 
 impl MaybeFlashblockFilter for FBPooledTransaction {
-    fn with_flashblock_number_min(mut self, flashblock_number_min: Option<u64>) -> Self {
-        self.flashblock_number_min = flashblock_number_min;
+    fn with_min_flashblock_number(mut self, min_flashblock_number: Option<u64>) -> Self {
+        self.min_flashblock_number = min_flashblock_number;
         self
     }
 
-    fn with_flashblock_number_max(mut self, flashblock_number_max: Option<u64>) -> Self {
-        self.flashblock_number_max = flashblock_number_max;
+    fn with_max_flashblock_number(mut self, max_flashblock_number: Option<u64>) -> Self {
+        self.max_flashblock_number = max_flashblock_number;
         self
     }
 
-    fn flashblock_number_min(&self) -> Option<u64> {
-        self.flashblock_number_min
+    fn min_flashblock_number(&self) -> Option<u64> {
+        self.min_flashblock_number
     }
 
-    fn flashblock_number_max(&self) -> Option<u64> {
-        self.flashblock_number_max
+    fn max_flashblock_number(&self) -> Option<u64> {
+        self.max_flashblock_number
     }
 }
 
@@ -107,8 +107,8 @@ impl PoolTransaction for FBPooledTransaction {
         Self {
             inner,
             reverted_hashes: None,
-            flashblock_number_min: None,
-            flashblock_number_max: None,
+            min_flashblock_number: None,
+            max_flashblock_number: None,
         }
     }
 
@@ -267,8 +267,8 @@ impl From<OpPooledTransaction> for FBPooledTransaction {
         Self {
             inner: tx,
             reverted_hashes: None,
-            flashblock_number_min: None,
-            flashblock_number_max: None,
+            min_flashblock_number: None,
+            max_flashblock_number: None,
         }
     }
 }
@@ -293,8 +293,8 @@ impl MaybeConditionalTransaction for FBPooledTransaction {
         FBPooledTransaction {
             inner: self.inner.with_conditional(conditional),
             reverted_hashes: self.reverted_hashes,
-            flashblock_number_min: self.flashblock_number_min,
-            flashblock_number_max: self.flashblock_number_max,
+            min_flashblock_number: self.min_flashblock_number,
+            max_flashblock_number: self.max_flashblock_number,
         }
     }
 }

@@ -32,7 +32,7 @@ async fn monitor_transaction_gc(rbuilder: LocalInstance) -> eyre::Result<()> {
             .random_reverting_transaction()
             .with_signer(accounts[i].clone())
             .with_bundle(
-                BundleOpts::default().with_block_number_max(latest_block_number + i as u64 + 1),
+                BundleOpts::default().with_max_block_number(latest_block_number + i as u64 + 1),
             )
             .send()
             .await?;
@@ -151,7 +151,7 @@ async fn bundle(rbuilder: LocalInstance) -> eyre::Result<()> {
             .includes(valid_bundle.tx_hash())
     );
 
-    let bundle_opts = BundleOpts::default().with_block_number_max(4);
+    let bundle_opts = BundleOpts::default().with_max_block_number(4);
 
     let reverted_bundle = driver
         .create_transaction()
@@ -190,7 +190,7 @@ async fn bundle_min_block_number(rbuilder: LocalInstance) -> eyre::Result<()> {
         .create_transaction()
         .with_revert() // the transaction reverts but it is included in the block
         .with_reverted_hash()
-        .with_bundle(BundleOpts::default().with_block_number_min(2))
+        .with_bundle(BundleOpts::default().with_min_block_number(2))
         .send()
         .await?;
 
@@ -207,8 +207,8 @@ async fn bundle_min_block_number(rbuilder: LocalInstance) -> eyre::Result<()> {
         .with_reverted_hash()
         .with_bundle(
             BundleOpts::default()
-                .with_block_number_max(4)
-                .with_block_number_min(4),
+                .with_max_block_number(4)
+                .with_min_block_number(4),
         )
         .send()
         .await?;
@@ -269,7 +269,7 @@ async fn bundle_range_limits(rbuilder: LocalInstance) -> eyre::Result<()> {
 
     // Max block cannot be a past block
     assert!(
-        send_bundle(&driver, BundleOpts::default().with_block_number_max(1))
+        send_bundle(&driver, BundleOpts::default().with_max_block_number(1))
             .await
             .is_err()
     );
@@ -280,7 +280,7 @@ async fn bundle_range_limits(rbuilder: LocalInstance) -> eyre::Result<()> {
 
     for i in next_valid_block..next_valid_block + MAX_BLOCK_RANGE_BLOCKS {
         assert!(
-            send_bundle(&driver, BundleOpts::default().with_block_number_max(i))
+            send_bundle(&driver, BundleOpts::default().with_max_block_number(i))
                 .await
                 .is_ok()
         );
@@ -291,7 +291,7 @@ async fn bundle_range_limits(rbuilder: LocalInstance) -> eyre::Result<()> {
         send_bundle(
             &driver,
             BundleOpts::default()
-                .with_block_number_max(next_valid_block + MAX_BLOCK_RANGE_BLOCKS + 1)
+                .with_max_block_number(next_valid_block + MAX_BLOCK_RANGE_BLOCKS + 1)
         )
         .await
         .is_err()
@@ -302,8 +302,8 @@ async fn bundle_range_limits(rbuilder: LocalInstance) -> eyre::Result<()> {
         send_bundle(
             &driver,
             BundleOpts::default()
-                .with_block_number_max(1)
-                .with_block_number_min(2)
+                .with_max_block_number(1)
+                .with_min_block_number(2)
         )
         .await
         .is_err()
@@ -314,8 +314,8 @@ async fn bundle_range_limits(rbuilder: LocalInstance) -> eyre::Result<()> {
         send_bundle(
             &driver,
             BundleOpts::default()
-                .with_block_number_max(next_valid_block)
-                .with_block_number_min(current_block)
+                .with_max_block_number(next_valid_block)
+                .with_min_block_number(current_block)
         )
         .await
         .is_ok()
@@ -323,7 +323,7 @@ async fn bundle_range_limits(rbuilder: LocalInstance) -> eyre::Result<()> {
     assert!(
         send_bundle(
             &driver,
-            BundleOpts::default().with_block_number_max(next_valid_block)
+            BundleOpts::default().with_max_block_number(next_valid_block)
         )
         .await
         .is_ok()
@@ -334,8 +334,8 @@ async fn bundle_range_limits(rbuilder: LocalInstance) -> eyre::Result<()> {
         send_bundle(
             &driver,
             BundleOpts::default()
-                .with_block_number_max(next_valid_block)
-                .with_block_number_min(next_valid_block)
+                .with_max_block_number(next_valid_block)
+                .with_min_block_number(next_valid_block)
         )
         .await
         .is_ok()
@@ -347,7 +347,7 @@ async fn bundle_range_limits(rbuilder: LocalInstance) -> eyre::Result<()> {
     assert!(
         send_bundle(
             &driver,
-            BundleOpts::default().with_block_number_min(current_block)
+            BundleOpts::default().with_min_block_number(current_block)
         )
         .await
         .is_ok()
@@ -355,7 +355,7 @@ async fn bundle_range_limits(rbuilder: LocalInstance) -> eyre::Result<()> {
     assert!(
         send_bundle(
             &driver,
-            BundleOpts::default().with_block_number_min(default_max - 1)
+            BundleOpts::default().with_min_block_number(default_max - 1)
         )
         .await
         .is_ok()
@@ -363,7 +363,7 @@ async fn bundle_range_limits(rbuilder: LocalInstance) -> eyre::Result<()> {
     assert!(
         send_bundle(
             &driver,
-            BundleOpts::default().with_block_number_min(default_max)
+            BundleOpts::default().with_min_block_number(default_max)
         )
         .await
         .is_ok()
@@ -373,7 +373,7 @@ async fn bundle_range_limits(rbuilder: LocalInstance) -> eyre::Result<()> {
     assert!(
         send_bundle(
             &driver,
-            BundleOpts::default().with_block_number_min(default_max + 1)
+            BundleOpts::default().with_min_block_number(default_max + 1)
         )
         .await
         .is_err()
@@ -428,7 +428,7 @@ async fn check_transaction_receipt_status_message(rbuilder: LocalInstance) -> ey
     let reverting_tx = driver
         .create_transaction()
         .random_reverting_transaction()
-        .with_bundle(BundleOpts::default().with_block_number_max(3))
+        .with_bundle(BundleOpts::default().with_max_block_number(3))
         .send()
         .await?;
     let tx_hash = reverting_tx.tx_hash();

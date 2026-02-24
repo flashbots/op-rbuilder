@@ -150,7 +150,7 @@ async fn test_flashtestations_with_number_contract(rbuilder: LocalInstance) -> e
     let tx = driver
         .create_transaction()
         .random_valid_transfer()
-        .with_bundle(BundleOpts::default().with_flashblock_number_min(4))
+        .with_bundle(BundleOpts::default().with_min_flashblock_number(4))
         .send()
         .await?;
     let block = driver.build_new_block_with_current_timestamp(None).await?;
@@ -307,7 +307,7 @@ async fn test_flashtestations_permit_with_flashblocks_number_contract(
     let tx = driver
         .create_transaction()
         .random_valid_transfer()
-        .with_bundle(BundleOpts::default().with_flashblock_number_min(4))
+        .with_bundle(BundleOpts::default().with_min_flashblock_number(4))
         .send()
         .await?;
     let block = driver.build_new_block_with_current_timestamp(None).await?;
@@ -396,7 +396,7 @@ async fn test_flashtestations_permit_with_flashblocks_number_permit(
         .create_transaction()
         .add_authorized_builder(TEE_DEBUG_ADDRESS)
         .with_to(FLASHBLOCKS_NUMBER_ADDRESS)
-        .with_bundle(BundleOpts::default().with_flashblock_number_min(4))
+        .with_bundle(BundleOpts::default().with_min_flashblock_number(4))
         .send()
         .await?;
     let block = driver.build_new_block_with_current_timestamp(None).await?;
@@ -432,7 +432,7 @@ async fn test_flashtestations_permit_with_flashblocks_number_permit(
     let tx = driver
         .create_transaction()
         .random_valid_transfer()
-        .with_bundle(BundleOpts::default().with_flashblock_number_min(4))
+        .with_bundle(BundleOpts::default().with_min_flashblock_number(4))
         .send()
         .await?;
     let block = driver.build_new_block_with_current_timestamp(None).await?;
