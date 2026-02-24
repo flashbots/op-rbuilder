@@ -66,8 +66,8 @@ impl MockFbTransactionFactory {
         self.validated(MockFbTransaction {
             inner: MockTransaction::legacy(),
             reverted_hashes: None,
-            flashblock_number_max: None,
-            flashblock_number_min: None,
+            max_flashblock_number: None,
+            min_flashblock_number: None,
         })
     }
 
@@ -76,8 +76,8 @@ impl MockFbTransactionFactory {
         self.validated(MockFbTransaction {
             inner: MockTransaction::legacy(),
             reverted_hashes: None,
-            flashblock_number_max: max,
-            flashblock_number_min: min,
+            max_flashblock_number: max,
+            min_flashblock_number: min,
         })
     }
 
@@ -86,8 +86,8 @@ impl MockFbTransactionFactory {
         self.validated(MockFbTransaction {
             inner: MockTransaction::eip1559(),
             reverted_hashes: None,
-            flashblock_number_max: None,
-            flashblock_number_min: None,
+            max_flashblock_number: None,
+            min_flashblock_number: None,
         })
     }
 
@@ -96,8 +96,8 @@ impl MockFbTransactionFactory {
         self.validated(MockFbTransaction {
             inner: MockTransaction::eip4844(),
             reverted_hashes: None,
-            flashblock_number_max: None,
-            flashblock_number_min: None,
+            max_flashblock_number: None,
+            min_flashblock_number: None,
         })
     }
 }
@@ -110,8 +110,8 @@ pub struct MockFbTransaction {
     /// transaction is not a bundle, this is `None`.
     pub reverted_hashes: Option<Vec<B256>>,
 
-    pub flashblock_number_min: Option<u64>,
-    pub flashblock_number_max: Option<u64>,
+    pub min_flashblock_number: Option<u64>,
+    pub max_flashblock_number: Option<u64>,
 }
 
 /// A validated transaction in the transaction pool, using [`MockTransaction`] as the transaction
@@ -135,8 +135,8 @@ impl PoolTransaction for MockFbTransaction {
         Self {
             inner: pooled.into(),
             reverted_hashes: None,
-            flashblock_number_min: None,
-            flashblock_number_max: None,
+            min_flashblock_number: None,
+            max_flashblock_number: None,
         }
     }
 
@@ -433,21 +433,21 @@ pub type PooledTransactionVariant =
     alloy_consensus::EthereumTxEnvelope<TxEip4844WithSidecar<BlobTransactionSidecarVariant>>;
 
 impl MaybeFlashblockFilter for MockFbTransaction {
-    fn with_flashblock_number_min(mut self, flashblock_number_min: Option<u64>) -> Self {
-        self.flashblock_number_min = flashblock_number_min;
+    fn with_min_flashblock_number(mut self, min_flashblock_number: Option<u64>) -> Self {
+        self.min_flashblock_number = min_flashblock_number;
         self
     }
 
-    fn with_flashblock_number_max(mut self, flashblock_number_max: Option<u64>) -> Self {
-        self.flashblock_number_max = flashblock_number_max;
+    fn with_max_flashblock_number(mut self, max_flashblock_number: Option<u64>) -> Self {
+        self.max_flashblock_number = max_flashblock_number;
         self
     }
 
-    fn flashblock_number_min(&self) -> Option<u64> {
-        self.flashblock_number_min
+    fn min_flashblock_number(&self) -> Option<u64> {
+        self.min_flashblock_number
     }
 
-    fn flashblock_number_max(&self) -> Option<u64> {
-        self.flashblock_number_max
+    fn max_flashblock_number(&self) -> Option<u64> {
+        self.max_flashblock_number
     }
 }
