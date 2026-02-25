@@ -15,10 +15,7 @@ use tracing::warn;
 use crate::{
     builders::{
         BuilderTransactionCtx, BuilderTransactionError, BuilderTransactions,
-        SimulationSuccessResult,
-        builder_tx::BuilderTxBase,
-        context::OpPayloadBuilderCtx,
-        flashblocks::payload::{FlashblocksExecutionInfo, FlashblocksExtraCtx},
+        SimulationSuccessResult, builder_tx::BuilderTxBase, context::OpPayloadBuilderCtx,
         get_nonce,
     },
     flashtestations::builder_tx::FlashtestationsBuilderTx,
@@ -57,17 +54,14 @@ sol!(
 // This will be the end of block transaction of a regular block
 #[derive(Debug, Clone)]
 pub(super) struct FlashblocksBuilderTx {
-    pub base_builder_tx: BuilderTxBase<FlashblocksExtraCtx>,
-    pub flashtestations_builder_tx:
-        Option<FlashtestationsBuilderTx<FlashblocksExtraCtx, FlashblocksExecutionInfo>>,
+    pub base_builder_tx: BuilderTxBase,
+    pub flashtestations_builder_tx: Option<FlashtestationsBuilderTx>,
 }
 
 impl FlashblocksBuilderTx {
     pub(super) fn new(
         signer: Option<Signer>,
-        flashtestations_builder_tx: Option<
-            FlashtestationsBuilderTx<FlashblocksExtraCtx, FlashblocksExecutionInfo>,
-        >,
+        flashtestations_builder_tx: Option<FlashtestationsBuilderTx>,
     ) -> Self {
         let base_builder_tx = BuilderTxBase::new(signer);
         Self {
@@ -77,23 +71,25 @@ impl FlashblocksBuilderTx {
     }
 }
 
-impl BuilderTransactions<FlashblocksExtraCtx, FlashblocksExecutionInfo> for FlashblocksBuilderTx {
+impl BuilderTransactions for FlashblocksBuilderTx {
     fn simulate_builder_txs(
         &self,
         state_provider: impl StateProvider + Clone,
-        info: &mut ExecutionInfo<FlashblocksExecutionInfo>,
-        ctx: &OpPayloadBuilderCtx<FlashblocksExtraCtx>,
+        info: &mut ExecutionInfo,
+        ctx: &OpPayloadBuilderCtx,
         db: &mut State<impl Database + DatabaseRef>,
         top_of_block: bool,
+        is_first_flashblock: bool,
+        is_last_flashblock: bool,
     ) -> Result<Vec<BuilderTransactionCtx>, BuilderTransactionError> {
         let mut builder_txs = Vec::<BuilderTransactionCtx>::new();
 
-        if ctx.is_first_flashblock() {
+        if is_first_flashblock {
             let flashblocks_builder_tx = self.base_builder_tx.simulate_builder_tx(ctx, &mut *db)?;
             builder_txs.extend(flashblocks_builder_tx.clone());
         }
 
-        if ctx.is_last_flashblock() {
+        if is_last_flashblock {
             let base_tx = self.base_builder_tx.simulate_builder_tx(ctx, &mut *db)?;
             builder_txs.extend(base_tx.clone());
 
@@ -109,6 +105,8 @@ impl BuilderTransactions<FlashblocksExtraCtx, FlashblocksExecutionInfo> for Flas
                     ctx,
                     db,
                     top_of_block,
+                    is_first_flashblock,
+                    is_last_flashblock,
                 ) {
                     Ok(flashtestations_builder_txs) => {
                         builder_txs.extend(flashtestations_builder_txs)
@@ -129,9 +127,8 @@ pub(super) struct FlashblocksNumberBuilderTx {
     pub signer: Signer,
     pub flashblock_number_address: Address,
     pub use_permit: bool,
-    pub base_builder_tx: BuilderTxBase<FlashblocksExtraCtx>,
-    pub flashtestations_builder_tx:
-        Option<FlashtestationsBuilderTx<FlashblocksExtraCtx, FlashblocksExecutionInfo>>,
+    pub base_builder_tx: BuilderTxBase,
+    pub flashtestations_builder_tx: Option<FlashtestationsBuilderTx>,
 }
 
 impl FlashblocksNumberBuilderTx {
@@ -139,9 +136,7 @@ impl FlashblocksNumberBuilderTx {
         signer: Signer,
         flashblock_number_address: Address,
         use_permit: bool,
-        flashtestations_builder_tx: Option<
-            FlashtestationsBuilderTx<FlashblocksExtraCtx, FlashblocksExecutionInfo>,
-        >,
+        flashtestations_builder_tx: Option<FlashtestationsBuilderTx>,
     ) -> Self {
         let base_builder_tx = BuilderTxBase::new(Some(signer));
         Self {
@@ -155,7 +150,7 @@ impl FlashblocksNumberBuilderTx {
 
     fn signed_increment_flashblocks_tx(
         &self,
-        ctx: &OpPayloadBuilderCtx<FlashblocksExtraCtx>,
+        ctx: &OpPayloadBuilderCtx,
         evm: &mut OpEvm<impl Database + DatabaseRef, NoOpInspector, PrecompilesMap>,
     ) -> Result<BuilderTransactionCtx, BuilderTransactionError> {
         let calldata = IFlashblockNumber::incrementFlashblockNumberCall {};
@@ -166,7 +161,7 @@ impl FlashblocksNumberBuilderTx {
         &self,
         flashtestations_signer: &Signer,
         current_flashblock_number: U256,
-        ctx: &OpPayloadBuilderCtx<FlashblocksExtraCtx>,
+        ctx: &OpPayloadBuilderCtx,
         evm: &mut OpEvm<impl Database + DatabaseRef, NoOpInspector, PrecompilesMap>,
     ) -> Result<Signature, BuilderTransactionError> {
         let struct_hash_calldata = IFlashblockNumber::computeStructHashCall {
@@ -185,7 +180,7 @@ impl FlashblocksNumberBuilderTx {
     fn signed_increment_flashblocks_permit_tx(
         &self,
         flashtestations_signer: &Signer,
-        ctx: &OpPayloadBuilderCtx<FlashblocksExtraCtx>,
+        ctx: &OpPayloadBuilderCtx,
         evm: &mut OpEvm<impl Database + DatabaseRef, NoOpInspector, PrecompilesMap>,
     ) -> Result<BuilderTransactionCtx, BuilderTransactionError> {
         let current_flashblock_calldata = IFlashblockNumber::flashblockNumberCall {};
@@ -203,7 +198,7 @@ impl FlashblocksNumberBuilderTx {
     fn increment_flashblocks_tx<T: SolCall + Clone>(
         &self,
         calldata: T,
-        ctx: &OpPayloadBuilderCtx<FlashblocksExtraCtx>,
+        ctx: &OpPayloadBuilderCtx,
         evm: &mut OpEvm<impl Database + DatabaseRef, NoOpInspector, PrecompilesMap>,
     ) -> Result<BuilderTransactionCtx, BuilderTransactionError> {
         let SimulationSuccessResult { gas_used, .. } = self.simulate_flashblocks_call(
@@ -233,7 +228,7 @@ impl FlashblocksNumberBuilderTx {
     fn simulate_flashblocks_readonly_call<T: SolCall>(
         &self,
         calldata: T,
-        ctx: &OpPayloadBuilderCtx<FlashblocksExtraCtx>,
+        ctx: &OpPayloadBuilderCtx,
         evm: &mut OpEvm<impl Database + DatabaseRef, NoOpInspector, PrecompilesMap>,
     ) -> Result<SimulationSuccessResult<T>, BuilderTransactionError> {
         self.simulate_flashblocks_call(calldata, vec![], ctx, evm)
@@ -243,7 +238,7 @@ impl FlashblocksNumberBuilderTx {
         &self,
         calldata: T,
         expected_logs: Vec<B256>,
-        ctx: &OpPayloadBuilderCtx<FlashblocksExtraCtx>,
+        ctx: &OpPayloadBuilderCtx,
         evm: &mut OpEvm<impl Database + DatabaseRef, NoOpInspector, PrecompilesMap>,
     ) -> Result<SimulationSuccessResult<T>, BuilderTransactionError> {
         let tx_req = OpTransactionRequest::default()
@@ -261,20 +256,20 @@ impl FlashblocksNumberBuilderTx {
     }
 }
 
-impl BuilderTransactions<FlashblocksExtraCtx, FlashblocksExecutionInfo>
-    for FlashblocksNumberBuilderTx
-{
+impl BuilderTransactions for FlashblocksNumberBuilderTx {
     fn simulate_builder_txs(
         &self,
         state_provider: impl StateProvider + Clone,
-        info: &mut ExecutionInfo<FlashblocksExecutionInfo>,
-        ctx: &OpPayloadBuilderCtx<FlashblocksExtraCtx>,
+        info: &mut ExecutionInfo,
+        ctx: &OpPayloadBuilderCtx,
         db: &mut State<impl Database + DatabaseRef>,
         top_of_block: bool,
+        is_first_flashblock: bool,
+        is_last_flashblock: bool,
     ) -> Result<Vec<BuilderTransactionCtx>, BuilderTransactionError> {
         let mut builder_txs = Vec::<BuilderTransactionCtx>::new();
 
-        if ctx.is_first_flashblock() {
+        if is_first_flashblock {
             // fallback block builder tx
             builder_txs.extend(self.base_builder_tx.simulate_builder_tx(ctx, &mut *db)?);
         } else {
@@ -310,7 +305,7 @@ impl BuilderTransactions<FlashblocksExtraCtx, FlashblocksExecutionInfo>
             builder_txs.extend(tx);
         }
 
-        if ctx.is_last_flashblock()
+        if is_last_flashblock
             && let Some(flashtestations_builder_tx) = &self.flashtestations_builder_tx
         {
             // Commit state that should be included to compute the correct nonce
@@ -328,6 +323,8 @@ impl BuilderTransactions<FlashblocksExtraCtx, FlashblocksExecutionInfo>
                 ctx,
                 db,
                 top_of_block,
+                is_first_flashblock,
+                is_last_flashblock,
             ) {
                 Ok(flashtestations_builder_txs) => builder_txs.extend(flashtestations_builder_txs),
                 Err(e) => {

@@ -53,19 +53,9 @@ use crate::{
     tx_signer::Signer,
 };
 
-/// Extra context trait that optionally provides the current flashblock index within a block.
-pub trait MaybeFlashblockIndex {
-    fn flashblock_index(&self) -> Option<u64> {
-        None
-    }
-}
-
-/// Standard (non-flashblock) builds have no flashblock index.
-impl MaybeFlashblockIndex for () {}
-
 /// Container type that holds all necessities to build a new payload.
 #[derive(Debug)]
-pub struct OpPayloadBuilderCtx<ExtraCtx: Debug + Default = ()> {
+pub struct OpPayloadBuilderCtx {
     /// The type that knows how to perform system calls and configure the evm.
     pub evm_config: OpEvmConfig,
     /// The DA config for the payload builder
@@ -86,8 +76,6 @@ pub struct OpPayloadBuilderCtx<ExtraCtx: Debug + Default = ()> {
     pub builder_signer: Option<Signer>,
     /// The metrics for the builder
     pub metrics: Arc<OpRBuilderMetrics>,
-    /// Extra context for the payload builder
-    pub extra_ctx: ExtraCtx,
     /// Max gas that can be used by a transaction.
     pub max_gas_per_txn: Option<u64>,
     /// Rate limiting based on gas. This is an optional feature.
@@ -96,13 +84,9 @@ pub struct OpPayloadBuilderCtx<ExtraCtx: Debug + Default = ()> {
     pub backrun_ctx: BackrunBundlesPayloadCtx,
 }
 
-impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
+impl OpPayloadBuilderCtx {
     pub(super) fn with_cancel(self, cancel: CancellationToken) -> Self {
         Self { cancel, ..self }
-    }
-
-    pub(super) fn with_extra_ctx(self, extra_ctx: ExtraCtx) -> Self {
-        Self { extra_ctx, ..self }
     }
 
     /// Returns the parent block the payload will be build on.
@@ -166,10 +150,7 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
     /// This will return the culmative DA bytes * scalar after Jovian
     /// after Ecotone, this will always return Some(0) as blobs aren't supported
     /// pre Ecotone, these fields aren't used.
-    pub fn blob_fields<Extra: Debug + Default>(
-        &self,
-        info: &ExecutionInfo<Extra>,
-    ) -> (Option<u64>, Option<u64>) {
+    pub fn blob_fields(&self, info: &ExecutionInfo) -> (Option<u64>, Option<u64>) {
         // For payload validation
         if let Some(blob_fields) = info.optional_blob_fields {
             return blob_fields;
@@ -265,7 +246,7 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
     }
 }
 
-impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
+impl OpPayloadBuilderCtx {
     /// Constructs a receipt for the given transaction.
     pub fn build_receipt<E: Evm>(
         &self,
@@ -299,10 +280,10 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
     }
 
     /// Executes all sequencer transactions that are included in the payload attributes.
-    pub(super) fn execute_sequencer_transactions<E: Debug + Default>(
+    pub(super) fn execute_sequencer_transactions(
         &self,
         db: &mut State<impl Database>,
-    ) -> Result<ExecutionInfo<E>, PayloadBuilderError> {
+    ) -> Result<ExecutionInfo, PayloadBuilderError> {
         let mut info = ExecutionInfo::with_capacity(self.attributes().transactions.len());
 
         let mut evm = self.evm_config.evm_with_env(&mut *db, self.evm_env.clone());
@@ -398,18 +379,20 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
     }
 }
 
-impl<ExtraCtx: Debug + Default + MaybeFlashblockIndex> OpPayloadBuilderCtx<ExtraCtx> {
+impl OpPayloadBuilderCtx {
     /// Executes the given best transactions and updates the execution info.
     ///
     /// Returns `Ok(Some(())` if the job was cancelled.
-    pub(super) fn execute_best_transactions<E: Debug + Default>(
+    #[expect(clippy::too_many_arguments)]
+    pub(super) fn execute_best_transactions(
         &self,
-        info: &mut ExecutionInfo<E>,
+        info: &mut ExecutionInfo,
         db: &mut State<impl Database>,
         best_txs: &mut impl PayloadTxsBounds,
         block_gas_limit: u64,
         block_da_limit: Option<u64>,
         block_da_footprint_limit: Option<u64>,
+        flashblock_index: Option<u64>,
     ) -> Result<Option<()>, PayloadBuilderError> {
         let execute_txs_start_time = Instant::now();
         let mut num_txs_considered = 0;
@@ -704,7 +687,7 @@ impl<ExtraCtx: Debug + Default + MaybeFlashblockIndex> OpPayloadBuilderCtx<Extra
                     num_txs_considered += 1;
                     num_backruns_considered += 1;
 
-                    if !bundle.is_valid(block_attr.number, self.extra_ctx.flashblock_index()) {
+                    if !bundle.is_valid(block_attr.number, flashblock_index) {
                         log_br_txn(TxnExecutionResult::ConditionalCheckFailed);
                         continue;
                     }
