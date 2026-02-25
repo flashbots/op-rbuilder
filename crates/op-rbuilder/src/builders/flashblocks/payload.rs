@@ -6,7 +6,9 @@ use crate::{
         builder_tx::BuilderTransactions,
         context::{MaybeFlashblockIndex, OpPayloadBuilderCtx},
         flashblocks::{
-            best_txs::BestFlashblocksTxs, config::FlashBlocksConfigExt, timing::FlashblockScheduler,
+            best_txs::{FlashblockCommittedTxs, FlashblockPoolTxCursor},
+            config::FlashBlocksConfigExt,
+            timing::FlashblockScheduler,
         },
         generator::{BlockCell, BuildArguments, PayloadBuilder},
     },
@@ -72,7 +74,8 @@ fn convert_receipt(receipt: &OpReceipt) -> op_alloy_consensus::OpReceipt {
     }
 }
 
-type NextBestFlashblocksTxs<Pool> = BestFlashblocksTxs<
+type NextFlashblockPoolTxCursor<'a, Pool> = FlashblockPoolTxCursor<
+    'a,
     <Pool as TransactionPool>::Transaction,
     Box<
         dyn reth_transaction_pool::BestTransactions<
@@ -334,7 +337,7 @@ where
     /// Given build arguments including an Optimism client, transaction pool,
     /// and configuration, this function creates a transaction payload. Returns
     /// a result indicating success with the payload or an error in case of failure.
-    fn build_payload(
+    async fn build_payload(
         &self,
         args: BuildArguments<OpPayloadBuilderAttributes<OpTransactionSigned>, OpBuiltPayload>,
         best_payload: BlockCell<OpBuiltPayload>,
@@ -376,41 +379,55 @@ where
             )
             .map_err(|e| PayloadBuilderError::Other(e.into()))?;
 
-        let state_provider = self.client.state_by_block_hash(ctx.parent().hash())?;
-        let db = StateProviderDatabase::new(&state_provider);
         self.address_gas_limiter.refresh(ctx.block_number());
 
-        // 1. execute the pre steps and seal an early block with that
-        let sequencer_tx_start_time = Instant::now();
-        let mut state = State::builder()
-            .with_database(cached_reads.as_db_mut(db))
-            .with_bundle_update()
-            .build();
+        // Phase 1: Build the fallback block. state_provider and State<DB> are
+        // scoped here so they do not live across await points
+        let (mut info, payload, fb_payload, mut cache, mut transition) = {
+            let state_provider = self.client.state_by_block_hash(ctx.parent().hash())?;
+            let db = StateProviderDatabase::new(&state_provider);
 
-        let mut info = execute_pre_steps(&mut state, &ctx)?;
-        let sequencer_tx_time = sequencer_tx_start_time.elapsed();
-        ctx.metrics.sequencer_tx_duration.record(sequencer_tx_time);
-        ctx.metrics.sequencer_tx_gauge.set(sequencer_tx_time);
+            // 1. execute the pre steps and seal an early block with that
+            let sequencer_tx_start_time = Instant::now();
+            let mut state = State::builder()
+                .with_database(cached_reads.as_db_mut(db))
+                .with_bundle_update()
+                .build();
 
-        // We add first builder tx right after deposits
-        if !ctx.attributes().no_tx_pool
-            && let Err(e) =
-                self.builder_tx
-                    .add_builder_txs(&state_provider, &mut info, &ctx, &mut state, false)
-        {
-            error!(
-                target: "payload_builder",
-                "Error adding builder txs to fallback block: {}",
-                e
-            );
+            let mut info = execute_pre_steps(&mut state, &ctx)?;
+            let sequencer_tx_time = sequencer_tx_start_time.elapsed();
+            ctx.metrics.sequencer_tx_duration.record(sequencer_tx_time);
+            ctx.metrics.sequencer_tx_gauge.set(sequencer_tx_time);
+
+            // We add first builder tx right after deposits
+            if !ctx.attributes().no_tx_pool
+                && let Err(e) = self.builder_tx.add_builder_txs(
+                    &state_provider,
+                    &mut info,
+                    &ctx,
+                    &mut state,
+                    false,
+                )
+            {
+                error!(
+                    target: "payload_builder",
+                    "Error adding builder txs to fallback block: {}",
+                    e
+                );
+            };
+
+            let (payload, fb_payload) = build_block(
+                &mut state,
+                &ctx,
+                &mut info,
+                !disable_state_root || ctx.attributes().no_tx_pool, // need to calculate state root for CL sync
+            )?;
+
+            // we can safely take from state as we drop it at the end of the scope
+            let cache = std::mem::take(&mut state.cache);
+            let transition = state.transition_state.take();
+            (info, payload, fb_payload, cache, transition)
         };
-
-        let (payload, fb_payload) = build_block(
-            &mut state,
-            &ctx,
-            &mut info,
-            !disable_state_root || ctx.attributes().no_tx_pool, // need to calculate state root for CL sync
-        )?;
 
         self.built_fb_payload_tx
             .try_send(payload.clone())
@@ -525,13 +542,7 @@ where
             .get_op_payload_builder_ctx(config, fb_cancel.clone(), extra_ctx)
             .map_err(|e| PayloadBuilderError::Other(e.into()))?;
 
-        // Create best_transaction iterator
-        let mut best_txs = BestFlashblocksTxs::new(BestPayloadTransactions::new(
-            self.pool
-                .best_transactions_with_attributes(ctx.best_transaction_attributes()),
-        ));
-
-        let (tx, rx) = std::sync::mpsc::sync_channel((expected_flashblocks + 1) as usize);
+        let (tx, mut rx) = mpsc::channel((expected_flashblocks + 1) as usize);
         tokio::spawn(
             self.task_metrics
                 .flashblock_timer
@@ -543,23 +554,29 @@ where
                 )),
         );
 
-        // Process flashblocks - block on async channel receive
+        // State data was extracted in Phase 1 block scope above.
+        // We carry (CacheState, Option<TransitionState>) between iterations
+        // and reconstruct State<DB> inside each sync scope.
+        let mut committed_txs = FlashblockCommittedTxs::default();
+        let parent_hash = ctx.parent_hash();
+
+        // Process flashblocks - async channel receive
         loop {
             // Wait for signal before building flashblock.
-            if let Ok(new_fb_cancel) = rx.recv() {
-                debug!(
-                    target: "payload_builder",
-                    id = %fb_payload.payload_id,
-                    flashblock_index = ctx.flashblock_index(),
-                    block_number = ctx.block_number(),
-                    "Received signal to build flashblock",
-                );
-                ctx = ctx.with_cancel(new_fb_cancel);
-            } else {
+            let Some(new_fb_cancel) = rx.recv().await else {
                 // Channel closed - block building cancelled
                 self.record_flashblocks_metrics(&ctx, &info, target_flashblocks, &span);
                 return Ok(());
-            }
+            };
+
+            debug!(
+                target: "payload_builder",
+                id = %fb_payload.payload_id,
+                flashblock_index = ctx.flashblock_index(),
+                block_number = ctx.block_number(),
+                "Received signal to build flashblock",
+            );
+            ctx = ctx.with_cancel(new_fb_cancel);
 
             let fb_span = if span.is_none() {
                 tracing::Span::none()
@@ -573,15 +590,37 @@ where
             let _entered = fb_span.enter();
 
             // Build flashblock after receiving signal
-            let next_flashblocks_ctx = match self.build_next_flashblock(
-                &ctx,
-                &mut info,
-                &mut state,
-                &state_provider,
-                &mut best_txs,
-                &block_cancel,
-                &best_payload,
-            ) {
+            let (build_result, new_cache, new_transition) = {
+                // reconstruct state
+                let state_provider = self.client.state_by_block_hash(parent_hash)?;
+                let mut state = State::builder()
+                    .with_database(StateProviderDatabase::new(&state_provider))
+                    .with_cached_prestate(cache)
+                    .with_bundle_update()
+                    .build();
+                state.transition_state = transition;
+
+                let mut best_txs = FlashblockPoolTxCursor::new(&mut committed_txs);
+
+                let result = self.build_next_flashblock(
+                    &ctx,
+                    &mut info,
+                    &mut state,
+                    &state_provider,
+                    &mut best_txs,
+                    &block_cancel,
+                    &best_payload,
+                );
+
+                let cache = std::mem::take(&mut state.cache);
+                let transition_state = state.transition_state.take();
+                (result, cache, transition_state)
+            }; // provider and state dropped
+
+            cache = new_cache;
+            transition = new_transition;
+
+            let next_flashblocks_ctx = match build_result {
                 Ok(Some(next_flashblocks_ctx)) => next_flashblocks_ctx,
                 Ok(None) => {
                     self.record_flashblocks_metrics(&ctx, &info, target_flashblocks, &span);
@@ -606,6 +645,7 @@ where
 
     #[allow(clippy::too_many_arguments)]
     fn build_next_flashblock<
+        'a,
         DB: Database<Error = ProviderError> + std::fmt::Debug + AsRef<P>,
         P: StateRootProvider + HashedPostStateProvider + StorageRootProvider,
     >(
@@ -614,7 +654,7 @@ where
         info: &mut ExecutionInfo<FlashblocksExecutionInfo>,
         state: &mut State<DB>,
         state_provider: impl reth::providers::StateProvider + Clone,
-        best_txs: &mut NextBestFlashblocksTxs<Pool>,
+        best_txs: &mut NextFlashblockPoolTxCursor<'a, Pool>,
         block_cancel: &CancellationToken,
         best_payload: &BlockCell<OpBuiltPayload>,
     ) -> eyre::Result<Option<FlashblocksExtraCtx>> {
@@ -705,7 +745,7 @@ where
             .iter()
             .map(|tx| tx.tx_hash())
             .collect::<Vec<_>>();
-        best_txs.mark_commited(new_transactions);
+        best_txs.mark_committed(new_transactions);
 
         // We got block cancelled, we won't need anything from the block at this point
         // Caution: this assume that block cancel token only cancelled when new FCU is received
@@ -873,12 +913,12 @@ where
     type Attributes = OpPayloadBuilderAttributes<OpTransactionSigned>;
     type BuiltPayload = OpBuiltPayload;
 
-    fn try_build(
+    async fn try_build(
         &self,
         args: BuildArguments<Self::Attributes, Self::BuiltPayload>,
         best_payload: BlockCell<Self::BuiltPayload>,
     ) -> Result<(), PayloadBuilderError> {
-        self.build_payload(args, best_payload)
+        self.build_payload(args, best_payload).await
     }
 }
 
