@@ -1,9 +1,10 @@
 use super::{config::FlashblocksConfig, wspub::WebSocketPublisher};
 use crate::{
+    backrun_bundle::BackrunBundlesPayloadCtx,
     builders::{
         BuilderConfig,
         builder_tx::BuilderTransactions,
-        context::OpPayloadBuilderCtx,
+        context::{MaybeFlashblockIndex, OpPayloadBuilderCtx},
         flashblocks::{
             best_txs::BestFlashblocksTxs, config::FlashBlocksConfigExt, timing::FlashblockScheduler,
         },
@@ -110,6 +111,12 @@ pub struct FlashblocksExtraCtx {
     da_footprint_per_batch: Option<u64>,
     /// Whether to disable state root calculation for each flashblock
     disable_state_root: bool,
+}
+
+impl MaybeFlashblockIndex for FlashblocksExtraCtx {
+    fn flashblock_index(&self) -> Option<u64> {
+        Some(self.flashblock_index)
+    }
 }
 
 impl FlashblocksExtraCtx {
@@ -293,6 +300,14 @@ where
             .next_evm_env(&config.parent_header, &block_env_attributes)
             .wrap_err("failed to create next evm env")?;
 
+        let backrun_ctx = BackrunBundlesPayloadCtx {
+            pool: self
+                .config
+                .backrun_bundle_pool
+                .block_pool(config.parent_header.number + 1),
+            args: self.config.backrun_bundle_args.clone(),
+        };
+
         Ok(OpPayloadBuilderCtx::<FlashblocksExtraCtx> {
             evm_config: self.evm_config.clone(),
             chain_spec,
@@ -307,6 +322,7 @@ where
             extra_ctx,
             max_gas_per_txn: self.config.max_gas_per_txn,
             address_gas_limiter: self.address_gas_limiter.clone(),
+            backrun_ctx,
         })
     }
 

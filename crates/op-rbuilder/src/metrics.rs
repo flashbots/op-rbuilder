@@ -161,6 +161,18 @@ pub struct OpRBuilderMetrics {
     pub bundles_reverted: Histogram,
     /// Histogram of eth_sendBundle request duration
     pub bundle_receive_duration: Histogram,
+    /// Number of backrun bundles considered for inclusion
+    pub payload_num_backruns_considered: Histogram,
+    /// Latest number of backrun bundles considered
+    pub payload_num_backruns_considered_gauge: Gauge,
+    /// Number of backrun bundles successfully included
+    pub payload_num_backruns_successful: Histogram,
+    /// Latest number of backrun bundles successfully included
+    pub payload_num_backruns_successful_gauge: Gauge,
+    /// Histogram of the duration of backrun transaction processing
+    pub backrun_transaction_processing_duration: Histogram,
+    /// Latest backrun transaction processing duration
+    pub backrun_transaction_processing_gauge: Gauge,
 }
 
 impl OpRBuilderMetrics {
@@ -174,6 +186,9 @@ impl OpRBuilderMetrics {
         num_txs_simulated_fail: impl IntoF64 + Copy,
         num_bundles_reverted: impl IntoF64,
         reverted_gas_used: impl IntoF64,
+        num_backruns_considered: impl IntoF64 + Copy,
+        num_backruns_successful: impl IntoF64 + Copy,
+        backrun_transaction_processing_time: impl IntoF64 + Copy,
     ) {
         self.payload_transaction_simulation_duration
             .record(payload_transaction_simulation_time);
@@ -193,6 +208,18 @@ impl OpRBuilderMetrics {
             .set(num_txs_simulated_fail);
         self.bundles_reverted.record(num_bundles_reverted);
         self.payload_reverted_tx_gas_used.set(reverted_gas_used);
+        self.payload_num_backruns_considered
+            .record(num_backruns_considered);
+        self.payload_num_backruns_considered_gauge
+            .set(num_backruns_considered);
+        self.payload_num_backruns_successful
+            .record(num_backruns_successful);
+        self.payload_num_backruns_successful_gauge
+            .set(num_backruns_successful);
+        self.backrun_transaction_processing_duration
+            .record(backrun_transaction_processing_time);
+        self.backrun_transaction_processing_gauge
+            .set(backrun_transaction_processing_time);
     }
 }
 
