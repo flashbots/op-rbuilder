@@ -242,6 +242,22 @@ pub struct FlashblocksP2pArgs {
         default_value = "50"
     )]
     pub p2p_max_peer_count: u32,
+
+    /// Optional flag to send the payload to peers
+    #[arg(
+        long = "flashblocks.p2p_send_payload",
+        env = "FLASHBLOCK_P2P_SEND_PAYLOAD",
+        default_value = "false"
+    )]
+    pub p2p_send_payload: bool,
+
+    /// Optional flag to process the payload received by peers
+    #[arg(
+        long = "flashblocks.p2p_process_payload",
+        env = "FLASHBLOCK_P2P_PROCESS_PAYLOAD",
+        default_value = "false"
+    )]
+    pub p2p_process_payload: bool,
 }
 
 /// Parameters for telemetry configuration
