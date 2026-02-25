@@ -188,15 +188,6 @@ pub struct FlashblocksArgs {
     )]
     pub ws_subscriber_limit: Option<u16>,
 
-    /// Enable incremental trie caching for state root calculation.
-    /// When enabled, subsequent flashblocks reuse trie nodes from previous flashblocks
-    /// for faster state root calculation (3-5x speedup expected).
-    #[arg(
-        long = "flashblocks.enable-incremental-trie-cache",
-        env = "FLASHBLOCKS_ENABLE_INCREMENTAL_TRIE_CACHE",
-        default_value = "false"
-    )]
-    pub flashblocks_enable_incremental_trie_cache: bool,
 }
 
 impl Default for FlashblocksArgs {
