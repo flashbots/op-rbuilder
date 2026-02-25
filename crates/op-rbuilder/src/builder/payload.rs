@@ -1209,9 +1209,8 @@ where
     if calculate_state_root {
         let state_provider = state.database.as_ref();
 
-        // Check if we can use incremental trie caching (use cached trie from previous flashblock if available)
-        // prev_trie_updates is None only for the first flashblock; all subsequent flashblocks
-        // reuse the trie nodes cached from the previous flashblock for faster state root calculation.
+        // reuse the trie nodes cached from the previous flashblock for faster state root calculation if available.
+        // prev_trie_updates is None for the first flashblock;
         let use_incremental =
             if let Some(prev_trie) = fb_state.as_ref().and_then(|s| s.prev_trie_updates.clone()) {
                 // Incremental path: Use cached trie from previous flashblock
@@ -1240,34 +1239,28 @@ where
                     state_root = %state_root,
                     "Incremental state root calculation completed"
                 );
-
-                true
             } else {
-                false
+                debug!(
+                    target: "payload_builder",
+                    flashblock_index = fb_state.as_ref().map_or(0, |s| s.flashblock_index),
+                    "Using full state root calculation"
+                );
+
+                hashed_state = state_provider.hashed_post_state(&state.bundle_state);
+
+                (state_root, trie_output) = state
+                    .database
+                    .as_ref()
+                    .state_root_with_updates(hashed_state.clone())
+                    .inspect_err(|err| {
+                        warn!(
+                            target: "payload_builder",
+                            parent_header=%ctx.parent().hash(),
+                            %err,
+                            "failed to calculate state root for payload"
+                        );
+                    })?;
             };
-
-        if !use_incremental {
-            debug!(
-                target: "payload_builder",
-                flashblock_index = fb_state.as_ref().map_or(0, |s| s.flashblock_index),
-                "Using full state root calculation"
-            );
-
-            hashed_state = state_provider.hashed_post_state(&state.bundle_state);
-
-            (state_root, trie_output) = state
-                .database
-                .as_ref()
-                .state_root_with_updates(hashed_state.clone())
-                .inspect_err(|err| {
-                    warn!(
-                        target: "payload_builder",
-                        parent_header=%ctx.parent().hash(),
-                        %err,
-                        "failed to calculate state root for payload"
-                    );
-                })?;
-        }
 
         // Save trie updates for next flashblock's incremental calculation
         if let Some(fb) = fb_state.as_mut() {
