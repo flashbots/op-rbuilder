@@ -13,6 +13,7 @@ use crate::{
     revert_protection::{EthApiExtServer, RevertProtectionExt},
     tx::FBPooledTransaction,
 };
+use clap_builder::{CommandFactory, FromArgMatches};
 use core::fmt::Debug;
 use moka::future::Cache;
 use reth::builder::{NodeBuilder, WithLaunchContext};
@@ -29,7 +30,10 @@ use reth_transaction_pool::TransactionPool;
 use std::{marker::PhantomData, sync::Arc};
 
 pub fn launch() -> Result<()> {
-    let cli = Cli::parsed();
+    // Ignore unrecognized flags
+    let arg_matches = Cli::command().ignore_errors(true).get_matches();
+    let cli = Cli::from_arg_matches(&arg_matches).map_err(|e| e.exit())?;
+
     let mode = cli.builder_mode();
 
     #[cfg(feature = "telemetry")]
