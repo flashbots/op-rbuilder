@@ -175,7 +175,7 @@ impl<S: Default + Clone> Default for BuilderConfig<S> {
             sampling_ratio: 100,
             max_gas_per_txn: None,
             gas_limiter_config: GasLimiterArgs::default(),
-            backrun_bundle_pool: BackrunBundleGlobalPool::default(),
+            backrun_bundle_pool: BackrunBundleGlobalPool::new(false),
             backrun_bundle_args: BackrunBundleArgs::default(),
         }
     }
@@ -199,7 +199,9 @@ where
             sampling_ratio: args.telemetry.sampling_ratio,
             max_gas_per_txn: args.max_gas_per_txn,
             gas_limiter_config: args.gas_limiter.clone(),
-            backrun_bundle_pool: BackrunBundleGlobalPool::new(),
+            backrun_bundle_pool: BackrunBundleGlobalPool::new(
+                args.backrun_bundle.enforce_strict_priority_fee_ordering,
+            ),
             backrun_bundle_args: args.backrun_bundle.clone(),
             specific: S::try_from(args)?,
         })

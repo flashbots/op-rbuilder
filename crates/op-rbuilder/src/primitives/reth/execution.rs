@@ -24,6 +24,7 @@ pub enum TxnExecutionResult {
     MaxGasUsageExceeded,
     ConditionalCheckFailed,
     PriorityFeeTooLow,
+    CoinbaseProfitTooLow,
 }
 
 #[derive(Default, Debug)]

@@ -10,12 +10,20 @@
 //!
 //! During block building, after each successfully committed pool transaction the
 //! builder checks whether any backrun bundles target that transaction. Candidates
-//! are retrieved from the per-block [`payload_pool::BackrunBundlePayloadPool`],
-//! ordered by descending effective priority fee.
+//! are retrieved from the per-block [`payload_pool::BackrunBundlePayloadPool`].
 //!
 //! A successfully committed backrun is appended to the block right after its
-//! target transaction. The backrun's effective priority fee must be at least as
-//! high as the target transaction's priority fee.
+//! target transaction.
+//!
+//! # Priority fee ordering
+//!
+//! By default, backrun candidates are sorted by effective priority fee
+//! (descending) and must have fee ≥ the target's fee.
+//!
+//! When `enforce_strict_priority_fee_ordering` is enabled, backruns must
+//! have fee == the target's fee, are sorted by declared `coinbase_profit`
+//! instead, and are rejected at commit time if actual coinbase profit is
+//! less than declared.
 //!
 //! # Metrics
 //!

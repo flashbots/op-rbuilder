@@ -11,6 +11,7 @@
 //! | `--backruns.max_landed_backruns_per_block` | `100` | Included backruns per block |
 //! | `--backruns.max_considered_backruns_per_transaction` | `10` | Candidates evaluated per tx |
 //! | `--backruns.max_landed_backruns_per_transaction` | `1` | Included backruns per tx |
+//! | `--backruns.enforce_strict_priority_fee_ordering` | `false` | Require backrun and tx priority fee to match and order backruns by coinbase profit |
 
 use clap::Args;
 
@@ -19,6 +20,7 @@ const DEFAULT_MAX_CONSIDERED_PER_BLOCK: usize = 100;
 const DEFAULT_MAX_LANDED_PER_BLOCK: usize = 100;
 const DEFAULT_MAX_CONSIDERED_PER_TRANSACTION: usize = 10;
 const DEFAULT_MAX_LANDED_PER_TRANSACTION: usize = 1;
+const DEFAULT_ENFORCE_STRICT_PRIORITY_FEE_ORDERING: bool = false;
 
 #[derive(Debug, Clone, PartialEq, Eq, Args)]
 pub struct BackrunBundleArgs {
@@ -41,6 +43,11 @@ pub struct BackrunBundleArgs {
         default_value_t = DEFAULT_MAX_LANDED_PER_TRANSACTION
     )]
     pub max_landed_backruns_per_transaction: usize,
+    #[arg(
+        long = "backruns.enforce_strict_priority_fee_ordering",
+        default_value_t = DEFAULT_ENFORCE_STRICT_PRIORITY_FEE_ORDERING
+    )]
+    pub enforce_strict_priority_fee_ordering: bool,
 }
 
 impl BackrunBundleArgs {
@@ -66,6 +73,7 @@ impl Default for BackrunBundleArgs {
             max_landed_backruns_per_block: DEFAULT_MAX_LANDED_PER_BLOCK,
             max_considered_backruns_per_transaction: DEFAULT_MAX_CONSIDERED_PER_TRANSACTION,
             max_landed_backruns_per_transaction: DEFAULT_MAX_LANDED_PER_TRANSACTION,
+            enforce_strict_priority_fee_ordering: DEFAULT_ENFORCE_STRICT_PRIORITY_FEE_ORDERING,
         }
     }
 }

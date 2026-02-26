@@ -15,6 +15,7 @@ pub(super) struct BackrunBundleBuilder<'a> {
     priority_fee: u128,
     gas_limit: u64,
     value: U256,
+    coinbase_profit: Option<U256>,
 }
 
 pub(super) fn make_backrun_bundle<'a>(
@@ -31,6 +32,7 @@ pub(super) fn make_backrun_bundle<'a>(
         priority_fee: 0,
         gas_limit: 21000,
         value: U256::ZERO,
+        coinbase_profit: None,
     }
 }
 
@@ -47,6 +49,11 @@ impl<'a> BackrunBundleBuilder<'a> {
 
     pub(super) fn with_priority_fee(mut self, priority_fee: u128) -> Self {
         self.priority_fee = priority_fee;
+        self
+    }
+
+    pub(super) fn with_coinbase_profit(mut self, coinbase_profit: U256) -> Self {
+        self.coinbase_profit = Some(coinbase_profit);
         self
     }
 
@@ -71,6 +78,7 @@ impl<'a> BackrunBundleBuilder<'a> {
             estimated_effective_priority_fee: self.priority_fee,
             estimated_da_size: 0,
             replacement_key: None,
+            coinbase_profit: self.coinbase_profit,
         }
     }
 }
