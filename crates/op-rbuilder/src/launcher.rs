@@ -3,6 +3,9 @@ use reth_optimism_rpc::OpEthApiBuilder;
 
 use crate::{
     args::*,
+    backrun_bundle::{
+        BackrunBundleApiServer, BackrunBundleRpc, maintain_backrun_bundle_pool_future,
+    },
     builders::{BuilderConfig, BuilderMode, FlashblocksBuilder, PayloadBuilder, StandardBuilder},
     metrics::{VERSION, record_flag_gauge_metrics},
     monitor_tx_pool::monitor_tx_pool,
@@ -10,6 +13,7 @@ use crate::{
     revert_protection::{EthApiExtServer, RevertProtectionExt},
     tx::FBPooledTransaction,
 };
+use clap_builder::{CommandFactory, FromArgMatches};
 use core::fmt::Debug;
 use moka::future::Cache;
 use reth::builder::{NodeBuilder, WithLaunchContext};
@@ -21,11 +25,15 @@ use reth_optimism_node::{
     OpNode,
     node::{OpAddOns, OpAddOnsBuilder, OpEngineValidatorBuilder, OpPoolBuilder},
 };
+use reth_provider::CanonStateSubscriptions;
 use reth_transaction_pool::TransactionPool;
 use std::{marker::PhantomData, sync::Arc};
 
 pub fn launch() -> Result<()> {
-    let cli = Cli::parsed();
+    // Ignore unrecognized flags
+    let arg_matches = Cli::command().ignore_errors(true).get_matches();
+    let cli = Cli::from_arg_matches(&arg_matches).map_err(|e| e.exit())?;
+
     let mode = cli.builder_mode();
 
     #[cfg(feature = "telemetry")]
@@ -109,6 +117,9 @@ where
         let op_node = OpNode::new(rollup_args.clone());
         let reverted_cache = Cache::builder().max_capacity(100).build();
         let reverted_cache_copy = reverted_cache.clone();
+        let backrun_bundle_enabled = builder_args.backrun_bundle.backruns_enabled;
+        let backrun_bundle_pool = builder_config.backrun_bundle_pool.clone();
+        let backrun_bundle_pool_maintain = backrun_bundle_pool.clone();
 
         let mut addons: OpAddOns<
             _,
@@ -164,6 +175,13 @@ where
                         .add_or_replace_configured(revert_protection_ext.into_rpc())?;
                 }
 
+                if builder_args.backrun_bundle.backruns_enabled {
+                    let backrun_rpc =
+                        BackrunBundleRpc::new(backrun_bundle_pool.clone(), ctx.provider().clone());
+                    ctx.modules
+                        .add_or_replace_configured(backrun_rpc.into_rpc())?;
+                }
+
                 Ok(())
             })
             .on_node_started(move |ctx| {
@@ -174,6 +192,17 @@ where
                     let task = monitor_tx_pool(listener, reverted_cache_copy);
                     ctx.task_executor.spawn_critical("txlogging", task);
                 }
+
+                if backrun_bundle_enabled {
+                    let chain_events = ctx.provider.canonical_state_stream();
+                    let task_executor = ctx.task_executor.clone();
+                    ctx.task_executor.spawn(maintain_backrun_bundle_pool_future(
+                        backrun_bundle_pool_maintain,
+                        chain_events,
+                        task_executor,
+                    ));
+                }
+
                 Ok(())
             })
             .launch()

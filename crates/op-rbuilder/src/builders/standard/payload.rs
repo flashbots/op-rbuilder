@@ -1,5 +1,6 @@
 use super::super::context::OpPayloadBuilderCtx;
 use crate::{
+    backrun_bundle::BackrunBundlesPayloadCtx,
     builders::{BuilderConfig, BuilderTransactions, generator::BuildArguments},
     gas_limiter::AddressGasLimiter,
     metrics::OpRBuilderMetrics,
@@ -238,6 +239,14 @@ where
             .next_evm_env(&config.parent_header, &block_env_attributes)
             .map_err(PayloadBuilderError::other)?;
 
+        let backrun_ctx = BackrunBundlesPayloadCtx {
+            pool: self
+                .config
+                .backrun_bundle_pool
+                .block_pool(config.parent_header.number + 1),
+            args: self.config.backrun_bundle_args.clone(),
+        };
+
         let ctx = OpPayloadBuilderCtx {
             evm_config: self.evm_config.clone(),
             da_config: self.config.da_config.clone(),
@@ -249,9 +258,9 @@ where
             cancel,
             builder_signer: self.config.builder_signer,
             metrics: self.metrics.clone(),
-            extra_ctx: Default::default(),
             max_gas_per_txn: self.config.max_gas_per_txn,
             address_gas_limiter: self.address_gas_limiter.clone(),
+            backrun_ctx,
         };
 
         let builder = OpBuilder::new(best);
@@ -358,14 +367,12 @@ impl<Txs: PayloadTxsBounds> OpBuilder<'_, Txs> {
         // 4. if mem pool transactions are requested we execute them
 
         // gas reserved for builder tx
-        let builder_txs =
-            match builder_tx.add_builder_txs(&state_provider, &mut info, ctx, db, true) {
-                Ok(builder_txs) => builder_txs,
-                Err(e) => {
-                    error!(target: "payload_builder", "Error adding builder txs to block: {}", e);
-                    vec![]
-                }
-            };
+        let builder_txs = builder_tx
+            .add_builder_txs(&state_provider, &mut info, ctx, db, true, false, false)
+            .inspect_err(
+                |e| error!(target: "payload_builder", "Error adding builder txs to block: {}", e),
+            )
+            .unwrap_or_default();
 
         let builder_tx_gas = builder_txs.iter().fold(0, |acc, tx| acc + tx.gas_used);
 
@@ -415,6 +422,7 @@ impl<Txs: PayloadTxsBounds> OpBuilder<'_, Txs> {
                     block_gas_limit,
                     block_da_limit,
                     block_da_footprint,
+                    None,
                 )?
                 .is_some()
             {
@@ -423,7 +431,9 @@ impl<Txs: PayloadTxsBounds> OpBuilder<'_, Txs> {
         }
 
         // Add builder tx to the block
-        if let Err(e) = builder_tx.add_builder_txs(&state_provider, &mut info, ctx, db, false) {
+        if let Err(e) =
+            builder_tx.add_builder_txs(&state_provider, &mut info, ctx, db, false, false, false)
+        {
             error!(target: "payload_builder", "Error adding builder txs to fallback block: {}", e);
         };
 

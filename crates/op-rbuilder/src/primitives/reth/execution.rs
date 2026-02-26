@@ -22,10 +22,12 @@ pub enum TxnExecutionResult {
     Reverted,
     RevertedAndExcluded,
     MaxGasUsageExceeded,
+    ConditionalCheckFailed,
+    PriorityFeeTooLow,
 }
 
 #[derive(Default, Debug)]
-pub struct ExecutionInfo<Extra: Debug + Default = ()> {
+pub struct ExecutionInfo {
     /// All executed transactions (unrecovered).
     pub executed_transactions: Vec<OpTransactionSigned>,
     /// The recovered senders for the executed transactions.
@@ -38,15 +40,13 @@ pub struct ExecutionInfo<Extra: Debug + Default = ()> {
     pub cumulative_da_bytes_used: u64,
     /// Tracks fees from executed mempool transactions
     pub total_fees: U256,
-    /// Extra execution information that can be attached by individual builders.
-    pub extra: Extra,
     /// DA Footprint Scalar for Jovian
     pub da_footprint_scalar: Option<u16>,
     /// Optional blob fields for payload validation
     pub optional_blob_fields: Option<(Option<u64>, Option<u64>)>,
 }
 
-impl<T: Debug + Default> ExecutionInfo<T> {
+impl ExecutionInfo {
     /// Create a new instance with allocated slots.
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
@@ -56,7 +56,6 @@ impl<T: Debug + Default> ExecutionInfo<T> {
             cumulative_gas_used: 0,
             cumulative_da_bytes_used: 0,
             total_fees: U256::ZERO,
-            extra: Default::default(),
             da_footprint_scalar: None,
             optional_blob_fields: None,
         }
