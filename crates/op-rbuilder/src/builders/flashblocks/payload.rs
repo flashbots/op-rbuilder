@@ -995,7 +995,7 @@ where
 pub(super) fn build_block<DB, P>(
     state: &mut State<DB>,
     ctx: &OpPayloadBuilderCtx,
-    mut fb_state: Option<&mut FlashblocksState>,
+    fb_state: Option<&mut FlashblocksState>,
     info: &mut ExecutionInfo,
     calculate_state_root: bool,
 ) -> Result<(OpBuiltPayload, OpFlashblockPayload), PayloadBuilderError>
@@ -1041,11 +1041,11 @@ where
     let mut state_root = B256::ZERO;
     let mut trie_output = TrieUpdates::default();
     let mut hashed_state = HashedPostState::default();
+    let mut trie_updates_to_cache: Option<TrieUpdates> = None;
 
     if calculate_state_root {
         let state_provider = state.database.as_ref();
 
-        // Clone to avoid borrow conflict when we write back to fb_state after trie calculation.
         // prev_trie_updates is None for the first flashblock.
         let prev_trie = fb_state.as_deref().and_then(|s| s.prev_trie_updates.clone());
         let flashblock_index = fb_state.as_deref().map(|s| s.flashblock_index()).unwrap_or(0);
@@ -1090,10 +1090,8 @@ where
                 })?
         };
 
-        // Save trie updates for next flashblock's incremental calculation
-        if let Some(fb) = fb_state.as_deref_mut() {
-            fb.prev_trie_updates = Some(Arc::new(trie_output.clone()));
-        }
+        // Cache trie updates to apply in fb_state later (avoids mut on fb_state parameter).
+        trie_updates_to_cache = Some(trie_output.clone());
 
         let state_root_calculation_time = state_root_start_time.elapsed();
         ctx.metrics
@@ -1222,6 +1220,9 @@ where
 
     // pick the new transactions from the info field and update the last flashblock index
     let (new_transactions, new_receipts) = if let Some(fb_state) = fb_state {
+        if let Some(updates) = trie_updates_to_cache.take() {
+            fb_state.prev_trie_updates = Some(Arc::new(updates));
+        }
         let new_txs = fb_state.slice_new_transactions(&info.executed_transactions);
         let new_receipts = fb_state.slice_new_receipts(&info.receipts);
         fb_state.set_last_flashblock_tx_index(info.executed_transactions.len());
