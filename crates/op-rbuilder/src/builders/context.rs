@@ -632,6 +632,7 @@ impl OpPayloadBuilderCtx {
                     self.backrun_ctx
                         .args
                         .max_considered_backruns_per_transaction,
+                    miner_fee,
                 );
 
                 let mut tx_backruns_landed = 0;
@@ -646,32 +647,35 @@ impl OpPayloadBuilderCtx {
                         break;
                     }
 
-                    /* Backrun tx commit checklist:
-                    This is a set of steps that are performed for normal transactions above that we need to
-                    replicate for backrun transactions
-                    - [x] num_txs_considered inc
-                    - [x] check conditional (block and flashblock number)
-                    - [x] check if tx over limits
-                    - [x] reject blobs and deposit txs
-                    - [x] exit early before evm execution if cancelled
-                    - [x] meter simulation duration
-                    - [x] meter tx_byte_size
-                    - [x] use gas limiter
-                    - [x] log when tx execution fails
-                    - [x] inc num_txs_simulated_success or num_txs_simulated_fail
-                    - [x] inc reverted_gas_used
-                    - [x] metrics use successful_tx_gas_used and reverted_tx_gas_used
-                    - [x] inc num_bundles_reverted
-                    - [x] enforce self.max_gas_per_txn
-                    - [x] increase info.{cumulative_gas_used, cumulative_da_bytes_used}
-                    - [x] push receipt to info.receipts
-                    - [x] commit changes to db
-                    - [x] increase info.total_fees
-                    - [x] update info.{executed_senders, executed_transactions}
+                    // Backrun tx commit checklist:
+                    // This is a set of steps that are performed for normal transactions above that we need to
+                    // replicate for backrun transactions
+                    // - [x] num_txs_considered inc
+                    // - [x] check conditional (block and flashblock number)
+                    // - [x] check if tx over limits
+                    // - [x] reject blobs and deposit txs
+                    // - [x] exit early before evm execution if cancelled
+                    // - [x] meter simulation duration
+                    // - [x] meter tx_byte_size
+                    // - [x] use gas limiter
+                    // - [x] log when tx execution fails
+                    // - [x] inc num_txs_simulated_success or num_txs_simulated_fail
+                    // - [x] inc reverted_gas_used
+                    // - [x] metrics use successful_tx_gas_used and reverted_tx_gas_used
+                    // - [x] inc num_bundles_reverted
+                    // - [x] enforce self.max_gas_per_txn
+                    // - [x] increase info.{cumulative_gas_used, cumulative_da_bytes_used}
+                    // - [x] push receipt to info.receipts
+                    // - [x] commit changes to db
+                    // - [x] increase info.total_fees
+                    // - [x] update info.{executed_senders, executed_transactions}
 
-                    In addition to that for backruns we do:
-                    - [x] check backrun priority fee >= target priority fee
-                            */
+                    // In addition to that for backruns we do:
+                    // - [x] if enforce_strict_priority_fee_ordering
+                    //       check backrun priority fee == target priority fee
+                    //       and check that stated coinbase profit <= real coinbase profit
+                    // - [x] if !enforce_strict_priority_fee_ordering
+                    // check backrun priority fee >= target priority fee
 
                     let br_hash = bundle.backrun_tx.hash();
 
@@ -701,8 +705,12 @@ impl OpPayloadBuilderCtx {
                         continue;
                     };
 
-                    // Reject backrun if its priority fee below target transaction
-                    if backrun_priority_fee < miner_fee {
+                    if self.backrun_ctx.args.enforce_strict_priority_fee_ordering {
+                        if backrun_priority_fee != miner_fee {
+                            log_br_txn(TxnExecutionResult::PriorityFeeTooLow);
+                            continue;
+                        }
+                    } else if backrun_priority_fee < miner_fee {
                         log_br_txn(TxnExecutionResult::PriorityFeeTooLow);
                         continue;
                     }
@@ -729,6 +737,15 @@ impl OpPayloadBuilderCtx {
                     if self.cancel.is_cancelled() {
                         return Ok(Some(()));
                     }
+
+                    let coinbase = self.evm_env.block_env.beneficiary;
+                    let coinbase_balance_before = evm
+                        .db_mut()
+                        .basic(coinbase)
+                        .ok()
+                        .flatten()
+                        .map(|a| a.balance)
+                        .unwrap_or(U256::ZERO);
 
                     let br_simulation_start = Instant::now();
                     let ResultAndState {
@@ -778,6 +795,19 @@ impl OpPayloadBuilderCtx {
                     {
                         log_br_txn(TxnExecutionResult::MaxGasUsageExceeded);
                         continue;
+                    }
+
+                    if self.backrun_ctx.args.enforce_strict_priority_fee_ordering {
+                        let stated = bundle.coinbase_profit.unwrap_or_default();
+                        let coinbase_balance_after = br_state
+                            .get(&coinbase)
+                            .map(|a| a.info.balance)
+                            .unwrap_or_default();
+                        let actual = coinbase_balance_after.saturating_sub(coinbase_balance_before);
+                        if actual < stated {
+                            log_br_txn(TxnExecutionResult::CoinbaseProfitTooLow);
+                            continue;
+                        }
                     }
 
                     num_txs_simulated_success += 1;

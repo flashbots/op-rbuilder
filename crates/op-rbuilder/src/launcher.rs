@@ -176,8 +176,13 @@ where
                 }
 
                 if builder_args.backrun_bundle.backruns_enabled {
-                    let backrun_rpc =
-                        BackrunBundleRpc::new(backrun_bundle_pool.clone(), ctx.provider().clone());
+                    let backrun_rpc = BackrunBundleRpc::new(
+                        backrun_bundle_pool.clone(),
+                        ctx.provider().clone(),
+                        builder_args
+                            .backrun_bundle
+                            .enforce_strict_priority_fee_ordering,
+                    );
                     ctx.modules
                         .add_or_replace_configured(backrun_rpc.into_rpc())?;
                 }

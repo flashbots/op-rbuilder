@@ -158,8 +158,11 @@ impl LocalInstance {
 
                 if args.backrun_bundle.backruns_enabled {
                     tracing::info!("Backrun bundle RPC enabled");
-                    let backrun_rpc =
-                        BackrunBundleRpc::new(backrun_bundle_pool.clone(), ctx.provider().clone());
+                    let backrun_rpc = BackrunBundleRpc::new(
+                        backrun_bundle_pool.clone(),
+                        ctx.provider().clone(),
+                        args.backrun_bundle.enforce_strict_priority_fee_ordering,
+                    );
                     ctx.modules
                         .add_or_replace_configured(backrun_rpc.into_rpc())?;
                 }

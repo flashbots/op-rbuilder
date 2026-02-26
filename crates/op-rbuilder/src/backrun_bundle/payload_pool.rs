@@ -29,6 +29,7 @@ pub struct StoredBackrunBundle {
     pub estimated_effective_priority_fee: u128,
     pub estimated_da_size: u64,
     pub replacement_key: Option<ReplacementKey>,
+    pub coinbase_profit: Option<U256>,
 }
 
 impl StoredBackrunBundle {
@@ -56,19 +57,33 @@ impl StoredBackrunBundle {
     }
 }
 
-/// Ord impl: highest `estimated_effective_priority_fee` first, backrun tx hash as tiebreaker.
+/// Ord impl: highest `priority` first, backrun tx hash as tiebreaker.
+/// The priority is coinbase profit or estimated_effective_priority_fee
+/// depending on the builder configuration.
 #[derive(Debug, Clone)]
-struct OrderedBackrunBundle(StoredBackrunBundle);
+struct OrderedBackrunBundle {
+    bundle: StoredBackrunBundle,
+    priority: U256,
+}
 
 impl OrderedBackrunBundle {
+    fn new(bundle: StoredBackrunBundle, use_coinbase_profit: bool) -> Self {
+        let priority = if use_coinbase_profit {
+            bundle.coinbase_profit.unwrap_or_default()
+        } else {
+            U256::from(bundle.estimated_effective_priority_fee)
+        };
+        Self { bundle, priority }
+    }
+
     fn backrun_tx_hash(&self) -> B256 {
-        B256::from(*self.0.backrun_tx.tx_hash())
+        B256::from(*self.bundle.backrun_tx.tx_hash())
     }
 }
 
 impl PartialEq for OrderedBackrunBundle {
     fn eq(&self, other: &Self) -> bool {
-        self.backrun_tx_hash() == other.backrun_tx_hash()
+        self.backrun_tx_hash() == other.backrun_tx_hash() && self.priority == other.priority
     }
 }
 
@@ -83,9 +98,8 @@ impl PartialOrd for OrderedBackrunBundle {
 impl Ord for OrderedBackrunBundle {
     fn cmp(&self, other: &Self) -> Ordering {
         other
-            .0
-            .estimated_effective_priority_fee
-            .cmp(&self.0.estimated_effective_priority_fee)
+            .priority
+            .cmp(&self.priority)
             .then_with(|| self.backrun_tx_hash().cmp(&other.backrun_tx_hash()))
     }
 }
@@ -100,7 +114,7 @@ struct TxBackruns {
 /// Each block number in [`super::global_pool::BackrunBundleGlobalPool`] maps to
 /// one `BackrunBundlePayloadPool`. During block building the payload builder
 /// calls [`Self::get_backruns`] after each successfully committed transaction
-/// to retrieve candidate backruns sorted by descending priority fee.
+/// to retrieve candidate backruns sorted by descending priority.
 ///
 /// `get_backruns` performs lightweight pre-filtering (base fee, sender nonce,
 /// balance, dedup by `(address, nonce)`) so the builder only simulates
@@ -108,12 +122,14 @@ struct TxBackruns {
 #[derive(Debug, Clone)]
 pub struct BackrunBundlePayloadPool {
     inner: Arc<DashMap<B256, TxBackruns>>,
+    enforce_strict_priority_fee_ordering: bool,
 }
 
 impl BackrunBundlePayloadPool {
-    fn new() -> Self {
+    pub(super) fn new(enforce_strict_priority_fee_ordering: bool) -> Self {
         Self {
             inner: Arc::new(DashMap::new()),
+            enforce_strict_priority_fee_ordering,
         }
     }
 
@@ -122,14 +138,18 @@ impl BackrunBundlePayloadPool {
             .entry(bundle.target_tx_hash)
             .or_default()
             .bundles
-            .insert(OrderedBackrunBundle(bundle));
+            .insert(OrderedBackrunBundle::new(
+                bundle,
+                self.enforce_strict_priority_fee_ordering,
+            ));
     }
 
     pub(super) fn remove_bundle(&self, bundle: &StoredBackrunBundle) -> bool {
         if let Some(mut tx_backruns) = self.inner.get_mut(&bundle.target_tx_hash) {
-            tx_backruns
-                .bundles
-                .remove(&OrderedBackrunBundle(bundle.clone()))
+            tx_backruns.bundles.remove(&OrderedBackrunBundle::new(
+                bundle.clone(),
+                self.enforce_strict_priority_fee_ordering,
+            ))
         } else {
             false
         }
@@ -150,7 +170,7 @@ impl BackrunBundlePayloadPool {
                     .value()
                     .bundles
                     .iter()
-                    .filter(|b| b.0.block_number_max == block_number)
+                    .filter(|b| b.bundle.block_number_max == block_number)
                     .count()
             })
             .sum()
@@ -161,9 +181,7 @@ impl BackrunBundlePayloadPool {
     const MAX_ITER_COUNT: usize = 50;
 
     /// Returns up to `max_count` backrun candidates for the given target tx, sorted by
-    /// descending `estimated_effective_priority_fee`. Note that this ordering uses the
-    /// estimated priority fee computed at bundle submission time (based on the then-current
-    /// base fee), which may differ from the actual priority fee at block-building time.
+    /// descending priority (coinbase_profit or estimated priority fee).
     pub fn get_backruns(
         &self,
         target_tx_hash: &B256,
@@ -171,13 +189,13 @@ impl BackrunBundlePayloadPool {
         base_fee: u64,
         gas_left: u64,
         max_count: usize,
+        target_tx_effective_fee: u128,
     ) -> Vec<StoredBackrunBundle> {
         let Some(tx_backruns) = self.inner.get(target_tx_hash) else {
             return Vec::new();
         };
 
         let mut seen = HashSet::<(Address, u64)>::new();
-        let base_fee = base_fee as u128;
 
         // limit loop size as its blocking for the block building
         let max_iter = Self::MAX_ITER_COUNT.max(max_count);
@@ -187,14 +205,26 @@ impl BackrunBundlePayloadPool {
             .iter()
             .take(max_iter)
             .filter(|ordered| {
-                let backrun_tx = &ordered.0.backrun_tx;
+                let backrun_tx = &ordered.bundle.backrun_tx;
 
-                if backrun_tx.max_fee_per_gas() < base_fee {
+                if backrun_tx.max_fee_per_gas() < base_fee as u128 {
                     return false;
                 }
 
                 if backrun_tx.gas_limit() > gas_left {
                     return false;
+                }
+
+                let effective_fee = backrun_tx.effective_tip_per_gas(base_fee).unwrap_or(0);
+
+                if self.enforce_strict_priority_fee_ordering {
+                    if effective_fee != target_tx_effective_fee {
+                        return false;
+                    }
+                } else {
+                    if effective_fee < target_tx_effective_fee {
+                        return false;
+                    }
                 }
 
                 let sender = backrun_tx.signer();
@@ -218,14 +248,8 @@ impl BackrunBundlePayloadPool {
                 account.balance >= max_cost
             })
             .take(max_count)
-            .map(|ordered| ordered.0.clone())
+            .map(|ordered| ordered.bundle.clone())
             .collect()
-    }
-}
-
-impl Default for BackrunBundlePayloadPool {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -277,23 +301,25 @@ mod tests {
         let target = B256::random();
         let block_range = (10, 10);
 
-        let high = OrderedBackrunBundle(
+        let high = OrderedBackrunBundle::new(
             make_backrun_bundle(&s, target, block_range)
                 .with_priority_fee(200)
                 .build(),
+            false,
         );
         // Different nonce so the signed tx hash differs (equality is by tx hash)
-        let low = OrderedBackrunBundle(
+        let low = OrderedBackrunBundle::new(
             make_backrun_bundle(&s, target, block_range)
                 .with_nonce(1)
                 .with_priority_fee(100)
                 .build(),
+            false,
         );
 
         // Higher priority fee sorts first (is "less" in Ord)
         assert!(high < low);
 
-        // Equality is by tx hash
+        // Equality differs for bundles with different tx hashes.
         assert_eq!(high, high.clone());
         assert_ne!(high, low);
 
@@ -303,7 +329,7 @@ mod tests {
         set.insert(high.clone());
         let fees: Vec<_> = set
             .iter()
-            .map(|o| o.0.estimated_effective_priority_fee)
+            .map(|o| o.bundle.estimated_effective_priority_fee)
             .collect();
         assert_eq!(fees, vec![200, 100]);
     }
@@ -313,7 +339,7 @@ mod tests {
         let s = Signer::random();
         let target_a = B256::random();
         let target_b = B256::random();
-        let pool = BackrunBundlePayloadPool::new();
+        let pool = BackrunBundlePayloadPool::new(false);
 
         let b1 = make_backrun_bundle(&s, target_a, (10, 12)).build();
         let b2 = make_backrun_bundle(&s, target_a, (10, 10))
@@ -352,9 +378,9 @@ mod tests {
         let s1 = Signer::random();
         let s2 = Signer::random();
         let target = B256::random();
-        let pool = BackrunBundlePayloadPool::new();
-        let block_range = (10, 10);
         let base_fee = 100;
+        let pool = BackrunBundlePayloadPool::new(false);
+        let block_range = (10, 10);
         let max_backruns = 10;
 
         // s1/nonce=0/priority=200: should land
@@ -393,7 +419,7 @@ mod tests {
             }
         };
 
-        let results = pool.get_backruns(&target, good_account, base_fee, u64::MAX, max_backruns);
+        let results = pool.get_backruns(&target, good_account, base_fee, u64::MAX, max_backruns, 0);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].estimated_effective_priority_fee, 200);
 
@@ -404,7 +430,8 @@ mod tests {
                 good_account,
                 base_fee,
                 u64::MAX,
-                max_backruns
+                max_backruns,
+                0,
             )
             .is_empty()
         );
@@ -423,7 +450,7 @@ mod tests {
                 ..Default::default()
             })
         };
-        let results = pool.get_backruns(&target, all_known, base_fee, u64::MAX, 1);
+        let results = pool.get_backruns(&target, all_known, base_fee, u64::MAX, 1, 0);
         assert_eq!(results.len(), 1, "max_count=1");
 
         // Balance check: no balance filters all
@@ -435,8 +462,64 @@ mod tests {
             })
         };
         assert!(
-            pool.get_backruns(&target, poor, base_fee, u64::MAX, max_backruns)
+            pool.get_backruns(&target, poor, base_fee, u64::MAX, max_backruns, 0)
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn test_get_backruns_strict_mode() {
+        let s1 = Signer::random();
+        let s2 = Signer::random();
+        let s3 = Signer::random();
+        let target = B256::random();
+        let base_fee = 100;
+        let effective_priority_fee = 200;
+        let block_range = (10, 10);
+        let pool = BackrunBundlePayloadPool::new(true);
+
+        // All bundles have the same effective fee  but different coinbase_profit.
+        let b_low = make_backrun_bundle(&s1, target, block_range)
+            .with_priority_fee(effective_priority_fee)
+            .with_coinbase_profit(U256::from(100))
+            .build();
+        let b_mid = make_backrun_bundle(&s2, target, block_range)
+            .with_priority_fee(effective_priority_fee)
+            .with_coinbase_profit(U256::from(500))
+            .build();
+        let b_high = make_backrun_bundle(&s3, target, block_range)
+            .with_priority_fee(effective_priority_fee)
+            .with_coinbase_profit(U256::from(1000))
+            .build();
+        let b_incorrect_fee = make_backrun_bundle(&s3, target, block_range)
+            .with_priority_fee(effective_priority_fee + 1)
+            .with_coinbase_profit(U256::from(1000))
+            .build();
+
+        pool.add_bundle(b_low);
+        pool.add_bundle(b_mid);
+        pool.add_bundle(b_high);
+        pool.add_bundle(b_incorrect_fee);
+
+        let all_known = |_: Address| -> Option<AccountInfo> {
+            Some(AccountInfo {
+                nonce: 0,
+                balance: U256::from(1_000_000_000u128),
+                ..Default::default()
+            })
+        };
+
+        let results = pool.get_backruns(
+            &target,
+            all_known,
+            base_fee,
+            u64::MAX,
+            10,
+            effective_priority_fee,
+        );
+        assert_eq!(results.len(), 3);
+        assert_eq!(results[0].coinbase_profit, Some(U256::from(1000)));
+        assert_eq!(results[1].coinbase_profit, Some(U256::from(500)));
+        assert_eq!(results[2].coinbase_profit, Some(U256::from(100)));
     }
 }
