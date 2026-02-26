@@ -7164,7 +7164,6 @@ dependencies = [
  "reth-tracing-otlp",
  "reth-transaction-pool",
  "reth-trie",
- "reth-trie-db",
  "revm",
  "rlimit",
  "secp256k1 0.30.0",
