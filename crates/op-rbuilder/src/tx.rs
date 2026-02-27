@@ -13,11 +13,6 @@ use reth_primitives::{Recovered, kzg::KzgSettings};
 use reth_primitives_traits::InMemorySize;
 use reth_transaction_pool::{EthBlobTransactionSidecar, EthPoolTransaction, PoolTransaction};
 
-pub trait FBPoolTransaction:
-    MaybeRevertingTransaction + OpPooledTx + MaybeFlashblockFilter
-{
-}
-
 #[derive(Clone, Debug)]
 pub struct FBPooledTransaction {
     pub inner: OpPooledTransaction,
@@ -30,8 +25,6 @@ pub struct FBPooledTransaction {
     pub min_flashblock_number: Option<u64>,
     pub max_flashblock_number: Option<u64>,
 }
-
-impl FBPoolTransaction for FBPooledTransaction {}
 
 impl OpPooledTx for FBPooledTransaction {
     fn encoded_2718(&self) -> Cow<'_, Bytes> {

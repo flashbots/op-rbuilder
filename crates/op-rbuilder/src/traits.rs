@@ -3,11 +3,12 @@ use reth_node_api::{FullNodeComponents, FullNodeTypes, NodeTypes};
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_node::OpEngineTypes;
 use reth_optimism_primitives::{OpPrimitives, OpTransactionSigned};
+use reth_optimism_txpool::OpPooledTx;
 use reth_payload_util::PayloadTransactions;
 use reth_provider::{BlockReaderIdExt, ChainSpecProvider, StateProviderFactory};
 use reth_transaction_pool::TransactionPool;
 
-use crate::tx::FBPoolTransaction;
+use crate::tx::{MaybeFlashblockFilter, MaybeRevertingTransaction};
 
 pub trait NodeBounds:
     FullNodeTypes<
@@ -46,18 +47,28 @@ impl<T> NodeComponents for T where
 }
 
 pub trait PoolBounds:
-    TransactionPool<Transaction: FBPoolTransaction<Consensus = OpTransactionSigned>> + Unpin + 'static
+    TransactionPool<
+        Transaction: MaybeRevertingTransaction
+                         + MaybeFlashblockFilter
+                         + OpPooledTx<Consensus = OpTransactionSigned>,
+    > + Unpin
+    + 'static
 where
-    <Self as TransactionPool>::Transaction: FBPoolTransaction,
+    <Self as TransactionPool>::Transaction:
+        MaybeRevertingTransaction + MaybeFlashblockFilter + OpPooledTx,
 {
 }
 
 impl<T> PoolBounds for T
 where
-    T: TransactionPool<Transaction: FBPoolTransaction<Consensus = OpTransactionSigned>>
-        + Unpin
+    T: TransactionPool<
+            Transaction: MaybeRevertingTransaction
+                             + MaybeFlashblockFilter
+                             + OpPooledTx<Consensus = OpTransactionSigned>,
+        > + Unpin
         + 'static,
-    <Self as TransactionPool>::Transaction: FBPoolTransaction,
+    <Self as TransactionPool>::Transaction:
+        MaybeRevertingTransaction + MaybeFlashblockFilter + OpPooledTx,
 {
 }
 
@@ -80,11 +91,19 @@ impl<T> ClientBounds for T where
 }
 
 pub trait PayloadTxsBounds:
-    PayloadTransactions<Transaction: FBPoolTransaction<Consensus = OpTransactionSigned>>
+    PayloadTransactions<
+    Transaction: MaybeRevertingTransaction
+                     + MaybeFlashblockFilter
+                     + OpPooledTx<Consensus = OpTransactionSigned>,
+>
 {
 }
 
 impl<T> PayloadTxsBounds for T where
-    T: PayloadTransactions<Transaction: FBPoolTransaction<Consensus = OpTransactionSigned>>
+    T: PayloadTransactions<
+        Transaction: MaybeRevertingTransaction
+                         + MaybeFlashblockFilter
+                         + OpPooledTx<Consensus = OpTransactionSigned>,
+    >
 {
 }
