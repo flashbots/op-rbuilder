@@ -1,4 +1,4 @@
-use std::{borrow::Cow, sync::Arc};
+use std::{borrow::Cow, ops::Deref, sync::Arc};
 
 use alloy_consensus::BlobTransactionValidationError;
 use alloy_eips::{Typed2718, eip7594::BlobTransactionSidecarVariant, eip7702::SignedAuthorization};
@@ -17,18 +17,18 @@ pub type FBPooledTransaction = WithFlashbotsMetadata<OpPooledTransaction>;
 /// Generic wrapper that adds Flashbots-specific metadata to any transaction type
 #[derive(Clone, Debug)]
 pub struct WithFlashbotsMetadata<T> {
-    pub inner: T,
+    inner: T,
 
     /// Reverted hashes for bundle transactions. If the transaction is a bundle,
     /// this is the list of hashes of the transactions that reverted. If the
     /// transaction is not a bundle, this is `None`.
-    pub reverted_hashes: Option<Vec<B256>>,
+    reverted_hashes: Option<Vec<B256>>,
 
     /// Minimum flashblock number constraint
-    pub min_flashblock_number: Option<u64>,
+    min_flashblock_number: Option<u64>,
 
     /// Maximum flashblock number constraint
-    pub max_flashblock_number: Option<u64>,
+    max_flashblock_number: Option<u64>,
 }
 
 impl<T> WithFlashbotsMetadata<T> {
@@ -265,6 +265,14 @@ impl<T: OpPooledTx> OpPooledTx for WithFlashbotsMetadata<T> {
 impl<T> From<T> for WithFlashbotsMetadata<T> {
     fn from(inner: T) -> Self {
         Self::new(inner)
+    }
+}
+
+impl<T> Deref for WithFlashbotsMetadata<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
     }
 }
 

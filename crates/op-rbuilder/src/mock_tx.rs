@@ -19,7 +19,7 @@ pub struct MockFbTransactionFactory {
 impl MockFbTransactionFactory {
     /// Generates a transaction ID for the given [`MockTransaction`].
     pub fn tx_id(&mut self, tx: &MockFbTransaction) -> TransactionId {
-        self.factory.tx_id(&tx.inner)
+        self.factory.tx_id(&tx)
     }
 
     /// Validates a [`MockTransaction`] and returns a [`MockValidFbTx`].
