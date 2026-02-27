@@ -23,9 +23,14 @@ use reth_optimism_payload_builder::OpBuiltPayload;
 use reth_optimism_primitives::{OpReceipt, OpTransactionSigned};
 use reth_payload_builder::EthPayloadBuilderAttributes;
 use reth_primitives_traits::SealedHeader;
-use std::sync::Arc;
+use std::{
+    cmp::{max, min},
+    sync::Arc,
+};
 use tokio::sync::mpsc;
 use tracing::warn;
+
+use base_access_lists::FBALBuilderDb;
 
 /// Handles newly built or received flashblock payloads.
 ///
@@ -326,9 +331,17 @@ fn execute_transactions(
     use reth_primitives_traits::SignedTransaction;
     use revm::{DatabaseCommit as _, context::result::ResultAndState};
 
-    let mut evm = ctx.evm_config().evm_with_env(&mut *state, evm_env);
+    let mut fbal_db = FBALBuilderDb::new(state);
+    let mut evm = ctx.evm_config().evm_with_env(&mut fbal_db, evm_env);
 
-    for tx in txs {
+    let mut min_tx_index = u64::MAX;
+    let mut max_tx_index = u64::MIN;
+    for (i, tx) in txs.into_iter().enumerate() {
+        let j: u64 = i.try_into().unwrap();
+        evm.db_mut().set_index(j);
+        min_tx_index = min(min_tx_index, j);
+        max_tx_index = max(max_tx_index, j);
+
         // Convert to recovered transaction
         let tx_recovered = tx
             .try_clone_into_recovered()
@@ -343,6 +356,7 @@ fn execute_transactions(
         let depositor_nonce = (ctx.is_regolith_active(timestamp) && tx_recovered.is_deposit())
             .then(|| {
                 evm.db_mut()
+                    .db_mut()
                     .load_cache_account(sender)
                     .map(|acc| acc.account_info().unwrap_or_default().nonce)
             })
@@ -398,6 +412,9 @@ fn execute_transactions(
                 .expect("DA footprint should always be available from the database post jovian")
         });
     info.da_footprint_scalar = da_footprint_gas_scalar;
+
+    let fbal_builder = fbal_db.finish()?;
+    info.extra.access_list = Some(fbal_builder.build(min_tx_index, max_tx_index));
 
     Ok(())
 }
