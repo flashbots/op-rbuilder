@@ -4,63 +4,13 @@ version: 2.1
 # Orbs
 # -------------------------------------------------------------------
 orbs:
-  gcp-cli: circleci/gcp-cli@3.0.1
-
-# -------------------------------------------------------------------
-# Commands
-# -------------------------------------------------------------------
-commands:
-  gcp-oidc-authenticate:
-    description: "Authenticate with GCP using a CircleCI OIDC token."
-    parameters:
-      project_id:
-        type: env_var_name
-        default: GCP_PROJECT_ID
-      workload_identity_pool_id:
-        type: env_var_name
-        default: GCP_WIP_ID
-      workload_identity_pool_provider_id:
-        type: env_var_name
-        default: GCP_WIP_PROVIDER_ID
-      service_account_email:
-        type: env_var_name
-        default: GCP_SERVICE_ACCOUNT_EMAIL
-      gcp_cred_config_file_path:
-        type: string
-        default: /home/circleci/gcp_cred_config.json
-      oidc_token_file_path:
-        type: string
-        default: /home/circleci/oidc_token.json
-    steps:
-      - run:
-          name: "Create OIDC credential configuration"
-          command: |
-            # Store OIDC token in temp file
-            echo $CIRCLE_OIDC_TOKEN > << parameters.oidc_token_file_path >>
-            # Create a credential configuration for the generated OIDC ID Token
-            gcloud iam workload-identity-pools create-cred-config \
-                "projects/${<< parameters.project_id >>}/locations/global/workloadIdentityPools/${<< parameters.workload_identity_pool_id >>}/providers/${<< parameters.workload_identity_pool_provider_id >>}"\
-                --output-file="<< parameters.gcp_cred_config_file_path >>" \
-                --service-account="${<< parameters.service_account_email >>}" \
-                --credential-source-file=<< parameters.oidc_token_file_path >>
-      - run:
-          name: "Authenticate with GCP using OIDC"
-          command: |
-            # Configure gcloud to leverage the generated credential configuration
-            gcloud auth login --brief --cred-file "<< parameters.gcp_cred_config_file_path >>"
-            # Configure ADC
-            echo "export GOOGLE_APPLICATION_CREDENTIALS='<< parameters.gcp_cred_config_file_path >>'" | tee -a "$BASH_ENV"
+  gcp-cli: circleci/gcp-cli@3.3.0
+  utils: ethereum-optimism/circleci-utils@1.0.24
 
 # -------------------------------------------------------------------
 # Executors
 # -------------------------------------------------------------------
 executors:
-  docker-builder:
-    docker:
-      - image: cimg/base:stable
-    working_directory: ~/project
-    resource_class: xlarge
-
   rust-docker:
     docker:
       - image: cimg/rust:1.73.0
@@ -96,29 +46,12 @@ jobs:
         description: "Target platforms, comma-separated"
         type: string
         default: "linux/amd64"
-      publish:
-        description: "Push to registry"
-        type: boolean
-        default: false
-      resource_class:
-        type: string
-        default: xlarge
     machine:
       image: ubuntu-2204:current
-    resource_class: << parameters.resource_class >>
+    resource_class: 2xlarge+
     steps:
       - checkout
-      - run:
-          name: Initialize submodules
-          command: git submodule sync && git submodule update --init --recursive
-
-      # Authenticate to GCP if publishing
-      - when:
-          condition: << parameters.publish >>
-          steps:
-            - gcp-cli/install
-            - gcp-oidc-authenticate
-
+      - utils/gcp-oidc-authenticate
       - run:
           name: Build Docker image
           no_output_timeout: 45m
@@ -142,28 +75,22 @@ jobs:
               export GIT_VERSION="untagged"
             else
               export GIT_VERSION=$(echo "$tags_at_commit" | sed "s/<< parameters.docker_name >>\///" | sort -V | tail -n 1)
+              export IMAGE_TAGS=$GIT_VERSION
             fi
             echo "GIT_VERSION=$GIT_VERSION"
+            echo "IMAGE_TAGS=$IMAGE_TAGS"
 
             # Create buildx builder for multi-platform support
             docker buildx create --driver=docker-container --name=buildx-build --bootstrap --use
 
-            # Determine output destination
-            DOCKER_OUTPUT=""
-            if [ "<< parameters.publish >>" == "true" ]; then
-              gcloud auth configure-docker << parameters.registry >>
-              DOCKER_OUTPUT="--push"
-              echo "Building and pushing to registry"
-            else
-              echo "Building without push (cache warm-up)"
-            fi
-
+            gcloud auth configure-docker << parameters.registry >>
+        
             # Build!
             docker buildx bake \
               --progress plain \
               --builder=buildx-build \
               -f docker-bake.hcl \
-              $DOCKER_OUTPUT \
+              --push \
               << parameters.docker_name >>
 
   # -----------------------------------------------------------------
@@ -246,6 +173,12 @@ jobs:
             rustup default stable
             rustc --version
             cargo --version
+      - run:
+          name: Install native dependencies
+          command: |
+            sudo apt-get update
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
+              libsqlite3-dev clang libclang-dev llvm build-essential pkg-config libtss2-dev
       - run:
           name: Build twice and compare
           command: |
@@ -339,12 +272,10 @@ workflows:
             branches:
               only: feat/policy-engine
           docker_name: op-rbuilder
-          docker_tags: << pipeline.git.revision >>,<< pipeline.git.branch >>
-          platforms: "linux/amd64,linux/arm64"
-          publish: true
+          docker_tags: << pipeline.git.revision >>
+          platforms: "linux/amd64"
           context:
-            - oplabs-gcr
-            - oplabs-gcr-release
+            - oplabs-gcr-internal
       - op-rbuilder-verify-reproducible:
           filters:
             tags:
@@ -360,12 +291,10 @@ workflows:
             branches:
               only: feat/policy-engine
           docker_name: tdx-quote-provider
-          docker_tags: << pipeline.git.revision >>,<< pipeline.git.branch >>
+          docker_tags: << pipeline.git.revision >>
           platforms: "linux/amd64"
-          publish: true
           context:
-            - oplabs-gcr
-            - oplabs-gcr-release
+            - oplabs-gcr-internal
 
   # CI - runs on PRs and pushes to main
   ci:
