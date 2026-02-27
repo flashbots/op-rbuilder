@@ -1,10 +1,9 @@
 use std::{borrow::Cow, sync::Arc};
 
-use alloy_consensus::{BlobTransactionValidationError, conditional::BlockConditionalAttributes};
+use alloy_consensus::BlobTransactionValidationError;
 use alloy_eips::{Typed2718, eip7594::BlobTransactionSidecarVariant, eip7702::SignedAuthorization};
 use alloy_primitives::{Address, B256, Bytes, TxHash, TxKind, U256};
 use alloy_rpc_types_eth::{AccessList, erc4337::TransactionConditional};
-use reth_optimism_primitives::OpTransactionSigned;
 use reth_optimism_txpool::{
     OpPooledTransaction, OpPooledTx, conditional::MaybeConditionalTransaction,
     estimated_da_size::DataAvailabilitySized, interop::MaybeInteropTransaction,
@@ -13,31 +12,38 @@ use reth_primitives::{Recovered, kzg::KzgSettings};
 use reth_primitives_traits::InMemorySize;
 use reth_transaction_pool::{EthBlobTransactionSidecar, EthPoolTransaction, PoolTransaction};
 
-#[derive(Clone, Debug)]
-pub struct FBPooledTransaction {
-    pub inner: OpPooledTransaction,
+pub type FBPooledTransaction = WithFlashbotsMetadata<OpPooledTransaction>;
 
-    /// reverted hashes for the transaction. If the transaction is a bundle,
+/// Generic wrapper that adds Flashbots-specific metadata to any transaction type
+#[derive(Clone, Debug)]
+pub struct WithFlashbotsMetadata<T> {
+    pub inner: T,
+
+    /// Reverted hashes for bundle transactions. If the transaction is a bundle,
     /// this is the list of hashes of the transactions that reverted. If the
     /// transaction is not a bundle, this is `None`.
     pub reverted_hashes: Option<Vec<B256>>,
 
+    /// Minimum flashblock number constraint
     pub min_flashblock_number: Option<u64>,
+
+    /// Maximum flashblock number constraint
     pub max_flashblock_number: Option<u64>,
 }
 
-impl OpPooledTx for FBPooledTransaction {
-    fn encoded_2718(&self) -> Cow<'_, Bytes> {
-        Cow::Borrowed(self.inner.encoded_2718())
+impl<T> WithFlashbotsMetadata<T> {
+    /// Create a new wrapper with no metadata
+    pub fn new(inner: T) -> Self {
+        Self {
+            inner,
+            reverted_hashes: None,
+            min_flashblock_number: None,
+            max_flashblock_number: None,
+        }
     }
 }
 
-pub trait MaybeRevertingTransaction {
-    fn with_reverted_hashes(self, reverted_hashes: Vec<B256>) -> Self;
-    fn reverted_hashes(&self) -> Option<Vec<B256>>;
-}
-
-impl MaybeRevertingTransaction for FBPooledTransaction {
+impl<T> MaybeRevertingTransaction for WithFlashbotsMetadata<T> {
     fn with_reverted_hashes(mut self, reverted_hashes: Vec<B256>) -> Self {
         self.reverted_hashes = Some(reverted_hashes);
         self
@@ -48,14 +54,7 @@ impl MaybeRevertingTransaction for FBPooledTransaction {
     }
 }
 
-pub trait MaybeFlashblockFilter {
-    fn with_min_flashblock_number(self, min_flashblock_number: Option<u64>) -> Self;
-    fn with_max_flashblock_number(self, max_flashblock_number: Option<u64>) -> Self;
-    fn min_flashblock_number(&self) -> Option<u64>;
-    fn max_flashblock_number(&self) -> Option<u64>;
-}
-
-impl MaybeFlashblockFilter for FBPooledTransaction {
+impl<T> MaybeFlashblockFilter for WithFlashbotsMetadata<T> {
     fn with_min_flashblock_number(mut self, min_flashblock_number: Option<u64>) -> Self {
         self.min_flashblock_number = min_flashblock_number;
         self
@@ -75,17 +74,21 @@ impl MaybeFlashblockFilter for FBPooledTransaction {
     }
 }
 
-impl InMemorySize for FBPooledTransaction {
+impl<T: InMemorySize> InMemorySize for WithFlashbotsMetadata<T> {
     fn size(&self) -> usize {
-        self.inner.size() + core::mem::size_of::<bool>()
+        self.inner.size()
+            + core::mem::size_of::<Option<Vec<B256>>>()
+            + core::mem::size_of::<Option<u64>>() * 2
     }
 }
 
-impl PoolTransaction for FBPooledTransaction {
-    type TryFromConsensusError =
-        <op_alloy_consensus::OpPooledTransaction as TryFrom<OpTransactionSigned>>::Error;
-    type Consensus = OpTransactionSigned;
-    type Pooled = op_alloy_consensus::OpPooledTransaction;
+impl<T> PoolTransaction for WithFlashbotsMetadata<T>
+where
+    T: PoolTransaction,
+{
+    type TryFromConsensusError = T::TryFromConsensusError;
+    type Consensus = T::Consensus;
+    type Pooled = T::Pooled;
 
     fn clone_into_consensus(&self) -> Recovered<Self::Consensus> {
         self.inner.clone_into_consensus()
@@ -96,13 +99,7 @@ impl PoolTransaction for FBPooledTransaction {
     }
 
     fn from_pooled(tx: Recovered<Self::Pooled>) -> Self {
-        let inner = OpPooledTransaction::from_pooled(tx);
-        Self {
-            inner,
-            reverted_hashes: None,
-            min_flashblock_number: None,
-            max_flashblock_number: None,
-        }
+        Self::new(T::from_pooled(tx))
     }
 
     fn hash(&self) -> &TxHash {
@@ -126,13 +123,13 @@ impl PoolTransaction for FBPooledTransaction {
     }
 }
 
-impl Typed2718 for FBPooledTransaction {
+impl<T: Typed2718> Typed2718 for WithFlashbotsMetadata<T> {
     fn ty(&self) -> u8 {
         self.inner.ty()
     }
 }
 
-impl alloy_consensus::Transaction for FBPooledTransaction {
+impl<T: alloy_consensus::Transaction> alloy_consensus::Transaction for WithFlashbotsMetadata<T> {
     fn chain_id(&self) -> Option<u64> {
         self.inner.chain_id()
     }
@@ -202,9 +199,12 @@ impl alloy_consensus::Transaction for FBPooledTransaction {
     }
 }
 
-impl EthPoolTransaction for FBPooledTransaction {
+impl<T: EthPoolTransaction> EthPoolTransaction for WithFlashbotsMetadata<T>
+where
+    T: PoolTransaction,
+{
     fn take_blob(&mut self) -> EthBlobTransactionSidecar {
-        EthBlobTransactionSidecar::None
+        self.inner.take_blob()
     }
 
     fn try_into_pooled_eip4844(
@@ -232,7 +232,7 @@ impl EthPoolTransaction for FBPooledTransaction {
     }
 }
 
-impl MaybeInteropTransaction for FBPooledTransaction {
+impl<T: MaybeInteropTransaction> MaybeInteropTransaction for WithFlashbotsMetadata<T> {
     fn interop_deadline(&self) -> Option<u64> {
         self.inner.interop_deadline()
     }
@@ -240,33 +240,15 @@ impl MaybeInteropTransaction for FBPooledTransaction {
     fn set_interop_deadline(&self, deadline: u64) {
         self.inner.set_interop_deadline(deadline);
     }
-
-    fn with_interop_deadline(self, interop: u64) -> Self
-    where
-        Self: Sized,
-    {
-        self.inner.with_interop_deadline(interop).into()
-    }
 }
 
-impl DataAvailabilitySized for FBPooledTransaction {
+impl<T: DataAvailabilitySized> DataAvailabilitySized for WithFlashbotsMetadata<T> {
     fn estimated_da_size(&self) -> u64 {
         self.inner.estimated_da_size()
     }
 }
 
-impl From<OpPooledTransaction> for FBPooledTransaction {
-    fn from(tx: OpPooledTransaction) -> Self {
-        Self {
-            inner: tx,
-            reverted_hashes: None,
-            min_flashblock_number: None,
-            max_flashblock_number: None,
-        }
-    }
-}
-
-impl MaybeConditionalTransaction for FBPooledTransaction {
+impl<T: MaybeConditionalTransaction> MaybeConditionalTransaction for WithFlashbotsMetadata<T> {
     fn set_conditional(&mut self, conditional: TransactionConditional) {
         self.inner.set_conditional(conditional);
     }
@@ -274,20 +256,28 @@ impl MaybeConditionalTransaction for FBPooledTransaction {
     fn conditional(&self) -> Option<&TransactionConditional> {
         self.inner.conditional()
     }
+}
 
-    fn has_exceeded_block_attributes(&self, block_attr: &BlockConditionalAttributes) -> bool {
-        self.inner.has_exceeded_block_attributes(block_attr)
+impl<T: OpPooledTx> OpPooledTx for WithFlashbotsMetadata<T> {
+    fn encoded_2718(&self) -> Cow<'_, Bytes> {
+        self.inner.encoded_2718()
     }
+}
 
-    fn with_conditional(self, conditional: TransactionConditional) -> Self
-    where
-        Self: Sized,
-    {
-        FBPooledTransaction {
-            inner: self.inner.with_conditional(conditional),
-            reverted_hashes: self.reverted_hashes,
-            min_flashblock_number: self.min_flashblock_number,
-            max_flashblock_number: self.max_flashblock_number,
-        }
+impl<T> From<T> for WithFlashbotsMetadata<T> {
+    fn from(inner: T) -> Self {
+        Self::new(inner)
     }
+}
+
+pub trait MaybeRevertingTransaction {
+    fn with_reverted_hashes(self, reverted_hashes: Vec<B256>) -> Self;
+    fn reverted_hashes(&self) -> Option<Vec<B256>>;
+}
+
+pub trait MaybeFlashblockFilter {
+    fn with_min_flashblock_number(self, min_flashblock_number: Option<u64>) -> Self;
+    fn with_max_flashblock_number(self, max_flashblock_number: Option<u64>) -> Self;
+    fn min_flashblock_number(&self) -> Option<u64>;
+    fn max_flashblock_number(&self) -> Option<u64>;
 }
