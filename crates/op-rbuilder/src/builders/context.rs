@@ -49,7 +49,6 @@ use crate::{
     metrics::OpRBuilderMetrics,
     primitives::reth::{ExecutionInfo, TxnExecutionResult},
     traits::PayloadTxsBounds,
-    tx::MaybeRevertingTransaction,
     tx_signer::Signer,
 };
 

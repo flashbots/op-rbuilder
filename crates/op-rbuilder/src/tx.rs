@@ -41,16 +41,14 @@ impl<T> WithFlashbotsMetadata<T> {
             max_flashblock_number: None,
         }
     }
-}
 
-impl<T> MaybeRevertingTransaction for WithFlashbotsMetadata<T> {
-    fn with_reverted_hashes(mut self, reverted_hashes: Vec<B256>) -> Self {
+    pub fn with_reverted_hashes(mut self, reverted_hashes: Vec<B256>) -> Self {
         self.reverted_hashes = Some(reverted_hashes);
         self
     }
 
-    fn reverted_hashes(&self) -> Option<Vec<B256>> {
-        self.reverted_hashes.clone()
+    pub fn reverted_hashes(&self) -> &Option<Vec<B256>> {
+        &self.reverted_hashes
     }
 }
 
@@ -268,11 +266,6 @@ impl<T> From<T> for WithFlashbotsMetadata<T> {
     fn from(inner: T) -> Self {
         Self::new(inner)
     }
-}
-
-pub trait MaybeRevertingTransaction {
-    fn with_reverted_hashes(self, reverted_hashes: Vec<B256>) -> Self;
-    fn reverted_hashes(&self) -> Option<Vec<B256>>;
 }
 
 pub trait MaybeFlashblockFilter {

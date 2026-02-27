@@ -3,7 +3,7 @@ use std::{sync::Arc, time::Instant};
 use crate::{
     metrics::OpRBuilderMetrics,
     primitives::bundle::{Bundle, BundleResult},
-    tx::{FBPooledTransaction, MaybeFlashblockFilter, MaybeRevertingTransaction},
+    tx::{FBPooledTransaction, MaybeFlashblockFilter},
 };
 use alloy_json_rpc::RpcObject;
 use alloy_primitives::B256;
