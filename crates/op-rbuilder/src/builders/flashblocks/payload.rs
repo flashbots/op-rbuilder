@@ -22,6 +22,7 @@ use alloy_consensus::{
 use alloy_eips::{Encodable2718, eip7685::EMPTY_REQUESTS_HASH, merge::BEACON_NONCE};
 use alloy_evm::block::BlockExecutionResult;
 use alloy_primitives::{Address, B256, Bytes, U256};
+use base_access_lists::FlashblockAccessList;
 use eyre::WrapErr as _;
 use op_alloy_rpc_types_engine::{
     OpFlashblockPayload, OpFlashblockPayloadBase, OpFlashblockPayloadDelta,
@@ -108,6 +109,7 @@ pub(super) struct FlashblocksState {
     /// Index into ExecutionInfo tracking the last consumed flashblock
     /// Used for slicing transactions/receipts per flashblock
     last_flashblock_tx_index: usize,
+    pub access_list: Option<FlashblockAccessList>,
 }
 
 impl FlashblocksState {
@@ -137,6 +139,7 @@ impl FlashblocksState {
             da_footprint_per_batch: self.da_footprint_per_batch,
             disable_state_root: self.disable_state_root,
             last_flashblock_tx_index: self.last_flashblock_tx_index,
+            access_list: todo!(),
         }
     }
 
@@ -1199,6 +1202,7 @@ where
         receipts: receipts_with_hash,
         new_account_balances,
         block_number: ctx.parent().number + 1,
+        access_lists: info.extra.access_list,
     };
 
     let (_, blob_gas_used) = ctx.blob_fields(info);

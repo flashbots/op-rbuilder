@@ -165,11 +165,14 @@ alloy-hardforks = "0.4.7"
 alloy-op-evm = { version = "0.26.3", default-features = false }
 alloy-op-hardforks = "0.4.7"
 op-alloy-rpc-types = { version = "0.23.1", default-features = false }
-op-alloy-rpc-types-engine = { version = "0.23.1", default-features = false, features = ["serde"] }
+# here
+op-alloy-rpc-types-engine = { version = "0.24.0", default-features = false, features = ["serde"] }
 op-alloy-rpc-jsonrpsee = { version = "0.23.1", default-features = false }
 op-alloy-network = { version = "0.23.1", default-features = false }
 op-alloy-consensus = { version = "0.23.1", default-features = false }
 op-alloy-flz = { version = "0.13.1", default-features = false }
+
+base-access-lists = { git = "https://github.com/base/base.git" }
 
 async-trait = { version = "0.1.83" }
 clap = { version = "4.4.3", features = ["derive", "env", "string"] }
@@ -211,3 +214,7 @@ time = { version = "0.3.36", features = ["macros", "formatting", "parsing"] }
 vergen = "9.0.4"
 vergen-git2 = "9.0.4"
 opentelemetry = { version = "0.31", features = ["trace"] }
+
+[patch.crates-io]
+op-alloy-rpc-types-engine = { path = "../optimism/rust/op-alloy/crates/rpc-types-engine" }
+reth-optimism-node = { path = "../optimism/rust/op-reth/crates/node" }

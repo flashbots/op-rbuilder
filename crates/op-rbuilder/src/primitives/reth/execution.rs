@@ -1,5 +1,6 @@
 //! Heavily influenced by [reth](https://github.com/paradigmxyz/reth/blob/1e965caf5fa176f244a31c0d2662ba1b590938db/crates/optimism/payload/src/builder.rs#L570)
 use alloy_primitives::{Address, U256};
+use base_access_lists::FlashblockAccessList;
 use core::fmt::Debug;
 use derive_more::Display;
 use op_revm::OpTransactionError;
@@ -44,6 +45,7 @@ pub struct ExecutionInfo {
     pub da_footprint_scalar: Option<u16>,
     /// Optional blob fields for payload validation
     pub optional_blob_fields: Option<(Option<u64>, Option<u64>)>,
+    pub access_lists: Option<FlashblockAccessList>,
 }
 
 impl ExecutionInfo {
@@ -58,6 +60,7 @@ impl ExecutionInfo {
             total_fees: U256::ZERO,
             da_footprint_scalar: None,
             optional_blob_fields: None,
+            access_lists: None,
         }
     }
 
