@@ -256,7 +256,6 @@ where
             evm_env,
             block_env_attributes,
             cancel,
-            builder_signer: self.config.builder_signer,
             metrics: self.metrics.clone(),
             max_gas_per_txn: self.config.max_gas_per_txn,
             address_gas_limiter: self.address_gas_limiter.clone(),

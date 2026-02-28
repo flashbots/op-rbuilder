@@ -99,7 +99,6 @@ impl OpPayloadSyncerCtx {
             evm_env,
             block_env_attributes,
             cancel,
-            builder_signer: None,
             metrics: self.metrics,
             max_gas_per_txn: self.max_gas_per_txn,
             address_gas_limiter: AddressGasLimiter::new(GasLimiterArgs::default()),
