@@ -14,7 +14,7 @@ use crate::{
     traits::{NodeBounds, PoolBounds},
 };
 
-pub struct StandardServiceBuilder(pub BuilderConfig<()>);
+pub struct StandardServiceBuilder(pub BuilderConfig);
 
 impl StandardServiceBuilder {
     pub fn spawn_payload_builder_service<Node, Pool, BuilderTx>(

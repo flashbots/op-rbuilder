@@ -109,7 +109,7 @@ impl LocalInstance {
             None
         };
 
-        let builder_config = BuilderConfig::<P::Config>::try_from(args.clone())
+        let builder_config = BuilderConfig::try_from(args.clone())
             .expect("Failed to convert rollup args to builder config");
         let da_config = builder_config.da_config.clone();
         let gas_limit_config = builder_config.gas_limit_config.clone();

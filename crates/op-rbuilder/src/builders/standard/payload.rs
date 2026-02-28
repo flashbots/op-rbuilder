@@ -48,7 +48,7 @@ pub(super) struct StandardOpPayloadBuilder<Pool, Client, BuilderTx, Txs = ()> {
     /// Node client
     pub client: Client,
     /// Settings for the builder, e.g. DA settings.
-    pub config: BuilderConfig<()>,
+    pub config: BuilderConfig,
     /// The type responsible for yielding the best transactions for the payload if mempool
     /// transactions are allowed.
     pub best_transactions: Txs,
@@ -66,7 +66,7 @@ impl<Pool, Client, BuilderTx> StandardOpPayloadBuilder<Pool, Client, BuilderTx> 
         evm_config: OpEvmConfig,
         pool: Pool,
         client: Client,
-        config: BuilderConfig<()>,
+        config: BuilderConfig,
         builder_tx: BuilderTx,
     ) -> Self {
         let address_gas_limiter = AddressGasLimiter::new(config.gas_limiter_config.clone());

@@ -1,8 +1,4 @@
-use core::{
-    convert::{Infallible, TryFrom},
-    fmt::Debug,
-    time::Duration,
-};
+use core::{fmt::Debug, time::Duration};
 use reth_node_builder::components::PayloadServiceBuilder;
 use reth_optimism_evm::OpEvmConfig;
 use reth_optimism_payload_builder::config::{OpDAConfig, OpGasLimitConfig};
@@ -27,7 +23,7 @@ pub use builder_tx::{
     SimulationSuccessResult, get_balance, get_nonce,
 };
 pub use context::OpPayloadBuilderCtx;
-pub use flashblocks::FlashblocksBuilder;
+pub use flashblocks::{FlashblocksBuilder, FlashblocksConfig};
 pub use standard::StandardBuilder;
 
 /// Defines the payload building mode for the OP builder.
@@ -48,10 +44,6 @@ pub enum BuilderMode {
 /// to the `NodeBuilder::with_components` method to construct the payload builder
 /// service that gets called whenver the current node is asked to build a block.
 pub trait PayloadBuilder: Send + Sync + 'static {
-    /// The type that has an implementation specific variant of the Config<T> struct.
-    /// This is used to configure the payload builder service during startup.
-    type Config: TryFrom<OpRbuilderArgs, Error: Debug> + Clone + Debug + Send + Sync + 'static;
-
     /// The type that is used to instantiate the payload builder service
     /// that will be used by reth to build blocks whenever the node is
     /// asked to do so.
@@ -64,7 +56,7 @@ pub trait PayloadBuilder: Send + Sync + 'static {
     /// that is preloaded with a [`PayloadJobGenerator`] instance specific to the builder
     /// type.
     fn new_service<Node, Pool>(
-        config: BuilderConfig<Self::Config>,
+        config: BuilderConfig,
     ) -> eyre::Result<Self::ServiceBuilder<Node, Pool>>
     where
         Node: NodeBounds,
@@ -72,8 +64,8 @@ pub trait PayloadBuilder: Send + Sync + 'static {
 }
 
 /// Configuration values that are applicable to any type of block builder.
-#[derive(Clone)]
-pub struct BuilderConfig<Specific: Clone> {
+#[derive(Debug, Clone)]
+pub struct BuilderConfig {
     /// Secret key of the builder that is used to sign the end of block transaction.
     pub builder_signer: Option<Signer>,
 
@@ -119,9 +111,6 @@ pub struct BuilderConfig<Specific: Clone> {
     /// Inverted sampling frequency in blocks. 1 - each block, 100 - every 100th block.
     pub sampling_ratio: u64,
 
-    /// Configuration values that are specific to the block builder implementation used.
-    pub specific: Specific,
-
     /// Maximum gas a transaction can use before being excluded.
     pub max_gas_per_txn: Option<u64>,
 
@@ -133,35 +122,13 @@ pub struct BuilderConfig<Specific: Clone> {
 
     /// Backrun bundle configuration
     pub backrun_bundle_args: BackrunBundleArgs,
+
+    /// Configuration specific to the flashblocks builder.
+    /// This is None for the standard builder.
+    pub flashblocks_config: Option<FlashblocksConfig>,
 }
 
-impl<S: Debug + Clone> core::fmt::Debug for BuilderConfig<S> {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("Config")
-            .field(
-                "builder_signer",
-                &match self.builder_signer.as_ref() {
-                    Some(signer) => signer.address.to_string(),
-                    None => "None".into(),
-                },
-            )
-            .field("revert_protection", &self.revert_protection)
-            .field("flashtestations", &self.flashtestations_config)
-            .field("block_time", &self.block_time)
-            .field("block_time_leeway", &self.block_time_leeway)
-            .field("da_config", &self.da_config)
-            .field("gas_limit_config", &self.gas_limit_config)
-            .field("sampling_ratio", &self.sampling_ratio)
-            .field("specific", &self.specific)
-            .field("max_gas_per_txn", &self.max_gas_per_txn)
-            .field("gas_limiter_config", &self.gas_limiter_config)
-            .field("backrun_bundle_pool", &self.backrun_bundle_pool)
-            .field("backrun_bundle_args", &self.backrun_bundle_args)
-            .finish()
-    }
-}
-
-impl<S: Default + Clone> Default for BuilderConfig<S> {
+impl Default for BuilderConfig {
     fn default() -> Self {
         Self {
             builder_signer: None,
@@ -171,46 +138,40 @@ impl<S: Default + Clone> Default for BuilderConfig<S> {
             block_time_leeway: Duration::from_millis(500),
             da_config: OpDAConfig::default(),
             gas_limit_config: OpGasLimitConfig::default(),
-            specific: S::default(),
             sampling_ratio: 100,
             max_gas_per_txn: None,
             gas_limiter_config: GasLimiterArgs::default(),
             backrun_bundle_pool: BackrunBundleGlobalPool::default(),
             backrun_bundle_args: BackrunBundleArgs::default(),
+            flashblocks_config: None,
         }
     }
 }
 
-impl<S> TryFrom<OpRbuilderArgs> for BuilderConfig<S>
-where
-    S: TryFrom<OpRbuilderArgs, Error: Debug> + Clone,
-{
-    type Error = S::Error;
+impl TryFrom<OpRbuilderArgs> for BuilderConfig {
+    type Error = eyre::Report;
 
     fn try_from(args: OpRbuilderArgs) -> Result<Self, Self::Error> {
+        let flashblocks_config = if args.flashblocks.enabled {
+            Some(flashblocks::FlashblocksConfig::try_from(args.clone())?)
+        } else {
+            None
+        };
+
         Ok(Self {
             builder_signer: args.builder_signer,
             revert_protection: args.enable_revert_protection,
-            flashtestations_config: args.flashtestations.clone(),
+            flashtestations_config: args.flashtestations,
             block_time: Duration::from_millis(args.chain_block_time),
             block_time_leeway: Duration::from_secs(args.extra_block_deadline_secs),
             da_config: Default::default(),
             gas_limit_config: Default::default(),
             sampling_ratio: args.telemetry.sampling_ratio,
             max_gas_per_txn: args.max_gas_per_txn,
-            gas_limiter_config: args.gas_limiter.clone(),
+            gas_limiter_config: args.gas_limiter,
             backrun_bundle_pool: BackrunBundleGlobalPool::new(),
-            backrun_bundle_args: args.backrun_bundle.clone(),
-            specific: S::try_from(args)?,
+            backrun_bundle_args: args.backrun_bundle,
+            flashblocks_config,
         })
-    }
-}
-
-#[expect(clippy::infallible_try_from)]
-impl TryFrom<OpRbuilderArgs> for () {
-    type Error = Infallible;
-
-    fn try_from(_: OpRbuilderArgs) -> Result<Self, Self::Error> {
-        Ok(())
     }
 }

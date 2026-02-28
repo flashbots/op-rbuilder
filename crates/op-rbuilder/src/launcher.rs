@@ -13,7 +13,6 @@ use crate::{
     tx::FBPooledTransaction,
 };
 use clap_builder::{CommandFactory, FromArgMatches};
-use core::fmt::Debug;
 use moka::future::Cache;
 use reth::builder::{NodeBuilder, WithLaunchContext};
 use reth_cli_commands::launcher::Launcher;
@@ -97,15 +96,13 @@ where
 impl<B> Launcher<OpChainSpecParser, OpRbuilderArgs> for BuilderLauncher<B>
 where
     B: PayloadBuilder,
-    BuilderConfig<B::Config>: TryFrom<OpRbuilderArgs>,
-    <BuilderConfig<B::Config> as TryFrom<OpRbuilderArgs>>::Error: Debug,
 {
     async fn entrypoint(
         self,
         builder: WithLaunchContext<NodeBuilder<Arc<DatabaseEnv>, OpChainSpec>>,
         builder_args: OpRbuilderArgs,
     ) -> Result<()> {
-        let builder_config = BuilderConfig::<B::Config>::try_from(builder_args.clone())
+        let builder_config = BuilderConfig::try_from(builder_args.clone())
             .expect("Failed to convert rollup args to builder config");
 
         record_flag_gauge_metrics(&builder_args);

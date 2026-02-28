@@ -1,6 +1,6 @@
 use crate::{
     backrun_bundle::{BackrunBundleArgs, BackrunBundleGlobalPool, BackrunBundlesPayloadCtx},
-    builders::{BuilderConfig, OpPayloadBuilderCtx, flashblocks::FlashblocksConfig},
+    builders::{BuilderConfig, OpPayloadBuilderCtx},
     gas_limiter::{AddressGasLimiter, args::GasLimiterArgs},
     metrics::OpRBuilderMetrics,
     traits::ClientBounds,
@@ -40,7 +40,7 @@ pub(super) struct OpPayloadSyncerCtx {
 impl OpPayloadSyncerCtx {
     pub(super) fn new<Client>(
         client: &Client,
-        builder_config: BuilderConfig<FlashblocksConfig>,
+        builder_config: BuilderConfig,
         evm_config: OpEvmConfig,
         metrics: Arc<OpRBuilderMetrics>,
     ) -> eyre::Result<Self>

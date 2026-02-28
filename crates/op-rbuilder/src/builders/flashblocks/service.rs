@@ -1,4 +1,4 @@
-use super::{FlashblocksConfig, payload::OpPayloadBuilder};
+use super::payload::OpPayloadBuilder;
 use crate::{
     builders::{
         BuilderConfig,
@@ -16,7 +16,7 @@ use crate::{
     tokio_metrics::FlashblocksTaskMetrics,
     traits::{NodeBounds, PoolBounds},
 };
-use eyre::WrapErr as _;
+use eyre::{ContextCompat, WrapErr as _};
 use reth_basic_payload_builder::BasicPayloadJobGeneratorConfig;
 use reth_node_api::NodeTypes;
 use reth_node_builder::{BuilderContext, components::PayloadServiceBuilder};
@@ -25,7 +25,7 @@ use reth_payload_builder::{PayloadBuilderHandle, PayloadBuilderService};
 use reth_provider::CanonStateSubscriptions;
 use std::{sync::Arc, time::Duration};
 
-pub struct FlashblocksServiceBuilder(pub BuilderConfig<FlashblocksConfig>);
+pub struct FlashblocksServiceBuilder(pub BuilderConfig);
 
 impl FlashblocksServiceBuilder {
     fn spawn_payload_builder_service<Node, Pool, BuilderTx>(
@@ -43,10 +43,16 @@ impl FlashblocksServiceBuilder {
         // this is effectively unused right now due to the usage of reth's `task_executor`.
         let cancel = tokio_util::sync::CancellationToken::new();
 
-        let (incoming_message_rx, outgoing_message_tx) = if self.0.specific.p2p_enabled {
+        let flashblocks_config = self
+            .0
+            .flashblocks_config
+            .clone()
+            .wrap_err("flashblocks_config must be set when using flashblocks builder")?;
+
+        let (incoming_message_rx, outgoing_message_tx) = if flashblocks_config.p2p_enabled {
             let mut builder = p2p::NodeBuilder::new();
 
-            if let Some(ref private_key_file) = self.0.specific.p2p_private_key_file
+            if let Some(ref private_key_file) = flashblocks_config.p2p_private_key_file
                 && !private_key_file.is_empty()
             {
                 let private_key_hex = std::fs::read_to_string(private_key_file)
@@ -59,7 +65,7 @@ impl FlashblocksServiceBuilder {
             }
 
             let known_peers: Vec<p2p::Multiaddr> =
-                if let Some(ref p2p_known_peers) = self.0.specific.p2p_known_peers {
+                if let Some(ref p2p_known_peers) = flashblocks_config.p2p_known_peers {
                     p2p_known_peers
                         .split(',')
                         .map(|s| s.to_string())
@@ -77,9 +83,9 @@ impl FlashblocksServiceBuilder {
                 .with_agent_version(AGENT_VERSION.to_string())
                 .with_protocol(FLASHBLOCKS_STREAM_PROTOCOL)
                 .with_known_peers(known_peers)
-                .with_port(self.0.specific.p2p_port)
+                .with_port(flashblocks_config.p2p_port)
                 .with_cancellation_token(cancel.clone())
-                .with_max_peer_count(self.0.specific.p2p_max_peer_count)
+                .with_max_peer_count(flashblocks_config.p2p_max_peer_count)
                 .try_build::<Message>()
                 .wrap_err("failed to build flashblocks p2p node")?;
             let multiaddrs = node.multiaddrs();
@@ -108,10 +114,10 @@ impl FlashblocksServiceBuilder {
         let (built_payload_tx, built_payload_rx) = tokio::sync::mpsc::channel(16);
 
         let ws_pub: Arc<WebSocketPublisher> = WebSocketPublisher::new(
-            self.0.specific.ws_addr,
+            flashblocks_config.ws_addr,
             metrics.clone(),
             &task_metrics.websocket_publisher,
-            self.0.specific.ws_subscriber_limit,
+            flashblocks_config.ws_subscriber_limit,
         )
         .wrap_err("failed to create ws publisher")?
         .into();
@@ -120,6 +126,7 @@ impl FlashblocksServiceBuilder {
             pool,
             ctx.provider().clone(),
             self.0.clone(),
+            flashblocks_config.clone(),
             builder_tx,
             built_fb_payload_tx,
             built_payload_tx,
@@ -200,6 +207,12 @@ where
         pool: Pool,
         _: OpEvmConfig,
     ) -> eyre::Result<PayloadBuilderHandle<<Node::Types as NodeTypes>::Payload>> {
+        let flashblocks_config = self
+            .0
+            .flashblocks_config
+            .clone()
+            .wrap_err("flashblocks_config must be set when using flashblocks builder")?;
+
         let signer = self.0.builder_signer;
         let flashtestations_builder_tx = if let Some(builder_key) = signer
             && self.0.flashtestations_config.flashtestations_enabled
@@ -219,9 +232,9 @@ where
 
         if let Some(builder_signer) = signer
             && let Some(flashblocks_number_contract_address) =
-                self.0.specific.number_contract_address
+                flashblocks_config.number_contract_address
         {
-            let use_permit = self.0.specific.number_contract_use_permit;
+            let use_permit = flashblocks_config.number_contract_use_permit;
             self.spawn_payload_builder_service(
                 ctx,
                 pool,
