@@ -23,8 +23,13 @@ pub use builder_tx::{
     SimulationSuccessResult, get_balance, get_nonce,
 };
 pub use context::OpPayloadBuilderCtx;
-pub use flashblocks::{FlashblocksBuilder, FlashblocksConfig};
-pub use standard::StandardBuilder;
+pub use flashblocks::FlashblocksConfig;
+
+use flashblocks::FlashblocksServiceBuilder;
+use reth_node_api::NodeTypes;
+use reth_node_builder::BuilderContext;
+use reth_payload_builder::PayloadBuilderHandle;
+use standard::StandardServiceBuilder;
 
 /// Defines the payload building mode for the OP builder.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -38,29 +43,46 @@ pub enum BuilderMode {
     Flashblocks,
 }
 
-/// Defines the interface for any block builder implementation API entry point.
-///
-/// Instances of this trait are used during Reth node construction as an argument
-/// to the `NodeBuilder::with_components` method to construct the payload builder
-/// service that gets called whenver the current node is asked to build a block.
-pub trait PayloadBuilder: Send + Sync + 'static {
-    /// The type that is used to instantiate the payload builder service
-    /// that will be used by reth to build blocks whenever the node is
-    /// asked to do so.
-    type ServiceBuilder<Node, Pool>: PayloadServiceBuilder<Node, Pool, OpEvmConfig>
-    where
-        Node: NodeBounds,
-        Pool: PoolBounds;
+/// Enum that wraps the different payload service builder implementations.
+pub enum OpPayloadServiceBuilder {
+    Standard(StandardServiceBuilder),
+    Flashblocks(FlashblocksServiceBuilder),
+}
 
-    /// Called during node startup by reth. Returns a [`PayloadBuilderService`] instance
-    /// that is preloaded with a [`PayloadJobGenerator`] instance specific to the builder
-    /// type.
-    fn new_service<Node, Pool>(
-        config: BuilderConfig,
-    ) -> eyre::Result<Self::ServiceBuilder<Node, Pool>>
-    where
-        Node: NodeBounds,
-        Pool: PoolBounds;
+impl OpPayloadServiceBuilder {
+    pub fn new(config: BuilderConfig) -> Self {
+        if config.flashblocks_config.is_some() {
+            Self::Flashblocks(FlashblocksServiceBuilder(config))
+        } else {
+            Self::Standard(StandardServiceBuilder(config))
+        }
+    }
+}
+
+impl<Node, Pool> PayloadServiceBuilder<Node, Pool, OpEvmConfig> for OpPayloadServiceBuilder
+where
+    Node: NodeBounds,
+    Pool: PoolBounds,
+{
+    async fn spawn_payload_builder_service(
+        self,
+        ctx: &BuilderContext<Node>,
+        pool: Pool,
+        evm_config: OpEvmConfig,
+    ) -> eyre::Result<PayloadBuilderHandle<<Node::Types as NodeTypes>::Payload>> {
+        match self {
+            Self::Standard(builder) => {
+                builder
+                    .spawn_payload_builder_service(ctx, pool, evm_config)
+                    .await
+            }
+            Self::Flashblocks(builder) => {
+                builder
+                    .spawn_payload_builder_service(ctx, pool, evm_config)
+                    .await
+            }
+        }
+    }
 }
 
 /// Configuration values that are applicable to any type of block builder.

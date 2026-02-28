@@ -5,7 +5,6 @@ use syn::{Expr, ItemFn, Meta, Token, parse_macro_input, punctuated::Punctuated};
 // Define all variant information in one place
 struct VariantInfo {
     name: &'static str,
-    builder_type: &'static str,
     args_modifier: fn(&proc_macro2::TokenStream) -> proc_macro2::TokenStream,
     default_args_factory: fn() -> proc_macro2::TokenStream,
 }
@@ -13,13 +12,11 @@ struct VariantInfo {
 const BUILDER_VARIANTS: &[VariantInfo] = &[
     VariantInfo {
         name: "standard",
-        builder_type: "crate::builders::StandardBuilder",
         args_modifier: |args| quote! { #args },
         default_args_factory: || quote! { Default::default() },
     },
     VariantInfo {
         name: "flashblocks",
-        builder_type: "crate::builders::FlashblocksBuilder",
         args_modifier: |args| {
             quote! {
                 {
@@ -172,27 +169,25 @@ fn generate_instance_init(
     let variant_info =
         get_variant_info(variant).unwrap_or_else(|| panic!("Unknown variant: {variant}"));
 
-    let builder_type: proc_macro2::TokenStream = variant_info.builder_type.parse().unwrap();
-
     match (args, config) {
         (None, None) => {
             let default_args = (variant_info.default_args_factory)();
-            quote! { crate::tests::LocalInstance::new::<#builder_type>(#default_args).await? }
+            quote! { crate::tests::LocalInstance::new(#default_args).await? }
         }
         (Some(args_expr), None) => {
             let modified_args = (variant_info.args_modifier)(&quote! { #args_expr });
-            quote! { crate::tests::LocalInstance::new::<#builder_type>(#modified_args).await? }
+            quote! { crate::tests::LocalInstance::new(#modified_args).await? }
         }
         (None, Some(config_expr)) => {
             let default_args = (variant_info.default_args_factory)();
             quote! {
-                crate::tests::LocalInstance::new_with_config::<#builder_type>(#default_args, #config_expr).await?
+                crate::tests::LocalInstance::new_with_config(#default_args, #config_expr).await?
             }
         }
         (Some(args_expr), Some(config_expr)) => {
             let modified_args = (variant_info.args_modifier)(&quote! { #args_expr });
             quote! {
-                crate::tests::LocalInstance::new_with_config::<#builder_type>(#modified_args, #config_expr).await?
+                crate::tests::LocalInstance::new_with_config(#modified_args, #config_expr).await?
             }
         }
     }

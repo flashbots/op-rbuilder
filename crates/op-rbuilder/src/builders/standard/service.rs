@@ -17,7 +17,7 @@ use crate::{
 pub struct StandardServiceBuilder(pub BuilderConfig);
 
 impl StandardServiceBuilder {
-    pub fn spawn_payload_builder_service<Node, Pool, BuilderTx>(
+    fn spawn_payload_builder_service_internal<Node, Pool, BuilderTx>(
         self,
         evm_config: OpEvmConfig,
         ctx: &BuilderContext<Node>,
@@ -88,7 +88,7 @@ where
             None
         };
 
-        self.spawn_payload_builder_service(
+        self.spawn_payload_builder_service_internal(
             evm_config,
             ctx,
             pool,

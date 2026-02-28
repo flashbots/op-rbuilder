@@ -28,7 +28,7 @@ use std::{sync::Arc, time::Duration};
 pub struct FlashblocksServiceBuilder(pub BuilderConfig);
 
 impl FlashblocksServiceBuilder {
-    fn spawn_payload_builder_service<Node, Pool, BuilderTx>(
+    fn spawn_payload_builder_service_internal<Node, Pool, BuilderTx>(
         self,
         ctx: &BuilderContext<Node>,
         pool: Pool,
@@ -235,7 +235,7 @@ where
                 flashblocks_config.number_contract_address
         {
             let use_permit = flashblocks_config.number_contract_use_permit;
-            self.spawn_payload_builder_service(
+            self.spawn_payload_builder_service_internal(
                 ctx,
                 pool,
                 FlashblocksNumberBuilderTx::new(
@@ -246,7 +246,7 @@ where
                 ),
             )
         } else {
-            self.spawn_payload_builder_service(
+            self.spawn_payload_builder_service_internal(
                 ctx,
                 pool,
                 FlashblocksBuilderTx::new(signer, flashtestations_builder_tx),
