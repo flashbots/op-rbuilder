@@ -45,20 +45,20 @@ async fn transaction_event_log(
             tx_hash,
             block_hash,
         } => debug!(
-            target = "tx_trace",
-            tx_hash = tx_hash.to_string(),
+            target: "tx_trace",
+            tx_hash = %tx_hash,
             stage = "mined_in_block",
-            block_hash = block_hash.to_string(),
+            block_hash = %block_hash,
             "Transaction event received"
         ),
         FullTransactionEvent::Replaced {
             transaction,
             replaced_by,
         } => debug!(
-            target = "tx_trace",
-            tx_hash = transaction.hash().to_string(),
+            target: "tx_trace",
+            tx_hash = %transaction.hash(),
             stage = "replaced",
-            replaced_by = replaced_by.to_string(),
+            replaced_by = %replaced_by,
             "Transaction event received"
         ),
         FullTransactionEvent::Discarded(hash) => {
@@ -67,16 +67,16 @@ async fn transaction_event_log(
             reverted_cache.insert(hash, ()).await;
 
             debug!(
-                target = "tx_trace",
-                tx_hash = hash.to_string(),
+                target: "tx_trace",
+                tx_hash = %hash,
                 stage = "discarded",
                 "Transaction event received"
             )
         }
         FullTransactionEvent::Invalid(hash) => {
             debug!(
-                target = "tx_trace",
-                tx_hash = hash.to_string(),
+                target: "tx_trace",
+                tx_hash = %hash,
                 stage = "marked_invalid",
                 "Transaction event received"
             )

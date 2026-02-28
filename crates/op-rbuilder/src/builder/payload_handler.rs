@@ -26,7 +26,7 @@ use reth_payload_builder::EthPayloadBuilderAttributes;
 use reth_primitives_traits::SealedHeader;
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use tracing::warn;
+use tracing::{error, info, trace, warn};
 
 /// Handles newly built or received flashblock payloads.
 ///
@@ -95,7 +95,7 @@ where
             cancel,
         } = self;
 
-        tracing::info!(target: "payload_builder", "flashblocks payload handler started");
+        info!(target: "payload_builder", "flashblocks payload handler started");
 
         loop {
             tokio::select! {
@@ -106,7 +106,11 @@ where
                 Some(payload) = built_payload_rx.recv() => {
                     // Update engine tree state with locally built block payloads
                     if let Err(e) = payload_events_handle.send(Events::BuiltPayload(payload.clone())) {
-                        warn!(target: "payload_builder", e = ?e, "failed to send BuiltPayload event");
+                        warn!(
+                            target: "payload_builder",
+                            error = ?e,
+                            "failed to send BuiltPayload event"
+                        );
                     }
                 }
                 Some(message) = p2p_rx.recv() => {
@@ -129,13 +133,26 @@ where
                                 );
                                 match res {
                                     Ok((payload, _)) => {
-                                        tracing::info!(target: "payload_builder", hash = payload.block().hash().to_string(), block_number = payload.block().header().number, "successfully executed external received flashblock");
+                                        info!(
+                                            target: "payload_builder",
+                                            block_hash = %payload.block().hash(),
+                                            block_number = payload.block().header().number,
+                                            "successfully executed external received flashblock"
+                                        );
                                         if let Err(e) = payload_events_handle.send(Events::BuiltPayload(payload)) {
-                                            warn!(target: "payload_builder", e = ?e, "failed to send BuiltPayload event on synced block");
+                                            warn!(
+                                                target: "payload_builder",
+                                                error = ?e,
+                                                "failed to send BuiltPayload event on synced block"
+                                            );
                                         }
                                     }
                                     Err(e) => {
-                                        tracing::error!(target: "payload_builder", error = ?e, "failed to execute external received flashblock");
+                                        error!(
+                                            target: "payload_builder",
+                                            error = ?e,
+                                            "failed to execute external received flashblock"
+                                        );
                                     }
                                 }
                             }));
@@ -163,7 +180,11 @@ where
 
     let start = tokio::time::Instant::now();
 
-    tracing::info!(target: "payload_builder", header = ?payload.block().header(), "executing external flashblock");
+    info!(
+        target: "payload_builder",
+        header = ?payload.block().header(),
+        "executing external flashblock"
+    );
 
     let mut cached_reads = reth::revm::cached::CachedReads::default();
     let parent_hash = payload.block().sealed_header().parent_hash;
@@ -218,32 +239,46 @@ where
     ));
 
     let extra_data = payload.block().sealed_header().extra_data.clone();
-    let (eip_1559_parameters, min_base_fee): (Option<B64>, Option<u64>) = if chain_spec
-        .is_jovian_active_at_timestamp(timestamp)
-    {
-        if extra_data.len() != 17 {
-            tracing::trace!(target: "payload_builder", len = extra_data.len(), data = ?extra_data, "invalid extra data length in flashblock for jovian fork");
-            bail!("extra data length should be 17 bytes");
-        }
-        let eip_1559_params = extra_data[1..9].try_into().ok();
-        let min_base_fee_bytes: [u8; 8] = extra_data[9..17]
-            .try_into()
-            .wrap_err("failed to extract min base fee from jovian extra data")?;
-        let min_base_fee = u64::from_be_bytes(min_base_fee_bytes);
-        (eip_1559_params, Some(min_base_fee))
-    } else if chain_spec.is_holocene_active_at_timestamp(timestamp) {
-        if extra_data.len() != 9 {
-            tracing::trace!(target: "payload_builder", len = extra_data.len(), data = ?extra_data, "invalid extra data length in flashblock for holocene fork");
-            bail!("extra data length should be 9 bytes");
-        }
-        (extra_data[1..9].try_into().ok(), None)
-    } else {
-        if !extra_data.is_empty() {
-            tracing::trace!(target: "payload_builder", len = extra_data.len(), data = ?extra_data, "invalid extra data length in flashblock for pre holocene fork");
-            bail!("extra data length should be 0 bytes");
-        }
-        (None, None)
-    };
+    let (eip_1559_parameters, min_base_fee): (Option<B64>, Option<u64>) =
+        if chain_spec.is_jovian_active_at_timestamp(timestamp) {
+            if extra_data.len() != 17 {
+                trace!(
+                    target: "payload_builder",
+                    len = extra_data.len(),
+                    data = ?extra_data,
+                    "invalid extra data length in flashblock for jovian fork"
+                );
+                bail!("extra data length should be 17 bytes");
+            }
+            let eip_1559_params = extra_data[1..9].try_into().ok();
+            let min_base_fee_bytes: [u8; 8] = extra_data[9..17]
+                .try_into()
+                .wrap_err("failed to extract min base fee from jovian extra data")?;
+            let min_base_fee = u64::from_be_bytes(min_base_fee_bytes);
+            (eip_1559_params, Some(min_base_fee))
+        } else if chain_spec.is_holocene_active_at_timestamp(timestamp) {
+            if extra_data.len() != 9 {
+                trace!(
+                    target: "payload_builder",
+                    len = extra_data.len(),
+                    data = ?extra_data,
+                    "invalid extra data length in flashblock for holocene fork"
+                );
+                bail!("extra data length should be 9 bytes");
+            }
+            (extra_data[1..9].try_into().ok(), None)
+        } else {
+            if !extra_data.is_empty() {
+                trace!(
+                    target: "payload_builder",
+                    len = extra_data.len(),
+                    data = ?extra_data,
+                    "invalid extra data length in flashblock for pre holocene fork"
+                );
+                bail!("extra data length should be 0 bytes");
+            }
+            (None, None)
+        };
 
     let payload_config = PayloadConfig::new(
         Arc::new(SealedHeader::new(parent_header.clone(), parent_hash)),
@@ -304,7 +339,8 @@ where
         .record(start.elapsed());
 
     if built_payload.block().hash() != payload.block().hash() {
-        tracing::error!(
+        error!(
+            target: "payload_builder",
             expected = %payload.block().hash(),
             got = %built_payload.block().hash(),
             "flashblock hash mismatch after execution"
@@ -315,7 +351,11 @@ where
 
     builder_ctx.metrics.block_synced_success.increment(1);
 
-    tracing::info!(target: "payload_builder", header = ?built_payload.block().header(), "successfully executed external flashblock");
+    info!(
+        target: "payload_builder",
+        header = ?built_payload.block().header(),
+        "successfully executed external flashblock"
+    );
     Ok((built_payload, fb_payload))
 }
 

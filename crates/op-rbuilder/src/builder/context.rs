@@ -325,7 +325,12 @@ impl OpPayloadBuilderCtx {
                 Ok(res) => res,
                 Err(err) => {
                     if err.is_invalid_tx_err() {
-                        trace!(target: "payload_builder", %err, ?sequencer_tx, "Error in sequencer transaction, skipping.");
+                        trace!(
+                            target: "payload_builder",
+                            error = %err,
+                            ?sequencer_tx,
+                            "Error in sequencer transaction, skipping."
+                        );
                         continue;
                     }
                     // this is an error that we should treat as fatal for this attempt
@@ -453,7 +458,7 @@ impl OpPayloadBuilderCtx {
             if self.enable_tx_tracking_debug_logs {
                 debug!(
                     target: "tx_trace",
-                    tx_hash = ?tx_hash,
+                    tx_hash = %tx_hash,
                     block_number = self.block_number(),
                     flashblock_index,
                     stage = "builder_popped"
@@ -472,7 +477,7 @@ impl OpPayloadBuilderCtx {
                 debug!(
                     target: "payload_builder",
                     id = ?self.payload_id(),
-                    tx_hash = ?tx_hash,
+                    tx_hash = %tx_hash,
                     tx_da_size = ?tx_da_size,
                     exclude_reverting_txs = ?exclude_reverting_txs,
                     result = %result,
@@ -544,12 +549,22 @@ impl OpPayloadBuilderCtx {
                         if err.is_nonce_too_low() {
                             // if the nonce is too low, we can skip this transaction
                             log_txn(TxnExecutionResult::NonceTooLow);
-                            trace!(target: "payload_builder", %err, ?tx, "skipping nonce too low transaction");
+                            trace!(
+                                target: "payload_builder",
+                                error = %err,
+                                ?tx,
+                                "skipping nonce too low transaction"
+                            );
                         } else {
                             // if the transaction is invalid, we can skip it and all of its
                             // descendants
                             log_txn(TxnExecutionResult::InternalError(err.clone()));
-                            trace!(target: "payload_builder", %err, ?tx, "skipping invalid transaction and its descendants");
+                            trace!(
+                                target: "payload_builder",
+                                error = %err,
+                                ?tx,
+                                "skipping invalid transaction and its descendants"
+                            );
                             best_txs.mark_invalid(tx.signer(), tx.nonce());
                         }
 
@@ -574,7 +589,7 @@ impl OpPayloadBuilderCtx {
             if self.enable_tx_tracking_debug_logs {
                 debug!(
                     target: "tx_trace",
-                    tx_hash = ?tx_hash,
+                    tx_hash = %tx_hash,
                     block_number = self.block_number(),
                     flashblock_index,
                     gas_used,
@@ -606,7 +621,12 @@ impl OpPayloadBuilderCtx {
                 }
                 if exclude_reverting_txs {
                     log_txn(TxnExecutionResult::RevertedAndExcluded);
-                    info!(target: "payload_builder", tx_hash = ?tx.tx_hash(), result = ?result, "skipping reverted transaction");
+                    info!(
+                        target: "payload_builder",
+                        tx_hash = %tx.tx_hash(),
+                        result = ?result,
+                        "skipping reverted transaction"
+                    );
                     best_txs.mark_invalid(tx.signer(), tx.nonce());
                     continue;
                 } else {
@@ -660,7 +680,7 @@ impl OpPayloadBuilderCtx {
             if self.enable_tx_tracking_debug_logs {
                 debug!(
                     target: "tx_trace",
-                    tx_hash = ?target_hash,
+                    tx_hash = %target_hash,
                     block_number = self.block_number(),
                     flashblock_index,
                     cumulative_gas = info.cumulative_gas_used,
@@ -739,7 +759,7 @@ impl OpPayloadBuilderCtx {
                         debug!(
                             target: "payload_builder",
                             message = "Considering backrun",
-                            tx_hash = ?br_hash,
+                            tx_hash = %br_hash,
                             result = %result,
                         )
                     };

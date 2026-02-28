@@ -158,7 +158,11 @@ impl ExternalNode {
                 ));
             }
             (we, them) if we < them => {
-                debug!("external node is behind the local chain: {we} < {them}, catching up...");
+                debug!(
+                    we = %we,
+                    them = %them,
+                    "external node is behind the local chain, catching up"
+                );
 
                 // make sure that we share common history with the provided chain
                 let hash_at_height = chain.hash_at_height(we).await?;
@@ -414,8 +418,9 @@ async fn cleanup(tempdir: PathBuf, docker: Docker, container_id: String) {
     // This is a no-op function that will be spawned to clean up the container on ctrl-c
     // or Drop.
     debug!(
-        "Cleaning up external node resources at {} [{container_id}]...",
-        tempdir.display()
+        path = %tempdir.display(),
+        container_id = %container_id,
+        "Cleaning up external node resources"
     );
 
     if !tempdir.exists() {
@@ -427,7 +432,7 @@ async fn cleanup(tempdir: PathBuf, docker: Docker, container_id: String) {
         .stop_container(&container_id, None::<StopContainerOptions>)
         .await
     {
-        warn!("Failed to stop container {}: {}", container_id, e);
+        warn!(container_id = %container_id, error = %e, "Failed to stop container");
     }
 
     if let Err(e) = docker
@@ -440,7 +445,7 @@ async fn cleanup(tempdir: PathBuf, docker: Docker, container_id: String) {
         )
         .await
     {
-        warn!("Failed to remove container {}: {}", container_id, e);
+        warn!(container_id = %container_id, error = %e, "Failed to remove container");
     }
 
     // Clean up the temporary directory
