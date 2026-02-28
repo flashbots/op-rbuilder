@@ -24,23 +24,21 @@ use reth_optimism_forks::OpHardforks;
 use reth_optimism_node::{OpBuiltPayload, OpPayloadBuilderAttributes};
 use reth_optimism_primitives::OpTransactionSigned;
 use reth_payload_primitives::BuiltPayloadExecutedBlock;
-use reth_payload_util::{BestPayloadTransactions, NoopPayloadTransactions, PayloadTransactions};
+use reth_payload_util::{BestPayloadTransactions, NoopPayloadTransactions};
 use reth_primitives::RecoveredBlock;
 use reth_primitives_traits::InMemorySize;
 use reth_provider::StateProvider;
 use reth_revm::{
     State, database::StateProviderDatabase, db::states::bundle_state::BundleRetention,
 };
-use reth_transaction_pool::{
-    BestTransactions, BestTransactionsAttributes, PoolTransaction, TransactionPool,
-};
+use reth_transaction_pool::{BestTransactions, BestTransactionsAttributes};
 use std::{sync::Arc, time::Instant};
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
 /// Optimism's payload builder
 #[derive(Debug, Clone)]
-pub(super) struct StandardOpPayloadBuilder<Pool, Client, BuilderTx, Txs = ()> {
+pub(super) struct StandardOpPayloadBuilder<Pool, Client, BuilderTx> {
     /// The type responsible for creating the evm.
     pub evm_config: OpEvmConfig,
     /// The transaction pool
@@ -49,9 +47,6 @@ pub(super) struct StandardOpPayloadBuilder<Pool, Client, BuilderTx, Txs = ()> {
     pub client: Client,
     /// Settings for the builder, e.g. DA settings.
     pub config: BuilderConfig<()>,
-    /// The type responsible for yielding the best transactions for the payload if mempool
-    /// transactions are allowed.
-    pub best_transactions: Txs,
     /// The metrics for the builder
     pub metrics: Arc<OpRBuilderMetrics>,
     /// Rate limiting based on gas. This is an optional feature.
@@ -75,7 +70,6 @@ impl<Pool, Client, BuilderTx> StandardOpPayloadBuilder<Pool, Client, BuilderTx> 
             client,
             config,
             evm_config,
-            best_transactions: (),
             metrics: Default::default(),
             address_gas_limiter,
             builder_tx,
@@ -83,41 +77,12 @@ impl<Pool, Client, BuilderTx> StandardOpPayloadBuilder<Pool, Client, BuilderTx> 
     }
 }
 
-/// A type that returns a the [`PayloadTransactions`] that should be included in the pool.
-pub(super) trait OpPayloadTransactions<Transaction>:
-    Clone + Send + Sync + Unpin + 'static
-{
-    /// Returns an iterator that yields the transaction in the order they should get included in the
-    /// new payload.
-    fn best_transactions<Pool: TransactionPool<Transaction = Transaction>>(
-        &self,
-        pool: Pool,
-        attr: BestTransactionsAttributes,
-    ) -> impl PayloadTransactions<Transaction = Transaction>;
-}
-
-impl<T: PoolTransaction> OpPayloadTransactions<T> for () {
-    fn best_transactions<Pool: TransactionPool<Transaction = T>>(
-        &self,
-        pool: Pool,
-        attr: BestTransactionsAttributes,
-    ) -> impl PayloadTransactions<Transaction = T> {
-        // TODO: once this issue is fixed we could remove without_updates and rely on regular impl
-        // https://github.com/paradigmxyz/reth/issues/17325
-        BestPayloadTransactions::new(
-            pool.best_transactions_with_attributes(attr)
-                .without_updates(),
-        )
-    }
-}
-
-impl<Pool, Client, BuilderTx, Txs> reth_basic_payload_builder::PayloadBuilder
-    for StandardOpPayloadBuilder<Pool, Client, BuilderTx, Txs>
+impl<Pool, Client, BuilderTx> reth_basic_payload_builder::PayloadBuilder
+    for StandardOpPayloadBuilder<Pool, Client, BuilderTx>
 where
     Pool: PoolBounds,
     Client: ClientBounds,
     BuilderTx: BuilderTransactions + Clone + Send + Sync,
-    Txs: OpPayloadTransactions<Pool::Transaction>,
 {
     type Attributes = OpPayloadBuilderAttributes<OpTransactionSigned>;
     type BuiltPayload = OpBuiltPayload;
@@ -142,9 +107,10 @@ where
         };
 
         self.build_payload(args, |attrs| {
-            #[allow(clippy::unit_arg)]
-            self.best_transactions
-                .best_transactions(pool.clone(), attrs)
+            BestPayloadTransactions::new(
+                pool.best_transactions_with_attributes(attrs)
+                    .without_updates(),
+            )
         })
     }
 
@@ -175,7 +141,7 @@ where
     }
 }
 
-impl<Pool, Client, BuilderTx, T> StandardOpPayloadBuilder<Pool, Client, BuilderTx, T>
+impl<Pool, Client, BuilderTx> StandardOpPayloadBuilder<Pool, Client, BuilderTx>
 where
     Pool: PoolBounds,
     Client: ClientBounds,
