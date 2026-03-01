@@ -2,7 +2,6 @@ use crate::{
     args::OpRbuilderArgs,
     backrun_bundle::{BackrunBundleApiServer, BackrunBundleRpc},
     builders::{BuilderConfig, FlashblocksBuilder, PayloadBuilder, StandardBuilder},
-    primitives::reth::engine_api_builder::OpEngineApiBuilder,
     revert_protection::{EthApiExtServer, RevertProtectionExt},
     tests::{
         EngineApi, Ipc, TEE_DEBUG_ADDRESS, TransactionPoolObserver, builder_signer, create_test_db,
@@ -116,17 +115,13 @@ impl LocalInstance {
         let gas_limit_config = builder_config.gas_limit_config.clone();
         let backrun_bundle_pool = builder_config.backrun_bundle_pool.clone();
 
-        let addons: OpAddOns<
-            _,
-            OpEthApiBuilder,
-            OpEngineValidatorBuilder,
-            OpEngineApiBuilder<OpEngineValidatorBuilder>,
-        > = OpAddOnsBuilder::default()
-            .with_sequencer(args.rollup_args.sequencer.clone())
-            .with_enable_tx_conditional(args.rollup_args.enable_tx_conditional)
-            .with_da_config(da_config)
-            .with_gas_limit_config(gas_limit_config)
-            .build();
+        let addons: OpAddOns<_, OpEthApiBuilder, OpEngineValidatorBuilder> =
+            OpAddOnsBuilder::default()
+                .with_sequencer(args.rollup_args.sequencer.clone())
+                .with_enable_tx_conditional(args.rollup_args.enable_tx_conditional)
+                .with_da_config(da_config)
+                .with_gas_limit_config(gas_limit_config)
+                .build();
 
         let node_builder = NodeBuilder::<_, OpChainSpec>::new(config.clone())
             .with_database(create_test_db(config.clone()))

@@ -204,8 +204,6 @@ interop = []
 
 telemetry = ["reth-tracing-otlp", "opentelemetry"]
 
-custom-engine-api = []
-
 [[bin]]
 name = "op-rbuilder"
 path = "src/bin/op-rbuilder/main.rs"

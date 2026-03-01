@@ -9,7 +9,6 @@ use crate::{
     builders::{BuilderConfig, BuilderMode, FlashblocksBuilder, PayloadBuilder, StandardBuilder},
     metrics::{VERSION, record_flag_gauge_metrics},
     monitor_tx_pool::monitor_tx_pool,
-    primitives::reth::engine_api_builder::OpEngineApiBuilder,
     revert_protection::{EthApiExtServer, RevertProtectionExt},
     tx::FBPooledTransaction,
 };
@@ -121,22 +120,14 @@ where
         let backrun_bundle_pool = builder_config.backrun_bundle_pool.clone();
         let backrun_bundle_pool_maintain = backrun_bundle_pool.clone();
 
-        let mut addons: OpAddOns<
-            _,
-            OpEthApiBuilder,
-            OpEngineValidatorBuilder,
-            OpEngineApiBuilder<OpEngineValidatorBuilder>,
-        > = OpAddOnsBuilder::default()
-            .with_sequencer(rollup_args.sequencer.clone())
-            .with_enable_tx_conditional(rollup_args.enable_tx_conditional)
-            .with_da_config(da_config)
-            .with_gas_limit_config(gas_limit_config)
-            .build();
-        if cfg!(feature = "custom-engine-api") {
-            let engine_builder: OpEngineApiBuilder<OpEngineValidatorBuilder> =
-                OpEngineApiBuilder::default();
-            addons = addons.with_engine_api(engine_builder);
-        }
+        let addons: OpAddOns<_, OpEthApiBuilder, OpEngineValidatorBuilder> =
+            OpAddOnsBuilder::default()
+                .with_sequencer(rollup_args.sequencer.clone())
+                .with_enable_tx_conditional(rollup_args.enable_tx_conditional)
+                .with_da_config(da_config)
+                .with_gas_limit_config(gas_limit_config)
+                .build();
+
         let handle = builder
             .with_types::<OpNode>()
             .with_components(
