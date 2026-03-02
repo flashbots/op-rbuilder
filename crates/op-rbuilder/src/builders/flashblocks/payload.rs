@@ -380,7 +380,6 @@ where
             cancel,
             da_config: self.config.da_config.clone(),
             gas_limit_config: self.config.gas_limit_config.clone(),
-            builder_signer: self.config.builder_signer,
             metrics: self.metrics.clone(),
             max_gas_per_txn: self.config.max_gas_per_txn,
             address_gas_limiter: self.address_gas_limiter.clone(),
