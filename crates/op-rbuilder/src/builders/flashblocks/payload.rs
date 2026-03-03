@@ -10,7 +10,7 @@ use crate::{
             config::FlashBlocksConfigExt,
             timing::FlashblockScheduler,
         },
-        generator::{BlockCell, BuildArguments, PayloadBuilder},
+        generator::{BuildArguments, PayloadBuilder},
     },
     gas_limiter::AddressGasLimiter,
     metrics::OpRBuilderMetrics,
@@ -52,7 +52,7 @@ use reth_transaction_pool::TransactionPool;
 use reth_trie::{HashedPostState, updates::TrieUpdates};
 use revm::Database;
 use std::{collections::BTreeMap, sync::Arc, time::Instant};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, metadata::Level, span, warn};
 
@@ -401,7 +401,7 @@ where
     async fn build_payload(
         &self,
         args: BuildArguments<OpPayloadBuilderAttributes<OpTransactionSigned>, OpBuiltPayload>,
-        best_payload: BlockCell<OpBuiltPayload>,
+        best_payload_tx: watch::Sender<Option<OpBuiltPayload>>,
     ) -> Result<(), PayloadBuilderError> {
         let block_build_start_time = Instant::now();
         let BuildArguments {
@@ -499,7 +499,7 @@ where
                 "Failed to send updated payload"
             );
         }
-        best_payload.set(payload);
+        best_payload_tx.send_replace(Some(payload));
 
         info!(
             target: "payload_builder",
@@ -672,7 +672,6 @@ where
                     &state_provider,
                     &mut best_txs,
                     &block_cancel,
-                    &best_payload,
                 );
 
                 let cache = std::mem::take(&mut state.cache);
@@ -684,7 +683,10 @@ where
             transition = new_transition;
 
             let next_flashblock_state = match build_result {
-                Ok(Some(next_flashblock_state)) => next_flashblock_state,
+                Ok(Some((next_flashblock_state, new_payload))) => {
+                    best_payload_tx.send_replace(Some(new_payload));
+                    next_flashblock_state
+                }
                 Ok(None) => {
                     self.record_flashblocks_metrics(
                         &ctx,
@@ -726,8 +728,7 @@ where
         state_provider: impl reth::providers::StateProvider + Clone,
         best_txs: &mut NextFlashblockPoolTxCursor<'a, Pool>,
         block_cancel: &CancellationToken,
-        best_payload: &BlockCell<OpBuiltPayload>,
-    ) -> eyre::Result<Option<FlashblocksState>> {
+    ) -> eyre::Result<Option<(FlashblocksState, OpBuiltPayload)>> {
         let flashblock_index = fb_state.flashblock_index();
         let mut target_gas_for_batch = fb_state.target_gas_for_batch();
         let mut target_da_for_batch = fb_state.target_da_for_batch();
@@ -893,8 +894,6 @@ where
                         "Failed to send updated payload"
                     );
                 }
-                best_payload.set(new_payload);
-
                 // Record flashblock build duration
                 ctx.metrics
                     .flashblock_build_duration
@@ -944,7 +943,7 @@ where
                     "Flashblock built"
                 );
 
-                Ok(Some(next_flashblock_state))
+                Ok(Some((next_flashblock_state, new_payload)))
             }
         }
     }
@@ -998,9 +997,9 @@ where
     async fn try_build(
         &self,
         args: BuildArguments<Self::Attributes, Self::BuiltPayload>,
-        best_payload: BlockCell<Self::BuiltPayload>,
+        best_payload_tx: watch::Sender<Option<Self::BuiltPayload>>,
     ) -> Result<(), PayloadBuilderError> {
-        self.build_payload(args, best_payload).await
+        self.build_payload(args, best_payload_tx).await
     }
 }
 
