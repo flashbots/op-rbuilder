@@ -17,7 +17,14 @@ use super::{
 
 const MAX_BLOCK_RANGE: u64 = 10;
 const MAX_FUTURE_BLOCK_ADD: u64 = 10;
+const CANCELLATION_MAX_BLOCK_RANGE: u64 = 2;
 
+/// Arguments for `eth_sendBackrunBundle`.
+///
+/// With 2 txs this submits a backrun bundle (target + backrun). With 0 txs and a
+/// `replacement_uuid`/`replacement_nonce` pair it cancels the active bundle for that UUID.
+/// A strictly higher nonce always wins — both for replacements and cancellations.
+/// Cancellations expire after `CANCELLATION_MAX_BLOCK_RANGE` blocks from the current tip.
 #[serde_with::skip_serializing_none]
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -75,7 +82,35 @@ where
     Provider: BlockNumReader + Send + Sync + 'static,
 {
     async fn send_backrun_bundle(&self, bundle: BackrunBundleRpcArgs) -> RpcResult<BundleResult> {
-        if bundle.transactions.len() != 2 {
+        let tx_count = bundle.transactions.len();
+
+        if tx_count == 0 {
+            let uuid = bundle.replacement_uuid.ok_or_else(|| {
+                EthApiError::InvalidParams(
+                    "replacementUuid is required for bundle cancellation".into(),
+                )
+            })?;
+            let nonce = bundle.replacement_nonce.ok_or_else(|| {
+                EthApiError::InvalidParams(
+                    "replacementNonce is required for bundle cancellation".into(),
+                )
+            })?;
+
+            let last_block_number = self
+                .provider
+                .best_block_number()
+                .map_err(|_| EthApiError::InternalEthError)?;
+
+            let max_block = last_block_number + CANCELLATION_MAX_BLOCK_RANGE;
+
+            self.global_pool.cancel_bundle(uuid, nonce, max_block);
+
+            return Ok(BundleResult {
+                bundle_hash: B256::ZERO,
+            });
+        }
+
+        if tx_count != 2 {
             return Err(EthApiError::InvalidParams(
                 "backrun bundle must contain exactly 2 transactions".into(),
             )
@@ -245,11 +280,6 @@ mod tests {
         let mut args = valid_args(tx.clone(), tx.clone(), 10);
         args.transactions = vec![tx.clone(), tx.clone(), tx.clone()];
         assert!(rpc.send_backrun_bundle(args).await.is_err());
-
-        // 0 txs
-        let mut args = valid_args(tx.clone(), tx.clone(), 10);
-        args.transactions = vec![];
-        assert!(rpc.send_backrun_bundle(args).await.is_err());
     }
 
     #[tokio::test]
@@ -324,5 +354,40 @@ mod tests {
         let args = valid_args(target, backrun, 10);
         let result = rpc.send_backrun_bundle(args).await;
         assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_cancel_requires_uuid_and_nonce() {
+        let rpc = make_rpc(5);
+        let cancel = |uuid, nonce| BackrunBundleRpcArgs {
+            transactions: vec![],
+            block_number: 0,
+            max_block_number: None,
+            min_flashblock_number: None,
+            max_flashblock_number: None,
+            replacement_uuid: uuid,
+            replacement_nonce: nonce,
+        };
+
+        // Missing uuid
+        assert!(
+            rpc.send_backrun_bundle(cancel(None, Some(1)))
+                .await
+                .is_err()
+        );
+
+        // Missing nonce
+        assert!(
+            rpc.send_backrun_bundle(cancel(Some(Uuid::new_v4()), None))
+                .await
+                .is_err()
+        );
+
+        // Both present — success
+        let result = rpc
+            .send_backrun_bundle(cancel(Some(Uuid::new_v4()), Some(1)))
+            .await
+            .unwrap();
+        assert_eq!(result.bundle_hash, B256::ZERO);
     }
 }

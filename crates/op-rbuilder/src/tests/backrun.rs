@@ -3,7 +3,7 @@ use crate::{
     backrun_bundle::BackrunBundleArgs,
     tests::{
         BlockTransactionsExt, BundleOpts, ChainDriverExt, LocalInstance, ONE_ETH,
-        TransactionBuilderExt, send_backrun_bundle,
+        TransactionBuilderExt, send_backrun_bundle, send_backrun_cancellation,
     },
 };
 use alloy_network::ReceiptResponse;
@@ -655,6 +655,57 @@ async fn backrun_replacement_stale_nonce_rejected(rbuilder: LocalInstance) -> ey
     assert!(
         !block.includes(&stale_hash),
         "Stale replacement should not be in block"
+    );
+
+    Ok(())
+}
+
+/// Tests that cancelling a backrun bundle via a 0-tx submission removes it from the block.
+#[rb_test(args = OpRbuilderArgs {
+    backrun_bundle: BackrunBundleArgs {
+        backruns_enabled: true,
+        max_landed_backruns_per_transaction: 1,
+        max_considered_backruns_per_transaction: 10,
+        ..Default::default()
+    },
+    ..Default::default()
+})]
+async fn backrun_cancellation(rbuilder: LocalInstance) -> eyre::Result<()> {
+    let driver = rbuilder.driver().await?;
+    let accounts = driver.fund_accounts(2, ONE_ETH).await?;
+
+    let (target_pending, target_raw_tx) = driver
+        .create_transaction()
+        .with_signer(accounts[0])
+        .random_valid_transfer()
+        .with_max_priority_fee_per_gas(10)
+        .send_and_get_raw_tx()
+        .await?;
+    let target_hash = *target_pending.tx_hash();
+
+    let replacement_uuid = Uuid::new_v4();
+
+    // Submit a backrun bundle with replacement key
+    let backrun_hash = send_backrun_bundle(
+        target_raw_tx,
+        driver
+            .create_transaction()
+            .with_signer(accounts[1])
+            .random_valid_transfer()
+            .with_max_priority_fee_per_gas(10),
+        BundleOpts::default().with_replacement_key(replacement_uuid, 0),
+    )
+    .await?;
+
+    // Cancel the bundle with a higher nonce
+    send_backrun_cancellation(driver.provider(), replacement_uuid, 1).await?;
+
+    let block = driver.build_new_block().await?;
+
+    assert!(block.includes(&target_hash), "Target tx should be in block");
+    assert!(
+        !block.includes(&backrun_hash),
+        "Cancelled backrun should not be in block"
     );
 
     Ok(())
