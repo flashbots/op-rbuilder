@@ -117,7 +117,7 @@ impl AddressGasLimiterInner {
         // Only clean up stale buckets every `cleanup_interval` blocks
         if block_number.is_multiple_of(self.config.cleanup_interval) {
             self.address_buckets
-                .retain(|_, bucket| bucket.available <= bucket.capacity);
+                .retain(|_, bucket| bucket.available < bucket.capacity);
         }
 
         active_addresses - self.address_buckets.len()
@@ -217,7 +217,46 @@ mod tests {
 
         // Everyone should get some gas back
         assert!(limiter.consume_gas(searcher1, 1_000_000).is_ok()); // Had 9.5M + 1M refill, now 9.5M
-        assert!(limiter.consume_gas(searcher2, 1_000_000).is_ok()); // Had 9.25M + 1M refill, now 9.25M  
+        assert!(limiter.consume_gas(searcher2, 1_000_000).is_ok()); // Had 9.25M + 1M refill, now 9.25M
         assert!(limiter.consume_gas(attacker, 1_000_000).is_ok()); // Had 5M + 1M refill, now 5M
+    }
+
+    #[test]
+    fn test_bucket_cleanup() {
+        // Test that unused buckets get cleaned up properly
+        let config = create_test_config(1000, 1000, 10);
+        let limiter = AddressGasLimiter::new(config);
+
+        let addr1 = Address::from([0x1; 20]);
+        let addr2 = Address::from([0x2; 20]);
+
+        // Create buckets for both
+        assert!(limiter.consume_gas(addr1, 100).is_ok());
+        assert!(limiter.consume_gas(addr2, 100).is_ok());
+
+        let inner = limiter.inner.as_ref().unwrap();
+        assert_eq!(inner.address_buckets.len(), 2);
+
+        // Refill for several blocks - addr1 stays at full capacity (unused)
+        // but addr2 continues to be used
+        for block in 1..=10 {
+            limiter.refresh(block);
+
+            if block > 1 {
+                // addr1 is now full and unused
+                // addr2 continues to use gas
+                assert!(limiter.consume_gas(addr2, 100).is_ok());
+            }
+        }
+
+        // After cleanup at block 10 (multiple of 5), addr1 should be removed
+        // because it's at full capacity (unused), while addr2 remains
+        assert_eq!(
+            inner.address_buckets.len(),
+            1,
+            "Unused bucket (addr1) should have been cleaned up"
+        );
+        assert!(inner.address_buckets.contains_key(&addr2));
+        assert!(!inner.address_buckets.contains_key(&addr1));
     }
 }
