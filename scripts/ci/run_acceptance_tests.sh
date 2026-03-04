@@ -14,12 +14,11 @@ OPTIMISM_DIR="${OPTIMISM_DIR:-$WORK_DIR/optimism}"
 OPTIMISM_REPO="${OPTIMISM_REPO:-https://github.com/ethereum-optimism/optimism.git}"
 OPTIMISM_REF="${OPTIMISM_REF:-develop}"
 
-# Canonical package selection is provided by CI through TEST_PKGS.
-TEST_PKGS="${TEST_PKGS:-}"
-TEST_RUN="${TEST_RUN:-}"
-TEST_TIMEOUT="${TEST_TIMEOUT:-45m}"
+# Canonical package selection is provided by CI through GATE.
+GATE="${GATE:-}"
 
 BUILD_OP_RBUILDER="${BUILD_OP_RBUILDER:-1}"
+OP_RBUILDER_FEATURES="${FEATURES:-rules}"
 PREP_OPTIMISM="${PREP_OPTIMISM:-1}"
 BUILD_CONTRACTS="${BUILD_CONTRACTS:-1}"
 BUILD_ROLLUP_BOOST="${BUILD_ROLLUP_BOOST:-1}"
@@ -121,9 +120,10 @@ build_op_rbuilder() {
     return
   fi
   log "Building op-rbuilder release binary"
+  log "op-rbuilder features: $OP_RBUILDER_FEATURES"
   (
     cd "$ROOT_DIR"
-    run_tool rust cargo build --release -p op-rbuilder --bin op-rbuilder
+    run_tool rust cargo build --release -p op-rbuilder --bin op-rbuilder --features $OP_RBUILDER_FEATURES
   )
 }
 
@@ -186,40 +186,36 @@ build_cannon_prestates() {
 }
 
 run_acceptance_tests() {
-  local normalized_pkgs
-  local -a test_pkgs
-  local -a args
-
-  normalized_pkgs="${TEST_PKGS//$'\n'/ }"
-  normalized_pkgs="${normalized_pkgs//$'\t'/ }"
-  normalized_pkgs="${normalized_pkgs//,/ }"
-  # shellcheck disable=SC2206
-  test_pkgs=($normalized_pkgs)
-  if [[ "${#test_pkgs[@]}" -eq 0 ]]; then
-    echo "no test packages configured; set TEST_PKGS" >&2
-    exit 1
-  fi
-
-  log "Running acceptance tests for package(s): ${test_pkgs[*]}"
+  log "Running acceptance tests for gate: ${GATE}"
   export RUST_BINARY_PATH_OP_RBUILDER="$RBUILDER_BIN"
   export RUST_BINARY_PATH_ROLLUP_BOOST="$ROLLUP_BOOST_BIN"
-  if [[ -n "${DEVSTACK_ORCHESTRATOR:-}" ]]; then
-    export DEVSTACK_ORCHESTRATOR
-  fi
+  export DEVSTACK_ORCHESTRATOR="${DEVSTACK_ORCHESTRATOR:-sysgo}"
+  export GATE="${GATE:-flashblocks}"
   if [[ -n "${DISABLE_OP_E2E_LEGACY:-}" ]]; then
     export DISABLE_OP_E2E_LEGACY
   fi
   export LOG_LEVEL="${LOG_LEVEL:-info}"
 
-  args=(-v -count=1 -timeout "$TEST_TIMEOUT")
-  if [[ -n "$TEST_RUN" ]]; then
-    args+=(-run "$TEST_RUN")
-  fi
-  args+=("${test_pkgs[@]}")
-
   (
-    cd "$OPTIMISM_DIR"
-    run_tool go go test "${args[@]}"
+    cd "$OPTIMISM_DIR"/op-acceptance-tests
+    BINARY_PATH=$(mise which op-acceptor)
+
+    # Gate mode - use go run with acceptor binary
+    CMD_ARGS=(
+        "go" "run" "cmd/main.go"
+        "--gate" "$GATE"
+        "--testdir" "$OPTIMISM_DIR"
+        "--validators" "$ROOT_DIR/tests/acceptance-tests.yaml"
+        "--acceptor" "$BINARY_PATH"
+        "--log.level" "$LOG_LEVEL"
+        "--orchestrator" "$DEVSTACK_ORCHESTRATOR"
+        "--show-progress"
+    )
+    echo "${CMD_ARGS[@]}"
+    "${CMD_ARGS[@]}"
+
+    # Copy logs to artifacts dir
+    cp -R $OPTIMISM_DIR/op-acceptance-tests/logs/testrun-* $ARTIFACTS_DIR
   ) 2>&1 | tee "$ARTIFACTS_DIR/go-test.log"
 }
 

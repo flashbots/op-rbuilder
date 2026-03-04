@@ -209,13 +209,8 @@ jobs:
   # -----------------------------------------------------------------
   op-rbuilder-acceptance:
     parameters:
-      suite_name:
+      gate:
         type: string
-      test_pkgs:
-        type: string
-      test_timeout:
-        type: string
-        default: "60m"
       devstack_orchestrator:
         type: string
         default: ""
@@ -225,15 +220,17 @@ jobs:
       log_level:
         type: string
         default: "info"
+      features:
+        type: string
     machine:
       image: ubuntu-2204:current
     resource_class: 2xlarge+
     environment:
       CARGO_TERM_COLOR: always
-      TEST_TIMEOUT: << parameters.test_timeout >>
-      TEST_PKGS: << parameters.test_pkgs >>
+      GATE: << parameters.gate >>
       DISABLE_RUSTC_WRAPPER: "1"
       LOG_LEVEL: << parameters.log_level >>
+      FEATURES: << parameters.features >>
     steps:
       - checkout
       - run:
@@ -248,10 +245,10 @@ jobs:
               libclang-dev libsqlite3-dev libtss2-dev llvm pkg-config
       - restore_cache:
           keys:
-            - op-rbuilder-acceptance-v1-<< parameters.suite_name >>-{{ arch }}-{{ checksum "Cargo.lock" }}
-            - op-rbuilder-acceptance-v1-<< parameters.suite_name >>-{{ arch }}-
+            - op-rbuilder-acceptance-v1-<< parameters.gate >>-{{ arch }}-{{ checksum "Cargo.lock" }}
+            - op-rbuilder-acceptance-v1-<< parameters.gate >>-{{ arch }}-
       - run:
-          name: Run acceptance tests (<< parameters.suite_name >>)
+          name: Run acceptance tests (<< parameters.gate >>)
           no_output_timeout: 120m
           command: |
             if [ -n "<< parameters.devstack_orchestrator >>" ]; then
@@ -262,7 +259,7 @@ jobs:
             fi
             ./scripts/ci/run_acceptance_tests.sh
       - save_cache:
-          key: op-rbuilder-acceptance-v1-<< parameters.suite_name >>-{{ arch }}-{{ checksum "Cargo.lock" }}
+          key: op-rbuilder-acceptance-v1-<< parameters.gate >>-{{ arch }}-{{ checksum "Cargo.lock" }}
           paths:
             - ~/.cargo/registry
             - ~/.cargo/git
@@ -272,7 +269,7 @@ jobs:
             - ~/.local/share/mise
       - store_artifacts:
           path: .ci-artifacts/acceptance
-          destination: acceptance-<< parameters.suite_name >>
+          destination: acceptance-<< parameters.gate >>
 
   # -----------------------------------------------------------------
   # [tdx-quote-provider] Check
@@ -379,8 +376,8 @@ workflows:
           features: "rules"
       - op-rbuilder-acceptance:
           name: op-rbuilder-acceptance-flashblocks
-          suite_name: flashblocks
-          test_pkgs: ./op-acceptance-tests/tests/flashblocks
+          gate: flashblocks
+          features: "rules"
           devstack_orchestrator: sysgo
           disable_op_e2e_legacy: "true"
       - tdx-quote-provider-check: {}
