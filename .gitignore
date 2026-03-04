@@ -9,6 +9,8 @@
 genesis.json
 /op-reth
 .env
+.ci-work/
+.ci-artifacts/
 
 # editors
 .code

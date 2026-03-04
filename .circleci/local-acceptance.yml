@@ -1,0 +1,30 @@
+version: 2.1
+
+jobs:
+  acceptance-local:
+    docker:
+      - image: cimg/base:stable
+    working_directory: ~/project
+    environment:
+      TEST_PKGS: ./op-acceptance-tests/tests/flashblocks
+      DEVSTACK_ORCHESTRATOR: sysgo
+      DISABLE_OP_E2E_LEGACY: "true"
+    steps:
+      - run:
+          name: Install native dependencies
+          no_output_timeout: 30m
+          command: |
+            sudo apt-get update
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
+              build-essential ca-certificates clang curl git jq \
+              libclang-dev libsqlite3-dev libtss2-dev llvm pkg-config
+      - run:
+          name: Run acceptance wrapper
+          no_output_timeout: 120m
+          command: |
+            ./scripts/ci/run_acceptance_tests.sh
+
+workflows:
+  local:
+    jobs:
+      - acceptance-local

@@ -84,7 +84,7 @@ jobs:
             docker buildx create --driver=docker-container --name=buildx-build --bootstrap --use
 
             gcloud auth configure-docker << parameters.registry >>
-        
+
             # Build!
             docker buildx bake \
               --progress plain \
@@ -205,6 +205,76 @@ jobs:
             fi
 
   # -----------------------------------------------------------------
+  # [op-rbuilder] Acceptance tests (op-devstack)
+  # -----------------------------------------------------------------
+  op-rbuilder-acceptance:
+    parameters:
+      suite_name:
+        type: string
+      test_pkgs:
+        type: string
+      test_timeout:
+        type: string
+        default: "60m"
+      devstack_orchestrator:
+        type: string
+        default: ""
+      disable_op_e2e_legacy:
+        type: string
+        default: ""
+      log_level:
+        type: string
+        default: "info"
+    machine:
+      image: ubuntu-2204:current
+    resource_class: 2xlarge+
+    environment:
+      CARGO_TERM_COLOR: always
+      TEST_TIMEOUT: << parameters.test_timeout >>
+      TEST_PKGS: << parameters.test_pkgs >>
+      DISABLE_RUSTC_WRAPPER: "1"
+      LOG_LEVEL: << parameters.log_level >>
+    steps:
+      - checkout
+      - run:
+          name: Initialize submodules
+          command: git submodule sync && git submodule update --init --recursive
+      - run:
+          name: Install native dependencies
+          command: |
+            sudo apt-get update
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
+              build-essential ca-certificates clang curl git jq \
+              libclang-dev libsqlite3-dev libtss2-dev llvm pkg-config
+      - restore_cache:
+          keys:
+            - op-rbuilder-acceptance-v1-<< parameters.suite_name >>-{{ arch }}-{{ checksum "Cargo.lock" }}
+            - op-rbuilder-acceptance-v1-<< parameters.suite_name >>-{{ arch }}-
+      - run:
+          name: Run acceptance tests (<< parameters.suite_name >>)
+          no_output_timeout: 120m
+          command: |
+            if [ -n "<< parameters.devstack_orchestrator >>" ]; then
+              export DEVSTACK_ORCHESTRATOR="<< parameters.devstack_orchestrator >>"
+            fi
+            if [ -n "<< parameters.disable_op_e2e_legacy >>" ]; then
+              export DISABLE_OP_E2E_LEGACY="<< parameters.disable_op_e2e_legacy >>"
+            fi
+            ./scripts/ci/run_acceptance_tests.sh
+      - save_cache:
+          key: op-rbuilder-acceptance-v1-<< parameters.suite_name >>-{{ arch }}-{{ checksum "Cargo.lock" }}
+          paths:
+            - ~/.cargo/registry
+            - ~/.cargo/git
+            - ~/.cache/go-build
+            - ~/go/pkg/mod
+            - ~/.cache/mise
+            - ~/.local/share/mise
+      - store_artifacts:
+          path: .ci-artifacts/acceptance
+          destination: acceptance-<< parameters.suite_name >>
+
+  # -----------------------------------------------------------------
   # [tdx-quote-provider] Check
   # -----------------------------------------------------------------
   tdx-quote-provider-check:
@@ -307,4 +377,10 @@ workflows:
           name: op-rbuilder-check-rules-nightly
           toolchain: "nightly-2026-02-21"
           features: "rules"
+      - op-rbuilder-acceptance:
+          name: op-rbuilder-acceptance-flashblocks
+          suite_name: flashblocks
+          test_pkgs: ./op-acceptance-tests/tests/flashblocks
+          devstack_orchestrator: sysgo
+          disable_op_e2e_legacy: "true"
       - tdx-quote-provider-check: {}
