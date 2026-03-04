@@ -196,11 +196,6 @@ impl BackrunBundleGlobalPool {
     }
 
     /// Cancel a bundle by UUID. Returns `true` if the cancellation was accepted.
-    ///
-    /// - If a bundle exists with nonce <= `nonce`, it is removed and the cancellation is stored.
-    /// - If a cancellation exists with nonce < `nonce`, it is updated.
-    /// - If the entry is vacant, the cancellation is stored.
-    /// - Returns `false` if the cancellation is stale (existing nonce is higher).
     pub fn cancel_bundle(&self, uuid: Uuid, nonce: u64, max_block: u64) -> bool {
         match self.inner.replacements.entry(uuid) {
             dashmap::mapref::entry::Entry::Occupied(mut entry) => {
