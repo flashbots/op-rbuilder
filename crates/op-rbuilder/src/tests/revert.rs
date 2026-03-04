@@ -1,5 +1,5 @@
 use alloy_provider::{PendingTransactionBuilder, Provider};
-use macros::{if_flashblocks, if_standard, rb_test};
+use macros::rb_test;
 use op_alloy_network::Optimism;
 
 use crate::{
@@ -7,7 +7,7 @@ use crate::{
     primitives::bundle::MAX_BLOCK_RANGE_BLOCKS,
     tests::{
         BlockTransactionsExt, BuilderTxValidation, BundleOpts, ChainDriver, ChainDriverExt,
-        LocalInstance, ONE_ETH, OpRbuilderArgsTestExt, TransactionBuilderExt,
+        ONE_ETH, OpRbuilderArgsTestExt, TransactionBuilderExt,
     },
 };
 
@@ -43,23 +43,11 @@ async fn monitor_transaction_gc(rbuilder: LocalInstance) -> eyre::Result<()> {
     for i in 0..10 {
         let generated_block = driver.build_new_block_with_current_timestamp(None).await?;
 
-        if_standard! {
-            // standard builder blocks should only include two transactions (deposit + builder)
-            assert_eq!(generated_block.transactions.len(), 2);
-        }
-
-        if_flashblocks! {
-            // flashblocks should include three transactions (deposit + 2 builder txs)
-            assert_eq!(generated_block.transactions.len(), 3);
-        }
+        // flashblocks should include three transactions (deposit + 2 builder txs)
+        assert_eq!(generated_block.transactions.len(), 3);
 
         // Validate builder transactions using BuilderTxValidation
-        if_standard! {
-            generated_block.assert_builder_tx_count(1);
-        }
-        if_flashblocks! {
-            generated_block.assert_builder_tx_count(2);
-        }
+        generated_block.assert_builder_tx_count(2);
 
         // since we created the 10 transactions with increasing block ranges, as we generate blocks
         // one transaction will be gc on each block.

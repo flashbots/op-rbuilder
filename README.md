@@ -37,7 +37,6 @@ cargo run -p op-rbuilder --bin op-rbuilder -- node \
     --http \
     --authrpc.port 9551 \
     --authrpc.jwtsecret /path/to/jwt.hex \
-    --flashblocks.enabled \
     --flashblocks.port 1111 \ # port to bind ws that provides flashblocks 
     --flashblocks.addr 127.0.0.1 # address to bind the ws that provides flashblocks
 ```
@@ -52,7 +51,6 @@ cargo run -p op-rbuilder --bin op-rbuilder -- node \
     --http \
     --authrpc.port 9551 \
     --authrpc.jwtsecret /path/to/jwt.hex \
-    --flashblocks.enabled \
     --flashblocks.number-contract-address 0xFlashblocksNumberAddress
 ```
 

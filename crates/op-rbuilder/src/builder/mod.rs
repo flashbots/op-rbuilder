@@ -1,6 +1,4 @@
 use core::{fmt::Debug, time::Duration};
-use reth_node_builder::components::PayloadServiceBuilder;
-use reth_optimism_evm::OpEvmConfig;
 use reth_optimism_payload_builder::config::{OpDAConfig, OpGasLimitConfig};
 
 use crate::{
@@ -8,82 +6,30 @@ use crate::{
     backrun_bundle::{BackrunBundleArgs, BackrunBundleGlobalPool},
     flashtestations::args::FlashtestationsArgs,
     gas_limiter::args::GasLimiterArgs,
-    traits::{NodeBounds, PoolBounds},
     tx_signer::Signer,
 };
 
+mod best_txs;
 mod builder_tx;
+mod config;
 mod context;
-mod flashblocks;
+mod flashblocks_builder_tx;
 mod generator;
-mod standard;
+mod p2p;
+mod payload;
+mod payload_handler;
+mod service;
+mod syncer_ctx;
+mod timing;
+mod wspub;
 
 pub use builder_tx::{
     BuilderTransactionCtx, BuilderTransactionError, BuilderTransactions, InvalidContractDataError,
     SimulationSuccessResult, get_balance, get_nonce,
 };
+pub use config::FlashblocksConfig;
 pub use context::OpPayloadBuilderCtx;
-pub use flashblocks::FlashblocksConfig;
-
-use flashblocks::FlashblocksServiceBuilder;
-use reth_node_api::NodeTypes;
-use reth_node_builder::BuilderContext;
-use reth_payload_builder::PayloadBuilderHandle;
-use standard::StandardServiceBuilder;
-
-/// Defines the payload building mode for the OP builder.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum BuilderMode {
-    /// Uses the plain OP payload builder that produces blocks every chain blocktime.
-    #[default]
-    Standard,
-    /// Uses the flashblocks payload builder that progressively builds chunks of a
-    /// block every short interval and makes it available through a websocket update
-    /// then merges them into a full block every chain block time.
-    Flashblocks,
-}
-
-/// Enum that wraps the different payload service builder implementations.
-pub enum OpPayloadServiceBuilder {
-    Standard(StandardServiceBuilder),
-    Flashblocks(FlashblocksServiceBuilder),
-}
-
-impl OpPayloadServiceBuilder {
-    pub fn new(config: BuilderConfig) -> Self {
-        if config.flashblocks_config.is_some() {
-            Self::Flashblocks(FlashblocksServiceBuilder(config))
-        } else {
-            Self::Standard(StandardServiceBuilder(config))
-        }
-    }
-}
-
-impl<Node, Pool> PayloadServiceBuilder<Node, Pool, OpEvmConfig> for OpPayloadServiceBuilder
-where
-    Node: NodeBounds,
-    Pool: PoolBounds,
-{
-    async fn spawn_payload_builder_service(
-        self,
-        ctx: &BuilderContext<Node>,
-        pool: Pool,
-        evm_config: OpEvmConfig,
-    ) -> eyre::Result<PayloadBuilderHandle<<Node::Types as NodeTypes>::Payload>> {
-        match self {
-            Self::Standard(builder) => {
-                builder
-                    .spawn_payload_builder_service(ctx, pool, evm_config)
-                    .await
-            }
-            Self::Flashblocks(builder) => {
-                builder
-                    .spawn_payload_builder_service(ctx, pool, evm_config)
-                    .await
-            }
-        }
-    }
-}
+pub use service::FlashblocksServiceBuilder;
 
 /// Configuration values that are applicable to any type of block builder.
 #[derive(Debug, Clone)]
@@ -145,9 +91,8 @@ pub struct BuilderConfig {
     /// Backrun bundle configuration
     pub backrun_bundle_args: BackrunBundleArgs,
 
-    /// Configuration specific to the flashblocks builder.
-    /// This is None for the standard builder.
-    pub flashblocks_config: Option<FlashblocksConfig>,
+    /// Flashblocks configuration
+    pub flashblocks_config: FlashblocksConfig,
 }
 
 impl Default for BuilderConfig {
@@ -165,7 +110,7 @@ impl Default for BuilderConfig {
             gas_limiter_config: GasLimiterArgs::default(),
             backrun_bundle_pool: BackrunBundleGlobalPool::default(),
             backrun_bundle_args: BackrunBundleArgs::default(),
-            flashblocks_config: None,
+            flashblocks_config: FlashblocksConfig::default(),
         }
     }
 }
@@ -174,11 +119,7 @@ impl TryFrom<OpRbuilderArgs> for BuilderConfig {
     type Error = eyre::Report;
 
     fn try_from(args: OpRbuilderArgs) -> Result<Self, Self::Error> {
-        let flashblocks_config = if args.flashblocks.enabled {
-            Some(flashblocks::FlashblocksConfig::try_from(args.clone())?)
-        } else {
-            None
-        };
+        let flashblocks_config = FlashblocksConfig::try_from(args.clone())?;
 
         Ok(Self {
             builder_signer: args.builder_signer,

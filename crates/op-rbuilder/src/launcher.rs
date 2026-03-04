@@ -6,7 +6,7 @@ use crate::{
     backrun_bundle::{
         BackrunBundleApiServer, BackrunBundleRpc, maintain_backrun_bundle_pool_future,
     },
-    builders::{BuilderConfig, OpPayloadServiceBuilder},
+    builder::{BuilderConfig, FlashblocksServiceBuilder},
     metrics::{VERSION, record_flag_gauge_metrics},
     monitor_tx_pool::monitor_tx_pool,
     revert_protection::{EthApiExtServer, RevertProtectionExt},
@@ -105,7 +105,7 @@ impl Launcher<OpChainSpecParser, OpRbuilderArgs> for BuilderLauncher {
                                 rollup_args.supervisor_safety_level,
                             ),
                     )
-                    .payload(OpPayloadServiceBuilder::new(builder_config)),
+                    .payload(FlashblocksServiceBuilder::new(builder_config)),
             )
             .with_add_ons(addons)
             .extend_rpc_modules(move |ctx| {

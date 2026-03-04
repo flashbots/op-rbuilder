@@ -1,15 +1,13 @@
 use super::wspub::WebSocketPublisher;
 use crate::{
     backrun_bundle::BackrunBundlesPayloadCtx,
-    builders::{
-        BuilderConfig, FlashblocksConfig,
+    builder::{
+        BuilderConfig,
+        best_txs::{FlashblockCommittedTxs, FlashblockPoolTxCursor},
         builder_tx::BuilderTransactions,
         context::OpPayloadBuilderCtx,
-        flashblocks::{
-            best_txs::{FlashblockCommittedTxs, FlashblockPoolTxCursor},
-            timing::FlashblockScheduler,
-        },
         generator::{BuildArguments, PayloadBuilder},
+        timing::FlashblockScheduler,
     },
     gas_limiter::AddressGasLimiter,
     metrics::OpRBuilderMetrics,
@@ -269,8 +267,6 @@ pub(super) struct OpPayloadBuilderInner<Pool, Client, BuilderTx, Tasks> {
     ws_pub: Arc<WebSocketPublisher>,
     /// System configuration for the builder
     config: BuilderConfig,
-    /// Flashblocks-specific configuration
-    flashblocks_config: FlashblocksConfig,
     /// The metrics for the builder
     metrics: Arc<OpRBuilderMetrics>,
     /// The end of builder transaction type
@@ -300,14 +296,12 @@ impl<Pool, Client, BuilderTx, Tasks> Clone for OpPayloadBuilder<Pool, Client, Bu
 }
 
 impl<Pool, Client, BuilderTx, Tasks> OpPayloadBuilder<Pool, Client, BuilderTx, Tasks> {
-    /// `OpPayloadBuilder` constructor.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     pub(super) fn new(
         evm_config: OpEvmConfig,
         pool: Pool,
         client: Client,
         config: BuilderConfig,
-        flashblocks_config: FlashblocksConfig,
         builder_tx: BuilderTx,
         built_fb_payload_tx: mpsc::Sender<OpBuiltPayload>,
         built_payload_tx: mpsc::Sender<OpBuiltPayload>,
@@ -326,7 +320,6 @@ impl<Pool, Client, BuilderTx, Tasks> OpPayloadBuilder<Pool, Client, BuilderTx, T
                 built_payload_tx,
                 ws_pub,
                 config,
-                flashblocks_config,
                 metrics,
                 builder_tx,
                 address_gas_limiter,
@@ -494,14 +487,15 @@ where
             config.attributes.payload_attributes.id.to_string(),
         );
 
-        let disable_state_root = self.flashblocks_config.disable_state_root;
+        let disable_state_root = self.config.flashblocks_config.disable_state_root;
         let ctx = self
             .get_op_payload_builder_ctx(config.clone(), block_cancel.clone())
             .map_err(|e| PayloadBuilderError::Other(e.into()))?;
 
         // Initialize flashblocks state for this block
         let mut fb_state = FlashblocksState::new(
-            self.flashblocks_config
+            self.config
+                .flashblocks_config
                 .flashblocks_per_block(self.config.block_time),
             disable_state_root,
         );
@@ -638,8 +632,11 @@ where
 
         // We adjust our flashblocks timings based on time the fcu block building signal arrived
         let timestamp = config.attributes.timestamp();
-        let flashblock_scheduler =
-            FlashblockScheduler::new(&self.flashblocks_config, self.config.block_time, timestamp);
+        let flashblock_scheduler = FlashblockScheduler::new(
+            &self.config.flashblocks_config,
+            self.config.block_time,
+            timestamp,
+        );
         info!(
             target: "payload_builder",
             id = %fb_payload.payload_id,
@@ -649,6 +646,7 @@ where
         let target_flashblocks = flashblock_scheduler.target_flashblocks();
 
         let expected_flashblocks = self
+            .config
             .flashblocks_config
             .flashblocks_per_block(self.config.block_time);
         if target_flashblocks < expected_flashblocks {
@@ -844,7 +842,7 @@ where
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     fn build_next_flashblock<
         'a,
         DB: Database<Error = ProviderError> + std::fmt::Debug + AsRef<P>,
@@ -942,7 +940,7 @@ where
             target_gas_for_batch.min(ctx.block_gas_limit()),
             target_da_for_batch,
             target_da_footprint_for_batch,
-            Some(fb_state.flashblock_index),
+            fb_state.flashblock_index,
         )
         .wrap_err("failed to execute best transactions")?;
         // Extract last transactions

@@ -30,7 +30,7 @@ use revm::{
 use tracing::{trace, warn};
 
 use crate::{
-    builders::context::OpPayloadBuilderCtx, primitives::reth::ExecutionInfo, tx_signer::Signer,
+    builder::context::OpPayloadBuilderCtx, primitives::reth::ExecutionInfo, tx_signer::Signer,
 };
 
 #[derive(Debug, Default)]

@@ -1,22 +1,21 @@
 use super::payload::OpPayloadBuilder;
 use crate::{
-    builders::{
+    builder::{
         BuilderConfig,
         builder_tx::BuilderTransactions,
-        flashblocks::{
-            builder_tx::{FlashblocksBuilderTx, FlashblocksNumberBuilderTx},
-            p2p::{AGENT_VERSION, FLASHBLOCKS_STREAM_PROTOCOL, Message},
-            payload_handler::PayloadHandler,
-            wspub::WebSocketPublisher,
-        },
+        flashblocks_builder_tx::{FlashblocksBuilderTx, FlashblocksNumberBuilderTx},
         generator::BlockPayloadJobGenerator,
+        p2p::{AGENT_VERSION, FLASHBLOCKS_STREAM_PROTOCOL, Message},
+        payload_handler::PayloadHandler,
+        syncer_ctx::OpPayloadSyncerCtx,
+        wspub::WebSocketPublisher,
     },
     flashtestations::service::bootstrap_flashtestations,
     metrics::OpRBuilderMetrics,
     tokio_metrics::FlashblocksTaskMetrics,
     traits::{NodeBounds, PoolBounds},
 };
-use eyre::{ContextCompat, WrapErr as _};
+use eyre::WrapErr as _;
 use reth_basic_payload_builder::BasicPayloadJobGeneratorConfig;
 use reth_node_api::NodeTypes;
 use reth_node_builder::{BuilderContext, components::PayloadServiceBuilder};
@@ -25,6 +24,7 @@ use reth_payload_builder::{PayloadBuilderHandle, PayloadBuilderService};
 use reth_provider::CanonStateSubscriptions;
 use std::{sync::Arc, time::Duration};
 
+#[derive(derive_more::Constructor)]
 pub struct FlashblocksServiceBuilder(pub BuilderConfig);
 
 impl FlashblocksServiceBuilder {
@@ -43,11 +43,7 @@ impl FlashblocksServiceBuilder {
         // this is effectively unused right now due to the usage of reth's `task_executor`.
         let cancel = tokio_util::sync::CancellationToken::new();
 
-        let flashblocks_config = self
-            .0
-            .flashblocks_config
-            .clone()
-            .wrap_err("flashblocks_config must be set when using flashblocks builder")?;
+        let flashblocks_config = &self.0.flashblocks_config;
 
         let (incoming_message_rx, outgoing_message_tx) = if flashblocks_config.p2p_enabled {
             let mut builder = p2p::NodeBuilder::new();
@@ -126,7 +122,6 @@ impl FlashblocksServiceBuilder {
             pool,
             ctx.provider().clone(),
             self.0.clone(),
-            flashblocks_config.clone(),
             builder_tx,
             built_fb_payload_tx,
             built_payload_tx,
@@ -149,7 +144,7 @@ impl FlashblocksServiceBuilder {
         let (payload_service, payload_builder_handle) =
             PayloadBuilderService::new(payload_generator, ctx.provider().canonical_state_stream());
 
-        let syncer_ctx = crate::builders::flashblocks::ctx::OpPayloadSyncerCtx::new(
+        let syncer_ctx = OpPayloadSyncerCtx::new(
             &ctx.provider().clone(),
             self.0,
             OpEvmConfig::optimism(ctx.chain_spec()),
@@ -207,12 +202,6 @@ where
         pool: Pool,
         _: OpEvmConfig,
     ) -> eyre::Result<PayloadBuilderHandle<<Node::Types as NodeTypes>::Payload>> {
-        let flashblocks_config = self
-            .0
-            .flashblocks_config
-            .clone()
-            .wrap_err("flashblocks_config must be set when using flashblocks builder")?;
-
         let signer = self.0.builder_signer;
         let flashtestations_builder_tx = if let Some(builder_key) = signer
             && self.0.flashtestations_config.flashtestations_enabled
@@ -230,6 +219,7 @@ where
             None
         };
 
+        let flashblocks_config = &self.0.flashblocks_config;
         if let Some(builder_signer) = signer
             && let Some(flashblocks_number_contract_address) =
                 flashblocks_config.number_contract_address

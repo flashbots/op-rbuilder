@@ -1,6 +1,6 @@
 use crate::{
     backrun_bundle::{BackrunBundleArgs, BackrunBundleGlobalPool, BackrunBundlesPayloadCtx},
-    builders::{BuilderConfig, OpPayloadBuilderCtx},
+    builder::{BuilderConfig, OpPayloadBuilderCtx},
     gas_limiter::{AddressGasLimiter, args::GasLimiterArgs},
     metrics::OpRBuilderMetrics,
     traits::ClientBounds,

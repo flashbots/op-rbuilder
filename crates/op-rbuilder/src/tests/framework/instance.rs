@@ -1,7 +1,7 @@
 use crate::{
     args::OpRbuilderArgs,
     backrun_bundle::{BackrunBundleApiServer, BackrunBundleRpc},
-    builders::{BuilderConfig, OpPayloadServiceBuilder},
+    builder::{BuilderConfig, FlashblocksServiceBuilder},
     revert_protection::{EthApiExtServer, RevertProtectionExt},
     tests::{
         EngineApi, Ipc, TEE_DEBUG_ADDRESS, TransactionPoolObserver, builder_signer, create_test_db,
@@ -129,7 +129,7 @@ impl LocalInstance {
                 op_node
                     .components()
                     .pool(pool_component(&args))
-                    .payload(OpPayloadServiceBuilder::new(builder_config)),
+                    .payload(FlashblocksServiceBuilder::new(builder_config)),
             )
             .with_add_ons(addons)
             .extend_rpc_modules(move |ctx| {

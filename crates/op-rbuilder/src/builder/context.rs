@@ -386,7 +386,7 @@ impl OpPayloadBuilderCtx {
         block_gas_limit: u64,
         block_da_limit: Option<u64>,
         block_da_footprint_limit: Option<u64>,
-        flashblock_index: Option<u64>,
+        flashblock_index: u64,
     ) -> Result<Option<()>, PayloadBuilderError> {
         let execute_txs_start_time = Instant::now();
         let mut num_txs_considered = 0;
