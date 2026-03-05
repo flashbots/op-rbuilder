@@ -27,6 +27,37 @@ To build the op-rbuilder, run:
 cargo build -p op-rbuilder --bin op-rbuilder
 ```
 
+### Txpool Policy Regimes
+
+Ingress filtering and tx ordering are configured through a policy file:
+
+```bash
+cargo run -p op-rbuilder --bin op-rbuilder -- node \
+    --chain /path/to/chain-config.json \
+    --http \
+    --authrpc.port 9551 \
+    --authrpc.jwtsecret /path/to/jwt.hex \
+    --rules.config-path /path/to/txpool-policy.yaml
+```
+
+Example policy:
+
+```yaml
+ingress:
+  type: deny_rules
+  sources:
+    file:
+      - path: /etc/op-rbuilder/rules/deny.yaml
+ordering:
+  type: priority_fee_with_boost
+  sources:
+    file:
+      - path: /etc/op-rbuilder/rules/boost.yaml
+```
+
+See [`docs/txpool_policy.md`](./docs/txpool_policy.md) for the full schema and
+source list merge semantics.
+
 ### Flashblocks
 
 To run op-rbuilder with flashblocks:

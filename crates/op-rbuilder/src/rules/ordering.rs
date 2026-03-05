@@ -41,11 +41,11 @@ impl<P: Ord + Clone> PartialOrd for ScorePriority<P> {
     }
 }
 
-/// Transaction ordering that uses pre-computed scores from the global score cache.
+/// Transaction ordering that optionally uses pre-computed scores from the global score cache.
 ///
 /// Scores are inserted at validation time by [`RuleBasedValidator`] and looked up
-/// here via [`get_tx_score`]. Transactions without a cached score get `score = 0`
-/// and fall back to `CoinbaseTipOrdering` for tie-breaking.
+/// here via [`get_tx_score`] when scoring is enabled. When scoring is disabled,
+/// this behaves like pure priority-fee ordering.
 ///
 /// Negative scores are supported: a transaction with `score < 0` will be ordered
 /// below unscored transactions (`score = 0`), effectively deprioritizing it.
@@ -53,6 +53,8 @@ impl<P: Ord + Clone> PartialOrd for ScorePriority<P> {
 pub struct ScoreOrdering<T> {
     inner: CoinbaseTipOrdering<T>,
     metrics: RulesMetrics,
+    scoring_enabled: bool,
+    unscored_score: i64,
 }
 
 impl<T> Default for ScoreOrdering<T> {
@@ -60,13 +62,32 @@ impl<T> Default for ScoreOrdering<T> {
         Self {
             inner: CoinbaseTipOrdering::<T>::default(),
             metrics: RulesMetrics::default(),
+            scoring_enabled: true,
+            unscored_score: 0,
         }
     }
 }
 
 impl<T> Clone for ScoreOrdering<T> {
     fn clone(&self) -> Self {
-        Self::default()
+        Self {
+            inner: CoinbaseTipOrdering::<T>::default(),
+            metrics: RulesMetrics::default(),
+            scoring_enabled: self.scoring_enabled,
+            unscored_score: self.unscored_score,
+        }
+    }
+}
+
+impl<T> ScoreOrdering<T> {
+    pub fn with_scoring_enabled(mut self, enabled: bool) -> Self {
+        self.scoring_enabled = enabled;
+        self
+    }
+
+    pub fn with_unscored_score(mut self, score: i64) -> Self {
+        self.unscored_score = score;
+        self
     }
 }
 
@@ -83,11 +104,15 @@ where
         transaction: &Self::Transaction,
         base_fee: u64,
     ) -> Priority<Self::PriorityValue> {
-        let score = match get_tx_score(transaction.hash()) {
-            Some(s) => s,
-            None => {
-                self.metrics.record_score_cache_miss();
-                0
+        let score = if !self.scoring_enabled {
+            self.unscored_score
+        } else {
+            match get_tx_score(transaction.hash()) {
+                Some(s) => s,
+                None => {
+                    self.metrics.record_score_cache_miss();
+                    self.unscored_score
+                }
             }
         };
         Priority::Value(ScorePriority {

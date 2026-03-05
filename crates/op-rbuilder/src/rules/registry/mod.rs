@@ -116,6 +116,16 @@ impl RuleFetcher {
     pub async fn refresh_global_ruleset(&self) -> FetchResult {
         use crate::rules::set_global_ruleset;
 
+        self.refresh_ruleset_with(set_global_ruleset).await
+    }
+
+    /// Fetch rules and update a caller-provided global state target.
+    ///
+    /// The target setter is only invoked when all registries succeed.
+    pub async fn refresh_ruleset_with<F>(&self, mut set_ruleset: F) -> FetchResult
+    where
+        F: FnMut(RuleSet),
+    {
         let mut result = self.fetch_all().await;
 
         // Only update global ruleset if all registries succeeded
@@ -126,7 +136,7 @@ impl RuleFetcher {
             // Pre-parse boost rule targets for faster matching
             result.ruleset.prepare();
 
-            set_global_ruleset(result.ruleset.clone());
+            set_ruleset(result.ruleset.clone());
             self.metrics
                 .update_rules_state(deny_count, boost_count, result.ruleset.hash);
 
@@ -152,6 +162,19 @@ impl RuleFetcher {
     ///
     /// Call `refresh_global_ruleset()` before this if you need initial rules loaded synchronously.
     pub fn start_auto_refresh(self, refresh_interval_secs: u64) -> tokio::task::JoinHandle<()> {
+        self.start_auto_refresh_with(refresh_interval_secs, crate::rules::set_global_ruleset)
+    }
+
+    /// Start a background task that periodically refreshes rules and applies to
+    /// a caller-provided target setter.
+    pub fn start_auto_refresh_with<F>(
+        self,
+        refresh_interval_secs: u64,
+        mut set_ruleset: F,
+    ) -> tokio::task::JoinHandle<()>
+    where
+        F: FnMut(RuleSet) + Send + 'static,
+    {
         let refresh_interval_secs = if refresh_interval_secs == 0 {
             let default = default_refresh_interval();
             tracing::warn!(
@@ -179,7 +202,7 @@ impl RuleFetcher {
             loop {
                 interval.tick().await;
                 tracing::debug!("Refreshing rules from registries");
-                self.refresh_global_ruleset().await;
+                self.refresh_ruleset_with(&mut set_ruleset).await;
             }
         })
     }

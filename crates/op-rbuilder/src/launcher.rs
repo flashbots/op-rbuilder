@@ -9,6 +9,10 @@ use crate::{
     pool::{CustomOpPoolBuilder, RuleBasedValidator},
     primitives::reth::engine_api_builder::OpEngineApiBuilder,
     revert_protection::{EthApiExtServer, RevertProtectionExt},
+    rules::{
+        IngressRegimeConfig, OrderingRegimeConfig, TxPoolPolicyConfig, set_ingress_ruleset,
+        set_ordering_ruleset,
+    },
     tx::FBPooledTransaction,
 };
 use core::fmt::Debug;
@@ -22,7 +26,7 @@ use reth_db::mdbx::DatabaseEnv;
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_cli::chainspec::OpChainSpecParser;
 use reth_optimism_node::{
-    OpNode, OpPoolBuilder,
+    OpNode,
     node::{OpAddOns, OpAddOnsBuilder, OpEngineValidatorBuilder},
 };
 use reth_transaction_pool::TransactionPool;
@@ -114,225 +118,184 @@ where
         let reverted_cache = Cache::builder().max_capacity(100).build();
         let reverted_cache_copy = reverted_cache.clone();
 
-        // Initialize rules system.
-        let (rules_enabled, rule_fetcher, rule_refresh_interval_seconds) =
-            if builder_args.rules.rules_enabled {
-                use crate::rules::RulesRegistryConfig;
-
-                tracing::info!("Rule based block building enabled");
-
-                // Load registry configuration if provided.
-                let (fetcher, refresh_interval) = if let Some(config_path) =
-                    &builder_args.rules.config_path
-                {
-                    tracing::info!(path = ?config_path, "Loading rules registry configuration");
-
-                    match RulesRegistryConfig::load(config_path).await {
-                        Ok(config) => {
-                            if config.is_registry_config_empty() {
-                                tracing::warn!("Rules registry config is empty");
-                                (None, config.refresh_interval)
-                            } else {
-                                match config.build_fetcher() {
-                                    Ok(f) => {
-                                        let interval = config.refresh_interval;
-                                        tracing::info!(
-                                            refresh_interval_secs = interval,
-                                            "Using refresh interval from config"
-                                        );
-                                        (Some(f), interval)
-                                    }
-                                    Err(e) => {
-                                        tracing::error!(error = %e, "Failed to build rule fetcher");
-                                        (None, config.refresh_interval)
-                                    }
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            tracing::error!(
-                                error = %e,
-                                path = ?config_path,
-                                "Failed to load rules registry config"
-                            );
-                            (None, 0)
-                        }
-                    }
-                } else {
-                    tracing::debug!("No rules registry config provided, using empty ruleset");
-                    (None, 0)
-                };
-
-                // Fetch initial rules and update global state.
-                if let Some(ref f) = fetcher {
-                    f.refresh_global_ruleset().await;
+        let policy_config = if let Some(config_path) = &builder_args.rules.config_path {
+            tracing::info!(path = ?config_path, "Loading txpool policy configuration");
+            match TxPoolPolicyConfig::load(config_path).await {
+                Ok(config) => config,
+                Err(e) => {
+                    tracing::error!(
+                        error = %e,
+                        path = ?config_path,
+                        "Failed to load txpool policy config; falling back to defaults"
+                    );
+                    TxPoolPolicyConfig::default()
                 }
+            }
+        } else {
+            tracing::debug!(
+                "No rules config path provided; using default txpool policy (allow_all + priority_fee)"
+            );
+            TxPoolPolicyConfig::default()
+        };
 
-                (true, fetcher, refresh_interval)
+        let ingress_deny_enabled = policy_config.ingress.uses_rules();
+        let ordering_scoring_enabled = policy_config.ordering.uses_scoring();
+        let ordering_unscored_score = policy_config.ordering.unscored_score();
+
+        let ingress_rule_fetcher = policy_config
+            .ingress
+            .sources()
+            .filter(|sources| !sources.is_empty())
+            .map(|sources| {
+                tracing::info!(
+                    refresh_interval_secs = sources.refresh_interval,
+                    sources = sources.file.len(),
+                    "Configured ingress rule sources"
+                );
+                (sources.build_fetcher(), sources.refresh_interval)
+            });
+
+        let ordering_rule_fetcher = policy_config
+            .ordering
+            .sources()
+            .filter(|sources| !sources.is_empty())
+            .map(|sources| {
+                tracing::info!(
+                    refresh_interval_secs = sources.refresh_interval,
+                    sources = sources.file.len(),
+                    "Configured ordering rule sources"
+                );
+                (sources.build_fetcher(), sources.refresh_interval)
+            });
+
+        if ingress_deny_enabled {
+            if let Some((fetcher, _)) = &ingress_rule_fetcher {
+                fetcher.refresh_ruleset_with(set_ingress_ruleset).await;
             } else {
-                tracing::debug!("Rules system disabled at runtime");
-                (false, None, 0)
-            };
+                tracing::warn!(
+                    "Ingress deny regime selected with no configured sources; using empty ingress ruleset"
+                );
+                set_ingress_ruleset(Default::default());
+            }
+        } else {
+            set_ingress_ruleset(Default::default());
+        }
+
+        if ordering_scoring_enabled {
+            if let Some((fetcher, _)) = &ordering_rule_fetcher {
+                fetcher.refresh_ruleset_with(set_ordering_ruleset).await;
+            } else {
+                tracing::warn!(
+                    "Ordering boost regime selected with no configured sources; using empty ordering ruleset"
+                );
+                set_ordering_ruleset(Default::default());
+            }
+        } else {
+            set_ordering_ruleset(Default::default());
+        }
 
         // Revert protection uses the same internal pool logic as conditional transactions
         // to garbage collect transactions out of the bundle range.
         let enable_tx_conditional_or_revert =
             rollup_args.enable_tx_conditional || builder_args.enable_revert_protection;
+        let enable_revert_protection = builder_args.enable_revert_protection;
+        let log_pool_transactions = builder_args.log_pool_transactions;
 
         // Keep the launched node alive for the lifetime of the process so RPC handles remain open.
-        let (node_exit_future, _node_handle): (NodeExitFuture, Box<dyn Any + Send>) =
-            if rules_enabled {
-                tracing::info!("Integrating rules validator with transaction pool");
+        let mut addons: OpAddOns<
+            _,
+            OpEthApiBuilder,
+            OpEngineValidatorBuilder,
+            OpEngineApiBuilder<OpEngineValidatorBuilder>,
+        > = OpAddOnsBuilder::default()
+            .with_sequencer(rollup_args.sequencer.clone())
+            .with_enable_tx_conditional(rollup_args.enable_tx_conditional)
+            .with_da_config(da_config)
+            .with_gas_limit_config(gas_limit_config)
+            .build();
+        if cfg!(feature = "custom-engine-api") {
+            let engine_builder: OpEngineApiBuilder<OpEngineValidatorBuilder> =
+                OpEngineApiBuilder::default();
+            addons = addons.with_engine_api(engine_builder);
+        }
 
-                let mut addons: OpAddOns<
-                    _,
-                    OpEthApiBuilder,
-                    OpEngineValidatorBuilder,
-                    OpEngineApiBuilder<OpEngineValidatorBuilder>,
-                > = OpAddOnsBuilder::default()
-                    .with_sequencer(rollup_args.sequencer.clone())
-                    .with_enable_tx_conditional(rollup_args.enable_tx_conditional)
-                    .with_da_config(da_config)
-                    .with_gas_limit_config(gas_limit_config)
-                    .build();
-                if cfg!(feature = "custom-engine-api") {
-                    let engine_builder: OpEngineApiBuilder<OpEngineValidatorBuilder> =
-                        OpEngineApiBuilder::default();
-                    addons = addons.with_engine_api(engine_builder);
-                }
+        tracing::info!(
+            ingress_regime = %match &policy_config.ingress {
+                IngressRegimeConfig::AllowAll => "allow_all",
+                IngressRegimeConfig::DenyRules { .. } => "deny_rules",
+            },
+            ordering_regime = %match &policy_config.ordering {
+                OrderingRegimeConfig::PriorityFee => "priority_fee",
+                OrderingRegimeConfig::PriorityFeeWithBoost { .. } => "priority_fee_with_boost",
+            },
+            "Configuring txpool policy regimes"
+        );
 
-                let pool_builder = CustomOpPoolBuilder::<FBPooledTransaction>::default()
-                    .with_enable_tx_conditional(enable_tx_conditional_or_revert)
-                    .with_supervisor(
-                        rollup_args.supervisor_http.clone(),
-                        rollup_args.supervisor_safety_level,
-                    )
-                    .with_validator_wrapper(RuleBasedValidator::new);
+        let pool_builder = CustomOpPoolBuilder::<FBPooledTransaction>::default()
+            .with_enable_tx_conditional(enable_tx_conditional_or_revert)
+            .with_supervisor(
+                rollup_args.supervisor_http.clone(),
+                rollup_args.supervisor_safety_level,
+            )
+            .with_scoring_enabled(ordering_scoring_enabled)
+            .with_unscored_score(ordering_unscored_score)
+            .with_validator_wrapper(move |validator| {
+                RuleBasedValidator::new(validator)
+                    .with_ingress_deny_enabled(ingress_deny_enabled)
+                    .with_scoring_enabled(ordering_scoring_enabled)
+            });
 
-                let components = op_node
-                    .components()
-                    .pool(pool_builder)
-                    .payload(B::new_service(builder_config)?);
+        let components = op_node
+            .components()
+            .pool(pool_builder)
+            .payload(B::new_service(builder_config)?);
 
-                let node_handle = builder
-                    .with_types::<OpNode>()
-                    .with_components(components)
-                    .with_add_ons(addons)
-                    .extend_rpc_modules(move |ctx| {
-                        if builder_args.enable_revert_protection {
-                            tracing::info!("Revert protection enabled");
+        let node_handle = builder
+            .with_types::<OpNode>()
+            .with_components(components)
+            .with_add_ons(addons)
+            .extend_rpc_modules(move |ctx| {
+                if enable_revert_protection {
+                    tracing::info!("Revert protection enabled");
 
-                            let pool = ctx.pool().clone();
-                            let provider = ctx.provider().clone();
-                            let revert_protection_ext = RevertProtectionExt::new(
-                                pool,
-                                provider,
-                                ctx.registry.eth_api().clone(),
-                                reverted_cache,
-                            );
-
-                            ctx.modules
-                                .add_or_replace_configured(revert_protection_ext.into_rpc())?;
-                        }
-                        Ok(())
-                    })
-                    .on_node_started(move |ctx| {
-                        VERSION.register_version_metrics();
-                        if builder_args.log_pool_transactions {
-                            tracing::info!("Logging pool transactions");
-                            let listener = ctx.pool.all_transactions_event_listener();
-                            let task =
-                                monitor_tx_pool(listener, reverted_cache_copy, rules_enabled);
-                            ctx.task_executor.spawn_critical("txlogging", task);
-                        }
-
-                        // Start auto-refresh only when rules are enabled.
-                        if rules_enabled && let Some(fetcher) = rule_fetcher {
-                            fetcher.start_auto_refresh(rule_refresh_interval_seconds);
-                        }
-
-                        Ok(())
-                    })
-                    .launch()
-                    .await?;
-
-                (node_handle.node_exit_future, Box::new(node_handle.node))
-            } else {
-                tracing::info!("Rules disabled at runtime, using default transaction pool builder");
-
-                let mut addons: OpAddOns<
-                    _,
-                    OpEthApiBuilder,
-                    OpEngineValidatorBuilder,
-                    OpEngineApiBuilder<OpEngineValidatorBuilder>,
-                > = OpAddOnsBuilder::default()
-                    .with_sequencer(rollup_args.sequencer.clone())
-                    .with_enable_tx_conditional(rollup_args.enable_tx_conditional)
-                    .with_da_config(da_config)
-                    .with_gas_limit_config(gas_limit_config)
-                    .build();
-                if cfg!(feature = "custom-engine-api") {
-                    let engine_builder: OpEngineApiBuilder<OpEngineValidatorBuilder> =
-                        OpEngineApiBuilder::default();
-                    addons = addons.with_engine_api(engine_builder);
-                }
-
-                let pool_builder = OpPoolBuilder::<FBPooledTransaction>::default()
-                    .with_enable_tx_conditional(enable_tx_conditional_or_revert)
-                    .with_supervisor(
-                        rollup_args.supervisor_http.clone(),
-                        rollup_args.supervisor_safety_level,
+                    let pool = ctx.pool().clone();
+                    let provider = ctx.provider().clone();
+                    let revert_protection_ext = RevertProtectionExt::new(
+                        pool,
+                        provider,
+                        ctx.registry.eth_api().clone(),
+                        reverted_cache,
                     );
 
-                let components = op_node
-                    .components()
-                    .pool(pool_builder)
-                    .payload(B::new_service(builder_config)?);
+                    ctx.modules
+                        .add_or_replace_configured(revert_protection_ext.into_rpc())?;
+                }
+                Ok(())
+            })
+            .on_node_started(move |ctx| {
+                VERSION.register_version_metrics();
+                if log_pool_transactions {
+                    tracing::info!("Logging pool transactions");
+                    let listener = ctx.pool.all_transactions_event_listener();
+                    let task =
+                        monitor_tx_pool(listener, reverted_cache_copy, ordering_scoring_enabled);
+                    ctx.task_executor.spawn_critical("txlogging", task);
+                }
 
-                let node_handle = builder
-                    .with_types::<OpNode>()
-                    .with_components(components)
-                    .with_add_ons(addons)
-                    .extend_rpc_modules(move |ctx| {
-                        if builder_args.enable_revert_protection {
-                            tracing::info!("Revert protection enabled");
+                if let Some((fetcher, interval_secs)) = ingress_rule_fetcher {
+                    fetcher.start_auto_refresh_with(interval_secs, set_ingress_ruleset);
+                }
+                if let Some((fetcher, interval_secs)) = ordering_rule_fetcher {
+                    fetcher.start_auto_refresh_with(interval_secs, set_ordering_ruleset);
+                }
 
-                            let pool = ctx.pool().clone();
-                            let provider = ctx.provider().clone();
-                            let revert_protection_ext = RevertProtectionExt::new(
-                                pool,
-                                provider,
-                                ctx.registry.eth_api().clone(),
-                                reverted_cache,
-                            );
+                Ok(())
+            })
+            .launch()
+            .await?;
 
-                            ctx.modules
-                                .add_or_replace_configured(revert_protection_ext.into_rpc())?;
-                        }
-                        Ok(())
-                    })
-                    .on_node_started(move |ctx| {
-                        VERSION.register_version_metrics();
-                        if builder_args.log_pool_transactions {
-                            tracing::info!("Logging pool transactions");
-                            let listener = ctx.pool.all_transactions_event_listener();
-                            let task =
-                                monitor_tx_pool(listener, reverted_cache_copy, rules_enabled);
-                            ctx.task_executor.spawn_critical("txlogging", task);
-                        }
-
-                        // Start auto-refresh only when rules are enabled.
-                        if rules_enabled && let Some(fetcher) = rule_fetcher {
-                            fetcher.start_auto_refresh(rule_refresh_interval_seconds);
-                        }
-
-                        Ok(())
-                    })
-                    .launch()
-                    .await?;
-
-                (node_handle.node_exit_future, Box::new(node_handle.node))
-            };
+        let (node_exit_future, _node_handle): (NodeExitFuture, Box<dyn Any + Send>) =
+            (node_handle.node_exit_future, Box::new(node_handle.node));
 
         node_exit_future.await?;
         Ok(())

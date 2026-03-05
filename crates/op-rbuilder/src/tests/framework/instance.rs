@@ -3,6 +3,7 @@ use crate::{
     builders::{BuilderConfig, FlashblocksBuilder, PayloadBuilder, StandardBuilder},
     primitives::reth::engine_api_builder::OpEngineApiBuilder,
     revert_protection::{EthApiExtServer, RevertProtectionExt},
+    rules::TxPoolPolicyConfig,
     tests::{
         EngineApi, Ipc, TEE_DEBUG_ADDRESS, TransactionPoolObserver, builder_signer, create_test_db,
         framework::driver::ChainDriver, get_available_port,
@@ -39,7 +40,7 @@ use reth_node_builder::{NodeBuilder, NodeConfig};
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_cli::commands::Commands;
 use reth_optimism_node::{
-    OpNode, OpPoolBuilder,
+    OpNode,
     node::{OpAddOns, OpAddOnsBuilder, OpEngineValidatorBuilder},
 };
 use reth_optimism_rpc::OpEthApiBuilder;
@@ -47,6 +48,7 @@ use reth_transaction_pool::{AllTransactionsEvents, TransactionPool};
 use rollup_boost::FlashblocksPayloadV1;
 use std::{
     net::SocketAddr,
+    path::PathBuf,
     sync::{Arc, LazyLock},
 };
 use tokio::{net::TcpListener, sync::oneshot, task::JoinHandle};
@@ -117,139 +119,90 @@ impl LocalInstance {
         let enable_tx_conditional_or_revert =
             args.rollup_args.enable_tx_conditional || args.enable_revert_protection;
 
-        let (exit_future, node_handle): (NodeExitFuture, Box<dyn Any + Send>) =
-            if args.rules.rules_enabled {
-                let addons: OpAddOns<
-                    _,
-                    OpEthApiBuilder,
-                    OpEngineValidatorBuilder,
-                    OpEngineApiBuilder<OpEngineValidatorBuilder>,
-                > = OpAddOnsBuilder::default()
-                    .with_sequencer(args.rollup_args.sequencer.clone())
-                    .with_enable_tx_conditional(args.rollup_args.enable_tx_conditional)
-                    .with_da_config(da_config)
-                    .with_gas_limit_config(gas_limit_config)
-                    .build();
+        let policy_config = if let Some(config_path) = &args.rules.config_path {
+            TxPoolPolicyConfig::load(config_path)
+                .await
+                .unwrap_or_else(|_| TxPoolPolicyConfig::default())
+        } else {
+            TxPoolPolicyConfig::default()
+        };
+        let ingress_deny_enabled = policy_config.ingress.uses_rules();
+        let ordering_scoring_enabled = policy_config.ordering.uses_scoring();
+        let ordering_unscored_score = policy_config.ordering.unscored_score();
 
-                let pool_builder = CustomOpPoolBuilder::<FBPooledTransaction>::default()
-                    .with_enable_tx_conditional(enable_tx_conditional_or_revert)
-                    .with_supervisor(
-                        args.rollup_args.supervisor_http.clone(),
-                        args.rollup_args.supervisor_safety_level,
-                    )
-                    .with_validator_wrapper(RuleBasedValidator::new);
+        let addons: OpAddOns<
+            _,
+            OpEthApiBuilder,
+            OpEngineValidatorBuilder,
+            OpEngineApiBuilder<OpEngineValidatorBuilder>,
+        > = OpAddOnsBuilder::default()
+            .with_sequencer(args.rollup_args.sequencer.clone())
+            .with_enable_tx_conditional(args.rollup_args.enable_tx_conditional)
+            .with_da_config(da_config)
+            .with_gas_limit_config(gas_limit_config)
+            .build();
 
-                let node_handle = NodeBuilder::<_, OpChainSpec>::new(config.clone())
-                    .with_database(create_test_db(config.clone()))
-                    .with_launch_context(task_manager.executor())
-                    .with_types::<OpNode>()
-                    .with_components(
-                        op_node
-                            .components()
-                            .pool(pool_builder)
-                            .payload(P::new_service(builder_config)?),
-                    )
-                    .with_add_ons(addons)
-                    .extend_rpc_modules(move |ctx| {
-                        if args.enable_revert_protection {
-                            tracing::info!("Revert protection enabled");
+        let pool_builder = CustomOpPoolBuilder::<FBPooledTransaction>::default()
+            .with_enable_tx_conditional(enable_tx_conditional_or_revert)
+            .with_supervisor(
+                args.rollup_args.supervisor_http.clone(),
+                args.rollup_args.supervisor_safety_level,
+            )
+            .with_scoring_enabled(ordering_scoring_enabled)
+            .with_unscored_score(ordering_unscored_score)
+            .with_validator_wrapper(move |validator| {
+                RuleBasedValidator::new(validator)
+                    .with_ingress_deny_enabled(ingress_deny_enabled)
+                    .with_scoring_enabled(ordering_scoring_enabled)
+            });
 
-                            let pool = ctx.pool().clone();
-                            let provider = ctx.provider().clone();
-                            let revert_protection_ext = RevertProtectionExt::new(
-                                pool,
-                                provider,
-                                ctx.registry.eth_api().clone(),
-                                reverted_cache,
-                            );
+        let enable_revert_protection = args.enable_revert_protection;
+        let node_handle = NodeBuilder::<_, OpChainSpec>::new(config.clone())
+            .with_database(create_test_db(config.clone()))
+            .with_launch_context(task_manager.executor())
+            .with_types::<OpNode>()
+            .with_components(
+                op_node
+                    .components()
+                    .pool(pool_builder)
+                    .payload(P::new_service(builder_config)?),
+            )
+            .with_add_ons(addons)
+            .extend_rpc_modules(move |ctx| {
+                if enable_revert_protection {
+                    tracing::info!("Revert protection enabled");
 
-                            ctx.modules
-                                .add_or_replace_configured(revert_protection_ext.into_rpc())?;
-                        }
-
-                        Ok(())
-                    })
-                    .on_rpc_started(move |_, _| {
-                        let _ = rpc_ready_tx.send(());
-                        Ok(())
-                    })
-                    .on_node_started(move |ctx| {
-                        txpool_ready_tx
-                            .send(ctx.pool.all_transactions_event_listener())
-                            .expect("Failed to send txpool ready signal");
-
-                        Ok(())
-                    })
-                    .launch()
-                    .await?;
-
-                (node_handle.node_exit_future, Box::new(node_handle.node))
-            } else {
-                let addons: OpAddOns<
-                    _,
-                    OpEthApiBuilder,
-                    OpEngineValidatorBuilder,
-                    OpEngineApiBuilder<OpEngineValidatorBuilder>,
-                > = OpAddOnsBuilder::default()
-                    .with_sequencer(args.rollup_args.sequencer.clone())
-                    .with_enable_tx_conditional(args.rollup_args.enable_tx_conditional)
-                    .with_da_config(da_config)
-                    .with_gas_limit_config(gas_limit_config)
-                    .build();
-
-                let pool_builder = OpPoolBuilder::<FBPooledTransaction>::default()
-                    .with_enable_tx_conditional(enable_tx_conditional_or_revert)
-                    .with_supervisor(
-                        args.rollup_args.supervisor_http.clone(),
-                        args.rollup_args.supervisor_safety_level,
+                    let pool = ctx.pool().clone();
+                    let provider = ctx.provider().clone();
+                    let revert_protection_ext = RevertProtectionExt::new(
+                        pool,
+                        provider,
+                        ctx.registry.eth_api().clone(),
+                        reverted_cache,
                     );
 
-                let node_handle = NodeBuilder::<_, OpChainSpec>::new(config.clone())
-                    .with_database(create_test_db(config.clone()))
-                    .with_launch_context(task_manager.executor())
-                    .with_types::<OpNode>()
-                    .with_components(
-                        op_node
-                            .components()
-                            .pool(pool_builder)
-                            .payload(P::new_service(builder_config)?),
-                    )
-                    .with_add_ons(addons)
-                    .extend_rpc_modules(move |ctx| {
-                        if args.enable_revert_protection {
-                            tracing::info!("Revert protection enabled");
+                    ctx.modules
+                        .add_or_replace_configured(revert_protection_ext.into_rpc())?;
+                }
 
-                            let pool = ctx.pool().clone();
-                            let provider = ctx.provider().clone();
-                            let revert_protection_ext = RevertProtectionExt::new(
-                                pool,
-                                provider,
-                                ctx.registry.eth_api().clone(),
-                                reverted_cache,
-                            );
+                Ok(())
+            })
+            .on_rpc_started(move |_, _| {
+                let _ = rpc_ready_tx.send(());
+                Ok(())
+            })
+            .on_node_started(move |ctx| {
+                txpool_ready_tx
+                    .send(ctx.pool.all_transactions_event_listener())
+                    .expect("Failed to send txpool ready signal");
 
-                            ctx.modules
-                                .add_or_replace_configured(revert_protection_ext.into_rpc())?;
-                        }
+                Ok(())
+            })
+            .launch()
+            .await?;
 
-                        Ok(())
-                    })
-                    .on_rpc_started(move |_, _| {
-                        let _ = rpc_ready_tx.send(());
-                        Ok(())
-                    })
-                    .on_node_started(move |ctx| {
-                        txpool_ready_tx
-                            .send(ctx.pool.all_transactions_event_listener())
-                            .expect("Failed to send txpool ready signal");
-
-                        Ok(())
-                    })
-                    .launch()
-                    .await?;
-
-                (node_handle.node_exit_future, Box::new(node_handle.node))
-            };
+        let (exit_future, node_handle): (NodeExitFuture, Box<dyn Any + Send>) =
+            (node_handle.node_exit_future, Box::new(node_handle.node));
 
         // Wait for all required components to be ready
         rpc_ready_rx.await.expect("Failed to receive ready signal");
@@ -285,7 +238,14 @@ impl LocalInstance {
         let Commands::Node(mut node_command) = args.command else {
             unreachable!()
         };
-        node_command.ext.rules.rules_enabled = true;
+        node_command.ext.rules.config_path = Some(write_test_policy_config(
+            r#"
+ingress:
+  type: deny_rules
+ordering:
+  type: priority_fee_with_boost
+"#,
+        )?);
         Self::new::<StandardBuilder>(node_command.ext).await
     }
 
@@ -296,7 +256,14 @@ impl LocalInstance {
         let Commands::Node(ref mut node_command) = args.command else {
             unreachable!()
         };
-        node_command.ext.rules.rules_enabled = true;
+        node_command.ext.rules.config_path = Some(write_test_policy_config(
+            r#"
+ingress:
+  type: deny_rules
+ordering:
+  type: priority_fee_with_boost
+"#,
+        )?);
         node_command.ext.flashblocks.enabled = true;
         node_command.ext.flashblocks.flashblocks_port = 0; // use random os assigned port
         Self::new::<FlashblocksBuilder>(node_command.ext.clone()).await
@@ -371,6 +338,10 @@ impl LocalInstance {
 
 impl Drop for LocalInstance {
     fn drop(&mut self) {
+        if let Some(config_path) = &self.args.rules.config_path {
+            std::fs::remove_file(config_path).ok();
+        }
+
         if let Some(task_manager) = self.task_manager.take() {
             task_manager.graceful_shutdown_with_timeout(Duration::from_secs(3));
             std::fs::remove_dir_all(self.config().datadir().to_string()).unwrap_or_else(|e| {
@@ -389,6 +360,16 @@ impl Future for LocalInstance {
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         self.get_mut().exit_future.poll_unpin(cx)
     }
+}
+
+fn write_test_policy_config(content: &str) -> eyre::Result<PathBuf> {
+    use std::io::Write;
+
+    let tempdir = std::env::temp_dir();
+    let file_path = tempdir.join(format!("rbuilder.{}.policy.yaml", nanoid!()));
+    let mut file = std::fs::File::create(&file_path)?;
+    file.write_all(content.as_bytes())?;
+    Ok(file_path)
 }
 
 pub fn default_node_config() -> NodeConfig<OpChainSpec> {

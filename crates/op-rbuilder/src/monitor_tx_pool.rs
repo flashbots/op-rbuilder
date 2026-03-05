@@ -8,8 +8,8 @@ use moka::future::Cache;
 use reth_transaction_pool::{AllTransactionsEvents, FullTransactionEvent};
 use tracing::info;
 
-fn remove_tx_score(tx_hash: &B256, rules_enabled: bool) {
-    if !rules_enabled {
+fn remove_tx_score(tx_hash: &B256, score_cache_enabled: bool) {
+    if !score_cache_enabled {
         return;
     }
 
@@ -28,17 +28,17 @@ fn remove_tx_score(tx_hash: &B256, rules_enabled: bool) {
 pub(crate) async fn monitor_tx_pool(
     mut new_transactions: AllTransactionsEvents<FBPooledTransaction>,
     reverted_cache: Cache<B256, ()>,
-    rules_enabled: bool,
+    score_cache_enabled: bool,
 ) {
     while let Some(event) = new_transactions.next().await {
-        transaction_event_log(event, &reverted_cache, rules_enabled).await;
+        transaction_event_log(event, &reverted_cache, score_cache_enabled).await;
     }
 }
 
 async fn transaction_event_log(
     event: FullTransactionEvent<FBPooledTransaction>,
     reverted_cache: &Cache<B256, ()>,
-    rules_enabled: bool,
+    score_cache_enabled: bool,
 ) {
     match event {
         FullTransactionEvent::Pending(hash) => {
@@ -61,7 +61,7 @@ async fn transaction_event_log(
             tx_hash,
             block_hash,
         } => {
-            remove_tx_score(&tx_hash, rules_enabled);
+            remove_tx_score(&tx_hash, score_cache_enabled);
 
             info!(
                 target = "monitoring",
@@ -75,7 +75,7 @@ async fn transaction_event_log(
             transaction,
             replaced_by,
         } => {
-            remove_tx_score(transaction.hash(), rules_enabled);
+            remove_tx_score(transaction.hash(), score_cache_enabled);
 
             info!(
                 target = "monitoring",
@@ -86,7 +86,7 @@ async fn transaction_event_log(
             )
         }
         FullTransactionEvent::Discarded(hash) => {
-            remove_tx_score(&hash, rules_enabled);
+            remove_tx_score(&hash, score_cache_enabled);
 
             // add the transaction hash to the reverted cache to notify the
             // eth get transaction receipt method
@@ -100,7 +100,7 @@ async fn transaction_event_log(
             )
         }
         FullTransactionEvent::Invalid(hash) => {
-            remove_tx_score(&hash, rules_enabled);
+            remove_tx_score(&hash, score_cache_enabled);
 
             info!(
                 target = "monitoring",

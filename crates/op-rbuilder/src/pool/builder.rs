@@ -48,6 +48,10 @@ pub struct CustomOpPoolBuilder<T, W = NoWrapper> {
     inner: OpPoolBuilder<T>,
     /// Validator wrapper state (typestate pattern)
     wrapper: W,
+    /// Whether boost score should participate in ordering.
+    scoring_enabled: bool,
+    /// Fallback score for txs missing a cache entry.
+    unscored_score: i64,
     /// Phantom data for transaction type
     _phantom: PhantomData<T>,
 }
@@ -57,6 +61,8 @@ impl<T> Default for CustomOpPoolBuilder<T, NoWrapper> {
         Self {
             inner: OpPoolBuilder::default(),
             wrapper: NoWrapper,
+            scoring_enabled: true,
+            unscored_score: 0,
             _phantom: PhantomData,
         }
     }
@@ -68,6 +74,8 @@ impl<T, W> CustomOpPoolBuilder<T, W> {
         CustomOpPoolBuilder {
             inner,
             wrapper: NoWrapper,
+            scoring_enabled: true,
+            unscored_score: 0,
             _phantom: PhantomData,
         }
     }
@@ -88,6 +96,16 @@ impl<T, W> CustomOpPoolBuilder<T, W> {
         self.inner = self.inner.with_supervisor(url, safety_level);
         self
     }
+
+    pub fn with_scoring_enabled(mut self, enabled: bool) -> Self {
+        self.scoring_enabled = enabled;
+        self
+    }
+
+    pub fn with_unscored_score(mut self, score: i64) -> Self {
+        self.unscored_score = score;
+        self
+    }
 }
 
 impl<T> CustomOpPoolBuilder<T, NoWrapper> {
@@ -102,6 +120,8 @@ impl<T> CustomOpPoolBuilder<T, NoWrapper> {
         CustomOpPoolBuilder {
             inner: self.inner,
             wrapper: WithWrapper(wrapper),
+            scoring_enabled: self.scoring_enabled,
+            unscored_score: self.unscored_score,
             _phantom: PhantomData,
         }
     }
@@ -128,6 +148,8 @@ where
         let CustomOpPoolBuilder {
             inner,
             wrapper: WithWrapper(wrapper),
+            scoring_enabled,
+            unscored_score,
             ..
         } = self;
         let OpPoolBuilder {
@@ -196,7 +218,9 @@ where
         let transaction_pool = reth_node_builder::components::TxPoolBuilder::new(ctx)
             .with_validator(final_validator)
             .build_with_ordering_and_spawn_maintenance_task(
-                ScoreOrdering::default(),
+                ScoreOrdering::default()
+                    .with_scoring_enabled(scoring_enabled)
+                    .with_unscored_score(unscored_score),
                 blob_store,
                 final_pool_config,
             )?;

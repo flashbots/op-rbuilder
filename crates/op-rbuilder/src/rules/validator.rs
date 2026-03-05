@@ -4,7 +4,7 @@
 //! additional checks include rule-based deny lists backed by the shared global ruleset.
 
 use crate::rules::{
-    global_ruleset,
+    get_ingress_ruleset, get_ordering_ruleset,
     metrics::RulesMetrics,
     state::{insert_tx_score, score_cache_len},
 };
@@ -29,6 +29,10 @@ pub struct RuleBasedValidator<V> {
     inner: V,
     /// Metrics for rule-based validation.
     metrics: RulesMetrics,
+    /// Whether ingress deny checks are enabled.
+    ingress_deny_enabled: bool,
+    /// Whether score cache enrichment is enabled.
+    scoring_enabled: bool,
 }
 
 impl<V: Clone> Clone for RuleBasedValidator<V> {
@@ -36,6 +40,8 @@ impl<V: Clone> Clone for RuleBasedValidator<V> {
         Self {
             inner: self.inner.clone(),
             metrics: self.metrics.clone(),
+            ingress_deny_enabled: self.ingress_deny_enabled,
+            scoring_enabled: self.scoring_enabled,
         }
     }
 }
@@ -45,16 +51,33 @@ impl<V> RuleBasedValidator<V> {
         Self {
             inner,
             metrics: RulesMetrics::default(),
+            ingress_deny_enabled: true,
+            scoring_enabled: true,
         }
+    }
+
+    pub fn with_ingress_deny_enabled(mut self, enabled: bool) -> Self {
+        self.ingress_deny_enabled = enabled;
+        self
+    }
+
+    pub fn with_scoring_enabled(mut self, enabled: bool) -> Self {
+        self.scoring_enabled = enabled;
+        self
     }
 
     fn validate_against_rules<T>(&self, transaction: &T) -> Result<(), String>
     where
         T: PoolTransaction,
     {
+        if !self.ingress_deny_enabled {
+            self.metrics.record_transaction_validated();
+            return Ok(());
+        }
+
         let sender = transaction.sender();
         let kind = transaction.kind();
-        let ruleset = global_ruleset();
+        let ruleset = get_ingress_ruleset();
 
         if ruleset.is_denied(&sender, &kind) {
             self.metrics.record_transaction_denied();
@@ -140,16 +163,18 @@ where
             ..
         } = outcome
         {
-            let ruleset = global_ruleset();
-            let tx = valid_tx.transaction();
-            let tx_hash = *tx.hash();
-            if ruleset.has_scoring_rules() {
-                let score = ruleset.score_transaction(tx);
-                insert_tx_score(tx_hash, score);
-            } else {
-                insert_tx_score(tx_hash, 0);
+            if self.scoring_enabled {
+                let ruleset = get_ordering_ruleset();
+                let tx = valid_tx.transaction();
+                let tx_hash = *tx.hash();
+                if ruleset.has_scoring_rules() {
+                    let score = ruleset.score_transaction(tx);
+                    insert_tx_score(tx_hash, score);
+                } else {
+                    insert_tx_score(tx_hash, 0);
+                }
+                self.metrics.score_cache_size.set(score_cache_len() as f64);
             }
-            self.metrics.score_cache_size.set(score_cache_len() as f64);
         }
 
         outcome

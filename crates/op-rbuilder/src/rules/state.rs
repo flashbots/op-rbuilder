@@ -1,4 +1,4 @@
-//! Global ruleset state management
+//! Global ruleset state management.
 //!
 //! Provides a global, thread-safe ruleset that can be updated atomically.
 //! The ruleset lives behind a global singleton that hot-path components (pool
@@ -10,8 +10,10 @@ use std::{
     sync::{Arc, OnceLock, RwLock},
 };
 
-/// Global ruleset singleton
-static GLOBAL_RULESET: OnceLock<RwLock<Arc<RuleSet>>> = OnceLock::new();
+/// Global ingress ruleset singleton.
+static GLOBAL_INGRESS_RULESET: OnceLock<RwLock<Arc<RuleSet>>> = OnceLock::new();
+/// Global ordering ruleset singleton.
+static GLOBAL_ORDERING_RULESET: OnceLock<RwLock<Arc<RuleSet>>> = OnceLock::new();
 
 /// Global score cache: tx_hash → pre-computed rule score.
 ///
@@ -19,17 +21,41 @@ static GLOBAL_RULESET: OnceLock<RwLock<Arc<RuleSet>>> = OnceLock::new();
 /// [`ScoreOrdering::priority()`] for cheap lookups instead of re-computing.
 static GLOBAL_SCORE_CACHE: OnceLock<RwLock<HashMap<B256, i64>>> = OnceLock::new();
 
-/// Get a reference to the global ruleset
-pub fn global_ruleset() -> Arc<RuleSet> {
-    let lock = GLOBAL_RULESET.get_or_init(|| RwLock::new(Arc::new(RuleSet::default())));
-    lock.read().expect("ruleset lock poisoned").clone()
+/// Get a reference to the ingress ruleset.
+pub fn get_ingress_ruleset() -> Arc<RuleSet> {
+    let lock = GLOBAL_INGRESS_RULESET.get_or_init(|| RwLock::new(Arc::new(RuleSet::default())));
+    lock.read().expect("ingress ruleset lock poisoned").clone()
 }
 
-/// Set the global ruleset (replaces entirely)
-pub fn set_global_ruleset(ruleset: RuleSet) {
-    let lock = GLOBAL_RULESET.get_or_init(|| RwLock::new(Arc::new(RuleSet::default())));
-    let mut guard = lock.write().expect("ruleset lock poisoned");
+/// Set the ingress ruleset (replaces entirely).
+pub fn set_ingress_ruleset(ruleset: RuleSet) {
+    let lock = GLOBAL_INGRESS_RULESET.get_or_init(|| RwLock::new(Arc::new(RuleSet::default())));
+    let mut guard = lock.write().expect("ingress ruleset lock poisoned");
     *guard = Arc::new(ruleset);
+}
+
+/// Get a reference to the ordering ruleset.
+pub fn get_ordering_ruleset() -> Arc<RuleSet> {
+    let lock = GLOBAL_ORDERING_RULESET.get_or_init(|| RwLock::new(Arc::new(RuleSet::default())));
+    lock.read().expect("ordering ruleset lock poisoned").clone()
+}
+
+/// Set the ordering ruleset (replaces entirely).
+pub fn set_ordering_ruleset(ruleset: RuleSet) {
+    let lock = GLOBAL_ORDERING_RULESET.get_or_init(|| RwLock::new(Arc::new(RuleSet::default())));
+    let mut guard = lock.write().expect("ordering ruleset lock poisoned");
+    *guard = Arc::new(ruleset);
+}
+
+/// Compatibility helper returning the ingress ruleset.
+pub fn global_ruleset() -> Arc<RuleSet> {
+    get_ingress_ruleset()
+}
+
+/// Compatibility helper that sets both ingress and ordering rulesets.
+pub fn set_global_ruleset(ruleset: RuleSet) {
+    set_ingress_ruleset(ruleset.clone());
+    set_ordering_ruleset(ruleset);
 }
 
 /// Update the global ruleset atomically by cloning, mutating, then swapping.
@@ -37,8 +63,8 @@ pub fn update_global_ruleset<F>(mutator: F)
 where
     F: FnOnce(&mut RuleSet),
 {
-    let lock = GLOBAL_RULESET.get_or_init(|| RwLock::new(Arc::new(RuleSet::default())));
-    let mut guard = lock.write().expect("ruleset lock poisoned");
+    let lock = GLOBAL_INGRESS_RULESET.get_or_init(|| RwLock::new(Arc::new(RuleSet::default())));
+    let mut guard = lock.write().expect("ingress ruleset lock poisoned");
     // Clone the current ruleset, mutate it, then swap
     let mut new = (**guard).clone();
     mutator(&mut new);
