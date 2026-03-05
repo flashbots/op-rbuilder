@@ -662,7 +662,7 @@ where
             );
             ctx.metrics
                 .reduced_flashblocks_number
-                .record((expected_flashblocks - target_flashblocks) as f64);
+                .increment(expected_flashblocks - target_flashblocks);
         }
 
         let gas_per_batch = ctx.block_gas_limit() / target_flashblocks;
@@ -1095,7 +1095,7 @@ where
             .record(fb_state.flashblock_index() as f64);
         ctx.metrics
             .missing_flashblocks_count
-            .record(flashblocks_per_block.saturating_sub(fb_state.flashblock_index()) as f64);
+            .increment(flashblocks_per_block.saturating_sub(fb_state.flashblock_index()));
         ctx.metrics
             .payload_num_tx
             .record(info.executed_transactions.len() as f64);
