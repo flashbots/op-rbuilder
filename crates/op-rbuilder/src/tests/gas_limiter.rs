@@ -1,7 +1,7 @@
 use crate::{
     args::OpRbuilderArgs,
     gas_limiter::args::GasLimiterArgs,
-    tests::{ChainDriverExt, LocalInstance, TransactionBuilderExt},
+    tests::{ChainDriverExt, TransactionBuilderExt},
 };
 use macros::rb_test;
 use std::collections::HashSet;

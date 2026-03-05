@@ -1,5 +1,5 @@
 use crate::{
-    builders::flashblocks::{ctx::OpPayloadSyncerCtx, p2p::Message, payload::build_block},
+    builder::{p2p::Message, payload::build_block, syncer_ctx::OpPayloadSyncerCtx},
     primitives::reth::ExecutionInfo,
     traits::ClientBounds,
 };

@@ -121,7 +121,7 @@ where
 #[cfg(test)]
 mod tests {
     use crate::{
-        builders::flashblocks::best_txs::{FlashblockCommittedTxs, FlashblockPoolTxCursor},
+        builder::best_txs::{FlashblockCommittedTxs, FlashblockPoolTxCursor},
         mock_tx::{MockFbTransaction, MockFbTransactionFactory},
     };
     use alloy_consensus::Transaction;
