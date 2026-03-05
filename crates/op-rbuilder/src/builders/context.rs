@@ -4,6 +4,7 @@ use alloy_evm::Database;
 use alloy_op_evm::block::receipt_builder::OpReceiptBuilder;
 use alloy_primitives::{BlockHash, Bytes, U256};
 use alloy_rpc_types_eth::Withdrawals;
+use base_access_lists::FBALBuilderDb;
 use core::fmt::Debug;
 use op_alloy_consensus::OpDepositReceipt;
 use op_revm::OpSpecId;
@@ -35,7 +36,11 @@ use reth_primitives_traits::{InMemorySize, SignedTransaction};
 use reth_revm::{State, context::Block};
 use reth_transaction_pool::{BestTransactionsAttributes, PoolTransaction};
 use revm::{DatabaseCommit, context::result::ResultAndState, interpreter::as_u64_saturated};
-use std::{sync::Arc, time::Instant};
+use std::{
+    cmp::{max, min},
+    sync::Arc,
+    time::Instant,
+};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, trace};
 
@@ -288,9 +293,22 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
     ) -> Result<ExecutionInfo<E>, PayloadBuilderError> {
         let mut info = ExecutionInfo::with_capacity(self.attributes().transactions.len());
 
-        let mut evm = self.evm_config.evm_with_env(&mut *db, self.evm_env.clone());
+        let mut fbal_db = FBALBuilderDb::new(&mut *db);
+        let min_tx_index = info.executed_transactions.iter().len() as u64;
+        fbal_db.set_index(min_tx_index);
+        let mut evm = self
+            .evm_config
+            .evm_with_env(&mut fbal_db, self.evm_env.clone());
 
+        let mut min_tx_index = u64::MAX;
+        let mut max_tx_index = u64::MIN;
+        let mut i: u64 = 0;
         for sequencer_tx in &self.attributes().transactions {
+            evm.db_mut().set_index(i);
+            min_tx_index = min(min_tx_index, i);
+            max_tx_index = max(max_tx_index, i);
+            i += 1;
+
             // A sequencer's block should never contain blob transactions.
             if sequencer_tx.value().is_eip4844() {
                 return Err(PayloadBuilderError::other(
@@ -317,6 +335,7 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
             let depositor_nonce = (self.is_regolith_active() && sequencer_tx.is_deposit())
                 .then(|| {
                     evm.db_mut()
+                        .db_mut()
                         .load_cache_account(sequencer_tx.signer())
                         .map(|acc| acc.account_info().unwrap_or_default().nonce)
                 })
@@ -376,6 +395,13 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
             });
 
         info.da_footprint_scalar = da_footprint_gas_scalar;
+
+        match fbal_db.finish() {
+            Ok(fbal_builder) => {
+                info.access_lists = Some(fbal_builder.build(min_tx_index, max_tx_index))
+            }
+            Err(err) => return Err(PayloadBuilderError::Other(Box::new(err))),
+        }
 
         Ok(info)
     }

@@ -21,7 +21,6 @@ use alloy_consensus::{
 use alloy_eips::{Encodable2718, eip7685::EMPTY_REQUESTS_HASH, merge::BEACON_NONCE};
 use alloy_evm::block::BlockExecutionResult;
 use alloy_primitives::{Address, B256, U256};
-use base_access_lists::FlashblockAccessList;
 use eyre::WrapErr as _;
 use op_alloy_rpc_types_engine::{
     OpFlashblockPayload, OpFlashblockPayloadBase, OpFlashblockPayloadDelta,
@@ -89,7 +88,6 @@ type NextBestFlashblocksTxs<Pool> = BestFlashblocksTxs<
 pub(super) struct FlashblocksExecutionInfo {
     /// Index of the last consumed flashblock
     last_flashblock_index: usize,
-    pub access_list: Option<FlashblockAccessList>,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -1090,7 +1088,7 @@ where
         receipts: receipts_with_hash,
         new_account_balances,
         block_number: ctx.parent().number + 1,
-        access_lists: info.extra.access_list,
+        access_lists: info.access_lists.clone(),
     };
 
     let (_, blob_gas_used) = ctx.blob_fields(info);

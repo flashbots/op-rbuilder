@@ -166,13 +166,13 @@ alloy-op-evm = { version = "0.26.3", default-features = false }
 alloy-op-hardforks = "0.4.7"
 op-alloy-rpc-types = { version = "0.23.1", default-features = false }
 # here
-op-alloy-rpc-types-engine = { version = "0.24.0", default-features = false, features = ["serde"] }
+op-alloy-rpc-types-engine = { version = "0.23.2", default-features = false, features = ["serde"] }
 op-alloy-rpc-jsonrpsee = { version = "0.23.1", default-features = false }
 op-alloy-network = { version = "0.23.1", default-features = false }
 op-alloy-consensus = { version = "0.23.1", default-features = false }
 op-alloy-flz = { version = "0.13.1", default-features = false }
 
-base-access-lists = { git = "https://github.com/base/base.git" }
+base-access-lists = { git = "https://github.com/base/base.git", rev = "264ae1ca69ed19d938c4207a0a3a8940ab4abd3f" }
 
 async-trait = { version = "0.1.83" }
 clap = { version = "4.4.3", features = ["derive", "env", "string"] }
@@ -216,4 +216,5 @@ vergen-git2 = "9.0.4"
 opentelemetry = { version = "0.31", features = ["trace"] }
 
 [patch.crates-io]
-op-alloy-rpc-types-engine = { path = "../optimism/rust/op-alloy/crates/rpc-types-engine" }
+op-alloy-rpc-types-engine = { git = "https://github.com/ethereum-optimism/optimism", branch = "joshklop/fbals" }
+op-alloy-consensus = { git = "https://github.com/ethereum-optimism/optimism", branch = "joshklop/fbals" }

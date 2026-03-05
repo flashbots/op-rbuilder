@@ -421,7 +421,7 @@ fn execute_transactions(
     info.da_footprint_scalar = da_footprint_gas_scalar;
 
     let fbal_builder = fbal_db.finish()?;
-    info.extra.access_list = Some(fbal_builder.build(min_tx_index, max_tx_index));
+    info.access_lists = Some(fbal_builder.build(min_tx_index, max_tx_index));
 
     Ok(())
 }

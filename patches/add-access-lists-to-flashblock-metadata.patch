@@ -1,0 +1,23 @@
+--- a/src/flashblock/metadata.rs
++++ b/src/flashblock/metadata.rs
+@@ -2,6 +2,7 @@
+
+ use alloc::collections::BTreeMap;
+ use alloy_primitives::{Address, B256, U256};
++use base_access_lists::FlashblockAccessList;
+ use op_alloy_consensus::OpReceipt;
+
+ /// Provides metadata about the block that may be useful for indexing or analysis.
+@@ -18,6 +19,12 @@
+     /// Contains logs, gas usage, and other EVM-level metadata.
+     #[cfg_attr(feature = "serde", serde(deserialize_with = "deserialize_flashblock_receipts"))]
+     pub receipts: BTreeMap<B256, OpReceipt>,
++    /// Optional access lists for the flashblock, tracking state access information.
++    // TODO: Remove this vendored crate once upstream op-alloy-rpc-types-engine natively includes
++    // the `access_lists` field in `OpFlashblockPayloadMetadata`.
++    #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
++    #[cfg_attr(feature = "serde", serde(default))]
++    pub access_lists: Option<FlashblockAccessList>,
+ }
+
+ #[cfg(feature = "serde")]
