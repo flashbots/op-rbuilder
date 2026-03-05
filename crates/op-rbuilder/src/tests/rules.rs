@@ -71,7 +71,6 @@ fn test_ruleset_deny_matches_sender_and_receiver() {
             addresses: vec![sender],
             aliases: vec![],
         },
-        remote_endpoint: None,
     });
 
     assert!(ruleset.is_denied(&sender, &TxKind::Call(receiver)));
@@ -84,7 +83,6 @@ fn test_ruleset_deny_matches_sender_and_receiver() {
             addresses: vec![receiver],
             aliases: vec![],
         },
-        remote_endpoint: None,
     });
 
     assert!(ruleset.is_denied(&Address::random(), &TxKind::Call(receiver)));
@@ -107,7 +105,6 @@ fn test_ruleset_alias_matching() {
             addresses: vec![],
             aliases: vec!["blocked".into()],
         },
-        remote_endpoint: None,
     });
 
     assert!(ruleset.is_denied(&sender, &TxKind::Call(Address::random())));
@@ -223,7 +220,6 @@ fn test_ruleset_merge_merges_rules_and_aliases() {
             addresses: vec![denied_sender],
             aliases: vec![],
         },
-        remote_endpoint: None,
     });
     base.aliases.insert_group("group1", vec![alias_addr]);
 
@@ -262,7 +258,6 @@ fn test_ruleset_serialization_roundtrip() {
             addresses: vec![sender],
             aliases: vec![],
         },
-        remote_endpoint: None,
     });
     ruleset.rules.boost.push(BoostRule {
         name: Some("vip boost".into()),
@@ -294,7 +289,6 @@ fn test_ruleset_is_restricted_fields_delegates_to_deny() {
             addresses: vec![sender],
             aliases: vec![],
         },
-        remote_endpoint: None,
     });
 
     assert!(ruleset.is_restricted_fields(&sender, &TxKind::Call(Address::random()), &[0u8; 0]));
@@ -314,7 +308,6 @@ fn test_global_ruleset_state_roundtrip() {
             addresses: vec![blocked],
             aliases: vec![],
         },
-        remote_endpoint: None,
     });
 
     set_global_ruleset(ruleset.clone());
@@ -338,7 +331,6 @@ fn test_global_ruleset_add_and_clear_rules() {
             addresses: vec![blocked],
             aliases: vec![],
         },
-        remote_endpoint: None,
     });
     add_scoring_rule(BoostRule {
         name: Some("boost".into()),
@@ -397,7 +389,6 @@ fn test_set_global_ruleset_updates_state() {
             addresses: vec![sender],
             aliases: vec![],
         },
-        remote_endpoint: None,
     });
 
     set_global_ruleset(updated);
@@ -418,7 +409,6 @@ fn test_fetcher_refresh_global_ruleset() {
             addresses: vec![blocked],
             aliases: vec![],
         },
-        remote_endpoint: None,
     });
 
     let mut fetcher = RuleFetcher::new();
@@ -468,7 +458,6 @@ fn test_rule_based_validator_blocks_denied_sender() {
             addresses: vec![blocked],
             aliases: vec![],
         },
-        remote_endpoint: None,
     });
 
     let validator = RuleBasedValidator::new(PassthroughValidator::default());
@@ -496,7 +485,6 @@ fn test_rule_based_validator_denied_tx_does_not_mark_as_bad() {
             addresses: vec![blocked],
             aliases: vec![],
         },
-        remote_endpoint: None,
     });
 
     let validator = RuleBasedValidator::new(PassthroughValidator::default());
@@ -527,7 +515,6 @@ fn test_rule_based_validator_allows_non_blocked_sender() {
             addresses: vec![blocked],
             aliases: vec![],
         },
-        remote_endpoint: None,
     });
 
     let validator = RuleBasedValidator::new(PassthroughValidator::default());
@@ -554,7 +541,6 @@ fn test_rule_based_validator_blocks_denied_receiver() {
             addresses: vec![blocked_receiver],
             aliases: vec![],
         },
-        remote_endpoint: None,
     });
 
     let validator = RuleBasedValidator::new(PassthroughValidator::default());
@@ -776,7 +762,6 @@ fn test_ruleset_deny_create_transactions() {
             addresses: vec![sender],
             aliases: vec![],
         },
-        remote_endpoint: None,
     });
 
     // Deny should work for both Call and Create transactions
@@ -855,7 +840,6 @@ fn test_fetcher_merges_multiple_registries() {
             addresses: vec![addr1],
             aliases: vec![],
         },
-        remote_endpoint: None,
     });
 
     let mut ruleset2 = RuleSet::default();
@@ -900,7 +884,6 @@ fn test_fetcher_fetch_all_returns_merged_rules() {
             addresses: vec![addr],
             aliases: vec![],
         },
-        remote_endpoint: None,
     });
 
     let mut fetcher = RuleFetcher::new();
@@ -964,7 +947,6 @@ fn test_ruleset_merge_preserves_existing_rules() {
             addresses: vec![addr1],
             aliases: vec![],
         },
-        remote_endpoint: None,
     });
     base.rules.boost.push(BoostRule {
         name: Some("base boost".into()),
@@ -984,7 +966,6 @@ fn test_ruleset_merge_preserves_existing_rules() {
             addresses: vec![addr2],
             aliases: vec![],
         },
-        remote_endpoint: None,
     });
     extra.rules.boost.push(BoostRule {
         name: Some("extra boost".into()),
@@ -1018,7 +999,6 @@ fn test_ruleset_denied_match_reason() {
             addresses: vec![sender],
             aliases: vec![],
         },
-        remote_endpoint: None,
     });
     ruleset.rules.deny.push(DenyRule {
         name: Some("deny receiver".into()),
@@ -1027,7 +1007,6 @@ fn test_ruleset_denied_match_reason() {
             addresses: vec![receiver],
             aliases: vec![],
         },
-        remote_endpoint: None,
     });
 
     let sender_match = ruleset.denied_match(&sender, &TxKind::Call(Address::random()));
@@ -1189,7 +1168,6 @@ fn test_deny_match_reason_returns_correct_variant_for_sender() {
             addresses: vec![sender],
             aliases: vec![],
         },
-        remote_endpoint: None,
     });
 
     let result = ruleset.denied_match(&sender, &TxKind::Call(receiver));
@@ -1213,7 +1191,6 @@ fn test_deny_match_reason_returns_correct_variant_for_receiver() {
             addresses: vec![receiver],
             aliases: vec![],
         },
-        remote_endpoint: None,
     });
 
     let result = ruleset.denied_match(&sender, &TxKind::Call(receiver));
@@ -1239,7 +1216,6 @@ fn test_deny_match_sender_takes_priority_over_receiver() {
             addresses: vec![sender, receiver],
             aliases: vec![],
         },
-        remote_endpoint: None,
     });
 
     let result = ruleset.denied_match(&sender, &TxKind::Call(receiver));
@@ -1265,7 +1241,6 @@ fn test_deny_match_returns_none_for_create_receiver() {
             addresses: vec![receiver_to_deny],
             aliases: vec![],
         },
-        remote_endpoint: None,
     });
 
     // Create transaction - receiver deny rule should not match
@@ -1281,47 +1256,9 @@ fn test_deny_match_returns_none_for_create_receiver() {
             addresses: vec![sender],
             aliases: vec![],
         },
-        remote_endpoint: None,
     });
     let result2 = ruleset2.denied_match(&sender, &TxKind::Create);
     assert!(result2.is_some());
-}
-
-#[test]
-fn test_external_deny_list_config_default_values() {
-    let config = crate::rules::types::ExternalDenyListConfig::default();
-    assert_eq!(config.endpoint, "https://www.google.com");
-    assert!(config.allow_fail);
-    assert_eq!(config.timeout, 1000);
-}
-
-#[test]
-fn test_deny_rule_with_remote_endpoint_serialization() {
-    use crate::rules::types::ExternalDenyListConfig;
-
-    let rule = DenyRule {
-        name: Some("external deny".into()),
-        description: Some("External validation".into()),
-        addrs: AddrSet {
-            addresses: vec![Address::random()],
-            aliases: vec!["blocked".into()],
-        },
-        remote_endpoint: Some(ExternalDenyListConfig {
-            endpoint: "https://example.com/check".to_string(),
-            allow_fail: false,
-            timeout: 5000,
-        }),
-    };
-
-    let json = serde_json::to_string(&rule).unwrap();
-    let decoded: DenyRule = serde_json::from_str(&json).unwrap();
-
-    assert_eq!(decoded.name, Some("external deny".into()));
-    assert!(decoded.remote_endpoint.is_some());
-    let endpoint = decoded.remote_endpoint.unwrap();
-    assert_eq!(endpoint.endpoint, "https://example.com/check");
-    assert!(!endpoint.allow_fail);
-    assert_eq!(endpoint.timeout, 5000);
 }
 
 #[test]
@@ -1772,26 +1709,6 @@ aliases:
 }
 
 #[test]
-fn test_ruleset_yaml_deny_with_remote_endpoint() {
-    let yaml = r#"
-rules:
-  deny:
-    - name: "external check"
-      addresses: []
-      remote_endpoint:
-        endpoint: "https://api.example.com/check"
-        allow_fail: false
-        timeout: 5000
-"#;
-    let ruleset: RuleSet = serde_yaml::from_str(yaml).unwrap();
-    assert_eq!(ruleset.rules.deny.len(), 1);
-    let endpoint = ruleset.rules.deny[0].remote_endpoint.as_ref().unwrap();
-    assert_eq!(endpoint.endpoint, "https://api.example.com/check");
-    assert!(!endpoint.allow_fail);
-    assert_eq!(endpoint.timeout, 5000);
-}
-
-#[test]
 fn test_ruleset_yaml_invalid_match_type_fails() {
     let yaml = r#"
 rules:
@@ -2035,7 +1952,6 @@ fn test_deny_rule_with_empty_addrs_denies_nothing() {
                 name: Some("empty deny".into()),
                 description: None,
                 addrs: AddrSet::default(),
-                remote_endpoint: None,
             }],
             boost: vec![],
         },
@@ -2061,7 +1977,6 @@ fn test_is_restricted_fields_delegates_to_is_denied() {
             addresses: vec![sender],
             aliases: vec![],
         },
-        remote_endpoint: None,
     });
 
     // is_restricted_fields should return true when is_denied returns true

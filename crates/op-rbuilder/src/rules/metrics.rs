@@ -15,15 +15,6 @@ pub struct RulesMetrics {
     /// Time to fetch rules from registries
     pub registry_fetch_duration: Histogram,
 
-    /// Successful external validation requests
-    pub external_validation_success: Counter,
-    /// Failed external validation requests
-    pub external_validation_failures: Counter,
-    /// Transactions rejected by external validation
-    pub external_validation_rejections: Counter,
-    /// External validation request duration
-    pub external_validation_duration: Histogram,
-
     /// Transactions denied by ingress rules
     pub transactions_denied: Counter,
     /// Transactions that passed ingress validation
@@ -67,19 +58,6 @@ impl RulesMetrics {
         );
         if let Some(h) = hash {
             self.active_ruleset_hash.set(h as f64);
-        }
-    }
-
-    pub fn record_external_validation(&self, success: bool, rejected: bool, duration: Duration) {
-        self.external_validation_duration
-            .record(duration.as_secs_f64());
-        if success {
-            self.external_validation_success.increment(1);
-            if rejected {
-                self.external_validation_rejections.increment(1);
-            }
-        } else {
-            self.external_validation_failures.increment(1);
         }
     }
 

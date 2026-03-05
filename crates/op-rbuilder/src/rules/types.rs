@@ -40,27 +40,6 @@ impl AddrSet {
     }
 }
 
-/// Configuration for the optional external denylist validation.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ExternalDenyListConfig {
-    /// Remote endpoint to call for validation.
-    pub endpoint: String,
-    /// Whether to allow transactions to pass when the HTTP request fails.
-    pub allow_fail: bool,
-    /// Timeout applied to the HTTP request in milliseconds.
-    pub timeout: u64,
-}
-
-impl Default for ExternalDenyListConfig {
-    fn default() -> Self {
-        Self {
-            endpoint: "https://www.google.com".to_string(),
-            allow_fail: true,
-            timeout: 1000,
-        }
-    }
-}
-
 /// Deny rule - blocks transactions
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct DenyRule {
@@ -73,9 +52,6 @@ pub struct DenyRule {
     /// Addresses to deny (direct or via aliases)
     #[serde(default, flatten)]
     pub addrs: AddrSet,
-    /// Optional remote denylist endpoint like https://denylist.example.com/check
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub remote_endpoint: Option<ExternalDenyListConfig>,
 }
 
 /// Match type for boost rules

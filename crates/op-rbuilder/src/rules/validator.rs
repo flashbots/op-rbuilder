@@ -1,41 +1,32 @@
-//! Transaction pool validator that integrates rule checks and optional external validation.
+//! Transaction pool validator that integrates rule checks.
 //!
 //! This validator wraps any base validator and adds custom ingress filtering in front of it. The
-//! additional checks include rule-based deny lists backed by the shared global ruleset as well as
-//! an optional HTTP call-out for bespoke validation logic.
+//! additional checks include rule-based deny lists backed by the shared global ruleset.
 
 use crate::rules::{
     global_ruleset,
     metrics::RulesMetrics,
     state::{insert_tx_score, score_cache_len},
 };
-use reqwest::Client;
 use reth_primitives_traits::{Block, SealedBlock};
 use reth_transaction_pool::{
     PoolTransaction, TransactionOrigin, TransactionValidationOutcome, TransactionValidator,
     error::{InvalidPoolTransactionError, PoolTransactionError},
 };
-use std::{
-    any::Any,
-    fmt,
-    time::{Duration, Instant},
-};
-use tracing::{debug, warn};
+use std::{any::Any, fmt};
+use tracing::warn;
 
-/// Rule-based transaction validator that applies ingress-phase rules and optional external checks.
+/// Rule-based transaction validator that applies ingress-phase rules.
 ///
-/// This validator wraps `OpTransactionValidator` (or any other `TransactionValidator`) and adds:
-/// 1. Optional rule-based deny checking backed by the shared global ruleset.
-/// 2. Optional external validation hook.
+/// This validator wraps `OpTransactionValidator` (or any other `TransactionValidator`) and adds
+/// optional rule-based deny checking backed by the shared global ruleset.
 ///
-/// Both checks happen before delegating to the wrapped validator. When rules are disabled or no
-/// external validation is configured, the validator acts as a simple passthrough.
+/// The check happens before delegating to the wrapped validator. When rules are disabled,
+/// the validator acts as a simple passthrough.
 #[derive(Debug)]
 pub struct RuleBasedValidator<V> {
     /// The wrapped validator (typically `OpTransactionValidator`).
     inner: V,
-    /// HTTP client for external validation.
-    client: Client,
     /// Metrics for rule-based validation.
     metrics: RulesMetrics,
 }
@@ -44,7 +35,6 @@ impl<V: Clone> Clone for RuleBasedValidator<V> {
     fn clone(&self) -> Self {
         Self {
             inner: self.inner.clone(),
-            client: self.client.clone(),
             metrics: self.metrics.clone(),
         }
     }
@@ -52,13 +42,8 @@ impl<V: Clone> Clone for RuleBasedValidator<V> {
 
 impl<V> RuleBasedValidator<V> {
     pub fn new(inner: V) -> Self {
-        let client = Client::builder()
-            .timeout(Duration::from_secs(1))
-            .build()
-            .expect("Failed to create HTTP client");
         Self {
             inner,
-            client,
             metrics: RulesMetrics::default(),
         }
     }
@@ -85,102 +70,6 @@ impl<V> RuleBasedValidator<V> {
         self.metrics.record_transaction_validated();
         Ok(())
     }
-
-    async fn validate_with_external_api<T>(&self, transaction: &T) -> Result<(), String>
-    where
-        T: PoolTransaction,
-    {
-        let ruleset = global_ruleset();
-        let tx_hash = transaction.hash();
-        let sender = transaction.sender();
-        let nonce = transaction.nonce();
-
-        let remote_endpoint_rules: Vec<_> = ruleset
-            .rules
-            .deny
-            .iter()
-            .filter_map(|rule| rule.remote_endpoint.as_ref().map(|config| (rule, config)))
-            .collect();
-
-        if remote_endpoint_rules.is_empty() {
-            return Ok(());
-        }
-
-        for (rule, config) in remote_endpoint_rules {
-            debug!(
-                target: "rule_validator",
-                tx_hash = %tx_hash,
-                sender = %sender,
-                endpoint = %config.endpoint,
-                rule_name = ?rule.name,
-                "Validating with external endpoint"
-            );
-
-            let tx_hash_str = tx_hash.to_string();
-            let sender_str = sender.to_string();
-            let nonce_str = nonce.to_string();
-            let start = Instant::now();
-
-            let response = self
-                .client
-                .get(&config.endpoint)
-                .query(&[
-                    ("tx_hash", tx_hash_str.as_str()),
-                    ("sender", sender_str.as_str()),
-                    ("nonce", nonce_str.as_str()),
-                ])
-                .timeout(Duration::from_millis(config.timeout))
-                .send()
-                .await;
-
-            let duration = start.elapsed();
-
-            match response {
-                Ok(response) => {
-                    if response.status().is_success() {
-                        self.metrics
-                            .record_external_validation(true, false, duration);
-                    } else {
-                        self.metrics
-                            .record_external_validation(true, true, duration);
-                        warn!(
-                            target: "rule_validator",
-                            tx_hash = %tx_hash,
-                            endpoint = %config.endpoint,
-                            status = %response.status(),
-                            "External validation rejected"
-                        );
-                        return Err(format!(
-                            "External validation failed: {} returned {}",
-                            config.endpoint,
-                            response.status()
-                        ));
-                    }
-                }
-                Err(err) => {
-                    self.metrics
-                        .record_external_validation(false, false, duration);
-                    warn!(
-                        target: "rule_validator",
-                        tx_hash = %tx_hash,
-                        endpoint = %config.endpoint,
-                        error = %err,
-                        allow_fail = config.allow_fail,
-                        "External validation request failed"
-                    );
-
-                    if !config.allow_fail {
-                        return Err(format!(
-                            "External validation failed: {} (endpoint: {})",
-                            err, config.endpoint
-                        ));
-                    }
-                }
-            }
-        }
-
-        Ok(())
-    }
 }
 
 /// Error type for rule-based validation failures.
@@ -194,8 +83,8 @@ struct RuleValidationError {
     ///
     /// - `true`: The transaction is permanently invalid (e.g., sender is on deny list).
     ///   It should be discarded immediately and not re-validated later.
-    /// - `false`: The transaction is temporarily invalid (e.g., external validation
-    ///   service was unreachable). It may become valid later and can be retried.
+    /// - `false`: The transaction is temporarily invalid. It may become valid later
+    ///   and can be retried.
     is_bad: bool,
 }
 
@@ -238,13 +127,6 @@ where
         transaction: Self::Transaction,
     ) -> TransactionValidationOutcome<Self::Transaction> {
         if let Err(e) = self.validate_against_rules(&transaction) {
-            return TransactionValidationOutcome::Invalid(
-                transaction,
-                InvalidPoolTransactionError::other(RuleValidationError::new(e, false)),
-            );
-        }
-
-        if let Err(e) = self.validate_with_external_api(&transaction).await {
             return TransactionValidationOutcome::Invalid(
                 transaction,
                 InvalidPoolTransactionError::other(RuleValidationError::new(e, false)),

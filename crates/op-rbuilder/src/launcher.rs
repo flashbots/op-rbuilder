@@ -208,7 +208,7 @@ where
             if rules_enabled {
                 tracing::info!("Integrating rules validator with transaction pool");
             } else {
-                tracing::info!("Rules disabled at runtime, external validation only");
+                tracing::info!("Rules disabled at runtime, validator acts as passthrough");
             }
 
             builder.with_validator_wrapper(RuleBasedValidator::new)
