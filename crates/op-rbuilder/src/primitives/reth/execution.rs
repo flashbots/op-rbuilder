@@ -23,7 +23,7 @@ pub enum TxnExecutionResult {
     RevertedAndExcluded,
     MaxGasUsageExceeded,
     ConditionalCheckFailed,
-    PriorityFeeTooLow,
+    BackrunPriorityFeeInvalid,
     CoinbaseProfitTooLow,
 }
 

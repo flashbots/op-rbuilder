@@ -707,11 +707,11 @@ impl OpPayloadBuilderCtx {
 
                     if self.backrun_ctx.args.enforce_strict_priority_fee_ordering {
                         if backrun_priority_fee != miner_fee {
-                            log_br_txn(TxnExecutionResult::PriorityFeeTooLow);
+                            log_br_txn(TxnExecutionResult::BackrunPriorityFeeInvalid);
                             continue;
                         }
                     } else if backrun_priority_fee < miner_fee {
-                        log_br_txn(TxnExecutionResult::PriorityFeeTooLow);
+                        log_br_txn(TxnExecutionResult::BackrunPriorityFeeInvalid);
                         continue;
                     }
 
