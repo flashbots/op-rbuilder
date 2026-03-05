@@ -7,6 +7,9 @@ use futures::{StreamExt, future::join_all, stream};
 use macros::rb_test;
 use std::sync::{LazyLock, Mutex};
 
+// Rules state is currently process-global (`set_global_ruleset`), so parallel rules_* tests can
+// race and overwrite each other's configuration. Serialize only the rules_* ordering tests until
+// rules state is made instance-scoped.
 static RULES_TEST_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
 /// This test ensures that the transactions are ordered by fee priority in the block.
