@@ -378,7 +378,7 @@ mod tests {
 
     #[test]
     fn test_cancellation() {
-        let gp = BackrunBundleGlobalPool::default();
+        let gp = BackrunBundleGlobalPool::new(false);
         let s = Signer::random();
         let target = B256::random();
         let uuid = uuid::Uuid::new_v4();
@@ -443,7 +443,7 @@ mod tests {
         assert!(!gp.cancel_bundle(uuid, bundle_replacement_nonce + 3, 30));
         assert!(matches!(
             gp.inner.replacements.get(&uuid).as_deref(),
-            Some(UuidEntry::Cancellation { nonce, max_block: 25 }) if *nonce == bundle_replacement_nonce + 3
+            Some(&UuidEntry::Cancellation { nonce, max_block: 25 }) if nonce == bundle_replacement_nonce + 3
         ));
     }
 }
