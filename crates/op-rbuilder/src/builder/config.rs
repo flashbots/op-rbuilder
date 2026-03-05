@@ -1,6 +1,6 @@
 use alloy_primitives::Address;
 
-use crate::{args::OpRbuilderArgs, builders::BuilderConfig};
+use crate::args::OpRbuilderArgs;
 use core::{
     net::{Ipv4Addr, SocketAddr},
     time::Duration,
@@ -111,15 +111,11 @@ impl TryFrom<OpRbuilderArgs> for FlashblocksConfig {
     }
 }
 
-pub(super) trait FlashBlocksConfigExt {
-    fn flashblocks_per_block(&self) -> u64;
-}
-
-impl FlashBlocksConfigExt for BuilderConfig<FlashblocksConfig> {
-    fn flashblocks_per_block(&self) -> u64 {
-        if self.block_time.as_millis() == 0 {
+impl FlashblocksConfig {
+    pub(super) fn flashblocks_per_block(&self, block_time: core::time::Duration) -> u64 {
+        if block_time.as_millis() == 0 {
             return 0;
         }
-        (self.block_time.as_millis() / self.specific.interval.as_millis()) as u64
+        (block_time.as_millis() / self.interval.as_millis()) as u64
     }
 }

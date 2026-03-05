@@ -39,18 +39,16 @@ impl StoredBackrunBundle {
     /// - `flashblock_number_min` is only enforced on the first block (`block_number`)
     /// - `flashblock_number_max` is only enforced on the last block (`block_number_max`)
     /// - On intermediate blocks all flashblocks are valid
-    pub fn is_valid(&self, block_number: u64, flashblock_number: Option<u64>) -> bool {
+    pub fn is_valid(&self, block_number: u64, flashblock_number: u64) -> bool {
         if block_number < self.block_number_min || block_number > self.block_number_max {
             return false;
         }
 
-        if let Some(fb) = flashblock_number {
-            if block_number == self.block_number_min && fb < self.flashblock_number_min {
-                return false;
-            }
-            if block_number == self.block_number_max && fb > self.flashblock_number_max {
-                return false;
-            }
+        if block_number == self.block_number_min && flashblock_number < self.flashblock_number_min {
+            return false;
+        }
+        if block_number == self.block_number_max && flashblock_number > self.flashblock_number_max {
+            return false;
         }
 
         true
@@ -264,35 +262,25 @@ mod tests {
         let target = B256::random();
         let mut b = make_backrun_bundle(&s, target, (10, 15)).build();
 
-        // Block range
-        assert!(!b.is_valid(9, None), "before range");
-        assert!(b.is_valid(10, None), "at start");
-        assert!(b.is_valid(12, None), "middle");
-        assert!(b.is_valid(15, None), "at end");
-        assert!(!b.is_valid(16, None), "after range");
-
         // Flashblock min only enforced on first block
         b.flashblock_number_min = 3;
-        assert!(!b.is_valid(10, Some(2)), "fb < min on first block");
-        assert!(b.is_valid(10, Some(3)), "fb == min on first block");
-        assert!(b.is_valid(11, Some(0)), "fb < min on non-first block OK");
+        assert!(!b.is_valid(10, 2), "fb < min on first block");
+        assert!(b.is_valid(10, 3), "fb == min on first block");
+        assert!(b.is_valid(11, 0), "fb < min on non-first block OK");
 
         // Flashblock max only enforced on last block
         b.flashblock_number_max = 5;
-        assert!(!b.is_valid(15, Some(6)), "fb > max on last block");
-        assert!(b.is_valid(15, Some(5)), "fb == max on last block");
-        assert!(b.is_valid(14, Some(99)), "fb > max on non-last block OK");
+        assert!(!b.is_valid(15, 6), "fb > max on last block");
+        assert!(b.is_valid(15, 5), "fb == max on last block");
+        assert!(b.is_valid(14, 99), "fb > max on non-last block OK");
 
         // Single-block range: both min and max enforced
         let mut single = make_backrun_bundle(&s, target, (10, 10)).build();
         single.flashblock_number_min = 2;
         single.flashblock_number_max = 5;
-        assert!(!single.is_valid(10, Some(1)), "below min");
-        assert!(single.is_valid(10, Some(3)), "in range");
-        assert!(!single.is_valid(10, Some(6)), "above max");
-
-        // No flashblock number: constraints ignored
-        assert!(b.is_valid(10, None));
+        assert!(!single.is_valid(10, 1), "below min");
+        assert!(single.is_valid(10, 3), "in range");
+        assert!(!single.is_valid(10, 6), "above max");
     }
 
     #[test]

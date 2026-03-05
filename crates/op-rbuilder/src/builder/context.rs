@@ -4,7 +4,6 @@ use alloy_evm::Database;
 use alloy_op_evm::block::receipt_builder::OpReceiptBuilder;
 use alloy_primitives::{B256, BlockHash, Bytes, U256};
 use alloy_rpc_types_eth::Withdrawals;
-use core::fmt::Debug;
 use op_alloy_consensus::OpDepositReceipt;
 use op_revm::{OpSpecId, OpTransactionError};
 use reth::payload::PayloadBuilderAttributes;
@@ -49,12 +48,9 @@ use crate::{
     metrics::OpRBuilderMetrics,
     primitives::reth::{ExecutionInfo, TxnExecutionResult},
     traits::PayloadTxsBounds,
-    tx::MaybeRevertingTransaction,
-    tx_signer::Signer,
 };
 
 /// Container type that holds all necessities to build a new payload.
-#[derive(Debug)]
 pub struct OpPayloadBuilderCtx {
     /// The type that knows how to perform system calls and configure the evm.
     pub evm_config: OpEvmConfig,
@@ -72,8 +68,6 @@ pub struct OpPayloadBuilderCtx {
     pub block_env_attributes: OpNextBlockEnvAttributes,
     /// Marker to check whether the job has been cancelled.
     pub cancel: CancellationToken,
-    /// The builder signer
-    pub builder_signer: Option<Signer>,
     /// The metrics for the builder
     pub metrics: Arc<OpRBuilderMetrics>,
     /// Max gas that can be used by a transaction.
@@ -392,7 +386,7 @@ impl OpPayloadBuilderCtx {
         block_gas_limit: u64,
         block_da_limit: Option<u64>,
         block_da_footprint_limit: Option<u64>,
-        flashblock_index: Option<u64>,
+        flashblock_index: u64,
     ) -> Result<Option<()>, PayloadBuilderError> {
         let execute_txs_start_time = Instant::now();
         let mut num_txs_considered = 0;

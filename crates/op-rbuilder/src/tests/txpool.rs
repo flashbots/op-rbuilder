@@ -1,6 +1,4 @@
-use crate::tests::{
-    BlockTransactionsExt, ChainDriverExt, LocalInstance, ONE_ETH, default_node_config,
-};
+use crate::tests::{BlockTransactionsExt, ChainDriverExt, ONE_ETH, default_node_config};
 use macros::rb_test;
 use reth::args::TxPoolArgs;
 use reth_node_builder::NodeConfig;
@@ -14,8 +12,7 @@ use reth_optimism_chainspec::OpChainSpec;
             ..Default::default()
         },
         ..default_node_config()
-    },
-    standard
+    }
 )]
 async fn pending_pool_limit(rbuilder: LocalInstance) -> eyre::Result<()> {
     let driver = rbuilder.driver().await?;

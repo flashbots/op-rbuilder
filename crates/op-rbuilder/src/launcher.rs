@@ -6,15 +6,13 @@ use crate::{
     backrun_bundle::{
         BackrunBundleApiServer, BackrunBundleRpc, maintain_backrun_bundle_pool_future,
     },
-    builders::{BuilderConfig, BuilderMode, FlashblocksBuilder, PayloadBuilder, StandardBuilder},
+    builder::{BuilderConfig, FlashblocksServiceBuilder},
     metrics::{VERSION, record_flag_gauge_metrics},
     monitor_tx_pool::monitor_tx_pool,
-    primitives::reth::engine_api_builder::OpEngineApiBuilder,
     revert_protection::{EthApiExtServer, RevertProtectionExt},
     tx::FBPooledTransaction,
 };
 use clap_builder::{CommandFactory, FromArgMatches};
-use core::fmt::Debug;
 use moka::future::Cache;
 use reth::builder::{NodeBuilder, WithLaunchContext};
 use reth_cli_commands::launcher::Launcher;
@@ -27,14 +25,12 @@ use reth_optimism_node::{
 };
 use reth_provider::CanonStateSubscriptions;
 use reth_transaction_pool::TransactionPool;
-use std::{marker::PhantomData, sync::Arc};
+use std::sync::Arc;
 
 pub fn launch() -> Result<()> {
     // Ignore unrecognized flags
     let arg_matches = Cli::command().ignore_errors(true).get_matches();
     let cli = Cli::from_arg_matches(&arg_matches).map_err(|e| e.exit())?;
-
-    let mode = cli.builder_mode();
 
     #[cfg(feature = "telemetry")]
     let telemetry_args = match &cli.command {
@@ -56,57 +52,19 @@ pub fn launch() -> Result<()> {
         cli_app.access_tracing_layers()?.add_layer(telemetry_layer);
     }
 
-    match mode {
-        BuilderMode::Standard => {
-            tracing::info!("Starting OP builder in standard mode");
-            let launcher = BuilderLauncher::<StandardBuilder>::new();
-            cli_app.run(launcher)?;
-        }
-        BuilderMode::Flashblocks => {
-            tracing::info!("Starting OP builder in flashblocks mode");
-            let launcher = BuilderLauncher::<FlashblocksBuilder>::new();
-            cli_app.run(launcher)?;
-        }
-    }
+    cli_app.run(BuilderLauncher)?;
     Ok(())
 }
 
-pub struct BuilderLauncher<B> {
-    _builder: PhantomData<B>,
-}
+struct BuilderLauncher;
 
-impl<B> BuilderLauncher<B>
-where
-    B: PayloadBuilder,
-{
-    pub fn new() -> Self {
-        Self {
-            _builder: PhantomData,
-        }
-    }
-}
-
-impl<B> Default for BuilderLauncher<B>
-where
-    B: PayloadBuilder,
-{
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl<B> Launcher<OpChainSpecParser, OpRbuilderArgs> for BuilderLauncher<B>
-where
-    B: PayloadBuilder,
-    BuilderConfig<B::Config>: TryFrom<OpRbuilderArgs>,
-    <BuilderConfig<B::Config> as TryFrom<OpRbuilderArgs>>::Error: Debug,
-{
+impl Launcher<OpChainSpecParser, OpRbuilderArgs> for BuilderLauncher {
     async fn entrypoint(
         self,
         builder: WithLaunchContext<NodeBuilder<Arc<DatabaseEnv>, OpChainSpec>>,
         builder_args: OpRbuilderArgs,
     ) -> Result<()> {
-        let builder_config = BuilderConfig::<B::Config>::try_from(builder_args.clone())
+        let builder_config = BuilderConfig::try_from(builder_args.clone())
             .expect("Failed to convert rollup args to builder config");
 
         record_flag_gauge_metrics(&builder_args);
@@ -121,22 +79,14 @@ where
         let backrun_bundle_pool = builder_config.backrun_bundle_pool.clone();
         let backrun_bundle_pool_maintain = backrun_bundle_pool.clone();
 
-        let mut addons: OpAddOns<
-            _,
-            OpEthApiBuilder,
-            OpEngineValidatorBuilder,
-            OpEngineApiBuilder<OpEngineValidatorBuilder>,
-        > = OpAddOnsBuilder::default()
-            .with_sequencer(rollup_args.sequencer.clone())
-            .with_enable_tx_conditional(rollup_args.enable_tx_conditional)
-            .with_da_config(da_config)
-            .with_gas_limit_config(gas_limit_config)
-            .build();
-        if cfg!(feature = "custom-engine-api") {
-            let engine_builder: OpEngineApiBuilder<OpEngineValidatorBuilder> =
-                OpEngineApiBuilder::default();
-            addons = addons.with_engine_api(engine_builder);
-        }
+        let addons: OpAddOns<_, OpEthApiBuilder, OpEngineValidatorBuilder> =
+            OpAddOnsBuilder::default()
+                .with_sequencer(rollup_args.sequencer.clone())
+                .with_enable_tx_conditional(rollup_args.enable_tx_conditional)
+                .with_da_config(da_config)
+                .with_gas_limit_config(gas_limit_config)
+                .build();
+
         let handle = builder
             .with_types::<OpNode>()
             .with_components(
@@ -155,7 +105,7 @@ where
                                 rollup_args.supervisor_safety_level,
                             ),
                     )
-                    .payload(B::new_service(builder_config)?),
+                    .payload(FlashblocksServiceBuilder::new(builder_config)),
             )
             .with_add_ons(addons)
             .extend_rpc_modules(move |ctx| {

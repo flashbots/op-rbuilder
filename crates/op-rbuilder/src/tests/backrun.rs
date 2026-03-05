@@ -2,8 +2,8 @@ use crate::{
     args::OpRbuilderArgs,
     backrun_bundle::BackrunBundleArgs,
     tests::{
-        BlockTransactionsExt, BundleOpts, ChainDriverExt, LocalInstance, ONE_ETH,
-        TransactionBuilderExt, send_backrun_bundle,
+        BlockTransactionsExt, BundleOpts, ChainDriverExt, ONE_ETH, TransactionBuilderExt,
+        send_backrun_bundle,
     },
 };
 use alloy_network::ReceiptResponse;
