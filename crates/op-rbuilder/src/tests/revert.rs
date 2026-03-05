@@ -26,11 +26,11 @@ async fn monitor_transaction_gc(rbuilder: LocalInstance) -> eyre::Result<()> {
     // send 10 bundles with different block ranges
     let mut pending_txn = Vec::new();
 
-    for i in 0..accounts.len() {
+    for (i, account) in accounts.iter().enumerate() {
         let txn = driver
             .create_transaction()
             .random_reverting_transaction()
-            .with_signer(accounts[i].clone())
+            .with_signer(*account)
             .with_bundle(
                 BundleOpts::default().with_max_block_number(latest_block_number + i as u64 + 1),
             )
@@ -52,11 +52,11 @@ async fn monitor_transaction_gc(rbuilder: LocalInstance) -> eyre::Result<()> {
         // since we created the 10 transactions with increasing block ranges, as we generate blocks
         // one transaction will be gc on each block.
         // transactions from [0, i] should be dropped, transactions from [i+1, 10] should be queued
-        for j in 0..=i {
-            assert!(rbuilder.pool().is_dropped(*pending_txn[j].tx_hash()));
+        for tx in pending_txn.iter().take(i + 1) {
+            assert!(rbuilder.pool().is_dropped(*tx.tx_hash()));
         }
-        for j in i + 1..10 {
-            assert!(rbuilder.pool().is_pending(*pending_txn[j].tx_hash()));
+        for tx in pending_txn.iter().take(10).skip(i + 1) {
+            assert!(rbuilder.pool().is_pending(*tx.tx_hash()));
         }
     }
 

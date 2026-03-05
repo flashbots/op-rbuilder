@@ -260,7 +260,7 @@ async fn test_flashblocks_number_contract_builder_tx(rbuilder: LocalInstance) ->
 
     // Verify builder txs (should be regular since builder tx is not registered yet)
     verify_builder_txs(
-        &txs,
+        txs,
         &[1, 2, 4, 6, 8],
         Some(Address::ZERO),
         "Should have regular builder tx",
@@ -274,7 +274,7 @@ async fn test_flashblocks_number_contract_builder_tx(rbuilder: LocalInstance) ->
     );
 
     // Verify user transactions
-    verify_user_tx_hashes(&txs, &[5, 7, 9], &user_transactions);
+    verify_user_tx_hashes(txs, &[5, 7, 9], &user_transactions);
 
     // Initialize contract
     let init_tx = driver
@@ -313,14 +313,14 @@ async fn test_flashblocks_number_contract_builder_tx(rbuilder: LocalInstance) ->
 
     // Other builder txs should call the contract
     verify_builder_txs(
-        &txs,
+        txs,
         &[2, 4, 6, 8],
         Some(contract_address),
         "Should call flashblocks contract",
     );
 
     // Verify user transactions, 3 blocks in total built
-    verify_user_tx_hashes(&txs, &[3, 5, 7, 9], &user_transactions);
+    verify_user_tx_hashes(txs, &[3, 5, 7, 9], &user_transactions);
 
     // Verify flashblock number incremented correctly
     let contract = FlashblocksNumber::new(contract_address, provider.clone());
@@ -342,10 +342,11 @@ async fn test_flashblocks_number_contract_builder_tx(rbuilder: LocalInstance) ->
         let is_fallback = i % 5 == 0;
         let tx_index = if is_fallback { 1 } else { 0 };
 
-        let tx_bytes = flashblock.diff.transactions.get(tx_index).expect(&format!(
-            "Flashblock {} should have tx at index {}",
-            i, tx_index
-        ));
+        let tx_bytes = flashblock
+            .diff
+            .transactions
+            .get(tx_index)
+            .unwrap_or_else(|| panic!("Flashblock {} should have tx at index {}", i, tx_index));
         let tx = OpTxEnvelope::decode_2718(&mut tx_bytes.as_ref())
             .expect("failed to decode transaction");
 

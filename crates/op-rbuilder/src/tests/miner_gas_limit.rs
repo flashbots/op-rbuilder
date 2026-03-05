@@ -49,7 +49,7 @@ async fn block_fill(rbuilder: LocalInstance) -> eyre::Result<()> {
             .with_max_priority_fee_per_gas(100)
             .send()
             .await?;
-        tx_hashes.push(tx.tx_hash().clone());
+        tx_hashes.push(*tx.tx_hash());
     }
     let unfit_tx = driver
         .create_transaction()

@@ -312,7 +312,8 @@ mod tests {
         assert_ne!(high, low);
 
         // BTreeSet iteration: highest fee first
-        let mut set = std::collections::BTreeSet::new();
+        #[allow(clippy::mutable_key_type)]
+        let mut set = BTreeSet::new();
         set.insert(low.clone());
         set.insert(high.clone());
         let fees: Vec<_> = set
