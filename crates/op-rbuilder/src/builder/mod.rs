@@ -108,7 +108,7 @@ impl Default for BuilderConfig {
             sampling_ratio: 100,
             max_gas_per_txn: None,
             gas_limiter_config: GasLimiterArgs::default(),
-            backrun_bundle_pool: BackrunBundleGlobalPool::default(),
+            backrun_bundle_pool: BackrunBundleGlobalPool::new(false),
             backrun_bundle_args: BackrunBundleArgs::default(),
             flashblocks_config: FlashblocksConfig::default(),
         }
@@ -131,9 +131,11 @@ impl TryFrom<OpRbuilderArgs> for BuilderConfig {
             gas_limit_config: Default::default(),
             sampling_ratio: args.telemetry.sampling_ratio,
             max_gas_per_txn: args.max_gas_per_txn,
-            gas_limiter_config: args.gas_limiter,
-            backrun_bundle_pool: BackrunBundleGlobalPool::new(),
-            backrun_bundle_args: args.backrun_bundle,
+            gas_limiter_config: args.gas_limiter.clone(),
+            backrun_bundle_pool: BackrunBundleGlobalPool::new(
+                args.backrun_bundle.enforce_strict_priority_fee_ordering,
+            ),
+            backrun_bundle_args: args.backrun_bundle.clone(),
             flashblocks_config,
         })
     }

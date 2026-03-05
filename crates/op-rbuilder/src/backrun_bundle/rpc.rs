@@ -1,5 +1,5 @@
 use alloy_consensus::{Transaction, Typed2718};
-use alloy_primitives::{B256, Bytes};
+use alloy_primitives::{B256, Bytes, U256};
 use jsonrpsee::{core::RpcResult, proc_macros::rpc};
 use reth_optimism_primitives::OpTransactionSigned;
 use reth_provider::BlockNumReader;
@@ -54,6 +54,11 @@ pub struct BackrunBundleRpcArgs {
     /// Replacement nonce must be set if `replacement_uuid` is set
     #[serde(default)]
     pub replacement_nonce: Option<u64>,
+
+    /// Declared coinbase profit (builder revenue) for this backrun.
+    /// Required when `enforce_strict_priority_fee_ordering` is enabled.
+    #[serde(default)]
+    pub coinbase_profit: Option<U256>,
 }
 
 #[rpc(server, namespace = "eth")]
@@ -65,13 +70,19 @@ pub trait BackrunBundleApi {
 pub struct BackrunBundleRpc<Provider> {
     global_pool: BackrunBundleGlobalPool,
     provider: Provider,
+    enforce_strict_priority_fee_ordering: bool,
 }
 
 impl<Provider> BackrunBundleRpc<Provider> {
-    pub fn new(global_pool: BackrunBundleGlobalPool, provider: Provider) -> Self {
+    pub fn new(
+        global_pool: BackrunBundleGlobalPool,
+        provider: Provider,
+        enforce_strict_priority_fee_ordering: bool,
+    ) -> Self {
         Self {
             global_pool,
             provider,
+            enforce_strict_priority_fee_ordering,
         }
     }
 }
@@ -174,6 +185,14 @@ where
             .into());
         }
 
+        if self.enforce_strict_priority_fee_ordering && bundle.coinbase_profit.is_none() {
+            return Err(EthApiError::InvalidParams(
+                "coinbaseProfit must be set when enforce_strict_priority_fee_ordering is enabled"
+                    .into(),
+            )
+            .into());
+        }
+
         let target_tx_hash = B256::from(*target_tx.tx_hash());
         let backrun_tx_hash = B256::from(*backrun_tx.tx_hash());
 
@@ -194,6 +213,7 @@ where
             estimated_effective_priority_fee,
             estimated_da_size,
             replacement_key,
+            coinbase_profit: bundle.coinbase_profit,
         };
 
         // Silently drop bundles rejected due to stale replacement nonce
@@ -250,7 +270,11 @@ mod tests {
     }
 
     fn make_rpc(best_block: u64) -> BackrunBundleRpc<MockProvider> {
-        BackrunBundleRpc::new(BackrunBundleGlobalPool::default(), MockProvider(best_block))
+        BackrunBundleRpc::new(
+            BackrunBundleGlobalPool::new(false),
+            MockProvider(best_block),
+            false,
+        )
     }
 
     fn valid_args(target: Bytes, backrun: Bytes, block_number: u64) -> BackrunBundleRpcArgs {
@@ -262,6 +286,7 @@ mod tests {
             max_flashblock_number: None,
             replacement_uuid: None,
             replacement_nonce: None,
+            coinbase_profit: None,
         }
     }
 
@@ -294,6 +319,7 @@ mod tests {
             max_flashblock_number: None,
             replacement_uuid: None,
             replacement_nonce: None,
+            coinbase_profit: None,
         };
         assert!(rpc.send_backrun_bundle(args).await.is_err());
     }
@@ -310,6 +336,7 @@ mod tests {
             max_flashblock_number: None,
             replacement_uuid: None,
             replacement_nonce: None,
+            coinbase_profit: None,
         };
         assert!(rpc.send_backrun_bundle(args).await.is_err());
     }
@@ -367,6 +394,7 @@ mod tests {
             max_flashblock_number: None,
             replacement_uuid: uuid,
             replacement_nonce: nonce,
+            coinbase_profit: None,
         };
 
         // Missing uuid
@@ -389,5 +417,28 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(result.bundle_hash, B256::ZERO);
+    }
+
+    fn make_strict_rpc(best_block: u64) -> BackrunBundleRpc<MockProvider> {
+        BackrunBundleRpc::new(
+            BackrunBundleGlobalPool::new(true),
+            MockProvider(best_block),
+            true,
+        )
+    }
+
+    #[tokio::test]
+    async fn test_strict_ordering_requires_coinbase_profit() {
+        let rpc = make_strict_rpc(5);
+        let s = Signer::random();
+
+        // Missing coinbase_profit is rejected
+        let args = valid_args(make_raw_tx(&s, 0), make_raw_tx(&s, 1), 10);
+        assert!(rpc.send_backrun_bundle(args).await.is_err());
+
+        // With coinbase_profit set it's accepted
+        let mut args = valid_args(make_raw_tx(&s, 0), make_raw_tx(&s, 1), 10);
+        args.coinbase_profit = Some(U256::from(1000));
+        assert!(rpc.send_backrun_bundle(args).await.is_ok());
     }
 }
