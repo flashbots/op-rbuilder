@@ -453,3 +453,27 @@ pub async fn send_backrun_bundle(
 
     Ok(backrun_hash)
 }
+
+pub async fn send_backrun_cancellation(
+    provider: &RootProvider<Optimism>,
+    uuid: Uuid,
+    nonce: u64,
+) -> eyre::Result<()> {
+    let bundle = BackrunBundleRpcArgs {
+        transactions: vec![],
+        block_number: 0,
+        max_block_number: None,
+        min_flashblock_number: None,
+        max_flashblock_number: None,
+        replacement_uuid: Some(uuid),
+        replacement_nonce: Some(nonce),
+        coinbase_profit: None,
+    };
+
+    let _result: BundleResult = provider
+        .client()
+        .request("eth_sendBackrunBundle", (bundle,))
+        .await?;
+
+    Ok(())
+}

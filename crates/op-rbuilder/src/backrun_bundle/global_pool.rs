@@ -14,9 +14,24 @@ use std::{
 };
 use uuid::Uuid;
 
+#[derive(Debug)]
+enum UuidEntry {
+    Bundle(StoredBackrunBundle),
+    Cancellation { nonce: u64, max_block: u64 },
+}
+
+impl UuidEntry {
+    fn replacement_nonce(&self) -> u64 {
+        match self {
+            UuidEntry::Bundle(b) => b.replacement_key.as_ref().map(|k| k.nonce).unwrap_or(0),
+            UuidEntry::Cancellation { nonce, .. } => *nonce,
+        }
+    }
+}
+
 struct BackrunBundleGlobalPoolInner {
     payload_pools: DashMap<u64, BackrunBundlePayloadPool>,
-    replacements: DashMap<Uuid, StoredBackrunBundle>,
+    replacements: DashMap<Uuid, UuidEntry>,
     metrics: BackrunPoolMetrics,
     estimated_base_fee_per_gas: AtomicU64,
     enforce_strict_priority_fee_ordering: bool,
@@ -69,13 +84,30 @@ impl BackrunBundleGlobalPool {
         }
     }
 
+    fn remove_bundle_from_pools(&self, bundle: &StoredBackrunBundle) {
+        for block in bundle.block_number_min..=bundle.block_number_max {
+            if let Some(pool) = self.inner.payload_pools.get(&block) {
+                pool.remove_bundle(bundle);
+            }
+        }
+        self.inner.metrics.backrun_bundle_count.decrement(1.0);
+        self.inner.metrics.backrun_bundles_removed.increment(1);
+    }
+
+    fn insert_bundle_into_pools(&self, bundle: &StoredBackrunBundle, first_pool_block: u64) {
+        for block in first_pool_block..=bundle.block_number_max {
+            self.block_pool(block).add_bundle(bundle.clone());
+        }
+        self.inner.metrics.backrun_bundle_count.increment(1.0);
+        self.inner.metrics.backrun_bundles_added.increment(1);
+    }
+
     /// Add a bundle to the global pool. Returns `false` if the bundle was rejected
     /// due to a stale replacement nonce or an already-expired block range.
     pub(super) fn add_bundle(&self, bundle: StoredBackrunBundle, last_block_number: u64) -> bool {
         if bundle.block_number_max <= last_block_number {
             return false;
         }
-        let metrics = &self.inner.metrics;
         let first_pool_block = (last_block_number + 1).max(bundle.block_number_min);
         if let Some(ref key) = bundle.replacement_key {
             // We use the entry API as a per-UUID write lock: payload pool
@@ -83,46 +115,23 @@ impl BackrunBundleGlobalPool {
             // is atomic w.r.t. concurrent calls for the same UUID.
             match self.inner.replacements.entry(key.uuid) {
                 dashmap::mapref::entry::Entry::Occupied(mut entry) => {
-                    let old_nonce = entry
-                        .get()
-                        .replacement_key
-                        .as_ref()
-                        .expect("tracked bundle must have replacement_key")
-                        .nonce;
-                    if key.nonce <= old_nonce {
+                    if key.nonce <= entry.get().replacement_nonce() {
                         return false;
                     }
-                    // Remove old bundle from all its payload pools
-                    let old = entry.get().clone();
-                    for block in old.block_number_min..=old.block_number_max {
-                        if let Some(pool) = self.inner.payload_pools.get(&block) {
-                            pool.remove_bundle(&old);
-                        }
+                    if let UuidEntry::Bundle(old_bundle) = entry.get() {
+                        let old = old_bundle.clone();
+                        self.remove_bundle_from_pools(&old);
                     }
-                    metrics.backrun_bundle_count.decrement(1.0);
-                    metrics.backrun_bundles_removed.increment(1);
-                    entry.insert(bundle.clone());
-                    for block in first_pool_block..=bundle.block_number_max {
-                        self.block_pool(block).add_bundle(bundle.clone());
-                    }
-                    metrics.backrun_bundle_count.increment(1.0);
-                    metrics.backrun_bundles_added.increment(1);
+                    entry.insert(UuidEntry::Bundle(bundle.clone()));
+                    self.insert_bundle_into_pools(&bundle, first_pool_block);
                 }
                 dashmap::mapref::entry::Entry::Vacant(entry) => {
-                    entry.insert(bundle.clone());
-                    for block in first_pool_block..=bundle.block_number_max {
-                        self.block_pool(block).add_bundle(bundle.clone());
-                    }
-                    metrics.backrun_bundle_count.increment(1.0);
-                    metrics.backrun_bundles_added.increment(1);
+                    entry.insert(UuidEntry::Bundle(bundle.clone()));
+                    self.insert_bundle_into_pools(&bundle, first_pool_block);
                 }
             }
         } else {
-            for block in first_pool_block..=bundle.block_number_max {
-                self.block_pool(block).add_bundle(bundle.clone());
-            }
-            metrics.backrun_bundle_count.increment(1.0);
-            metrics.backrun_bundles_added.increment(1);
+            self.insert_bundle_into_pools(&bundle, first_pool_block);
         }
         true
     }
@@ -184,9 +193,31 @@ impl BackrunBundleGlobalPool {
             .decrement(unique_removed as f64);
         metrics.backrun_bundles_removed.increment(unique_removed);
 
-        self.inner
-            .replacements
-            .retain(|_, bundle| bundle.block_number_max > block_number);
+        self.inner.replacements.retain(|_, entry| match entry {
+            UuidEntry::Bundle(b) => b.block_number_max > block_number,
+            UuidEntry::Cancellation { max_block, .. } => *max_block > block_number,
+        });
+    }
+
+    /// Cancel a bundle by UUID. Returns `true` if the cancellation was accepted.
+    pub(super) fn cancel_bundle(&self, uuid: Uuid, nonce: u64, max_block: u64) -> bool {
+        match self.inner.replacements.entry(uuid) {
+            dashmap::mapref::entry::Entry::Occupied(mut entry) => {
+                if nonce <= entry.get().replacement_nonce() {
+                    return false;
+                }
+                if let UuidEntry::Bundle(old_bundle) = entry.get() {
+                    let old = old_bundle.clone();
+                    self.remove_bundle_from_pools(&old);
+                }
+                entry.insert(UuidEntry::Cancellation { nonce, max_block });
+                true
+            }
+            dashmap::mapref::entry::Entry::Vacant(entry) => {
+                entry.insert(UuidEntry::Cancellation { nonce, max_block });
+                true
+            }
+        }
     }
 }
 
@@ -304,6 +335,8 @@ mod tests {
         let tip_block = 11;
         let tip_base_fee = 42;
 
+        let cancelled_uuid = uuid::Uuid::new_v4();
+
         // Add bundles across blocks 8-10 and 12-14
         let mut b1 = make_backrun_bundle(&s, target, (8, 10))
             .with_priority_fee(100)
@@ -315,6 +348,9 @@ mod tests {
             .build();
         gp.add_bundle(b1, last_block);
         gp.add_bundle(b2, last_block);
+
+        // Add a cancellation with max_block=10 (should be cleaned up)
+        gp.cancel_bundle(cancelled_uuid, 1, 10);
 
         // Simulate canonical state change
         let header = alloy_consensus::Header {
@@ -332,10 +368,82 @@ mod tests {
         // Pools <= tip_block removed, pool 12+ retained
         assert_eq!(gp.inner.payload_pools.len(), 3); // 12, 13, 14
 
-        // Replacement for b1 (max=10 <= tip_block) cleaned up
+        // Replacement for b1 (max=10 <= tip_block) cleaned up;
+        // cancellation for cancelled_uuid (max_block=10 <= tip_block) also cleaned up
         assert!(gp.inner.replacements.is_empty());
 
         // Base fee updated
         assert_eq!(gp.estimated_base_fee_per_gas(), tip_base_fee);
+    }
+
+    #[test]
+    fn test_cancellation() {
+        let gp = BackrunBundleGlobalPool::new(false);
+        let s = Signer::random();
+        let target = B256::random();
+        let uuid = uuid::Uuid::new_v4();
+        let last_block = 0;
+        let block_range = (10, 12);
+        let bundle_replacement_nonce = 5;
+
+        // Add a bundle
+        let mut b1 = make_backrun_bundle(&s, target, block_range)
+            .with_priority_fee(100)
+            .build();
+        b1.replacement_key = Some(ReplacementKey {
+            uuid,
+            nonce: bundle_replacement_nonce,
+        });
+        assert!(gp.add_bundle(b1, last_block));
+        for block in 10..=12 {
+            assert_eq!(pool_bundle_count(&gp.block_pool(block)), 1);
+        }
+
+        // Cancel with stale nonce rejected
+        assert!(!gp.cancel_bundle(uuid, bundle_replacement_nonce - 1, 20));
+        assert!(!gp.cancel_bundle(uuid, bundle_replacement_nonce, 20));
+        for block in 10..=12 {
+            assert_eq!(pool_bundle_count(&gp.block_pool(block)), 1);
+        }
+
+        // Cancel with higher nonce removes bundle from pools
+        assert!(gp.cancel_bundle(uuid, bundle_replacement_nonce + 1, 20));
+        for block in 10..=12 {
+            assert_eq!(pool_bundle_count(&gp.block_pool(block)), 0);
+        }
+
+        // Add with nonce <= cancel nonce rejected
+        let mut b2 = make_backrun_bundle(&s, target, block_range)
+            .with_nonce(1)
+            .with_priority_fee(200)
+            .build();
+        b2.replacement_key = Some(ReplacementKey {
+            uuid,
+            nonce: bundle_replacement_nonce + 1,
+        });
+        assert!(!gp.add_bundle(b2, last_block));
+
+        // Add with higher nonce supersedes cancellation
+        let mut b3 = make_backrun_bundle(&s, target, block_range)
+            .with_nonce(2)
+            .with_priority_fee(300)
+            .build();
+        b3.replacement_key = Some(ReplacementKey {
+            uuid,
+            nonce: bundle_replacement_nonce + 2,
+        });
+        assert!(gp.add_bundle(b3, last_block));
+        for block in 10..=12 {
+            assert_eq!(pool_bundle_count(&gp.block_pool(block)), 1);
+        }
+
+        // Double cancel: higher nonce accepted, lower/equal rejected
+        assert!(gp.cancel_bundle(uuid, bundle_replacement_nonce + 3, 25));
+        assert!(!gp.cancel_bundle(uuid, bundle_replacement_nonce + 2, 30));
+        assert!(!gp.cancel_bundle(uuid, bundle_replacement_nonce + 3, 30));
+        assert!(matches!(
+            gp.inner.replacements.get(&uuid).as_deref(),
+            Some(&UuidEntry::Cancellation { nonce, max_block: 25 }) if nonce == bundle_replacement_nonce + 3
+        ));
     }
 }
