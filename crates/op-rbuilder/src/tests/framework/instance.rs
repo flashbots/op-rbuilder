@@ -273,6 +273,15 @@ impl LocalInstance {
     /// This method prefunds the default accounts with 1 ETH each.
     pub async fn standard() -> eyre::Result<Self> {
         let args = crate::args::Cli::parse_from(["dummy", "node"]);
+        let Commands::Node(node_command) = args.command else {
+            unreachable!()
+        };
+        Self::new::<StandardBuilder>(node_command.ext).await
+    }
+
+    /// Creates a standard builder instance with runtime rules explicitly enabled.
+    pub async fn standard_with_rules() -> eyre::Result<Self> {
+        let args = crate::args::Cli::parse_from(["dummy", "node"]);
         let Commands::Node(mut node_command) = args.command else {
             unreachable!()
         };
