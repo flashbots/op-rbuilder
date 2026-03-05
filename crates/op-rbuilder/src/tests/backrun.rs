@@ -7,6 +7,7 @@ use crate::{
     },
 };
 use alloy_network::ReceiptResponse;
+use alloy_primitives::U256;
 use alloy_provider::Provider;
 use macros::rb_test;
 use uuid::Uuid;
@@ -655,6 +656,227 @@ async fn backrun_replacement_stale_nonce_rejected(rbuilder: LocalInstance) -> ey
     assert!(
         !block.includes(&stale_hash),
         "Stale replacement should not be in block"
+    );
+
+    Ok(())
+}
+
+/// Tests that in strict ordering mode, a backrun that overstates its coinbase profit is excluded.
+#[rb_test(args = OpRbuilderArgs {
+    backrun_bundle: BackrunBundleArgs {
+        backruns_enabled: true,
+        enforce_strict_priority_fee_ordering: true,
+        ..Default::default()
+    },
+    ..Default::default()
+})]
+async fn backrun_strict_rejects_overstated_coinbase_profit(
+    rbuilder: LocalInstance,
+) -> eyre::Result<()> {
+    let driver = rbuilder.driver().await?;
+    let accounts = driver.fund_accounts(2, ONE_ETH).await?;
+    let target_priority_fee = 10;
+
+    let (target_pending, target_raw_tx) = driver
+        .create_transaction()
+        .with_signer(accounts[0])
+        .random_valid_transfer()
+        .with_max_priority_fee_per_gas(target_priority_fee)
+        .send_and_get_raw_tx()
+        .await?;
+    let target_hash = *target_pending.tx_hash();
+
+    let backrun_overstated_profit_hash = send_backrun_bundle(
+        target_raw_tx,
+        driver
+            .create_transaction()
+            .with_signer(accounts[1])
+            .random_valid_transfer()
+            .with_max_priority_fee_per_gas(target_priority_fee),
+        BundleOpts::default().with_coinbase_profit(U256::MAX),
+    )
+    .await?;
+
+    let block = driver.build_new_block().await?;
+
+    assert!(block.includes(&target_hash), "Target tx should be in block");
+    assert!(
+        !block.includes(&backrun_overstated_profit_hash),
+        "Backrun with overstated coinbase_profit should be excluded"
+    );
+
+    Ok(())
+}
+
+/// Tests that in strict ordering mode, a backrun with a correctly stated coinbase profit
+/// is included.
+#[rb_test(args = OpRbuilderArgs {
+    backrun_bundle: BackrunBundleArgs {
+        backruns_enabled: true,
+        enforce_strict_priority_fee_ordering: true,
+        ..Default::default()
+    },
+    ..Default::default()
+})]
+async fn backrun_strict_includes_correct_coinbase_profit(
+    rbuilder: LocalInstance,
+) -> eyre::Result<()> {
+    let driver = rbuilder.driver().await?;
+    let accounts = driver.fund_accounts(2, ONE_ETH).await?;
+    let target_priority_fee = 10;
+
+    let (target_pending, target_raw_tx) = driver
+        .create_transaction()
+        .with_signer(accounts[0])
+        .random_valid_transfer()
+        .with_max_priority_fee_per_gas(target_priority_fee)
+        .send_and_get_raw_tx()
+        .await?;
+    let target_hash = *target_pending.tx_hash();
+
+    let backrun_hash = send_backrun_bundle(
+        target_raw_tx,
+        driver
+            .create_transaction()
+            .with_signer(accounts[1])
+            .random_valid_transfer()
+            .with_max_priority_fee_per_gas(target_priority_fee),
+        BundleOpts::default().with_coinbase_profit(U256::from(21_000 * target_priority_fee)),
+    )
+    .await?;
+
+    let block = driver.build_new_block().await?;
+
+    assert!(block.includes(&target_hash), "Target tx should be in block");
+    assert!(
+        block.includes(&backrun_hash),
+        "Backrun with accurate coinbase_profit should be included"
+    );
+
+    Ok(())
+}
+
+/// Tests that strict ordering requires exact priority fee match — both higher and lower are rejected.
+#[rb_test(args = OpRbuilderArgs {
+    backrun_bundle: BackrunBundleArgs {
+        backruns_enabled: true,
+        enforce_strict_priority_fee_ordering: true,
+        ..Default::default()
+    },
+    ..Default::default()
+})]
+async fn backrun_strict_rejects_mismatched_priority_fee(
+    rbuilder: LocalInstance,
+) -> eyre::Result<()> {
+    let driver = rbuilder.driver().await?;
+    let accounts = driver.fund_accounts(3, ONE_ETH).await?;
+    let target_priority_fee = 10;
+
+    let (target_pending, target_raw_tx) = driver
+        .create_transaction()
+        .with_signer(accounts[0])
+        .random_valid_transfer()
+        .with_max_priority_fee_per_gas(target_priority_fee)
+        .send_and_get_raw_tx()
+        .await?;
+    let target_hash = *target_pending.tx_hash();
+
+    let higher_hash = send_backrun_bundle(
+        target_raw_tx.clone(),
+        driver
+            .create_transaction()
+            .with_signer(accounts[1])
+            .random_valid_transfer()
+            .with_max_priority_fee_per_gas(target_priority_fee + 1),
+        BundleOpts::default().with_coinbase_profit(U256::ZERO),
+    )
+    .await?;
+
+    let lower_hash = send_backrun_bundle(
+        target_raw_tx,
+        driver
+            .create_transaction()
+            .with_signer(accounts[2])
+            .random_valid_transfer()
+            .with_max_priority_fee_per_gas(target_priority_fee - 1),
+        BundleOpts::default().with_coinbase_profit(U256::ZERO),
+    )
+    .await?;
+
+    let block = driver.build_new_block().await?;
+
+    assert!(block.includes(&target_hash), "Target tx should be in block");
+    assert!(
+        !block.includes(&higher_hash),
+        "Backrun with higher priority fee should be excluded in strict mode"
+    );
+    assert!(
+        !block.includes(&lower_hash),
+        "Backrun with lower priority fee should be excluded in strict mode"
+    );
+
+    Ok(())
+}
+
+/// Tests that in strict ordering mode, when multiple backruns have the same priority fee,
+/// the one with the higher coinbase_profit is preferred.
+#[rb_test(args = OpRbuilderArgs {
+    backrun_bundle: BackrunBundleArgs {
+        backruns_enabled: true,
+        enforce_strict_priority_fee_ordering: true,
+        max_landed_backruns_per_transaction: 1,
+        max_considered_backruns_per_transaction: 10,
+        ..Default::default()
+    },
+    ..Default::default()
+})]
+async fn backrun_strict_orders_by_coinbase_profit(rbuilder: LocalInstance) -> eyre::Result<()> {
+    let driver = rbuilder.driver().await?;
+    let accounts = driver.fund_accounts(3, ONE_ETH).await?;
+    let target_priority_fee = 10;
+
+    let (target_pending, target_raw_tx) = driver
+        .create_transaction()
+        .with_signer(accounts[0])
+        .random_valid_transfer()
+        .with_max_priority_fee_per_gas(target_priority_fee)
+        .send_and_get_raw_tx()
+        .await?;
+    let target_hash = *target_pending.tx_hash();
+
+    let low_profit_hash = send_backrun_bundle(
+        target_raw_tx.clone(),
+        driver
+            .create_transaction()
+            .with_signer(accounts[1])
+            .random_valid_transfer()
+            .with_max_priority_fee_per_gas(target_priority_fee),
+        BundleOpts::default().with_coinbase_profit(U256::ZERO),
+    )
+    .await?;
+
+    let high_profit_hash = send_backrun_bundle(
+        target_raw_tx,
+        driver
+            .create_transaction()
+            .with_signer(accounts[2])
+            .random_valid_transfer()
+            .with_max_priority_fee_per_gas(target_priority_fee),
+        BundleOpts::default().with_coinbase_profit(U256::from(1)),
+    )
+    .await?;
+
+    let block = driver.build_new_block().await?;
+
+    assert!(block.includes(&target_hash), "Target tx should be in block");
+    // With limit=1, only the higher coinbase_profit backrun should land
+    assert!(
+        block.includes(&high_profit_hash),
+        "Backrun with higher coinbase_profit should land"
+    );
+    assert!(
+        !block.includes(&low_profit_hash),
+        "Backrun with lower coinbase_profit should not land when limit=1"
     );
 
     Ok(())

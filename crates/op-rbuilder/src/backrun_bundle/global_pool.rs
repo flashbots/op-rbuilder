@@ -19,6 +19,7 @@ struct BackrunBundleGlobalPoolInner {
     replacements: DashMap<Uuid, StoredBackrunBundle>,
     metrics: BackrunPoolMetrics,
     estimated_base_fee_per_gas: AtomicU64,
+    enforce_strict_priority_fee_ordering: bool,
 }
 
 impl fmt::Debug for BackrunBundleGlobalPoolInner {
@@ -56,13 +57,14 @@ pub struct BackrunBundleGlobalPool {
 }
 
 impl BackrunBundleGlobalPool {
-    pub fn new() -> Self {
+    pub fn new(enforce_strict_priority_fee_ordering: bool) -> Self {
         Self {
             inner: Arc::new(BackrunBundleGlobalPoolInner {
                 payload_pools: DashMap::new(),
                 replacements: DashMap::new(),
                 metrics: Default::default(),
                 estimated_base_fee_per_gas: AtomicU64::new(0),
+                enforce_strict_priority_fee_ordering,
             }),
         }
     }
@@ -133,7 +135,9 @@ impl BackrunBundleGlobalPool {
         self.inner
             .payload_pools
             .entry(block_number)
-            .or_default()
+            .or_insert_with(|| {
+                BackrunBundlePayloadPool::new(self.inner.enforce_strict_priority_fee_ordering)
+            })
             .clone()
     }
 
@@ -186,12 +190,6 @@ impl BackrunBundleGlobalPool {
     }
 }
 
-impl Default for BackrunBundleGlobalPool {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
@@ -208,7 +206,7 @@ mod tests {
 
     #[test]
     fn test_add_bundle_block_spanning() {
-        let gp = BackrunBundleGlobalPool::default();
+        let gp = BackrunBundleGlobalPool::new(false);
         let s = Signer::random();
         let target = B256::random();
 
@@ -237,7 +235,7 @@ mod tests {
 
     #[test]
     fn test_replacement() {
-        let gp = BackrunBundleGlobalPool::default();
+        let gp = BackrunBundleGlobalPool::new(false);
         let s = Signer::random();
         let target = B256::random();
         let uuid = uuid::Uuid::new_v4();
@@ -275,6 +273,7 @@ mod tests {
             0,
             u64::MAX,
             10,
+            0,
         );
         assert_eq!(bundles[0].estimated_effective_priority_fee, 200);
 
@@ -297,7 +296,7 @@ mod tests {
 
     #[test]
     fn test_on_canonical_state_change() {
-        let gp = BackrunBundleGlobalPool::default();
+        let gp = BackrunBundleGlobalPool::new(false);
         let s = Signer::random();
         let target = B256::random();
         let uuid = uuid::Uuid::new_v4();

@@ -34,6 +34,7 @@ pub struct BundleOpts {
     max_timestamp: Option<u64>,
     replacement_uuid: Option<Uuid>,
     replacement_nonce: Option<u64>,
+    coinbase_profit: Option<U256>,
 }
 
 impl BundleOpts {
@@ -70,6 +71,11 @@ impl BundleOpts {
     pub fn with_replacement_key(mut self, uuid: Uuid, nonce: u64) -> Self {
         self.replacement_uuid = Some(uuid);
         self.replacement_nonce = Some(nonce);
+        self
+    }
+
+    pub fn with_coinbase_profit(mut self, coinbase_profit: U256) -> Self {
+        self.coinbase_profit = Some(coinbase_profit);
         self
     }
 }
@@ -227,6 +233,10 @@ impl TransactionBuilder {
             eyre::ensure!(
                 bundle_opts.replacement_uuid.is_none(),
                 "replacement_uuid is not supported for ordinary bundles, use send_backrun_bundle"
+            );
+            eyre::ensure!(
+                bundle_opts.coinbase_profit.is_none(),
+                "coinbase_profit is not supported for ordinary bundles, use send_backrun_bundle"
             );
             // Send the transaction as a bundle with the bundle options
             let raw_tx = transaction_encoded.clone();
@@ -433,6 +443,7 @@ pub async fn send_backrun_bundle(
         max_flashblock_number: bundle_opts.max_flashblock_number,
         replacement_uuid: bundle_opts.replacement_uuid,
         replacement_nonce: bundle_opts.replacement_nonce,
+        coinbase_profit: bundle_opts.coinbase_profit,
     };
 
     let _result: BundleResult = provider
