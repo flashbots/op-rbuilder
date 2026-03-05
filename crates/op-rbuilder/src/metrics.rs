@@ -144,9 +144,9 @@ pub struct OpRBuilderMetrics {
     /// Byte size of transactions
     pub tx_byte_size: Histogram,
     /// How much less flashblocks we issue to be on time with block construction
-    pub reduced_flashblocks_number: Histogram,
+    pub reduced_flashblocks_number: Counter,
     /// How much less flashblocks we issued in reality, comparing to calculated number for block
-    pub missing_flashblocks_count: Histogram,
+    pub missing_flashblocks_count: Counter,
     /// How much time we have deducted from block building time
     pub flashblocks_time_drift: Histogram,
     /// Time offset we used for first flashblock
