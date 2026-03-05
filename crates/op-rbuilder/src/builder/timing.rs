@@ -6,7 +6,7 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, warn};
 
-use crate::builders::flashblocks::config::FlashblocksConfig;
+use crate::builder::config::FlashblocksConfig;
 
 /// Schedules and triggers flashblock builds at predetermined times during a
 /// block slot. This should be created at the start of each payload building

@@ -1,6 +1,6 @@
 pub mod args;
 pub mod backrun_bundle;
-pub mod builders;
+pub mod builder;
 pub mod flashtestations;
 pub mod gas_limiter;
 pub mod launcher;

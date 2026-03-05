@@ -9,16 +9,15 @@ use std::time::Duration;
 use crate::{
     args::{FlashblocksArgs, OpRbuilderArgs},
     tests::{
-        BlockTransactionsExt, BundleOpts, ChainDriver, FLASHBLOCKS_NUMBER_ADDRESS, LocalInstance,
+        BlockTransactionsExt, BundleOpts, ChainDriver, FLASHBLOCKS_NUMBER_ADDRESS,
         TransactionBuilderExt, flashblocks_number_contract::FlashblocksNumber,
     },
 };
 
-#[rb_test(flashblocks, args = OpRbuilderArgs {
+#[rb_test(args = OpRbuilderArgs {
     chain_block_time: 1000,
     enable_revert_protection: true,
     flashblocks: FlashblocksArgs {
-        enabled: true,
         flashblocks_port: 1239,
         flashblocks_addr: "127.0.0.1".into(),
         flashblocks_block_time: 200,
@@ -72,11 +71,10 @@ async fn test_flashblock_min_filtering(rbuilder: LocalInstance) -> eyre::Result<
     flashblocks_listener.stop().await
 }
 
-#[rb_test(flashblocks, args = OpRbuilderArgs {
+#[rb_test(args = OpRbuilderArgs {
     chain_block_time: 1000,
     enable_revert_protection: true,
     flashblocks: FlashblocksArgs {
-        enabled: true,
         flashblocks_port: 1239,
         flashblocks_addr: "127.0.0.1".into(),
         flashblocks_block_time: 200,
@@ -126,11 +124,10 @@ async fn test_flashblock_max_filtering(rbuilder: LocalInstance) -> eyre::Result<
     flashblocks_listener.stop().await
 }
 
-#[rb_test(flashblocks, args = OpRbuilderArgs {
+#[rb_test(args = OpRbuilderArgs {
     chain_block_time: 1000,
     enable_revert_protection: true,
     flashblocks: FlashblocksArgs {
-        enabled: true,
         flashblocks_port: 1239,
         flashblocks_addr: "127.0.0.1".into(),
         flashblocks_block_time: 200,
@@ -170,10 +167,9 @@ async fn test_flashblock_min_max_filtering(rbuilder: LocalInstance) -> eyre::Res
     flashblocks_listener.stop().await
 }
 
-#[rb_test(flashblocks, args = OpRbuilderArgs {
+#[rb_test(args = OpRbuilderArgs {
     chain_block_time: 1000,
     flashblocks: FlashblocksArgs {
-        enabled: true,
         flashblocks_port: 1239,
         flashblocks_addr: "127.0.0.1".into(),
         flashblocks_block_time: 200,
@@ -213,7 +209,7 @@ async fn test_flashblocks_no_state_root_calculation(rbuilder: LocalInstance) -> 
     Ok(())
 }
 
-#[rb_test(flashblocks, args = OpRbuilderArgs {
+#[rb_test(args = OpRbuilderArgs {
     chain_block_time: 1000,
     enable_revert_protection: true,
     flashblocks: FlashblocksArgs {
@@ -420,10 +416,9 @@ fn verify_user_tx_hashes(
 }
 
 /// Smoke test for flashblocks with end buffer.
-#[rb_test(flashblocks, args = OpRbuilderArgs {
+#[rb_test(args = OpRbuilderArgs {
     chain_block_time: 1000,
     flashblocks: FlashblocksArgs {
-        enabled: true,
         flashblocks_port: 1239,
         flashblocks_addr: "127.0.0.1".into(),
         flashblocks_block_time: 250,
@@ -462,10 +457,9 @@ async fn smoke_basic(rbuilder: LocalInstance) -> eyre::Result<()> {
 }
 
 /// Smoke test with send_offset_ms
-#[rb_test(flashblocks, args = OpRbuilderArgs {
+#[rb_test(args = OpRbuilderArgs {
     chain_block_time: 1000,
     flashblocks: FlashblocksArgs {
-        enabled: true,
         flashblocks_port: 1239,
         flashblocks_addr: "127.0.0.1".into(),
         flashblocks_block_time: 250,
@@ -506,10 +500,9 @@ async fn smoke_with_offset(rbuilder: LocalInstance) -> eyre::Result<()> {
 
 /// Test significant FCU delay (700ms into 1000ms block)
 /// Should produce fewer flashblocks due to less remaining time
-#[rb_test(flashblocks, args = OpRbuilderArgs {
+#[rb_test(args = OpRbuilderArgs {
     chain_block_time: 1000,
     flashblocks: FlashblocksArgs {
-        enabled: true,
         flashblocks_port: 1239,
         flashblocks_addr: "127.0.0.1".into(),
         flashblocks_block_time: 200,
@@ -554,10 +547,9 @@ async fn late_fcu_reduces_flashblocks(rbuilder: LocalInstance) -> eyre::Result<(
 /// With 1000ms block time, 200ms flashblock interval, and 50ms end buffer:
 /// - Available time = 1000 - lag - 50 = 950 - lag
 /// - Flashblocks per block = ceil((available_time) / 200) + 1 (base flashblock)
-#[rb_test(flashblocks, args = OpRbuilderArgs {
+#[rb_test(args = OpRbuilderArgs {
       chain_block_time: 1000,
       flashblocks: FlashblocksArgs {
-          enabled: true,
           flashblocks_port: 1239,
           flashblocks_addr: "127.0.0.1".into(),
           flashblocks_block_time: 200,
