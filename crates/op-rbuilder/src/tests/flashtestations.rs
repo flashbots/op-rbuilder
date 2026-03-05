@@ -155,9 +155,9 @@ async fn test_flashtestations_with_number_contract(rbuilder: LocalInstance) -> e
         "fallback builder tx should send to zero address"
     );
     // flashblocks number contract
-    for i in 2..6 {
+    for (i, tx) in txs.iter().enumerate().take(6).skip(2) {
         assert_eq!(
-            txs[i].to(),
+            tx.to(),
             Some(FLASHBLOCKS_NUMBER_ADDRESS),
             "builder tx should send to flashblocks number contract at index {}",
             i
@@ -305,9 +305,9 @@ async fn test_flashtestations_permit_with_flashblocks_number_contract(
         "builder tx should send to zero address"
     );
     // flashblocks number contract
-    for i in 2..6 {
+    for (i, tx) in txs.iter().enumerate().take(6).skip(2) {
         assert_eq!(
-            txs[i].to(),
+            tx.to(),
             Some(FLASHBLOCKS_NUMBER_ADDRESS),
             "builder tx should send to flashblocks number contract at index {}",
             i
@@ -392,9 +392,9 @@ async fn test_flashtestations_permit_with_flashblocks_number_permit(
     // 1 deposit tx, 5 regular builder tx, 1 add builder tx, 1 block proof tx
     assert_eq!(num_txs, 8, "Expected 8 transactions in block");
     // Check no transactions to the flashblocks number contract as tee signer is not authorized
-    for i in 1..6 {
+    for (i, tx) in txs.iter().enumerate().take(6).skip(1) {
         assert_eq!(
-            txs[i].to(),
+            tx.to(),
             Some(Address::ZERO),
             "builder tx should send to flashblocks number contract at index {}",
             i
@@ -423,9 +423,9 @@ async fn test_flashtestations_permit_with_flashblocks_number_permit(
     // 1 deposit tx, 1 regular builder tx, 4 flashblocks builder tx, 1 user tx, 1 block proof tx
     assert_eq!(txs.len(), 8, "Expected 8 transactions in block");
     // flashblocks number contract
-    for i in 2..6 {
+    for (i, tx) in txs.iter().enumerate().take(6).skip(2) {
         assert_eq!(
-            txs[i].to(),
+            tx.to(),
             Some(FLASHBLOCKS_NUMBER_ADDRESS),
             "builder tx should send to flashblocks number contract at index {}",
             i

@@ -96,7 +96,7 @@ async fn chain_produces_blocks(rbuilder: LocalInstance) -> eyre::Result<()> {
 /// with other requests, such as fcu or getPayload.
 #[rb_test(multi_threaded)]
 async fn produces_blocks_under_load_within_deadline(rbuilder: LocalInstance) -> eyre::Result<()> {
-    let driver = rbuilder.driver().await?.with_gas_limit(10_00_000);
+    let driver = rbuilder.driver().await?.with_gas_limit(1_000_000);
 
     let done = AtomicBool::new(false);
 
