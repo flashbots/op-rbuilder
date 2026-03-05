@@ -21,8 +21,8 @@ use tracing::warn;
 /// This validator wraps `OpTransactionValidator` (or any other `TransactionValidator`) and adds
 /// optional rule-based deny checking backed by the shared global ruleset.
 ///
-/// The check happens before delegating to the wrapped validator. When rules are disabled,
-/// the validator acts as a simple passthrough.
+/// The check happens before delegating to the wrapped validator. When no deny rules are
+/// configured, the validator acts as a simple passthrough.
 #[derive(Debug)]
 pub struct RuleBasedValidator<V> {
     /// The wrapped validator (typically `OpTransactionValidator`).

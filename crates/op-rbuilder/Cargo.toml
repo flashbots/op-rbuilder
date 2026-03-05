@@ -208,11 +208,6 @@ telemetry = ["reth-tracing-otlp", "opentelemetry"]
 
 custom-engine-api = []
 
-# Enables rule-based transaction filtering (deny lists) and scoring (boost/nerf priority).
-# When enabled, transactions can be blocked at pool ingress and ordered during block building
-# based on configurable rules loaded from file sources.
-rules = []
-
 [[bin]]
 name = "op-rbuilder"
 path = "src/bin/op-rbuilder/main.rs"

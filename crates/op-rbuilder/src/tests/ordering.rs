@@ -1,6 +1,7 @@
-#[cfg(feature = "rules")]
-use crate::rules::{BoostRule, MatchType, RuleSet, set_global_ruleset};
-use crate::tests::{ChainDriverExt, LocalInstance, framework::ONE_ETH};
+use crate::{
+    rules::{BoostRule, MatchType, RuleSet, set_global_ruleset},
+    tests::{ChainDriverExt, LocalInstance, framework::ONE_ETH},
+};
 use alloy_consensus::Transaction;
 use futures::{StreamExt, future::join_all, stream};
 use macros::rb_test;
@@ -76,7 +77,6 @@ async fn fee_priority_ordering(rbuilder: LocalInstance) -> eyre::Result<()> {
 /// Ensure that ruleset can override fee ordering: a low-fee tx to favored `to` address
 /// should be ordered before a higher-fee tx that does not match any rule.
 #[rb_test(standard)]
-#[cfg(feature = "rules")]
 async fn rules_override_fee_priority(rbuilder: LocalInstance) -> eyre::Result<()> {
     let driver = rbuilder.driver().await?;
     let accounts = driver.fund_accounts(2, ONE_ETH).await?;
@@ -132,7 +132,6 @@ async fn rules_override_fee_priority(rbuilder: LocalInstance) -> eyre::Result<()
 
 /// Without a ruleset, higher-fee txs should be prioritized over lower-fee txs.
 #[rb_test(standard)]
-#[cfg(feature = "rules")]
 async fn rules_absent_fee_priority_wins(rbuilder: LocalInstance) -> eyre::Result<()> {
     let driver = rbuilder.driver().await?;
     let accounts = driver.fund_accounts(2, ONE_ETH).await?;
@@ -175,7 +174,6 @@ async fn rules_absent_fee_priority_wins(rbuilder: LocalInstance) -> eyre::Result
 
 /// Test that boost rules with MatchType::From prioritize transactions from specific senders.
 #[rb_test(standard)]
-#[cfg(feature = "rules")]
 async fn rules_boost_from_address(rbuilder: LocalInstance) -> eyre::Result<()> {
     let driver = rbuilder.driver().await?;
     let accounts = driver.fund_accounts(3, ONE_ETH).await?;
@@ -243,7 +241,6 @@ async fn rules_boost_from_address(rbuilder: LocalInstance) -> eyre::Result<()> {
 
 /// Test that boost rules with MatchType::Selector prioritize transactions with specific function selectors.
 #[rb_test(standard)]
-#[cfg(feature = "rules")]
 async fn rules_boost_selector(rbuilder: LocalInstance) -> eyre::Result<()> {
     let driver = rbuilder.driver().await?;
     let accounts = driver.fund_accounts(2, ONE_ETH).await?;
@@ -303,7 +300,6 @@ async fn rules_boost_selector(rbuilder: LocalInstance) -> eyre::Result<()> {
 
 /// Test that multiple boost rules with different weights are applied correctly.
 #[rb_test(standard)]
-#[cfg(feature = "rules")]
 async fn rules_multiple_boost_weights(rbuilder: LocalInstance) -> eyre::Result<()> {
     let driver = rbuilder.driver().await?;
     let accounts = driver.fund_accounts(3, ONE_ETH).await?;
@@ -377,7 +373,6 @@ async fn rules_multiple_boost_weights(rbuilder: LocalInstance) -> eyre::Result<(
 
 /// Test that alias-based boost rules work correctly.
 #[rb_test(standard)]
-#[cfg(feature = "rules")]
 async fn rules_boost_with_aliases(rbuilder: LocalInstance) -> eyre::Result<()> {
     let driver = rbuilder.driver().await?;
     let accounts = driver.fund_accounts(3, ONE_ETH).await?;
@@ -438,7 +433,6 @@ async fn rules_boost_with_aliases(rbuilder: LocalInstance) -> eyre::Result<()> {
 
 /// Test that multiple boost rules can match the same transaction and their weights are summed.
 #[rb_test(standard)]
-#[cfg(feature = "rules")]
 async fn rules_combined_boost_rules(rbuilder: LocalInstance) -> eyre::Result<()> {
     let driver = rbuilder.driver().await?;
     let accounts = driver.fund_accounts(2, ONE_ETH).await?;
@@ -534,7 +528,6 @@ async fn rules_combined_boost_rules(rbuilder: LocalInstance) -> eyre::Result<()>
 
 /// Test that when no scoring rules exist, fee priority is preserved.
 #[rb_test(standard)]
-#[cfg(feature = "rules")]
 async fn rules_no_scoring_rules_preserves_fee_priority(
     rbuilder: LocalInstance,
 ) -> eyre::Result<()> {
@@ -586,7 +579,6 @@ async fn rules_no_scoring_rules_preserves_fee_priority(
 
 /// Test that rules with negative weights still work correctly (penalize transactions).
 #[rb_test(standard)]
-#[cfg(feature = "rules")]
 async fn rules_negative_weight_penalizes(rbuilder: LocalInstance) -> eyre::Result<()> {
     let driver = rbuilder.driver().await?;
     let accounts = driver.fund_accounts(2, ONE_ETH).await?;
@@ -645,7 +637,6 @@ async fn rules_negative_weight_penalizes(rbuilder: LocalInstance) -> eyre::Resul
 
 /// Test that when rules are cleared, fee priority is restored.
 #[rb_test(standard)]
-#[cfg(feature = "rules")]
 async fn rules_cleared_fee_priority_restored(rbuilder: LocalInstance) -> eyre::Result<()> {
     let driver = rbuilder.driver().await?;
     let accounts = driver.fund_accounts(2, ONE_ETH).await?;
@@ -707,7 +698,6 @@ async fn rules_cleared_fee_priority_restored(rbuilder: LocalInstance) -> eyre::R
 
 /// Test that multiple rules matching the same transaction sum their weights correctly.
 #[rb_test(standard)]
-#[cfg(feature = "rules")]
 async fn rules_multiple_matching_rules_sum_weights(rbuilder: LocalInstance) -> eyre::Result<()> {
     let driver = rbuilder.driver().await?;
     let accounts = driver.fund_accounts(3, ONE_ETH).await?;
@@ -805,7 +795,6 @@ async fn rules_multiple_matching_rules_sum_weights(rbuilder: LocalInstance) -> e
 // ==================== Additional Integration Tests ====================
 
 /// Helper to filter block hashes to only include the specified tx hashes (in order).
-#[cfg(feature = "rules")]
 fn filter_tx_order(
     block_hashes: &[alloy_primitives::B256],
     tx_hashes: &[&alloy_primitives::B256],
@@ -819,7 +808,6 @@ fn filter_tx_order(
 
 /// Test that equal weight txs are sorted by fee when rules are present but equal.
 #[rb_test(standard)]
-#[cfg(feature = "rules")]
 async fn rules_equal_weight_sorted_by_fee(rbuilder: LocalInstance) -> eyre::Result<()> {
     let driver = rbuilder.driver().await?;
     let accounts = driver.fund_accounts(3, ONE_ETH).await?;
@@ -878,7 +866,6 @@ async fn rules_equal_weight_sorted_by_fee(rbuilder: LocalInstance) -> eyre::Resu
 
 /// Test that zero weight rule doesn't affect ordering (fee priority preserved).
 #[rb_test(standard)]
-#[cfg(feature = "rules")]
 async fn rules_zero_weight_preserves_fee_ordering(rbuilder: LocalInstance) -> eyre::Result<()> {
     let driver = rbuilder.driver().await?;
     let accounts = driver.fund_accounts(2, ONE_ETH).await?;
@@ -935,7 +922,6 @@ async fn rules_zero_weight_preserves_fee_ordering(rbuilder: LocalInstance) -> ey
 
 /// Test multiple alias groups working together.
 #[rb_test(standard)]
-#[cfg(feature = "rules")]
 async fn rules_multiple_alias_groups(rbuilder: LocalInstance) -> eyre::Result<()> {
     let driver = rbuilder.driver().await?;
     let accounts = driver.fund_accounts(4, ONE_ETH).await?;
@@ -1022,7 +1008,6 @@ async fn rules_multiple_alias_groups(rbuilder: LocalInstance) -> eyre::Result<()
 
 /// Test that same sender can have multiple transactions with rules applied consistently.
 #[rb_test(standard)]
-#[cfg(feature = "rules")]
 async fn rules_same_sender_multiple_txs(rbuilder: LocalInstance) -> eyre::Result<()> {
     let driver = rbuilder.driver().await?;
     let accounts = driver.fund_accounts(2, ONE_ETH).await?;
@@ -1084,7 +1069,6 @@ async fn rules_same_sender_multiple_txs(rbuilder: LocalInstance) -> eyre::Result
 
 /// Test selector matching with extended calldata.
 #[rb_test(standard)]
-#[cfg(feature = "rules")]
 async fn rules_selector_with_calldata(rbuilder: LocalInstance) -> eyre::Result<()> {
     let driver = rbuilder.driver().await?;
     let accounts = driver.fund_accounts(2, ONE_ETH).await?;
@@ -1143,7 +1127,6 @@ async fn rules_selector_with_calldata(rbuilder: LocalInstance) -> eyre::Result<(
 
 /// Test that rules with very large weights work correctly.
 #[rb_test(standard)]
-#[cfg(feature = "rules")]
 async fn rules_large_weight_values(rbuilder: LocalInstance) -> eyre::Result<()> {
     let driver = rbuilder.driver().await?;
     let accounts = driver.fund_accounts(2, ONE_ETH).await?;
@@ -1193,7 +1176,6 @@ async fn rules_large_weight_values(rbuilder: LocalInstance) -> eyre::Result<()> 
 
 /// Test mixing positive and negative weights.
 #[rb_test(standard)]
-#[cfg(feature = "rules")]
 async fn rules_mixed_positive_negative_weights(rbuilder: LocalInstance) -> eyre::Result<()> {
     let driver = rbuilder.driver().await?;
     let accounts = driver.fund_accounts(3, ONE_ETH).await?;
@@ -1276,7 +1258,6 @@ async fn rules_mixed_positive_negative_weights(rbuilder: LocalInstance) -> eyre:
 
 /// Test that rule updates between blocks take effect.
 #[rb_test(standard)]
-#[cfg(feature = "rules")]
 async fn rules_update_between_blocks(rbuilder: LocalInstance) -> eyre::Result<()> {
     let driver = rbuilder.driver().await?;
     let accounts = driver.fund_accounts(2, ONE_ETH).await?;
@@ -1371,7 +1352,6 @@ async fn rules_update_between_blocks(rbuilder: LocalInstance) -> eyre::Result<()
 
 /// Test empty ruleset means fee priority applies.
 #[rb_test(standard)]
-#[cfg(feature = "rules")]
 async fn rules_empty_ruleset_fee_priority(rbuilder: LocalInstance) -> eyre::Result<()> {
     let driver = rbuilder.driver().await?;
     let accounts = driver.fund_accounts(3, ONE_ETH).await?;

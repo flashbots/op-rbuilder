@@ -47,7 +47,6 @@ target "op-rbuilder" {
     GIT_DATE     = GIT_DATE
     GIT_VERSION  = GIT_VERSION
     RBUILDER_BIN = "op-rbuilder"
-    FEATURES     = "rules"
   }
   labels = {
     "org.opencontainers.image.source"   = "https://github.com/flashbots/op-rbuilder"

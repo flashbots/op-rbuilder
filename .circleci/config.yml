@@ -18,6 +18,57 @@ executors:
     resource_class: xlarge
 
 # -------------------------------------------------------------------
+# Reusable commands
+# -------------------------------------------------------------------
+commands:
+  init-submodules:
+    steps:
+      - run:
+          name: Initialize submodules
+          command: git submodule sync && git submodule update --init --recursive
+
+  install-rust-toolchain:
+    parameters:
+      toolchain:
+        type: string
+    steps:
+      - run:
+          name: Install Rust toolchain (<< parameters.toolchain >>)
+          command: |
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain "<< parameters.toolchain >>"
+            echo 'export PATH=$HOME/.cargo/bin:$PATH' >> "$BASH_ENV"
+            source "$BASH_ENV"
+            rustup component add rustfmt clippy
+            rustc --version
+            cargo --version
+
+  install-native-deps:
+    parameters:
+      packages:
+        type: string
+    steps:
+      - run:
+          name: Install native dependencies
+          command: |
+            sudo apt-get update
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y << parameters.packages >>
+
+  restore-cargo-cache:
+    steps:
+      - restore_cache:
+          keys:
+            - cargo-deps-v2-{{ arch }}-{{ checksum "Cargo.lock" }}
+            - cargo-deps-v2-{{ arch }}-
+
+  save-cargo-cache:
+    steps:
+      - save_cache:
+          key: cargo-deps-v2-{{ arch }}-{{ checksum "Cargo.lock" }}
+          paths:
+            - ~/.cargo/registry
+            - ~/.cargo/git
+
+# -------------------------------------------------------------------
 # Jobs
 # -------------------------------------------------------------------
 jobs:
@@ -94,9 +145,58 @@ jobs:
               << parameters.docker_name >>
 
   # -----------------------------------------------------------------
-  # [op-rbuilder] Check - lint and test
+  # [op-rbuilder] Formatting check
   # -----------------------------------------------------------------
-  op-rbuilder-check:
+  op-rbuilder-fmt:
+    parameters:
+      toolchain:
+        type: string
+    machine:
+      image: ubuntu-2204:current
+    resource_class: xlarge
+    environment:
+      CARGO_TERM_COLOR: always
+    steps:
+      - checkout
+      - init-submodules
+      - install-rust-toolchain:
+          toolchain: << parameters.toolchain >>
+      - restore-cargo-cache
+      - run:
+          name: Check formatting
+          command: cargo +<< parameters.toolchain >> fmt -- --check
+      - save-cargo-cache
+
+  # -----------------------------------------------------------------
+  # [op-rbuilder] Clippy
+  # -----------------------------------------------------------------
+  op-rbuilder-clippy:
+    parameters:
+      toolchain:
+        type: string
+    machine:
+      image: ubuntu-2204:current
+    resource_class: xlarge
+    environment:
+      CARGO_TERM_COLOR: always
+      TESTS_TEMP_DIR: /home/circleci/project
+    steps:
+      - checkout
+      - init-submodules
+      - install-rust-toolchain:
+          toolchain: << parameters.toolchain >>
+      - install-native-deps:
+          packages: "libsqlite3-dev clang libclang-dev llvm build-essential pkg-config libtss2-dev"
+      - restore-cargo-cache
+      - run:
+          name: Run clippy
+          command: cargo +<< parameters.toolchain >> clippy --all-features -- -D warnings
+      - save-cargo-cache
+
+  # -----------------------------------------------------------------
+  # [op-rbuilder] Tests
+  # -----------------------------------------------------------------
+  op-rbuilder-test:
     parameters:
       toolchain:
         type: string
@@ -111,54 +211,98 @@ jobs:
       TESTS_TEMP_DIR: /home/circleci/project
     steps:
       - checkout
+      - init-submodules
+      - install-rust-toolchain:
+          toolchain: << parameters.toolchain >>
+      - install-native-deps:
+          packages: "libsqlite3-dev clang libclang-dev llvm build-essential pkg-config libtss2-dev"
+      - restore-cargo-cache
       - run:
-          name: Initialize submodules
-          command: git submodule sync && git submodule update --init --recursive
-      - run:
-          name: Install Rust toolchain (<< parameters.toolchain >>)
+          name: Install cargo-nextest
           command: |
-            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain "<< parameters.toolchain >>"
-            echo 'export PATH=$HOME/.cargo/bin:$PATH' >> "$BASH_ENV"
-            source "$BASH_ENV"
-            rustup component add rustfmt clippy
-            rustc --version
-            cargo --version
+            curl -LsSf https://get.nexte.st/latest/linux | tar zxf - -C ${CARGO_HOME:-$HOME/.cargo}/bin
+            cargo nextest --version
       - run:
-          name: Install native dependencies
+          name: Test (nextest)
           command: |
-            sudo apt-get update
-            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
-              libsqlite3-dev clang libclang-dev llvm build-essential pkg-config libtss2-dev
-      - restore_cache:
-          keys:
-            - cargo-deps-v1-{{ checksum "Cargo.lock" }}
+            if [ -n "<< parameters.features >>" ]; then
+              cargo nextest run --workspace --profile ci --features "<< parameters.features >>"
+            else
+              cargo nextest run --workspace --profile ci
+            fi
       - run:
-          name: Compile tester
-          command: make tester
+          name: Ensure nextest results directory exists
+          when: always
+          command: mkdir -p target/nextest/ci
+      - when:
+          condition: always
+          steps:
+            - store_test_results:
+                path: target/nextest/ci
+      - save-cargo-cache
+
+  # -----------------------------------------------------------------
+  # [op-rbuilder] Build debug binary for downstream jobs
+  # -----------------------------------------------------------------
+  op-rbuilder-build:
+    parameters:
+      toolchain:
+        type: string
+      features:
+        type: string
+    machine:
+      image: ubuntu-2204:current
+    resource_class: xlarge
+    environment:
+      CARGO_TERM_COLOR: always
+      FEATURES: << parameters.features >>
+    steps:
+      - checkout
+      - init-submodules
+      - install-rust-toolchain:
+          toolchain: << parameters.toolchain >>
+      - install-native-deps:
+          packages: "libsqlite3-dev clang libclang-dev llvm build-essential pkg-config libtss2-dev"
+      - restore-cargo-cache
       - run:
-          name: Compile op-rbuilder
+          name: Build op-rbuilder binary
           command: |
             if [ -n "<< parameters.features >>" ]; then
               cargo build -p op-rbuilder --bin op-rbuilder --features "<< parameters.features >>"
             else
               cargo build -p op-rbuilder --bin op-rbuilder
             fi
-      - run:
-          name: Lint
-          command: make lint
-      - run:
-          name: Test
-          command: |
-            if [ "<< parameters.features >>" = "rules" ]; then
-              make test-rules
-            else
-              make test
-            fi
-      - save_cache:
-          key: cargo-deps-v1-{{ checksum "Cargo.lock" }}
+      - persist_to_workspace:
+          root: ~/project
           paths:
-            - ~/.cargo/registry
-            - ~/.cargo/git
+            - target/debug/op-rbuilder
+      - save-cargo-cache
+
+  # -----------------------------------------------------------------
+  # [op-rbuilder] Build tester binary with testing feature
+  # -----------------------------------------------------------------
+  op-rbuilder-build-testing:
+    parameters:
+      toolchain:
+        type: string
+    machine:
+      image: ubuntu-2204:current
+    resource_class: xlarge
+    environment:
+      CARGO_TERM_COLOR: always
+      TESTS_TEMP_DIR: /home/circleci/project
+    steps:
+      - checkout
+      - init-submodules
+      - install-rust-toolchain:
+          toolchain: << parameters.toolchain >>
+      - install-native-deps:
+          packages: "libsqlite3-dev clang libclang-dev llvm build-essential pkg-config libtss2-dev"
+      - restore-cargo-cache
+      - run:
+          name: Build tester binary
+          command: cargo build -p op-rbuilder --bin tester --features testing
+      - save-cargo-cache
 
   # -----------------------------------------------------------------
   # [op-rbuilder] Verify reproducible build
@@ -233,16 +377,11 @@ jobs:
       FEATURES: << parameters.features >>
     steps:
       - checkout
-      - run:
-          name: Initialize submodules
-          command: git submodule sync && git submodule update --init --recursive
-      - run:
-          name: Install native dependencies
-          command: |
-            sudo apt-get update
-            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
-              build-essential ca-certificates clang curl git jq \
-              libclang-dev libsqlite3-dev libtss2-dev llvm pkg-config
+      - attach_workspace:
+          at: ~/project
+      - init-submodules
+      - install-native-deps:
+          packages: "build-essential ca-certificates clang curl git jq libclang-dev libsqlite3-dev libtss2-dev llvm pkg-config"
       - restore_cache:
           keys:
             - op-rbuilder-acceptance-v1-<< parameters.gate >>-{{ arch }}-{{ checksum "Cargo.lock" }}
@@ -251,6 +390,12 @@ jobs:
           name: Run acceptance tests (<< parameters.gate >>)
           no_output_timeout: 120m
           command: |
+            export BUILD_OP_RBUILDER=0
+            export RBUILDER_BIN="/home/circleci/project/target/debug/op-rbuilder"
+            if [ ! -x "$RBUILDER_BIN" ]; then
+              echo "op-rbuilder binary missing from workspace: $RBUILDER_BIN" >&2
+              exit 1
+            fi
             if [ -n "<< parameters.devstack_orchestrator >>" ]; then
               export DEVSTACK_ORCHESTRATOR="<< parameters.devstack_orchestrator >>"
             fi
@@ -258,6 +403,34 @@ jobs:
               export DISABLE_OP_E2E_LEGACY="<< parameters.disable_op_e2e_legacy >>"
             fi
             ./scripts/ci/run_acceptance_tests.sh
+      - run:
+          name: Generate JUnit XML test report for CircleCI (acceptance)
+          when: always
+          command: |
+            mkdir -p .ci-artifacts/acceptance/results
+
+            # Prefer logs copied into artifacts by run_acceptance_tests.sh; fall back to optimism checkout logs.
+            LOG_DIR="$(ls -td .ci-artifacts/acceptance/testrun-* 2>/dev/null | head -1 || true)"
+            if [ -z "$LOG_DIR" ]; then
+              LOG_DIR="$(ls -td .ci-work/optimism/op-acceptance-tests/logs/* 2>/dev/null | head -1 || true)"
+            fi
+
+            if [ -z "$LOG_DIR" ] || [ ! -f "$LOG_DIR/raw_go_events.log" ]; then
+              echo "No raw_go_events.log found; skipping JUnit generation."
+              exit 0
+            fi
+
+            if command -v gotestsum >/dev/null 2>&1 && gotestsum --version >/dev/null 2>&1; then
+              gotestsum --junitfile .ci-artifacts/acceptance/results/results.xml --raw-command cat "$LOG_DIR/raw_go_events.log" || true
+            else
+              # Fallback for environments where gotestsum is present only as an unconfigured shim.
+              go run gotest.tools/gotestsum@v1.12.3 --junitfile .ci-artifacts/acceptance/results/results.xml --raw-command cat "$LOG_DIR/raw_go_events.log" || true
+            fi
+      - when:
+          condition: always
+          steps:
+            - store_test_results:
+                path: .ci-artifacts/acceptance/results
       - save_cache:
           key: op-rbuilder-acceptance-v1-<< parameters.gate >>-{{ arch }}-{{ checksum "Cargo.lock" }}
           paths:
@@ -366,18 +539,29 @@ workflows:
   # CI - runs on PRs and pushes to main
   ci:
     jobs:
-      - op-rbuilder-check:
-          name: op-rbuilder-check-default-nightly
+      - op-rbuilder-fmt:
+          name: fmt
+          toolchain: "nightly-2026-02-21"
+      - op-rbuilder-clippy:
+          name: clippy
+          toolchain: "nightly-2026-02-21"
+      - op-rbuilder-test:
+          name: test
           toolchain: "nightly-2026-02-21"
           features: ""
-      - op-rbuilder-check:
-          name: op-rbuilder-check-rules-nightly
+      - op-rbuilder-build:
+          name: build
           toolchain: "nightly-2026-02-21"
-          features: "rules"
+          features: ""
+      - op-rbuilder-build-testing:
+          name: build-testing
+          toolchain: "nightly-2026-02-21"
       - op-rbuilder-acceptance:
-          name: op-rbuilder-acceptance-flashblocks
+          name: acceptance-test
+          requires:
+            - build
           gate: flashblocks
-          features: "rules"
+          features: ""
           devstack_orchestrator: sysgo
           disable_op_e2e_legacy: "true"
       - tdx-quote-provider-check: {}

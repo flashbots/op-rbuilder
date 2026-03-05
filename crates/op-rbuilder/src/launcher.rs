@@ -1,32 +1,32 @@
 use eyre::Result;
 use reth_optimism_rpc::OpEthApiBuilder;
 
-#[cfg(feature = "rules")]
-use crate::pool::{CustomOpPoolBuilder, RuleBasedValidator};
 use crate::{
     args::*,
     builders::{BuilderConfig, BuilderMode, FlashblocksBuilder, PayloadBuilder, StandardBuilder},
     metrics::{VERSION, record_flag_gauge_metrics},
     monitor_tx_pool::monitor_tx_pool,
+    pool::{CustomOpPoolBuilder, RuleBasedValidator},
     primitives::reth::engine_api_builder::OpEngineApiBuilder,
     revert_protection::{EthApiExtServer, RevertProtectionExt},
     tx::FBPooledTransaction,
 };
 use core::fmt::Debug;
 use moka::future::Cache;
-use reth::builder::{NodeBuilder, WithLaunchContext};
+use reth::{
+    builder::{NodeBuilder, WithLaunchContext},
+    core::exit::NodeExitFuture,
+};
 use reth_cli_commands::launcher::Launcher;
 use reth_db::mdbx::DatabaseEnv;
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_cli::chainspec::OpChainSpecParser;
-#[cfg(not(feature = "rules"))]
-use reth_optimism_node::OpPoolBuilder;
 use reth_optimism_node::{
-    OpNode,
+    OpNode, OpPoolBuilder,
     node::{OpAddOns, OpAddOnsBuilder, OpEngineValidatorBuilder},
 };
 use reth_transaction_pool::TransactionPool;
-use std::{marker::PhantomData, sync::Arc};
+use std::{any::Any, marker::PhantomData, sync::Arc};
 
 pub fn launch() -> Result<()> {
     let cli = Cli::parsed();
@@ -114,32 +114,14 @@ where
         let reverted_cache = Cache::builder().max_capacity(100).build();
         let reverted_cache_copy = reverted_cache.clone();
 
-        let mut addons: OpAddOns<
-            _,
-            OpEthApiBuilder,
-            OpEngineValidatorBuilder,
-            OpEngineApiBuilder<OpEngineValidatorBuilder>,
-        > = OpAddOnsBuilder::default()
-            .with_sequencer(rollup_args.sequencer.clone())
-            .with_enable_tx_conditional(rollup_args.enable_tx_conditional)
-            .with_da_config(da_config)
-            .with_gas_limit_config(gas_limit_config)
-            .build();
-        if cfg!(feature = "custom-engine-api") {
-            let engine_builder: OpEngineApiBuilder<OpEngineValidatorBuilder> =
-                OpEngineApiBuilder::default();
-            addons = addons.with_engine_api(engine_builder);
-        }
-
-        // Initialize rules system if enabled
-        #[cfg(feature = "rules")]
+        // Initialize rules system.
         let (rules_enabled, rule_fetcher, rule_refresh_interval_seconds) =
             if builder_args.rules.rules_enabled {
                 use crate::rules::RulesRegistryConfig;
 
                 tracing::info!("Rule based block building enabled");
 
-                // Load registry configuration if provided
+                // Load registry configuration if provided.
                 let (fetcher, refresh_interval) = if let Some(config_path) =
                     &builder_args.rules.config_path
                 {
@@ -181,99 +163,178 @@ where
                     (None, 0)
                 };
 
-                // Fetch initial rules and update global state
+                // Fetch initial rules and update global state.
                 if let Some(ref f) = fetcher {
                     f.refresh_global_ruleset().await;
                 }
 
                 (true, fetcher, refresh_interval)
             } else {
-                tracing::debug!("Rules system feature compiled in but disabled at runtime");
+                tracing::debug!("Rules system disabled at runtime");
                 (false, None, 0)
             };
 
-        // Build pool with conditional rules integration
-        #[cfg(feature = "rules")]
-        let pool_builder = {
-            let builder = CustomOpPoolBuilder::<FBPooledTransaction>::default()
-                .with_enable_tx_conditional(
-                    rollup_args.enable_tx_conditional || builder_args.enable_revert_protection,
-                )
-                .with_supervisor(
-                    rollup_args.supervisor_http.clone(),
-                    rollup_args.supervisor_safety_level,
-                );
+        // Revert protection uses the same internal pool logic as conditional transactions
+        // to garbage collect transactions out of the bundle range.
+        let enable_tx_conditional_or_revert =
+            rollup_args.enable_tx_conditional || builder_args.enable_revert_protection;
 
-            // Integrate rule-aware validator with optional rule checks.
+        // Keep the launched node alive for the lifetime of the process so RPC handles remain open.
+        let (node_exit_future, _node_handle): (NodeExitFuture, Box<dyn Any + Send>) =
             if rules_enabled {
                 tracing::info!("Integrating rules validator with transaction pool");
+
+                let mut addons: OpAddOns<
+                    _,
+                    OpEthApiBuilder,
+                    OpEngineValidatorBuilder,
+                    OpEngineApiBuilder<OpEngineValidatorBuilder>,
+                > = OpAddOnsBuilder::default()
+                    .with_sequencer(rollup_args.sequencer.clone())
+                    .with_enable_tx_conditional(rollup_args.enable_tx_conditional)
+                    .with_da_config(da_config)
+                    .with_gas_limit_config(gas_limit_config)
+                    .build();
+                if cfg!(feature = "custom-engine-api") {
+                    let engine_builder: OpEngineApiBuilder<OpEngineValidatorBuilder> =
+                        OpEngineApiBuilder::default();
+                    addons = addons.with_engine_api(engine_builder);
+                }
+
+                let pool_builder = CustomOpPoolBuilder::<FBPooledTransaction>::default()
+                    .with_enable_tx_conditional(enable_tx_conditional_or_revert)
+                    .with_supervisor(
+                        rollup_args.supervisor_http.clone(),
+                        rollup_args.supervisor_safety_level,
+                    )
+                    .with_validator_wrapper(RuleBasedValidator::new);
+
+                let components = op_node
+                    .components()
+                    .pool(pool_builder)
+                    .payload(B::new_service(builder_config)?);
+
+                let node_handle = builder
+                    .with_types::<OpNode>()
+                    .with_components(components)
+                    .with_add_ons(addons)
+                    .extend_rpc_modules(move |ctx| {
+                        if builder_args.enable_revert_protection {
+                            tracing::info!("Revert protection enabled");
+
+                            let pool = ctx.pool().clone();
+                            let provider = ctx.provider().clone();
+                            let revert_protection_ext = RevertProtectionExt::new(
+                                pool,
+                                provider,
+                                ctx.registry.eth_api().clone(),
+                                reverted_cache,
+                            );
+
+                            ctx.modules
+                                .add_or_replace_configured(revert_protection_ext.into_rpc())?;
+                        }
+                        Ok(())
+                    })
+                    .on_node_started(move |ctx| {
+                        VERSION.register_version_metrics();
+                        if builder_args.log_pool_transactions {
+                            tracing::info!("Logging pool transactions");
+                            let listener = ctx.pool.all_transactions_event_listener();
+                            let task =
+                                monitor_tx_pool(listener, reverted_cache_copy, rules_enabled);
+                            ctx.task_executor.spawn_critical("txlogging", task);
+                        }
+
+                        // Start auto-refresh only when rules are enabled.
+                        if rules_enabled && let Some(fetcher) = rule_fetcher {
+                            fetcher.start_auto_refresh(rule_refresh_interval_seconds);
+                        }
+
+                        Ok(())
+                    })
+                    .launch()
+                    .await?;
+
+                (node_handle.node_exit_future, Box::new(node_handle.node))
             } else {
-                tracing::info!("Rules disabled at runtime, validator acts as passthrough");
-            }
+                tracing::info!("Rules disabled at runtime, using default transaction pool builder");
 
-            builder.with_validator_wrapper(RuleBasedValidator::new)
-        };
+                let mut addons: OpAddOns<
+                    _,
+                    OpEthApiBuilder,
+                    OpEngineValidatorBuilder,
+                    OpEngineApiBuilder<OpEngineValidatorBuilder>,
+                > = OpAddOnsBuilder::default()
+                    .with_sequencer(rollup_args.sequencer.clone())
+                    .with_enable_tx_conditional(rollup_args.enable_tx_conditional)
+                    .with_da_config(da_config)
+                    .with_gas_limit_config(gas_limit_config)
+                    .build();
+                if cfg!(feature = "custom-engine-api") {
+                    let engine_builder: OpEngineApiBuilder<OpEngineValidatorBuilder> =
+                        OpEngineApiBuilder::default();
+                    addons = addons.with_engine_api(engine_builder);
+                }
 
-        #[cfg(not(feature = "rules"))]
-        let pool_builder = OpPoolBuilder::<FBPooledTransaction>::default()
-            .with_enable_tx_conditional(
-                // Revert protection uses the same internal pool logic as conditional transactions
-                // to garbage collect transactions out of the bundle range.
-                rollup_args.enable_tx_conditional || builder_args.enable_revert_protection,
-            )
-            .with_supervisor(
-                rollup_args.supervisor_http.clone(),
-                rollup_args.supervisor_safety_level,
-            );
-
-        let components = op_node
-            .components()
-            .pool(pool_builder)
-            .payload(B::new_service(builder_config)?);
-
-        let handle = builder
-            .with_types::<OpNode>()
-            .with_components(components)
-            .with_add_ons(addons)
-            .extend_rpc_modules(move |ctx| {
-                if builder_args.enable_revert_protection {
-                    tracing::info!("Revert protection enabled");
-
-                    let pool = ctx.pool().clone();
-                    let provider = ctx.provider().clone();
-                    let revert_protection_ext = RevertProtectionExt::new(
-                        pool,
-                        provider,
-                        ctx.registry.eth_api().clone(),
-                        reverted_cache,
+                let pool_builder = OpPoolBuilder::<FBPooledTransaction>::default()
+                    .with_enable_tx_conditional(enable_tx_conditional_or_revert)
+                    .with_supervisor(
+                        rollup_args.supervisor_http.clone(),
+                        rollup_args.supervisor_safety_level,
                     );
 
-                    ctx.modules
-                        .add_or_replace_configured(revert_protection_ext.into_rpc())?;
-                }
-                Ok(())
-            })
-            .on_node_started(move |ctx| {
-                VERSION.register_version_metrics();
-                if builder_args.log_pool_transactions {
-                    tracing::info!("Logging pool transactions");
-                    let listener = ctx.pool.all_transactions_event_listener();
-                    let task = monitor_tx_pool(listener, reverted_cache_copy);
-                    ctx.task_executor.spawn_critical("txlogging", task);
-                }
+                let components = op_node
+                    .components()
+                    .pool(pool_builder)
+                    .payload(B::new_service(builder_config)?);
 
-                // Start auto-refresh if rules are enabled and fetcher is configured
-                #[cfg(feature = "rules")]
-                if let Some(fetcher) = rule_fetcher {
-                    fetcher.start_auto_refresh(rule_refresh_interval_seconds);
-                }
+                let node_handle = builder
+                    .with_types::<OpNode>()
+                    .with_components(components)
+                    .with_add_ons(addons)
+                    .extend_rpc_modules(move |ctx| {
+                        if builder_args.enable_revert_protection {
+                            tracing::info!("Revert protection enabled");
 
-                Ok(())
-            })
-            .launch()
-            .await?;
+                            let pool = ctx.pool().clone();
+                            let provider = ctx.provider().clone();
+                            let revert_protection_ext = RevertProtectionExt::new(
+                                pool,
+                                provider,
+                                ctx.registry.eth_api().clone(),
+                                reverted_cache,
+                            );
 
-        handle.node_exit_future.await?;
+                            ctx.modules
+                                .add_or_replace_configured(revert_protection_ext.into_rpc())?;
+                        }
+                        Ok(())
+                    })
+                    .on_node_started(move |ctx| {
+                        VERSION.register_version_metrics();
+                        if builder_args.log_pool_transactions {
+                            tracing::info!("Logging pool transactions");
+                            let listener = ctx.pool.all_transactions_event_listener();
+                            let task =
+                                monitor_tx_pool(listener, reverted_cache_copy, rules_enabled);
+                            ctx.task_executor.spawn_critical("txlogging", task);
+                        }
+
+                        // Start auto-refresh only when rules are enabled.
+                        if rules_enabled && let Some(fetcher) = rule_fetcher {
+                            fetcher.start_auto_refresh(rule_refresh_interval_seconds);
+                        }
+
+                        Ok(())
+                    })
+                    .launch()
+                    .await?;
+
+                (node_handle.node_exit_future, Box::new(node_handle.node))
+            };
+
+        node_exit_future.await?;
         Ok(())
     }
 }

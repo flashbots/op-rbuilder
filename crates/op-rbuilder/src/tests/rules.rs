@@ -1,4 +1,4 @@
-#![cfg(all(test, feature = "rules"))]
+#![cfg(test)]
 //! Tests for the refactored rules subsystem.
 
 use crate::{

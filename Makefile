@@ -85,11 +85,6 @@ test: ## Run the tests for rbuilder and op-rbuilder
 	cargo test -p op-rbuilder --verbose --features "$(FEATURES)"
 	cargo test -p tdx-quote-provider --verbose --features "$(FEATURES)"
 
-.PHONY: test-rules
-test-rules: ## tdx-quote-provider does not support rules feature
-	cargo test --verbose --features rules
-	cargo test -p op-rbuilder --verbose --features rules
-
 .PHONY: lt
 lt: lint test ## Run "lint" and "test"
 

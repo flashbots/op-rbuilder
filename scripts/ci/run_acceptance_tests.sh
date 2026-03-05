@@ -18,7 +18,7 @@ OPTIMISM_REF="${OPTIMISM_REF:-develop}"
 GATE="${GATE:-}"
 
 BUILD_OP_RBUILDER="${BUILD_OP_RBUILDER:-1}"
-OP_RBUILDER_FEATURES="${FEATURES:-rules}"
+OP_RBUILDER_FEATURES="${FEATURES:-}"
 PREP_OPTIMISM="${PREP_OPTIMISM:-1}"
 BUILD_CONTRACTS="${BUILD_CONTRACTS:-1}"
 BUILD_ROLLUP_BOOST="${BUILD_ROLLUP_BOOST:-1}"
@@ -123,7 +123,11 @@ build_op_rbuilder() {
   log "op-rbuilder features: $OP_RBUILDER_FEATURES"
   (
     cd "$ROOT_DIR"
-    run_tool rust cargo build --release -p op-rbuilder --bin op-rbuilder --features $OP_RBUILDER_FEATURES
+    if [[ -n "$OP_RBUILDER_FEATURES" ]]; then
+      run_tool rust cargo build --release -p op-rbuilder --bin op-rbuilder --features "$OP_RBUILDER_FEATURES"
+    else
+      run_tool rust cargo build --release -p op-rbuilder --bin op-rbuilder
+    fi
   )
 }
 

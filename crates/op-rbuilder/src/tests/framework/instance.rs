@@ -38,10 +38,8 @@ use reth::{
 use reth_node_builder::{NodeBuilder, NodeConfig};
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_cli::commands::Commands;
-#[cfg(not(feature = "rules"))]
-use reth_optimism_node::node::OpPoolBuilder;
 use reth_optimism_node::{
-    OpNode,
+    OpNode, OpPoolBuilder,
     node::{OpAddOns, OpAddOnsBuilder, OpEngineValidatorBuilder},
 };
 use reth_optimism_rpc::OpEthApiBuilder;
@@ -55,7 +53,6 @@ use tokio::{net::TcpListener, sync::oneshot, task::JoinHandle};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 use tokio_util::sync::CancellationToken;
 
-#[cfg(feature = "rules")]
 use crate::pool::{CustomOpPoolBuilder, RuleBasedValidator};
 /// Represents a type that emulates a local in-process instance of the OP builder node.
 /// This node uses IPC as the communication channel for the RPC server Engine API.
@@ -117,87 +114,142 @@ impl LocalInstance {
         let da_config = builder_config.da_config.clone();
         let gas_limit_config = builder_config.gas_limit_config.clone();
 
-        let addons: OpAddOns<
-            _,
-            OpEthApiBuilder,
-            OpEngineValidatorBuilder,
-            OpEngineApiBuilder<OpEngineValidatorBuilder>,
-        > = OpAddOnsBuilder::default()
-            .with_sequencer(args.rollup_args.sequencer.clone())
-            .with_enable_tx_conditional(args.rollup_args.enable_tx_conditional)
-            .with_da_config(da_config)
-            .with_gas_limit_config(gas_limit_config)
-            .build();
+        let enable_tx_conditional_or_revert =
+            args.rollup_args.enable_tx_conditional || args.enable_revert_protection;
 
-        #[cfg(feature = "rules")]
-        let pool_builder = {
-            let rollup_args = &args.rollup_args;
-            CustomOpPoolBuilder::<FBPooledTransaction>::default()
-                .with_enable_tx_conditional(
-                    rollup_args.enable_tx_conditional || args.enable_revert_protection,
-                )
-                .with_supervisor(
-                    rollup_args.supervisor_http.clone(),
-                    rollup_args.supervisor_safety_level,
-                )
-                .with_validator_wrapper(RuleBasedValidator::new)
-        };
+        let (exit_future, node_handle): (NodeExitFuture, Box<dyn Any + Send>) =
+            if args.rules.rules_enabled {
+                let addons: OpAddOns<
+                    _,
+                    OpEthApiBuilder,
+                    OpEngineValidatorBuilder,
+                    OpEngineApiBuilder<OpEngineValidatorBuilder>,
+                > = OpAddOnsBuilder::default()
+                    .with_sequencer(args.rollup_args.sequencer.clone())
+                    .with_enable_tx_conditional(args.rollup_args.enable_tx_conditional)
+                    .with_da_config(da_config)
+                    .with_gas_limit_config(gas_limit_config)
+                    .build();
 
-        let node_builder = NodeBuilder::<_, OpChainSpec>::new(config.clone())
-            .with_database(create_test_db(config.clone()))
-            .with_launch_context(task_manager.executor())
-            .with_types::<OpNode>()
-            .with_components(
-                op_node
-                    .components()
-                    .pool({
-                        #[cfg(not(feature = "rules"))]
-                        {
-                            pool_component(&args)
+                let pool_builder = CustomOpPoolBuilder::<FBPooledTransaction>::default()
+                    .with_enable_tx_conditional(enable_tx_conditional_or_revert)
+                    .with_supervisor(
+                        args.rollup_args.supervisor_http.clone(),
+                        args.rollup_args.supervisor_safety_level,
+                    )
+                    .with_validator_wrapper(RuleBasedValidator::new);
+
+                let node_handle = NodeBuilder::<_, OpChainSpec>::new(config.clone())
+                    .with_database(create_test_db(config.clone()))
+                    .with_launch_context(task_manager.executor())
+                    .with_types::<OpNode>()
+                    .with_components(
+                        op_node
+                            .components()
+                            .pool(pool_builder)
+                            .payload(P::new_service(builder_config)?),
+                    )
+                    .with_add_ons(addons)
+                    .extend_rpc_modules(move |ctx| {
+                        if args.enable_revert_protection {
+                            tracing::info!("Revert protection enabled");
+
+                            let pool = ctx.pool().clone();
+                            let provider = ctx.provider().clone();
+                            let revert_protection_ext = RevertProtectionExt::new(
+                                pool,
+                                provider,
+                                ctx.registry.eth_api().clone(),
+                                reverted_cache,
+                            );
+
+                            ctx.modules
+                                .add_or_replace_configured(revert_protection_ext.into_rpc())?;
                         }
-                        #[cfg(feature = "rules")]
-                        {
-                            pool_builder
-                        }
+
+                        Ok(())
                     })
-                    .payload(P::new_service(builder_config)?),
-            )
-            .with_add_ons(addons)
-            .extend_rpc_modules(move |ctx| {
-                if args.enable_revert_protection {
-                    tracing::info!("Revert protection enabled");
+                    .on_rpc_started(move |_, _| {
+                        let _ = rpc_ready_tx.send(());
+                        Ok(())
+                    })
+                    .on_node_started(move |ctx| {
+                        txpool_ready_tx
+                            .send(ctx.pool.all_transactions_event_listener())
+                            .expect("Failed to send txpool ready signal");
 
-                    let pool = ctx.pool().clone();
-                    let provider = ctx.provider().clone();
-                    let revert_protection_ext = RevertProtectionExt::new(
-                        pool,
-                        provider,
-                        ctx.registry.eth_api().clone(),
-                        reverted_cache,
+                        Ok(())
+                    })
+                    .launch()
+                    .await?;
+
+                (node_handle.node_exit_future, Box::new(node_handle.node))
+            } else {
+                let addons: OpAddOns<
+                    _,
+                    OpEthApiBuilder,
+                    OpEngineValidatorBuilder,
+                    OpEngineApiBuilder<OpEngineValidatorBuilder>,
+                > = OpAddOnsBuilder::default()
+                    .with_sequencer(args.rollup_args.sequencer.clone())
+                    .with_enable_tx_conditional(args.rollup_args.enable_tx_conditional)
+                    .with_da_config(da_config)
+                    .with_gas_limit_config(gas_limit_config)
+                    .build();
+
+                let pool_builder = OpPoolBuilder::<FBPooledTransaction>::default()
+                    .with_enable_tx_conditional(enable_tx_conditional_or_revert)
+                    .with_supervisor(
+                        args.rollup_args.supervisor_http.clone(),
+                        args.rollup_args.supervisor_safety_level,
                     );
 
-                    ctx.modules
-                        .add_or_replace_configured(revert_protection_ext.into_rpc())?;
-                }
+                let node_handle = NodeBuilder::<_, OpChainSpec>::new(config.clone())
+                    .with_database(create_test_db(config.clone()))
+                    .with_launch_context(task_manager.executor())
+                    .with_types::<OpNode>()
+                    .with_components(
+                        op_node
+                            .components()
+                            .pool(pool_builder)
+                            .payload(P::new_service(builder_config)?),
+                    )
+                    .with_add_ons(addons)
+                    .extend_rpc_modules(move |ctx| {
+                        if args.enable_revert_protection {
+                            tracing::info!("Revert protection enabled");
 
-                Ok(())
-            })
-            .on_rpc_started(move |_, _| {
-                let _ = rpc_ready_tx.send(());
-                Ok(())
-            })
-            .on_node_started(move |ctx| {
-                txpool_ready_tx
-                    .send(ctx.pool.all_transactions_event_listener())
-                    .expect("Failed to send txpool ready signal");
+                            let pool = ctx.pool().clone();
+                            let provider = ctx.provider().clone();
+                            let revert_protection_ext = RevertProtectionExt::new(
+                                pool,
+                                provider,
+                                ctx.registry.eth_api().clone(),
+                                reverted_cache,
+                            );
 
-                Ok(())
-            });
+                            ctx.modules
+                                .add_or_replace_configured(revert_protection_ext.into_rpc())?;
+                        }
 
-        let node_handle = node_builder.launch().await?;
-        let exit_future = node_handle.node_exit_future;
-        let boxed_handle = Box::new(node_handle.node);
-        let node_handle: Box<dyn Any + Send> = boxed_handle;
+                        Ok(())
+                    })
+                    .on_rpc_started(move |_, _| {
+                        let _ = rpc_ready_tx.send(());
+                        Ok(())
+                    })
+                    .on_node_started(move |ctx| {
+                        txpool_ready_tx
+                            .send(ctx.pool.all_transactions_event_listener())
+                            .expect("Failed to send txpool ready signal");
+
+                        Ok(())
+                    })
+                    .launch()
+                    .await?;
+
+                (node_handle.node_exit_future, Box::new(node_handle.node))
+            };
 
         // Wait for all required components to be ready
         rpc_ready_rx.await.expect("Failed to receive ready signal");
@@ -221,10 +273,11 @@ impl LocalInstance {
     /// This method prefunds the default accounts with 1 ETH each.
     pub async fn standard() -> eyre::Result<Self> {
         let args = crate::args::Cli::parse_from(["dummy", "node"]);
-        let Commands::Node(ref node_command) = args.command else {
+        let Commands::Node(mut node_command) = args.command else {
             unreachable!()
         };
-        Self::new::<StandardBuilder>(node_command.ext.clone()).await
+        node_command.ext.rules.rules_enabled = true;
+        Self::new::<StandardBuilder>(node_command.ext).await
     }
 
     /// Creates new local instance of the OP builder node with the flashblocks builder configuration.
@@ -234,6 +287,7 @@ impl LocalInstance {
         let Commands::Node(ref mut node_command) = args.command else {
             unreachable!()
         };
+        node_command.ext.rules.rules_enabled = true;
         node_command.ext.flashblocks.enabled = true;
         node_command.ext.flashblocks.flashblocks_port = 0; // use random os assigned port
         Self::new::<FlashblocksBuilder>(node_command.ext.clone()).await
@@ -383,20 +437,6 @@ fn chain_spec() -> Arc<OpChainSpec> {
 
 fn task_manager() -> TaskManager {
     TaskManager::new(tokio::runtime::Handle::current())
-}
-#[cfg(not(feature = "rules"))]
-fn pool_component(args: &OpRbuilderArgs) -> OpPoolBuilder<FBPooledTransaction> {
-    let rollup_args = &args.rollup_args;
-    OpPoolBuilder::<FBPooledTransaction>::default()
-        .with_enable_tx_conditional(
-            // Revert protection uses the same internal pool logic as conditional transactions
-            // to garbage collect transactions out of the bundle range.
-            rollup_args.enable_tx_conditional || args.enable_revert_protection,
-        )
-        .with_supervisor(
-            rollup_args.supervisor_http.clone(),
-            rollup_args.supervisor_safety_level,
-        )
 }
 
 async fn spawn_attestation_provider() -> eyre::Result<AttestationServer> {
