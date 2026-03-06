@@ -4,13 +4,13 @@ base_args:
   - op-rbuilder
 
 setup:
-  - make op-rbuilder
+  - cd .. && make op-rbuilder FEATURES=telemetry
 
 recipe:
   op-rbuilder:
     services:
       op-rbuilder:
-        host_path: ./target/debug/op-rbuilder
+        host_path: ../target/debug/op-rbuilder
         args:
           - node
           - --builder.playground # enabling op-rbuilder to detect playground environment and service configurations
@@ -41,6 +41,12 @@ recipe:
           - 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
           - --bootnodes
           - '{{Service "bootnode" "rpc" "enode" "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798483ada7726a3c4655da4fbfc0e1108a8fd17b448a68554199c47d08ffb10d4b8"}}'
+          - --log.stdout.filter
+          - op_rbuilder=debug
+          - --telemetry.otlp-endpoint
+          - http://localhost:4318
+          - --telemetry.sampling-ratio
+          - '1'
         ports:
           authrpc: 4444
           http: 2222
@@ -52,3 +58,37 @@ recipe:
         volumes:
           /data_op_rbuilder:
             name: data # $HOME/.local/state/builder-playground/devnet/volume-op-rbuilder-data
+
+  observability:
+    services:
+      jaeger:
+        image: jaegertracing/all-in-one
+        tag: latest
+        ports:
+          otlp-http: 4318
+          ui: 16686
+        env:
+          COLLECTOR_OTLP_ENABLED: "true"
+
+      prometheus:
+        image: prom/prometheus
+        tag: latest
+        args:
+          - --config.file=/etc/prometheus/prometheus.yml
+          - --web.enable-lifecycle
+          - --storage.tsdb.retention.time=1h
+        ports:
+          http: 9090
+        files:
+          /etc/prometheus/prometheus.yml: prometheus.yaml
+
+      grafana:
+        image: grafana/grafana
+        tag: latest
+        ports:
+          http: 3000
+        env:
+          GF_AUTH_ANONYMOUS_ENABLED: "true"
+          GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+        files:
+          /etc/grafana/provisioning/datasources/datasources.yaml: grafana/datasources.yaml

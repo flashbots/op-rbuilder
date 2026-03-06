@@ -19,9 +19,13 @@ pub fn setup_telemetry_layer(
     }
 
     // Create OTLP layer with custom configuration
+    let mut endpoint =
+        Url::parse(args.otlp_endpoint.as_ref().unwrap()).expect("Invalid OTLP endpoint");
+    reth_tracing_otlp::OtlpProtocol::Http.validate_endpoint(&mut endpoint)?;
+
     let config = reth_tracing_otlp::OtlpConfig::new(
         "op-rbuilder",
-        Url::parse(args.otlp_endpoint.as_ref().unwrap()).expect("Invalid OTLP endpoint"),
+        endpoint,
         reth_tracing_otlp::OtlpProtocol::Http,
         None,
     )?;
