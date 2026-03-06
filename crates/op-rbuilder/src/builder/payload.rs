@@ -474,18 +474,9 @@ where
             cancel: block_cancel,
         } = args;
 
-        // We log only every 100th block to reduce usage
-        let span = if cfg!(feature = "telemetry")
-            && config
-                .parent_header
-                .number
-                .is_multiple_of(self.config.sampling_ratio)
-        {
-            span!(Level::INFO, "build_payload")
-        } else {
-            tracing::Span::none()
-        };
-        let _entered = span.enter();
+        // The build_payload span is created and instrumented in try_build() using
+        // tracing::Instrument, which safely manages it across async .await points.
+        let span = tracing::Span::current();
         span.record(
             "payload_id",
             config.attributes.payload_attributes.id.to_string(),
@@ -747,8 +738,6 @@ where
                     "build_flashblock",
                 )
             };
-            let _entered = fb_span.enter();
-
             let FlashblockBuildOutput {
                 ctx: returned_ctx,
                 build_result,
@@ -757,8 +746,8 @@ where
                 committed_txs: new_committed,
                 info: new_info,
                 fb_state: returned_fb_state,
-            } = self
-                .run_blocking_task({
+            } = tracing::Instrument::instrument(
+                self.run_blocking_task({
                     let builder = self.clone();
                     let ctx = ctx;
                     let block_cancel = block_cancel.clone();
@@ -804,8 +793,10 @@ where
                             fb_state,
                         })
                     }
-                })
-                .await?;
+                }),
+                fb_span,
+            )
+            .await?;
 
             ctx = returned_ctx;
             fb_state = returned_fb_state;
@@ -1133,7 +1124,18 @@ where
         args: BuildArguments<Self::Attributes, Self::BuiltPayload>,
         best_payload_tx: watch::Sender<Option<Self::BuiltPayload>>,
     ) -> Result<(), PayloadBuilderError> {
-        self.build_payload(args, best_payload_tx).await
+        let span = if cfg!(feature = "telemetry")
+            && args
+                .config
+                .parent_header
+                .number
+                .is_multiple_of(self.config.sampling_ratio)
+        {
+            span!(Level::INFO, "build_payload")
+        } else {
+            tracing::Span::none()
+        };
+        tracing::Instrument::instrument(self.build_payload(args, best_payload_tx), span).await
     }
 }
 

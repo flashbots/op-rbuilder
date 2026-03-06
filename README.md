@@ -126,27 +126,7 @@ cargo test --package op-rbuilder --lib
 
 ## Local Devnet
 
-1. Install [flashbots/builder-playground](https://github.com/flashbots/builder-playground).
-
-2. `builder-playground start playground.yaml` (use `--skip-setup` if you need to skip `cargo build` every time).
-
-3. Run `contender`:
-
-```bash
-cargo run -- spam --tps 10 -r http://localhost:2222 --optimism --min-balance 0.14
-```
-
-And you should start to see blocks being built and landed on-chain with `contender` transactions.
-
-Alternatively, you can send a single test transaction like:
-
-```bash
-builder-playground test http://localhost:2222 --timeout 30s --retries 10
-```
-
-op-rbuilder will automatically try to detect all settings and ports from the currently running playground thanks to the `--builder.playground` flag.
-
-Make sure to check out `playground.yaml` if you need to inspect or modify the configuration for your local test environment!
+Local development environment setup and configuration files can be found in [`dev/README.md`](./dev/README.md).
 
 ## Running GitHub actions locally
 

@@ -50,6 +50,9 @@ pub fn launch() -> Result<()> {
         use crate::primitives::telemetry::setup_telemetry_layer;
         let telemetry_layer = setup_telemetry_layer(&telemetry_args)?;
         cli_app.access_tracing_layers()?.add_layer(telemetry_layer);
+
+        // macos fix
+        otel_shutdown_hook();
     }
 
     cli_app.run(BuilderLauncher)?;
@@ -166,4 +169,27 @@ impl Launcher<OpChainSpecParser, OpRbuilderArgs> for BuilderLauncher {
         handle.node_exit_future.await?;
         Ok(())
     }
+}
+
+/// Panic hook for known macOS TLS destruction ordering crash OpenTelemetry
+#[cfg(feature = "telemetry")]
+fn otel_shutdown_hook() {
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let is_tls_panic = info
+            .payload()
+            .downcast_ref::<String>()
+            .map(|s| s.contains("Thread Local Storage value during or after destruction"))
+            .or_else(|| {
+                info.payload()
+                    .downcast_ref::<&str>()
+                    .map(|s| s.contains("Thread Local Storage value during or after destruction"))
+            })
+            .unwrap_or(false);
+
+        if is_tls_panic {
+            std::process::exit(0);
+        }
+        default_hook(info);
+    }));
 }
