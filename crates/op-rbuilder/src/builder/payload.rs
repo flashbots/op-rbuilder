@@ -449,6 +449,7 @@ where
             gas_limit_config: self.config.gas_limit_config.clone(),
             metrics: self.metrics.clone(),
             max_gas_per_txn: self.config.max_gas_per_txn,
+            max_uncompressed_block_size: self.config.max_uncompressed_block_size,
             address_gas_limiter: self.address_gas_limiter.clone(),
             backrun_ctx,
         })
@@ -1093,6 +1094,9 @@ where
         ctx.metrics
             .payload_num_tx_gauge
             .set(info.executed_transactions.len() as f64);
+        ctx.metrics
+            .block_uncompressed_size
+            .record(info.cumulative_uncompressed_bytes as f64);
 
         info!(
             target: "payload_builder",

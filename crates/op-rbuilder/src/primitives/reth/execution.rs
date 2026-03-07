@@ -22,6 +22,8 @@ pub enum TxnExecutionResult {
     Reverted,
     RevertedAndExcluded,
     MaxGasUsageExceeded,
+    #[display("BlockUncompressedSizeExceeded: total_uncompressed={_0} tx_uncompressed_size={_1} block_limit={_2}")]
+    BlockUncompressedSizeExceeded(u64, u64, u64),
     ConditionalCheckFailed,
     BackrunPriorityFeeInvalid,
     CoinbaseProfitTooLow,
@@ -39,6 +41,8 @@ pub struct ExecutionInfo {
     pub cumulative_gas_used: u64,
     /// Estimated DA size
     pub cumulative_da_bytes_used: u64,
+    /// Cumulative uncompressed (EIP-2718 encoded) bytes used in the block
+    pub cumulative_uncompressed_bytes: u64,
     /// Tracks fees from executed mempool transactions
     pub total_fees: U256,
     /// DA Footprint Scalar for Jovian
@@ -56,6 +60,7 @@ impl ExecutionInfo {
             receipts: Vec::with_capacity(capacity),
             cumulative_gas_used: 0,
             cumulative_da_bytes_used: 0,
+            cumulative_uncompressed_bytes: 0,
             total_fees: U256::ZERO,
             da_footprint_scalar: None,
             optional_blob_fields: None,
@@ -78,6 +83,8 @@ impl ExecutionInfo {
         tx_gas_limit: u64,
         da_footprint_gas_scalar: Option<u16>,
         block_da_footprint_limit: Option<u64>,
+        tx_uncompressed_size: u64,
+        max_uncompressed_block_size: Option<u64>,
     ) -> Result<(), TxnExecutionResult> {
         if tx_data_limit.is_some_and(|da_limit| tx_da_size > da_limit) {
             return Err(TxnExecutionResult::TransactionDALimitExceeded);
@@ -111,6 +118,21 @@ impl ExecutionInfo {
                 block_gas_limit,
             ));
         }
+
+        // Check block uncompressed size limit
+        if let Some(limit) = max_uncompressed_block_size {
+            let total = self
+                .cumulative_uncompressed_bytes
+                .saturating_add(tx_uncompressed_size);
+            if total > limit {
+                return Err(TxnExecutionResult::BlockUncompressedSizeExceeded(
+                    self.cumulative_uncompressed_bytes,
+                    tx_uncompressed_size,
+                    limit,
+                ));
+            }
+        }
+
         Ok(())
     }
 }

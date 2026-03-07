@@ -38,6 +38,10 @@ pub struct OpRbuilderArgs {
     #[arg(long = "builder.max_gas_per_txn")]
     pub max_gas_per_txn: Option<u64>,
 
+    /// Maximum cumulative uncompressed (EIP-2718 encoded) block size in bytes
+    #[arg(long = "builder.max-uncompressed-block-size")]
+    pub max_uncompressed_block_size: Option<u64>,
+
     /// Signals whether to log pool transaction events
     #[arg(long = "builder.log-pool-transactions", default_value = "false")]
     pub log_pool_transactions: bool,

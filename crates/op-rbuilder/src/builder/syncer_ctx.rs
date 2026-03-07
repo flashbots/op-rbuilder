@@ -101,6 +101,7 @@ impl OpPayloadSyncerCtx {
             cancel,
             metrics: self.metrics,
             max_gas_per_txn: self.max_gas_per_txn,
+            max_uncompressed_block_size: None,
             address_gas_limiter: AddressGasLimiter::new(GasLimiterArgs::default()),
             backrun_ctx,
         }
