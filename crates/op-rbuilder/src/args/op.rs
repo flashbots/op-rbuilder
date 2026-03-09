@@ -91,14 +91,6 @@ fn expand_path(s: &str) -> Result<PathBuf> {
 /// Parameters for Flashblocks configuration
 #[derive(Debug, Clone, PartialEq, Eq, clap::Args)]
 pub struct FlashblocksArgs {
-    /// DEPRECATED. Will be removed in the next version
-    #[arg(
-        long = "flashblocks.enabled",
-        default_value = "true",
-        env = "ENABLE_FLASHBLOCKS"
-    )]
-    pub enabled: bool,
-
     /// The port that we bind to for the websocket server that provides flashblocks
     #[arg(
         long = "flashblocks.port",
