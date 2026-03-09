@@ -12,7 +12,6 @@ use crate::{
     revert_protection::{EthApiExtServer, RevertProtectionExt},
     tx::FBPooledTransaction,
 };
-use clap_builder::{CommandFactory, FromArgMatches};
 use moka::future::Cache;
 use reth::builder::{NodeBuilder, WithLaunchContext};
 use reth_cli_commands::launcher::Launcher;
@@ -28,9 +27,7 @@ use reth_transaction_pool::TransactionPool;
 use std::sync::Arc;
 
 pub fn launch() -> Result<()> {
-    // Ignore unrecognized flags
-    let arg_matches = Cli::command().ignore_errors(true).get_matches();
-    let cli = Cli::from_arg_matches(&arg_matches).map_err(|e| e.exit())?;
+    let cli = Cli::parsed();
 
     #[cfg(feature = "telemetry")]
     let telemetry_args = match &cli.command {
