@@ -3,6 +3,10 @@
 All notable changes to this project will be documented in this file.
 ## [0.4.0] - 2026-03-09
 
+### ⚠️ BREAKING CHANGES
+
+Standard building mode is now deprecated, flashblocks building mode will always be on. The `--flashblocks.enabled` flag will be removed in the next release.
+
 ### Bug Fixes
 
 - Don't miss blocks on batcher updates ([#529](https://github.com/flashbots/op-rbuilder/pull/529))
