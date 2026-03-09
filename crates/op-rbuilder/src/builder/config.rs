@@ -1,4 +1,5 @@
 use alloy_primitives::Address;
+use tracing::warn;
 
 use crate::args::OpRbuilderArgs;
 use core::{
@@ -80,6 +81,12 @@ impl TryFrom<OpRbuilderArgs> for FlashblocksConfig {
     type Error = eyre::Report;
 
     fn try_from(args: OpRbuilderArgs) -> Result<Self, Self::Error> {
+        if !args.flashblocks.enabled {
+            warn!(
+                "Standard building mode is deprecated and this flag will be removed in a future release. Running in flashblocks mode"
+            )
+        }
+
         let interval = Duration::from_millis(args.flashblocks.flashblocks_block_time);
 
         let ws_addr = SocketAddr::new(
