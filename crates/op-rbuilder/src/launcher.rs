@@ -51,7 +51,8 @@ pub fn launch() -> Result<()> {
         let telemetry_layer = setup_telemetry_layer(&telemetry_args)?;
         cli_app.access_tracing_layers()?.add_layer(telemetry_layer);
 
-        // macos fix
+        // macos fix: suppress known TLS destruction ordering panic on macOS
+        #[cfg(target_os = "macos")]
         otel_shutdown_hook();
     }
 
@@ -172,7 +173,7 @@ impl Launcher<OpChainSpecParser, OpRbuilderArgs> for BuilderLauncher {
 }
 
 /// Panic hook for known macOS TLS destruction ordering crash OpenTelemetry
-#[cfg(feature = "telemetry")]
+#[cfg(all(feature = "telemetry", target_os = "macos"))]
 fn otel_shutdown_hook() {
     let default_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
