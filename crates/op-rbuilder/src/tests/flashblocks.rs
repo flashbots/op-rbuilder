@@ -9,16 +9,15 @@ use std::time::Duration;
 use crate::{
     args::{FlashblocksArgs, OpRbuilderArgs},
     tests::{
-        BlockTransactionsExt, BundleOpts, ChainDriver, FLASHBLOCKS_NUMBER_ADDRESS, LocalInstance,
+        BlockTransactionsExt, BundleOpts, ChainDriver, FLASHBLOCKS_NUMBER_ADDRESS,
         TransactionBuilderExt, flashblocks_number_contract::FlashblocksNumber,
     },
 };
 
-#[rb_test(flashblocks, args = OpRbuilderArgs {
+#[rb_test(args = OpRbuilderArgs {
     chain_block_time: 1000,
     enable_revert_protection: true,
     flashblocks: FlashblocksArgs {
-        enabled: true,
         flashblocks_port: 1239,
         flashblocks_addr: "127.0.0.1".into(),
         flashblocks_block_time: 200,
@@ -36,7 +35,7 @@ async fn test_flashblock_min_filtering(rbuilder: LocalInstance) -> eyre::Result<
     let tx1 = driver
         .create_transaction()
         .random_valid_transfer()
-        .with_bundle(BundleOpts::default().with_flashblock_number_min(0))
+        .with_bundle(BundleOpts::default().with_min_flashblock_number(0))
         .with_max_priority_fee_per_gas(0)
         .send()
         .await?;
@@ -44,7 +43,7 @@ async fn test_flashblock_min_filtering(rbuilder: LocalInstance) -> eyre::Result<
     let tx2 = driver
         .create_transaction()
         .random_valid_transfer()
-        .with_bundle(BundleOpts::default().with_flashblock_number_min(3))
+        .with_bundle(BundleOpts::default().with_min_flashblock_number(3))
         .with_max_priority_fee_per_gas(10)
         .send()
         .await?;
@@ -72,11 +71,10 @@ async fn test_flashblock_min_filtering(rbuilder: LocalInstance) -> eyre::Result<
     flashblocks_listener.stop().await
 }
 
-#[rb_test(flashblocks, args = OpRbuilderArgs {
+#[rb_test(args = OpRbuilderArgs {
     chain_block_time: 1000,
     enable_revert_protection: true,
     flashblocks: FlashblocksArgs {
-        enabled: true,
         flashblocks_port: 1239,
         flashblocks_addr: "127.0.0.1".into(),
         flashblocks_block_time: 200,
@@ -90,7 +88,7 @@ async fn test_flashblock_max_filtering(rbuilder: LocalInstance) -> eyre::Result<
 
     // Since we cannot directly trigger flashblock creation in tests, we
     // instead fill up the gas of flashblocks so that our tx with the
-    // flashblock_number_max parameter set is properly delayed, simulating
+    // max_flashblock_number parameter set is properly delayed, simulating
     // the scenario where we'd sent the tx after the flashblock max number
     // had passed.
     let call = driver
@@ -108,7 +106,7 @@ async fn test_flashblock_max_filtering(rbuilder: LocalInstance) -> eyre::Result<
     let tx1 = driver
         .create_transaction()
         .random_valid_transfer()
-        .with_bundle(BundleOpts::default().with_flashblock_number_max(1))
+        .with_bundle(BundleOpts::default().with_max_flashblock_number(1))
         .send()
         .await?;
 
@@ -126,11 +124,10 @@ async fn test_flashblock_max_filtering(rbuilder: LocalInstance) -> eyre::Result<
     flashblocks_listener.stop().await
 }
 
-#[rb_test(flashblocks, args = OpRbuilderArgs {
+#[rb_test(args = OpRbuilderArgs {
     chain_block_time: 1000,
     enable_revert_protection: true,
     flashblocks: FlashblocksArgs {
-        enabled: true,
         flashblocks_port: 1239,
         flashblocks_addr: "127.0.0.1".into(),
         flashblocks_block_time: 200,
@@ -147,8 +144,8 @@ async fn test_flashblock_min_max_filtering(rbuilder: LocalInstance) -> eyre::Res
         .random_valid_transfer()
         .with_bundle(
             BundleOpts::default()
-                .with_flashblock_number_max(2)
-                .with_flashblock_number_min(2),
+                .with_max_flashblock_number(2)
+                .with_min_flashblock_number(2),
         )
         .send()
         .await?;
@@ -170,10 +167,9 @@ async fn test_flashblock_min_max_filtering(rbuilder: LocalInstance) -> eyre::Res
     flashblocks_listener.stop().await
 }
 
-#[rb_test(flashblocks, args = OpRbuilderArgs {
+#[rb_test(args = OpRbuilderArgs {
     chain_block_time: 1000,
     flashblocks: FlashblocksArgs {
-        enabled: true,
         flashblocks_port: 1239,
         flashblocks_addr: "127.0.0.1".into(),
         flashblocks_block_time: 200,
@@ -213,7 +209,7 @@ async fn test_flashblocks_no_state_root_calculation(rbuilder: LocalInstance) -> 
     Ok(())
 }
 
-#[rb_test(flashblocks, args = OpRbuilderArgs {
+#[rb_test(args = OpRbuilderArgs {
     chain_block_time: 1000,
     enable_revert_protection: true,
     flashblocks: FlashblocksArgs {
@@ -264,7 +260,7 @@ async fn test_flashblocks_number_contract_builder_tx(rbuilder: LocalInstance) ->
 
     // Verify builder txs (should be regular since builder tx is not registered yet)
     verify_builder_txs(
-        &txs,
+        txs,
         &[1, 2, 4, 6, 8],
         Some(Address::ZERO),
         "Should have regular builder tx",
@@ -278,7 +274,7 @@ async fn test_flashblocks_number_contract_builder_tx(rbuilder: LocalInstance) ->
     );
 
     // Verify user transactions
-    verify_user_tx_hashes(&txs, &[5, 7, 9], &user_transactions);
+    verify_user_tx_hashes(txs, &[5, 7, 9], &user_transactions);
 
     // Initialize contract
     let init_tx = driver
@@ -317,14 +313,14 @@ async fn test_flashblocks_number_contract_builder_tx(rbuilder: LocalInstance) ->
 
     // Other builder txs should call the contract
     verify_builder_txs(
-        &txs,
+        txs,
         &[2, 4, 6, 8],
         Some(contract_address),
         "Should call flashblocks contract",
     );
 
     // Verify user transactions, 3 blocks in total built
-    verify_user_tx_hashes(&txs, &[3, 5, 7, 9], &user_transactions);
+    verify_user_tx_hashes(txs, &[3, 5, 7, 9], &user_transactions);
 
     // Verify flashblock number incremented correctly
     let contract = FlashblocksNumber::new(contract_address, provider.clone());
@@ -346,10 +342,11 @@ async fn test_flashblocks_number_contract_builder_tx(rbuilder: LocalInstance) ->
         let is_fallback = i % 5 == 0;
         let tx_index = if is_fallback { 1 } else { 0 };
 
-        let tx_bytes = flashblock.diff.transactions.get(tx_index).expect(&format!(
-            "Flashblock {} should have tx at index {}",
-            i, tx_index
-        ));
+        let tx_bytes = flashblock
+            .diff
+            .transactions
+            .get(tx_index)
+            .unwrap_or_else(|| panic!("Flashblock {} should have tx at index {}", i, tx_index));
         let tx = OpTxEnvelope::decode_2718(&mut tx_bytes.as_ref())
             .expect("failed to decode transaction");
 
@@ -383,7 +380,7 @@ async fn create_flashblock_transactions(
         let tx = driver
             .create_transaction()
             .random_valid_transfer()
-            .with_bundle(BundleOpts::default().with_flashblock_number_min(i))
+            .with_bundle(BundleOpts::default().with_min_flashblock_number(i))
             .send()
             .await?;
         txs.push(*tx.tx_hash());
@@ -420,10 +417,9 @@ fn verify_user_tx_hashes(
 }
 
 /// Smoke test for flashblocks with end buffer.
-#[rb_test(flashblocks, args = OpRbuilderArgs {
+#[rb_test(args = OpRbuilderArgs {
     chain_block_time: 1000,
     flashblocks: FlashblocksArgs {
-        enabled: true,
         flashblocks_port: 1239,
         flashblocks_addr: "127.0.0.1".into(),
         flashblocks_block_time: 250,
@@ -462,10 +458,9 @@ async fn smoke_basic(rbuilder: LocalInstance) -> eyre::Result<()> {
 }
 
 /// Smoke test with send_offset_ms
-#[rb_test(flashblocks, args = OpRbuilderArgs {
+#[rb_test(args = OpRbuilderArgs {
     chain_block_time: 1000,
     flashblocks: FlashblocksArgs {
-        enabled: true,
         flashblocks_port: 1239,
         flashblocks_addr: "127.0.0.1".into(),
         flashblocks_block_time: 250,
@@ -506,10 +501,9 @@ async fn smoke_with_offset(rbuilder: LocalInstance) -> eyre::Result<()> {
 
 /// Test significant FCU delay (700ms into 1000ms block)
 /// Should produce fewer flashblocks due to less remaining time
-#[rb_test(flashblocks, args = OpRbuilderArgs {
+#[rb_test(args = OpRbuilderArgs {
     chain_block_time: 1000,
     flashblocks: FlashblocksArgs {
-        enabled: true,
         flashblocks_port: 1239,
         flashblocks_addr: "127.0.0.1".into(),
         flashblocks_block_time: 200,
@@ -554,10 +548,9 @@ async fn late_fcu_reduces_flashblocks(rbuilder: LocalInstance) -> eyre::Result<(
 /// With 1000ms block time, 200ms flashblock interval, and 50ms end buffer:
 /// - Available time = 1000 - lag - 50 = 950 - lag
 /// - Flashblocks per block = ceil((available_time) / 200) + 1 (base flashblock)
-#[rb_test(flashblocks, args = OpRbuilderArgs {
+#[rb_test(args = OpRbuilderArgs {
       chain_block_time: 1000,
       flashblocks: FlashblocksArgs {
-          enabled: true,
           flashblocks_port: 1239,
           flashblocks_addr: "127.0.0.1".into(),
           flashblocks_block_time: 200,

@@ -1,7 +1,5 @@
 use crate::{
-    builders::flashblocks::{
-        ctx::OpPayloadSyncerCtx, p2p::Message, payload::FlashblocksExecutionInfo,
-    },
+    builder::{p2p::Message, payload::build_block, syncer_ctx::OpPayloadSyncerCtx},
     primitives::reth::ExecutionInfo,
     traits::ClientBounds,
 };
@@ -293,13 +291,8 @@ where
         cancel,
     );
 
-    let (built_payload, fb_payload) = crate::builders::flashblocks::payload::build_block(
-        &mut state,
-        &builder_ctx,
-        &mut info,
-        true,
-    )
-    .wrap_err("failed to build flashblock")?;
+    let (built_payload, fb_payload) = build_block(&mut state, &builder_ctx, None, &mut info, true)
+        .wrap_err("failed to build flashblock")?;
 
     builder_ctx
         .metrics
@@ -325,7 +318,7 @@ where
 #[allow(clippy::too_many_arguments)]
 fn execute_transactions(
     ctx: &OpPayloadSyncerCtx,
-    info: &mut ExecutionInfo<FlashblocksExecutionInfo>,
+    info: &mut ExecutionInfo,
     state: &mut State<impl alloy_evm::Database>,
     txs: Vec<op_alloy_consensus::OpTxEnvelope>,
     gas_limit: u64,

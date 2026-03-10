@@ -12,17 +12,8 @@ env:
 
 jobs:
   lint_and_test:
-    name: Lint and test
+    name: Lint and test (nightly)
     runs-on: warp-ubuntu-latest-x64-16x
-    env:
-      # Set features for the Makefile
-      FEATURES: ${{ matrix.features }}
-    strategy:
-      matrix:
-        toolchain:
-          - nightly
-        features:
-          - ""
 
     steps:
       - name: Checkout sources
@@ -32,7 +23,7 @@ jobs:
       - name: Setup rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: ${{ matrix.toolchain }}
+          toolchain: nightly
           components: "rustfmt,clippy"
 
       # https://github.com/swatinem/rust-cache
@@ -52,6 +43,9 @@ jobs:
         run: |
           echo "SCCACHE_GHA_ENABLED=true" >> $GITHUB_ENV
           echo "RUSTC_WRAPPER=sccache" >> $GITHUB_ENV
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@nextest
 
       - name: Install Foundry toolchain
         uses: foundry-rs/foundry-toolchain@v1

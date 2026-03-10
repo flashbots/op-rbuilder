@@ -27,16 +27,16 @@ The `eth_sendBundle` endpoint is only available when revert protection is enable
 
 ### Parameters
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `txs` | `string[]` | ✅ | Array of RLP-encoded transaction data (exactly one transaction) |
-| `revertingTxHashes` | `string[]` | ❌ | Transaction hashes allowed to revert without failing the bundle |
-| `minBlockNumber` | `number` | ❌ | Earliest block number for execution |
-| `maxBlockNumber` | `number` | ❌ | Latest block number for execution |
-| `minFlashblockNumber` | `number` | ❌ | Earliest flashblock iteration for execution |
-| `maxFlashblockNumber` | `number` | ❌ | Latest flashblock iteration for execution |
-| `minTimestamp` | `number` | ❌ | Earliest timestamp for execution (Unix epoch seconds) |
-| `maxTimestamp` | `number` | ❌ | Latest timestamp for execution (Unix epoch seconds) |
+| Field                 | Type       | Required | Description                                                     |
+| --------------------- | ---------- | -------- | --------------------------------------------------------------- |
+| `txs`                 | `string[]` | ✅        | Array of RLP-encoded transaction data (exactly one transaction) |
+| `revertingTxHashes`   | `string[]` | ❌        | Transaction hashes allowed to revert without failing the bundle |
+| `minBlockNumber`      | `number`   | ❌        | Earliest block number for execution                             |
+| `maxBlockNumber`      | `number`   | ❌        | Latest block number for execution                               |
+| `minFlashblockNumber` | `number`   | ❌        | Earliest flashblock iteration for execution                     |
+| `maxFlashblockNumber` | `number`   | ❌        | Latest flashblock iteration for execution                       |
+| `minTimestamp`        | `number`   | ❌        | Earliest timestamp for execution (Unix epoch seconds)           |
+| `maxTimestamp`        | `number`   | ❌        | Latest timestamp for execution (Unix epoch seconds)             |
 
 ## Response
 
@@ -81,13 +81,13 @@ Timestamp-based constraints depend on the builder node's clock and may not be pe
 
 ## Error Responses
 
-| Error | Description | Solution |
-|-------|-------------|----------|
-| `bundle must contain exactly one transaction` | Bundle has 0 or >1 transactions | Include exactly one transaction |
-| `block_number_max (X) is a past block` | Max block is ≤ current block | Use future block number |
-| `block_number_max (X) is too high` | Block range exceeds 10 blocks | Reduce block range |
-| `flashblock_number_min (X) is greater than flashblock_number_max (Y)` | Invalid flashblock range | Ensure min ≤ max |
-| `method not found` | Revert protection disabled | Enable revert protection |
+| Error                                                                 | Description                     | Solution                        |
+| --------------------------------------------------------------------- | ------------------------------- | ------------------------------- |
+| `bundle must contain exactly one transaction`                         | Bundle has 0 or >1 transactions | Include exactly one transaction |
+| `max_block_number (X) is a past block`                                | Max block is ≤ current block    | Use future block number         |
+| `max_block_number (X) is too high`                                    | Block range exceeds 10 blocks   | Reduce block range              |
+| `min_flashblock_number (X) is greater than max_flashblock_number (Y)` | Invalid flashblock range        | Ensure min ≤ max                |
+| `method not found`                                                    | Revert protection disabled      | Enable revert protection        |
 
 ## Usage Examples
 

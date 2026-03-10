@@ -18,9 +18,6 @@ mod miner_gas_limit;
 mod gas_limiter;
 
 #[cfg(test)]
-mod ordering;
-
-#[cfg(test)]
 mod revert;
 
 #[cfg(test)]
@@ -31,6 +28,9 @@ mod txpool;
 
 #[cfg(test)]
 mod forks;
+
+#[cfg(test)]
+mod backrun;
 // If the order of deployment from the signer changes the address will change
 #[cfg(test)]
 const FLASHBLOCKS_NUMBER_ADDRESS: alloy_primitives::Address =

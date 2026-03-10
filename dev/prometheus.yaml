@@ -1,0 +1,24 @@
+global:
+  scrape_interval: 5s
+  evaluation_interval: 5s
+
+scrape_configs:
+  - job_name: op-rbuilder
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['host.docker.internal:9011']
+
+  - job_name: el
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['el:9090']
+
+  - job_name: op-geth
+    metrics_path: /debug/metrics/prometheus
+    static_configs:
+      - targets: ['op-geth:6061']
+
+  - job_name: op-node
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['op-node:7300']

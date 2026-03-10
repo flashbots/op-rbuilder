@@ -5,8 +5,8 @@
 //! clap [Args](clap::Args) for optimism rollup configuration
 
 use crate::{
-    flashtestations::args::FlashtestationsArgs, gas_limiter::args::GasLimiterArgs,
-    tx_signer::Signer,
+    backrun_bundle::BackrunBundleArgs, flashtestations::args::FlashtestationsArgs,
+    gas_limiter::args::GasLimiterArgs, tx_signer::Signer,
 };
 use alloy_primitives::Address;
 use anyhow::{Result, anyhow};
@@ -53,7 +53,7 @@ pub struct OpRbuilderArgs {
     #[arg(
         long = "builder.playground",
         num_args = 0..=1,
-        default_missing_value = "$HOME/.playground/devnet/",
+        default_missing_value = "$HOME/.local/state/builder-playground/devnet",
         value_parser = expand_path,
         env = "PLAYGROUND_DIR",
     )]
@@ -66,6 +66,8 @@ pub struct OpRbuilderArgs {
     pub flashtestations: FlashtestationsArgs,
     #[command(flatten)]
     pub gas_limiter: GasLimiterArgs,
+    #[command(flatten)]
+    pub backrun_bundle: BackrunBundleArgs,
 }
 
 impl Default for OpRbuilderArgs {
@@ -87,19 +89,12 @@ fn expand_path(s: &str) -> Result<PathBuf> {
 }
 
 /// Parameters for Flashblocks configuration
-/// The names in the struct are prefixed with `flashblocks` to avoid conflicts
-/// with the standard block building configuration since these args are flattened
-/// into the main `OpRbuilderArgs` struct with the other rollup/node args.
 #[derive(Debug, Clone, PartialEq, Eq, clap::Args)]
 pub struct FlashblocksArgs {
-    /// When set to true, the builder will build flashblocks
-    /// and will build standard blocks at the chain block time.
-    ///
-    /// The default value will change in the future once the flashblocks
-    /// feature is stable.
+    /// DEPRECATED. Will be removed in the next version
     #[arg(
         long = "flashblocks.enabled",
-        default_value = "false",
+        default_value = "true",
         env = "ENABLE_FLASHBLOCKS"
     )]
     pub enabled: bool,

@@ -1,6 +1,59 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [0.4.0] - 2026-03-09
+
+### ⚠️ BREAKING CHANGES
+
+Standard building mode is now deprecated, flashblocks building mode will always be on. The `--flashblocks.enabled` flag will be removed in the next release.
+
+### Bug Fixes
+
+- Update testcontainers to v0.27.0 to remediate CVE-2025-62518 ([#396](https://github.com/flashbots/op-rbuilder/pull/396))
+- Cleanup address gas limiter buckets properly ([#425](https://github.com/flashbots/op-rbuilder/pull/425))
+
+### Features
+
+- Replace BlockCell with watch channel ([#397](https://github.com/flashbots/op-rbuilder/pull/397))
+- Async PayloadBuilder::try_build ([#394](https://github.com/flashbots/op-rbuilder/pull/394))
+- Add strict priority fee ordering mode for backrun bundles ([#410](https://github.com/flashbots/op-rbuilder/pull/410))
+- Add explicit backrun bundle cancellation via 0-tx submissions ([#423](https://github.com/flashbots/op-rbuilder/pull/423))
+- Local observability playground ([#430](https://github.com/flashbots/op-rbuilder/pull/430))
+- Async-orchestrated payload builder with isolated blocking phases ([#398](https://github.com/flashbots/op-rbuilder/pull/398))
+
+### Miscellaneous
+
+- Rename bundle fields for consistency (no api change) ([#402](https://github.com/flashbots/op-rbuilder/pull/402))
+- Remove the standard builder [breaking-change] ([#424](https://github.com/flashbots/op-rbuilder/pull/424))
+- Lints all targets ([#426](https://github.com/flashbots/op-rbuilder/pull/426))
+- Use counters instead of histograms for a couple metrics ([#428](https://github.com/flashbots/op-rbuilder/pull/428))
+
+### Refactor
+
+- Remove ExtraCtx generic param ([#404](https://github.com/flashbots/op-rbuilder/pull/404))
+
+### Testing
+
+- Use nextest test runner ([#422](https://github.com/flashbots/op-rbuilder/pull/422))
+
+### Performance
+
+- Add incremental trie cache optimization for flashblocks state root calculation ([#427](https://github.com/flashbots/op-rbuilder/pull/427))
+
+### Chore
+
+- Standardize releases ([#421](https://github.com/flashbots/op-rbuilder/pull/421))
+- Remove unused custom-engine-api feature flag ([#420](https://github.com/flashbots/op-rbuilder/pull/420))
+- Fix reproducible builds ([#403](https://github.com/flashbots/op-rbuilder/pull/403))
+- Re-add flashblocks.enabled flag with deprecation warning ([#432](https://github.com/flashbots/op-rbuilder/pull/432))
+- Feature gate macos fix ([#431](https://github.com/flashbots/op-rbuilder/pull/431))
+
+### Revert
+
+- Async payload builder ([#434](https://github.com/flashbots/op-rbuilder/pull/434))
+
+
+
 ## [0.2.14] - 2026-01-17
 
 ### Bug Fixes

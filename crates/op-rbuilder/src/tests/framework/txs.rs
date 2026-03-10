@@ -1,4 +1,5 @@
 use crate::{
+    backrun_bundle::BackrunBundleRpcArgs,
     primitives::bundle::{Bundle, BundleResult},
     tests::funded_signer,
     tx::FBPooledTransaction,
@@ -19,37 +20,41 @@ use reth_transaction_pool::{AllTransactionsEvents, FullTransactionEvent, Transac
 use std::{collections::VecDeque, sync::Arc};
 use tokio::sync::watch;
 use tracing::debug;
+use uuid::Uuid;
 
 use alloy_eips::eip1559::MIN_PROTOCOL_BASE_FEE;
 
 #[derive(Clone, Copy, Default)]
 pub struct BundleOpts {
-    block_number_min: Option<u64>,
-    block_number_max: Option<u64>,
-    flashblock_number_min: Option<u64>,
-    flashblock_number_max: Option<u64>,
+    min_block_number: Option<u64>,
+    max_block_number: Option<u64>,
+    min_flashblock_number: Option<u64>,
+    max_flashblock_number: Option<u64>,
     min_timestamp: Option<u64>,
     max_timestamp: Option<u64>,
+    replacement_uuid: Option<Uuid>,
+    replacement_nonce: Option<u64>,
+    coinbase_profit: Option<U256>,
 }
 
 impl BundleOpts {
-    pub fn with_block_number_min(mut self, block_number_min: u64) -> Self {
-        self.block_number_min = Some(block_number_min);
+    pub fn with_min_block_number(mut self, min_block_number: u64) -> Self {
+        self.min_block_number = Some(min_block_number);
         self
     }
 
-    pub fn with_block_number_max(mut self, block_number_max: u64) -> Self {
-        self.block_number_max = Some(block_number_max);
+    pub fn with_max_block_number(mut self, max_block_number: u64) -> Self {
+        self.max_block_number = Some(max_block_number);
         self
     }
 
-    pub fn with_flashblock_number_min(mut self, flashblock_number_min: u64) -> Self {
-        self.flashblock_number_min = Some(flashblock_number_min);
+    pub fn with_min_flashblock_number(mut self, min_flashblock_number: u64) -> Self {
+        self.min_flashblock_number = Some(min_flashblock_number);
         self
     }
 
-    pub fn with_flashblock_number_max(mut self, flashblock_number_max: u64) -> Self {
-        self.flashblock_number_max = Some(flashblock_number_max);
+    pub fn with_max_flashblock_number(mut self, max_flashblock_number: u64) -> Self {
+        self.max_flashblock_number = Some(max_flashblock_number);
         self
     }
 
@@ -60,6 +65,17 @@ impl BundleOpts {
 
     pub fn with_max_timestamp(mut self, max_timestamp: u64) -> Self {
         self.max_timestamp = Some(max_timestamp);
+        self
+    }
+
+    pub fn with_replacement_key(mut self, uuid: Uuid, nonce: u64) -> Self {
+        self.replacement_uuid = Some(uuid);
+        self.replacement_nonce = Some(nonce);
+        self
+    }
+
+    pub fn with_coinbase_profit(mut self, coinbase_profit: U256) -> Self {
+        self.coinbase_profit = Some(coinbase_profit);
         self
     }
 }
@@ -199,6 +215,13 @@ impl TransactionBuilder {
     }
 
     pub async fn send(self) -> eyre::Result<PendingTransactionBuilder<Optimism>> {
+        let (pending, _raw_tx) = self.send_and_get_raw_tx().await?;
+        Ok(pending)
+    }
+
+    pub async fn send_and_get_raw_tx(
+        self,
+    ) -> eyre::Result<(PendingTransactionBuilder<Optimism>, Vec<u8>)> {
         let with_reverted_hash = self.with_reverted_hash;
         let bundle_opts = self.bundle_opts;
         let provider = self.provider.clone();
@@ -207,18 +230,27 @@ impl TransactionBuilder {
         let transaction_encoded = transaction.encoded_2718();
 
         if let Some(bundle_opts) = bundle_opts {
+            eyre::ensure!(
+                bundle_opts.replacement_uuid.is_none(),
+                "replacement_uuid is not supported for ordinary bundles, use send_backrun_bundle"
+            );
+            eyre::ensure!(
+                bundle_opts.coinbase_profit.is_none(),
+                "coinbase_profit is not supported for ordinary bundles, use send_backrun_bundle"
+            );
             // Send the transaction as a bundle with the bundle options
+            let raw_tx = transaction_encoded.clone();
             let bundle = Bundle {
-                transactions: vec![transaction_encoded.into()],
-                reverting_hashes: if with_reverted_hash {
+                txs: vec![transaction_encoded.into()],
+                reverting_tx_hashes: if with_reverted_hash {
                     Some(vec![txn_hash])
                 } else {
                     None
                 },
-                block_number_min: bundle_opts.block_number_min,
-                block_number_max: bundle_opts.block_number_max,
-                flashblock_number_min: bundle_opts.flashblock_number_min,
-                flashblock_number_max: bundle_opts.flashblock_number_max,
+                min_block_number: bundle_opts.min_block_number,
+                max_block_number: bundle_opts.max_block_number,
+                min_flashblock_number: bundle_opts.min_flashblock_number,
+                max_flashblock_number: bundle_opts.max_flashblock_number,
                 min_timestamp: bundle_opts.min_timestamp,
                 max_timestamp: bundle_opts.max_timestamp,
             };
@@ -228,15 +260,17 @@ impl TransactionBuilder {
                 .request("eth_sendBundle", (bundle,))
                 .await?;
 
-            return Ok(PendingTransactionBuilder::new(
-                provider.root().clone(),
-                result.bundle_hash,
+            return Ok((
+                PendingTransactionBuilder::new(provider.root().clone(), result.bundle_hash),
+                raw_tx,
             ));
         }
 
-        Ok(provider
+        let raw_tx = transaction_encoded.clone();
+        let pending = provider
             .send_raw_transaction(transaction_encoded.as_slice())
-            .await?)
+            .await?;
+        Ok((pending, raw_tx))
     }
 }
 
@@ -376,4 +410,70 @@ impl TransactionPoolObserver {
             Some(TransactionEvent::Pending) | Some(TransactionEvent::Queued)
         )
     }
+}
+
+/// Sends a backrun bundle consisting of a raw target transaction and a backrun transaction.
+///
+/// The target transaction is assumed to have already been sent to the mempool.
+/// Both transactions are submitted as a backrun bundle via `eth_sendBackrunBundle`.
+///
+/// Returns the backrun tx hash.
+pub async fn send_backrun_bundle(
+    target_raw_tx: Vec<u8>,
+    backrun_builder: TransactionBuilder,
+    bundle_opts: BundleOpts,
+) -> eyre::Result<B256> {
+    let provider = backrun_builder.provider.clone();
+
+    let backrun_tx = backrun_builder.build().await;
+    let backrun_hash = B256::from(*backrun_tx.tx_hash());
+    let backrun_encoded = backrun_tx.encoded_2718();
+
+    // Submit both as a backrun bundle
+    let block_number = match bundle_opts.min_block_number {
+        Some(n) => n,
+        None => provider.get_block_number().await? + 1,
+    };
+
+    let bundle = BackrunBundleRpcArgs {
+        transactions: vec![target_raw_tx.into(), backrun_encoded.into()],
+        block_number,
+        max_block_number: bundle_opts.max_block_number,
+        min_flashblock_number: bundle_opts.min_flashblock_number,
+        max_flashblock_number: bundle_opts.max_flashblock_number,
+        replacement_uuid: bundle_opts.replacement_uuid,
+        replacement_nonce: bundle_opts.replacement_nonce,
+        coinbase_profit: bundle_opts.coinbase_profit,
+    };
+
+    let _result: BundleResult = provider
+        .client()
+        .request("eth_sendBackrunBundle", (bundle,))
+        .await?;
+
+    Ok(backrun_hash)
+}
+
+pub async fn send_backrun_cancellation(
+    provider: &RootProvider<Optimism>,
+    uuid: Uuid,
+    nonce: u64,
+) -> eyre::Result<()> {
+    let bundle = BackrunBundleRpcArgs {
+        transactions: vec![],
+        block_number: 0,
+        max_block_number: None,
+        min_flashblock_number: None,
+        max_flashblock_number: None,
+        replacement_uuid: Some(uuid),
+        replacement_nonce: Some(nonce),
+        coinbase_profit: None,
+    };
+
+    let _result: BundleResult = provider
+        .client()
+        .request("eth_sendBackrunBundle", (bundle,))
+        .await?;
+
+    Ok(())
 }

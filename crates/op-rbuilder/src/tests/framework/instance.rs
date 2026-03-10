@@ -1,7 +1,7 @@
 use crate::{
     args::OpRbuilderArgs,
-    builders::{BuilderConfig, FlashblocksBuilder, PayloadBuilder, StandardBuilder},
-    primitives::reth::engine_api_builder::OpEngineApiBuilder,
+    backrun_bundle::{BackrunBundleApiServer, BackrunBundleRpc},
+    builder::{BuilderConfig, FlashblocksServiceBuilder},
     revert_protection::{EthApiExtServer, RevertProtectionExt},
     tests::{
         EngineApi, Ipc, TEE_DEBUG_ADDRESS, TransactionPoolObserver, builder_signer, create_test_db,
@@ -12,7 +12,6 @@ use crate::{
 };
 use alloy_primitives::{Address, B256, Bytes, hex, keccak256};
 use alloy_provider::{Identity, ProviderBuilder, RootProvider};
-use clap::Parser;
 use core::{
     any::Any,
     future::Future,
@@ -38,7 +37,6 @@ use reth::{
 };
 use reth_node_builder::{NodeBuilder, NodeConfig};
 use reth_optimism_chainspec::OpChainSpec;
-use reth_optimism_cli::commands::Commands;
 use reth_optimism_node::{
     OpNode,
     node::{OpAddOns, OpAddOnsBuilder, OpEngineValidatorBuilder, OpPoolBuilder},
@@ -73,8 +71,8 @@ impl LocalInstance {
     ///
     /// This method does not prefund any accounts, so before sending any transactions
     /// make sure that sender accounts are funded.
-    pub async fn new<P: PayloadBuilder>(args: OpRbuilderArgs) -> eyre::Result<Self> {
-        Box::pin(Self::new_with_config::<P>(args, default_node_config())).await
+    pub async fn new(args: OpRbuilderArgs) -> eyre::Result<Self> {
+        Box::pin(Self::new_with_config(args, default_node_config())).await
     }
 
     /// Creates a new local instance of the OP builder node with the given arguments,
@@ -82,7 +80,7 @@ impl LocalInstance {
     ///
     /// This method does not prefund any accounts, so before sending any transactions
     /// make sure that sender accounts are funded.
-    pub async fn new_with_config<P: PayloadBuilder>(
+    pub async fn new_with_config(
         args: OpRbuilderArgs,
         config: NodeConfig<OpChainSpec>,
     ) -> eyre::Result<Self> {
@@ -109,22 +107,19 @@ impl LocalInstance {
             None
         };
 
-        let builder_config = BuilderConfig::<P::Config>::try_from(args.clone())
+        let builder_config = BuilderConfig::try_from(args.clone())
             .expect("Failed to convert rollup args to builder config");
         let da_config = builder_config.da_config.clone();
         let gas_limit_config = builder_config.gas_limit_config.clone();
+        let backrun_bundle_pool = builder_config.backrun_bundle_pool.clone();
 
-        let addons: OpAddOns<
-            _,
-            OpEthApiBuilder,
-            OpEngineValidatorBuilder,
-            OpEngineApiBuilder<OpEngineValidatorBuilder>,
-        > = OpAddOnsBuilder::default()
-            .with_sequencer(args.rollup_args.sequencer.clone())
-            .with_enable_tx_conditional(args.rollup_args.enable_tx_conditional)
-            .with_da_config(da_config)
-            .with_gas_limit_config(gas_limit_config)
-            .build();
+        let addons: OpAddOns<_, OpEthApiBuilder, OpEngineValidatorBuilder> =
+            OpAddOnsBuilder::default()
+                .with_sequencer(args.rollup_args.sequencer.clone())
+                .with_enable_tx_conditional(args.rollup_args.enable_tx_conditional)
+                .with_da_config(da_config)
+                .with_gas_limit_config(gas_limit_config)
+                .build();
 
         let node_builder = NodeBuilder::<_, OpChainSpec>::new(config.clone())
             .with_database(create_test_db(config.clone()))
@@ -134,7 +129,7 @@ impl LocalInstance {
                 op_node
                     .components()
                     .pool(pool_component(&args))
-                    .payload(P::new_service(builder_config)?),
+                    .payload(FlashblocksServiceBuilder::new(builder_config)),
             )
             .with_add_ons(addons)
             .extend_rpc_modules(move |ctx| {
@@ -152,6 +147,17 @@ impl LocalInstance {
 
                     ctx.modules
                         .add_or_replace_configured(revert_protection_ext.into_rpc())?;
+                }
+
+                if args.backrun_bundle.backruns_enabled {
+                    tracing::info!("Backrun bundle RPC enabled");
+                    let backrun_rpc = BackrunBundleRpc::new(
+                        backrun_bundle_pool.clone(),
+                        ctx.provider().clone(),
+                        args.backrun_bundle.enforce_strict_priority_fee_ordering,
+                    );
+                    ctx.modules
+                        .add_or_replace_configured(backrun_rpc.into_rpc())?;
                 }
 
                 Ok(())
@@ -189,28 +195,6 @@ impl LocalInstance {
             pool_observer: TransactionPoolObserver::new(pool_monitor, reverted_cache_clone),
             attestation_server,
         })
-    }
-
-    /// Creates new local instance of the OP builder node with the standard builder configuration.
-    /// This method prefunds the default accounts with 1 ETH each.
-    pub async fn standard() -> eyre::Result<Self> {
-        let args = crate::args::Cli::parse_from(["dummy", "node"]);
-        let Commands::Node(ref node_command) = args.command else {
-            unreachable!()
-        };
-        Self::new::<StandardBuilder>(node_command.ext.clone()).await
-    }
-
-    /// Creates new local instance of the OP builder node with the flashblocks builder configuration.
-    /// This method prefunds the default accounts with 1 ETH each.
-    pub async fn flashblocks() -> eyre::Result<Self> {
-        let mut args = crate::args::Cli::parse_from(["dummy", "node"]);
-        let Commands::Node(ref mut node_command) = args.command else {
-            unreachable!()
-        };
-        node_command.ext.flashblocks.enabled = true;
-        node_command.ext.flashblocks.flashblocks_port = 0; // use random os assigned port
-        Self::new::<FlashblocksBuilder>(node_command.ext.clone()).await
     }
 
     pub const fn config(&self) -> &NodeConfig<OpChainSpec> {
