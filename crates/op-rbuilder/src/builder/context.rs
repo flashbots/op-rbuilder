@@ -72,6 +72,8 @@ pub struct OpPayloadBuilderCtx {
     pub metrics: Arc<OpRBuilderMetrics>,
     /// Max gas that can be used by a transaction.
     pub max_gas_per_txn: Option<u64>,
+    /// Maximum cumulative uncompressed (EIP-2718 encoded) block size in bytes.
+    pub max_uncompressed_block_size: Option<u64>,
     /// Rate limiting based on gas. This is an optional feature.
     pub address_gas_limiter: AddressGasLimiter,
     /// Backrun bundles context.
@@ -340,6 +342,7 @@ impl OpPayloadBuilderCtx {
                     sequencer_tx.encoded_2718().as_slice(),
                 );
             }
+            info.cumulative_uncompressed_bytes += sequencer_tx.encode_2718_len() as u64;
 
             let ctx = ReceiptBuilderCtx {
                 tx: sequencer_tx.inner(),
@@ -374,6 +377,26 @@ impl OpPayloadBuilderCtx {
 }
 
 impl OpPayloadBuilderCtx {
+    fn record_limit_rejection_metrics(&self, result: &TxnExecutionResult) {
+        match result {
+            TxnExecutionResult::TransactionDALimitExceeded => {
+                self.metrics.tx_da_size_exceeded_total.increment(1);
+            }
+            TxnExecutionResult::BlockDALimitExceeded(..) => {
+                self.metrics.block_da_size_exceeded_total.increment(1);
+            }
+            TxnExecutionResult::TransactionGasLimitExceeded(..) => {
+                self.metrics.block_gas_limit_exceeded_total.increment(1);
+            }
+            TxnExecutionResult::BlockUncompressedSizeExceeded(..) => {
+                self.metrics
+                    .block_uncompressed_size_exceeded_total
+                    .increment(1);
+            }
+            _ => {}
+        }
+    }
+
     /// Executes the given best transactions and updates the execution info.
     ///
     /// Returns `Ok(Some(())` if the job was cancelled.
@@ -386,6 +409,7 @@ impl OpPayloadBuilderCtx {
         block_gas_limit: u64,
         block_da_limit: Option<u64>,
         block_da_footprint_limit: Option<u64>,
+        max_uncompressed_block_size: Option<u64>,
         flashblock_index: u64,
     ) -> Result<Option<()>, PayloadBuilderError> {
         let execute_txs_start_time = Instant::now();
@@ -409,6 +433,7 @@ impl OpPayloadBuilderCtx {
             block_da_limit = ?block_da_limit,
             tx_da_limit = ?tx_da_limit,
             block_gas_limit = ?block_gas_limit,
+            max_uncompressed_block_size = ?max_uncompressed_block_size,
             "Executing best transactions",
         );
 
@@ -425,6 +450,7 @@ impl OpPayloadBuilderCtx {
             let tx_da_size = tx.estimated_da_size();
             let tx = tx.into_consensus();
             let tx_hash = tx.tx_hash();
+            let tx_uncompressed_size = tx.encode_2718_len() as u64;
 
             // exclude reverting transaction if:
             // - the transaction comes from a bundle (is_some) and the hash **is not** in reverted hashes
@@ -478,10 +504,13 @@ impl OpPayloadBuilderCtx {
                 tx.gas_limit(),
                 info.da_footprint_scalar,
                 block_da_footprint_limit,
+                tx_uncompressed_size,
+                max_uncompressed_block_size,
             ) {
                 // we can't fit this transaction into the block, so we need to mark it as
                 // invalid which also removes all dependent transaction from
                 // the iterator before we can continue
+                self.record_limit_rejection_metrics(&result);
                 log_txn(result);
                 best_txs.mark_invalid(tx.signer(), tx.nonce());
                 continue;
@@ -578,6 +607,8 @@ impl OpPayloadBuilderCtx {
             info.cumulative_gas_used += gas_used;
             // record tx da size
             info.cumulative_da_bytes_used += tx_da_size;
+            // record uncompressed tx size
+            info.cumulative_uncompressed_bytes += tx_uncompressed_size;
 
             let tx_succeeded = result.is_success();
 
@@ -715,6 +746,7 @@ impl OpPayloadBuilderCtx {
                     }
 
                     let br_tx_da_size = bundle.estimated_da_size;
+                    let br_tx_uncompressed_size = bundle.backrun_tx.encode_2718_len() as u64;
                     if let Err(result) = info.is_tx_over_limits(
                         br_tx_da_size,
                         block_gas_limit,
@@ -723,7 +755,10 @@ impl OpPayloadBuilderCtx {
                         bundle.backrun_tx.gas_limit(),
                         info.da_footprint_scalar,
                         block_da_footprint_limit,
+                        br_tx_uncompressed_size,
+                        max_uncompressed_block_size,
                     ) {
+                        self.record_limit_rejection_metrics(&result);
                         log_br_txn(result);
                         continue;
                     }
@@ -812,6 +847,7 @@ impl OpPayloadBuilderCtx {
                     log_br_txn(TxnExecutionResult::Success);
                     info.cumulative_gas_used += br_gas_used;
                     info.cumulative_da_bytes_used += br_tx_da_size;
+                    info.cumulative_uncompressed_bytes += br_tx_uncompressed_size;
 
                     let br_ctx = ReceiptBuilderCtx {
                         tx: bundle.backrun_tx.inner(),

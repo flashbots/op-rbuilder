@@ -161,6 +161,16 @@ pub struct OpRBuilderMetrics {
     pub bundles_reverted: Histogram,
     /// Histogram of eth_sendBundle request duration
     pub bundle_receive_duration: Histogram,
+    /// Transactions rejected by per-tx DA size limit
+    pub tx_da_size_exceeded_total: Counter,
+    /// Transactions rejected by cumulative block DA limit
+    pub block_da_size_exceeded_total: Counter,
+    /// Transactions rejected by cumulative block gas limit
+    pub block_gas_limit_exceeded_total: Counter,
+    /// Transactions rejected by block uncompressed size limit
+    pub block_uncompressed_size_exceeded_total: Counter,
+    /// Cumulative uncompressed block size at end of block
+    pub block_uncompressed_size: Histogram,
     /// Number of backrun bundles considered for inclusion
     pub payload_num_backruns_considered: Histogram,
     /// Latest number of backrun bundles considered

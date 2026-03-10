@@ -241,10 +241,13 @@ pub trait BuilderTransactions {
                 continue;
             }
 
+            let tx_uncompressed_size = builder_tx.signed_tx.inner().encode_2718_len() as u64;
+
             // Add gas used by the transaction to cumulative gas used, before creating the receipt
             let gas_used = result.gas_used();
             info.cumulative_gas_used += gas_used;
             info.cumulative_da_bytes_used += builder_tx.da_size;
+            info.cumulative_uncompressed_bytes += tx_uncompressed_size;
 
             let ctx = ReceiptBuilderCtx {
                 tx: builder_tx.signed_tx.inner(),

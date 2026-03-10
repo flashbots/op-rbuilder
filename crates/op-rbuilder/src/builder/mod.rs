@@ -82,6 +82,9 @@ pub struct BuilderConfig {
     /// Maximum gas a transaction can use before being excluded.
     pub max_gas_per_txn: Option<u64>,
 
+    /// Maximum cumulative uncompressed (EIP-2718 encoded) block size in bytes.
+    pub max_uncompressed_block_size: Option<u64>,
+
     /// Address gas limiter stuff
     pub gas_limiter_config: GasLimiterArgs,
 
@@ -107,6 +110,7 @@ impl Default for BuilderConfig {
             gas_limit_config: OpGasLimitConfig::default(),
             sampling_ratio: 100,
             max_gas_per_txn: None,
+            max_uncompressed_block_size: None,
             gas_limiter_config: GasLimiterArgs::default(),
             backrun_bundle_pool: BackrunBundleGlobalPool::new(false),
             backrun_bundle_args: BackrunBundleArgs::default(),
@@ -131,6 +135,7 @@ impl TryFrom<OpRbuilderArgs> for BuilderConfig {
             gas_limit_config: Default::default(),
             sampling_ratio: args.telemetry.sampling_ratio,
             max_gas_per_txn: args.max_gas_per_txn,
+            max_uncompressed_block_size: args.max_uncompressed_block_size,
             gas_limiter_config: args.gas_limiter.clone(),
             backrun_bundle_pool: BackrunBundleGlobalPool::new(
                 args.backrun_bundle.enforce_strict_priority_fee_ordering,
