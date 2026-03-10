@@ -4,7 +4,7 @@ use thiserror::Error;
 use tracing::info;
 
 #[derive(Error, Debug)]
-pub enum AttestationError {
+pub(crate) enum AttestationError {
     #[error("Failed to get attestation: {0}")]
     GetAttestationFailed(TdxError),
     #[error("Failed to read mock attestation file: {0}")]
@@ -13,7 +13,7 @@ pub enum AttestationError {
 
 /// Configuration for attestation
 #[derive(Default)]
-pub struct AttestationConfig {
+pub(crate) struct AttestationConfig {
     /// If true, uses the mock attestation provider instead of real TDX hardware
     pub mock: bool,
     /// Path to the mock attestation file
@@ -21,12 +21,12 @@ pub struct AttestationConfig {
 }
 
 /// Trait for attestation providers
-pub trait AttestationProvider {
+pub(crate) trait AttestationProvider {
     fn get_attestation(&self, report_data: [u8; 64]) -> Result<Vec<u8>, AttestationError>;
 }
 
 /// Real TDX hardware attestation provider
-pub struct TdxAttestationProvider {
+pub(crate) struct TdxAttestationProvider {
     tdx: Tdx,
 }
 
@@ -37,7 +37,7 @@ impl Default for TdxAttestationProvider {
 }
 
 impl TdxAttestationProvider {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self { tdx: Tdx::new() }
     }
 }
@@ -54,12 +54,12 @@ impl AttestationProvider for TdxAttestationProvider {
 }
 
 /// Mock attestation provider
-pub struct MockAttestationProvider {
+pub(crate) struct MockAttestationProvider {
     mock_attestation_path: String,
 }
 
 impl MockAttestationProvider {
-    pub fn new(mock_attestation_path: String) -> Self {
+    pub(crate) fn new(mock_attestation_path: String) -> Self {
         Self {
             mock_attestation_path,
         }
@@ -82,7 +82,7 @@ impl AttestationProvider for MockAttestationProvider {
     }
 }
 
-pub fn get_attestation_provider(
+pub(crate) fn get_attestation_provider(
     config: AttestationConfig,
 ) -> Arc<dyn AttestationProvider + Send + Sync> {
     if config.mock {

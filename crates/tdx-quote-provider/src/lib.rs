@@ -5,3 +5,5 @@
 pub mod metrics;
 pub mod provider;
 pub mod server;
+
+pub use server::{Server, ServerConfig};

@@ -4,11 +4,7 @@ use metrics_exporter_prometheus::PrometheusBuilder;
 use tracing::{Level, info};
 use tracing_subscriber::filter::EnvFilter;
 
-use crate::server::{Server, ServerConfig};
-
-mod metrics;
-mod provider;
-mod server;
+use tdx_quote_provider::{Server, ServerConfig};
 
 #[derive(Clone, Parser, Debug)]
 #[command(about = "TDX Quote Provider CLI")]

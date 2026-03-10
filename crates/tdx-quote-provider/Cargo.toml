@@ -1,6 +1,6 @@
 [package]
 name = "tdx-quote-provider"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -9,25 +9,25 @@ repository.workspace = true
 description = "TDX quote provider API service"
 readme = "README.md"
 
-[dependencies]
-axum = { version = "0.8.1" }
-thiserror.workspace = true
-clap.workspace = true
-tracing.workspace = true
-tokio = { workspace = true, features = ["full", "signal"] }
-eyre.workspace = true
-metrics.workspace = true
-metrics-derive = "0.1"
-serde.workspace = true
-serde_json.workspace = true
+[lints]
+workspace = true
 
-hex = "0.4.3"
-dotenvy = "0.15.4"
-metrics-exporter-prometheus = { version = "0.17.0", features = [
-    "http-listener",
-] }
-tracing-subscriber = { version = "0.3.11", features = ["env-filter", "json"] }
-tdx = { git = "https://github.com/automata-network/tdx-attestation-sdk.git", features = ["configfs"], branch = "main"}
+[dependencies]
+axum.workspace = true
+clap.workspace = true
+dotenvy.workspace = true
+eyre.workspace = true
+hex.workspace = true
+metrics.workspace = true
+metrics-derive.workspace = true
+metrics-exporter-prometheus.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["full", "signal"] }
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+tdx.workspace = true
 
 [dev-dependencies]
 reqwest.workspace = true
