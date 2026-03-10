@@ -22,10 +22,12 @@ builder-playground start dev/playground.yaml --skip-setup
 ```
 
 Services:
-- Grafana:    http://localhost:3000
-- Jaeger:     http://localhost:16686
-- Prometheus: http://localhost:9090
-- RPC:        http://localhost:2222
+- Grafana:       http://localhost:3000
+- Tempo:         http://localhost:3200 (via Grafana Explore)
+- Prometheus:    http://localhost:9090
+- Loki:          http://localhost:3100
+- RPC:           http://localhost:2222
+- Chain Monitor: http://localhost:8087/metrics
 
 Logs can be found at `$HOME/.local/state/builder-playground/sessions/latest/logs/`
 
@@ -34,7 +36,7 @@ Logs can be found at `$HOME/.local/state/builder-playground/sessions/latest/logs
 Run `contender`:
 
 ```bash
-contender spam --tps 10 -r http://localhost:2222 --optimism --min-balance 0.14
+contender spam --tps 50 -r http://localhost:2222 --optimism --min-balance 0.14eth --forever
 ```
 
 You should start to see blocks being built and landed on-chain with `contender` transactions.

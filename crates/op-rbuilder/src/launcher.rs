@@ -51,6 +51,25 @@ pub fn launch() -> Result<()> {
         otel_shutdown_hook();
     }
 
+    #[cfg(feature = "loki")]
+    {
+        if let Some(loki_url) = &telemetry_args.loki_url {
+            use crate::primitives::telemetry::setup_loki_layer;
+            let (loki_layer, loki_task) = setup_loki_layer(loki_url)?;
+            cli_app.access_tracing_layers()?.add_layer(loki_layer);
+
+            // Spawn the background task that ships logs to Loki.
+            // Needs its own runtime since we're not yet inside tokio.
+            std::thread::spawn(move || {
+                tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .expect("failed to build loki runtime")
+                    .block_on(loki_task);
+            });
+        }
+    }
+
     cli_app.run(BuilderLauncher)?;
     Ok(())
 }

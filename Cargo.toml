@@ -192,6 +192,8 @@ testcontainers = "0.27.0"
 tikv-jemallocator = { version = "0.6" }
 vergen = "9.0.4"
 vergen-git2 = "9.0.4"
+opentelemetry = { version = "0.31", features = ["trace"] }
+tracing-loki = "0.2.6"
 
 # tdx attestation
 tdx = { git = "https://github.com/automata-network/tdx-attestation-sdk.git", features = ["configfs"], branch = "main" }

@@ -133,6 +133,8 @@ tokio-util.workspace = true
 tower.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+opentelemetry = { workspace = true, optional = true }
+tracing-loki = { workspace = true, optional = true }
 url.workspace = true
 uuid.workspace = true
 
@@ -198,7 +200,8 @@ testing = [
 
 interop = []
 
-telemetry = ["reth-tracing-otlp"]
+telemetry = ["reth-tracing-otlp", "opentelemetry"]
+loki = ["tracing-loki", "telemetry"]
 
 [[bin]]
 name = "op-rbuilder"
