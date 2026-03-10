@@ -321,6 +321,7 @@ fn execute_transactions(
     evm_env: alloy_evm::EvmEnv<op_revm::OpSpecId>,
     chain_spec: Arc<OpChainSpec>,
 ) -> eyre::Result<()> {
+    use alloy_eips::Encodable2718;
     use alloy_evm::Evm as _;
     use reth_evm::ConfigureEvm as _;
     use reth_primitives_traits::SignedTransaction;
@@ -370,6 +371,21 @@ fn execute_transactions(
             })?;
         if info.cumulative_gas_used > gas_limit {
             bail!("flashblock exceeded gas limit when executing transactions");
+        }
+
+        let tx_uncompressed_size = tx_recovered.encode_2718_len() as u64;
+        info.cumulative_uncompressed_bytes = info
+            .cumulative_uncompressed_bytes
+            .checked_add(tx_uncompressed_size)
+            .ok_or_else(|| {
+                eyre::eyre!(
+                    "total uncompressed bytes overflowed when executing flashblock transactions"
+                )
+            })?;
+        if let Some(limit) = ctx.max_uncompressed_block_size()
+            && info.cumulative_uncompressed_bytes > limit
+        {
+            bail!("flashblock exceeded max uncompressed block size when executing transactions");
         }
 
         let receipt_ctx = ReceiptBuilderCtx {

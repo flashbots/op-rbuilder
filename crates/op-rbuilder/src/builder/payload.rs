@@ -898,6 +898,12 @@ where
             .iter()
             .filter(|tx| !tx.is_top_of_block)
             .fold(0, |acc, tx| acc + tx.da_size);
+        let builder_tx_uncompressed_size: u64 = builder_txs
+            .iter()
+            .filter(|tx| !tx.is_top_of_block)
+            .fold(0, |acc, tx| {
+                acc + tx.signed_tx.inner().encode_2718_len() as u64
+            });
         target_gas_for_batch = target_gas_for_batch.saturating_sub(builder_tx_gas);
 
         // saturating sub just in case, we will log an error if da_limit too small for builder_tx_da_size
@@ -910,6 +916,22 @@ where
             info.da_footprint_scalar,
         ) {
             *footprint = footprint.saturating_sub(builder_tx_da_size.saturating_mul(scalar as u64));
+        }
+
+        let max_uncompressed_block_size = ctx
+            .max_uncompressed_block_size
+            .map(|limit| limit.saturating_sub(builder_tx_uncompressed_size));
+        if let Some(limit) = ctx.max_uncompressed_block_size
+            && info.cumulative_uncompressed_bytes
+                >= limit.saturating_sub(builder_tx_uncompressed_size)
+        {
+            error!(
+                target: "payload_builder",
+                current_uncompressed = info.cumulative_uncompressed_bytes,
+                reserved_builder_tx_uncompressed = builder_tx_uncompressed_size,
+                limit,
+                "Builder tx uncompressed size subtraction caused max_uncompressed_block_size to be 0. No transaction would be included."
+            );
         }
 
         let best_txs_start_time = Instant::now();
@@ -936,6 +958,7 @@ where
             target_gas_for_batch.min(ctx.block_gas_limit()),
             target_da_for_batch,
             target_da_footprint_for_batch,
+            max_uncompressed_block_size,
             fb_state.flashblock_index,
         )
         .wrap_err("failed to execute best transactions")?;

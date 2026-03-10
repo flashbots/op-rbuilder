@@ -1,8 +1,10 @@
 use crate::{
     args::OpRbuilderArgs,
-    tests::{BuilderTxValidation, TransactionBuilderExt},
+    tests::{BuilderTxValidation, LocalInstance, OpRbuilderArgsTestExt, TransactionBuilderExt},
 };
-use alloy_primitives::TxHash;
+use alloy_primitives::{Bytes, TxHash};
+use alloy_provider::{Provider, RootProvider};
+use op_alloy_network::Optimism;
 
 use core::{
     sync::atomic::{AtomicBool, Ordering},
@@ -12,6 +14,18 @@ use macros::rb_test;
 use std::collections::HashSet;
 use tokio::{join, task::yield_now};
 use tracing::info;
+
+async fn raw_tx_size_bytes(
+    provider: &RootProvider<Optimism>,
+    tx_hash: TxHash,
+) -> eyre::Result<u64> {
+    let raw: Option<Bytes> = provider
+        .raw_request("eth_getRawTransactionByHash".into(), (tx_hash,))
+        .await?;
+    Ok(raw
+        .ok_or_else(|| eyre::eyre!("raw transaction not found for hash {tx_hash}"))?
+        .len() as u64)
+}
 
 /// This is a smoke test that ensures that transactions are included in blocks
 /// and that the block generator is functioning correctly.
@@ -281,6 +295,94 @@ async fn block_includes_builder_transaction(rbuilder: LocalInstance) -> eyre::Re
         // 2 builder txs (fallback + flashblock number)
         block.assert_builder_tx_count(2);
     }
+
+    Ok(())
+}
+
+#[rb_test]
+async fn max_uncompressed_block_size_includes_builder_transactions(
+    rbuilder: LocalInstance,
+) -> eyre::Result<()> {
+    let (limit, user_tx_size) = {
+        let probe_driver = rbuilder.driver().await?;
+        let probe_provider = rbuilder.provider().await?;
+
+        let probe_block = probe_driver
+            .build_new_block_with_current_timestamp(None)
+            .await?;
+        let builder_info = probe_block.find_builder_txs();
+        assert_eq!(
+            builder_info.count, 2,
+            "probe block should include two builder txs"
+        );
+
+        let tx_hashes: Vec<_> = probe_block.transactions.hashes().collect();
+        assert_eq!(
+            tx_hashes.len(),
+            3,
+            "probe block should contain deposit + 2 builder txs"
+        );
+
+        let mut sizes = Vec::with_capacity(tx_hashes.len());
+        for tx_hash in &tx_hashes {
+            sizes.push(raw_tx_size_bytes(&probe_provider, *tx_hash).await?);
+        }
+
+        let first_builder_size = sizes[builder_info.indices[0]];
+        let second_builder_size = sizes[builder_info.indices[1]];
+        assert!(
+            second_builder_size > 0,
+            "second builder transaction should have non-zero encoded size"
+        );
+
+        let total_probe_size: u64 = sizes.iter().sum();
+        let deposit_size = total_probe_size - first_builder_size - second_builder_size;
+
+        let (_pending, raw_user_tx) = probe_driver
+            .create_transaction()
+            .random_valid_transfer()
+            .send_and_get_raw_tx()
+            .await?;
+        let user_tx_size = raw_user_tx.len() as u64;
+
+        // Allow: deposit + first builder + user tx. Disallow adding the final builder tx.
+        let limit = deposit_size + first_builder_size + user_tx_size + (second_builder_size - 1);
+        (limit, user_tx_size)
+    };
+
+    let mut args = OpRbuilderArgs::test_default();
+    args.max_uncompressed_block_size = Some(limit);
+    let rbuilder = LocalInstance::new(args).await?;
+    let driver = rbuilder.driver().await?;
+    let provider = rbuilder.provider().await?;
+
+    let user_tx = driver
+        .create_transaction()
+        .random_valid_transfer()
+        .send()
+        .await?;
+    let block = driver.build_new_block_with_current_timestamp(None).await?;
+
+    assert!(
+        block.transactions.hashes().any(|h| h == *user_tx.tx_hash()),
+        "user tx should still fit before final builder tx is considered"
+    );
+
+    let builder_info = block.find_builder_txs();
+    assert_eq!(
+        builder_info.count, 1,
+        "final builder tx should be skipped when it would exceed max uncompressed size"
+    );
+
+    let mut built_size = 0u64;
+    for tx_hash in block.transactions.hashes() {
+        built_size += raw_tx_size_bytes(&provider, tx_hash).await?;
+    }
+
+    assert!(
+        built_size <= limit,
+        "built block should not exceed max uncompressed size: built={built_size} limit={limit} user_tx_size={user_tx_size}"
+    );
 
     Ok(())
 }

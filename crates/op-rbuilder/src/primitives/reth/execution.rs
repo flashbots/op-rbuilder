@@ -22,7 +22,9 @@ pub enum TxnExecutionResult {
     Reverted,
     RevertedAndExcluded,
     MaxGasUsageExceeded,
-    #[display("BlockUncompressedSizeExceeded: total_uncompressed={_0} tx_uncompressed_size={_1} block_limit={_2}")]
+    #[display(
+        "BlockUncompressedSizeExceeded: total_uncompressed={_0} tx_uncompressed_size={_1} block_limit={_2}"
+    )]
     BlockUncompressedSizeExceeded(u64, u64, u64),
     ConditionalCheckFailed,
     BackrunPriorityFeeInvalid,
@@ -134,5 +136,41 @@ impl ExecutionInfo {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ExecutionInfo, TxnExecutionResult};
+
+    #[test]
+    fn tx_limit_rejects_when_uncompressed_size_exceeds_limit() {
+        let info = ExecutionInfo {
+            cumulative_uncompressed_bytes: 100,
+            ..Default::default()
+        };
+
+        let result =
+            info.is_tx_over_limits(0, 30_000_000, None, None, 21_000, None, None, 50, Some(149));
+
+        assert!(matches!(
+            result,
+            Err(TxnExecutionResult::BlockUncompressedSizeExceeded(
+                100, 50, 149
+            ))
+        ));
+    }
+
+    #[test]
+    fn tx_limit_allows_exact_uncompressed_size_fit() {
+        let info = ExecutionInfo {
+            cumulative_uncompressed_bytes: 100,
+            ..Default::default()
+        };
+
+        let result =
+            info.is_tx_over_limits(0, 30_000_000, None, None, 21_000, None, None, 50, Some(150));
+
+        assert!(result.is_ok());
     }
 }

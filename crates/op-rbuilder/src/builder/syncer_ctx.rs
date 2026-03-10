@@ -29,6 +29,8 @@ pub(super) struct OpPayloadSyncerCtx {
     chain_spec: Arc<OpChainSpec>,
     /// Max gas that can be used by a transaction.
     max_gas_per_txn: Option<u64>,
+    /// Maximum cumulative uncompressed (EIP-2718 encoded) block size in bytes.
+    max_uncompressed_block_size: Option<u64>,
     /// The metrics for the builder
     metrics: Arc<OpRBuilderMetrics>,
     /// Global backrun bundle pool
@@ -53,6 +55,7 @@ impl OpPayloadSyncerCtx {
             da_config: builder_config.da_config.clone(),
             chain_spec,
             max_gas_per_txn: builder_config.max_gas_per_txn,
+            max_uncompressed_block_size: builder_config.max_uncompressed_block_size,
             metrics,
             backrun_bundle_pool: builder_config.backrun_bundle_pool.clone(),
             backrun_bundle_args: builder_config.backrun_bundle_args.clone(),
@@ -65,6 +68,10 @@ impl OpPayloadSyncerCtx {
 
     pub(super) fn max_gas_per_txn(&self) -> Option<u64> {
         self.max_gas_per_txn
+    }
+
+    pub(super) fn max_uncompressed_block_size(&self) -> Option<u64> {
+        self.max_uncompressed_block_size
     }
 
     /// Returns true if regolith is active for the payload.
@@ -101,7 +108,7 @@ impl OpPayloadSyncerCtx {
             cancel,
             metrics: self.metrics,
             max_gas_per_txn: self.max_gas_per_txn,
-            max_uncompressed_block_size: None,
+            max_uncompressed_block_size: self.max_uncompressed_block_size,
             address_gas_limiter: AddressGasLimiter::new(GasLimiterArgs::default()),
             backrun_ctx,
         }

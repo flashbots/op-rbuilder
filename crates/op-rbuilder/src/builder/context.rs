@@ -377,6 +377,26 @@ impl OpPayloadBuilderCtx {
 }
 
 impl OpPayloadBuilderCtx {
+    fn record_limit_rejection_metrics(&self, result: &TxnExecutionResult) {
+        match result {
+            TxnExecutionResult::TransactionDALimitExceeded => {
+                self.metrics.tx_da_size_exceeded_total.increment(1);
+            }
+            TxnExecutionResult::BlockDALimitExceeded(..) => {
+                self.metrics.block_da_size_exceeded_total.increment(1);
+            }
+            TxnExecutionResult::TransactionGasLimitExceeded(..) => {
+                self.metrics.block_gas_limit_exceeded_total.increment(1);
+            }
+            TxnExecutionResult::BlockUncompressedSizeExceeded(..) => {
+                self.metrics
+                    .block_uncompressed_size_exceeded_total
+                    .increment(1);
+            }
+            _ => {}
+        }
+    }
+
     /// Executes the given best transactions and updates the execution info.
     ///
     /// Returns `Ok(Some(())` if the job was cancelled.
@@ -389,6 +409,7 @@ impl OpPayloadBuilderCtx {
         block_gas_limit: u64,
         block_da_limit: Option<u64>,
         block_da_footprint_limit: Option<u64>,
+        max_uncompressed_block_size: Option<u64>,
         flashblock_index: u64,
     ) -> Result<Option<()>, PayloadBuilderError> {
         let execute_txs_start_time = Instant::now();
@@ -412,6 +433,7 @@ impl OpPayloadBuilderCtx {
             block_da_limit = ?block_da_limit,
             tx_da_limit = ?tx_da_limit,
             block_gas_limit = ?block_gas_limit,
+            max_uncompressed_block_size = ?max_uncompressed_block_size,
             "Executing best transactions",
         );
 
@@ -483,11 +505,12 @@ impl OpPayloadBuilderCtx {
                 info.da_footprint_scalar,
                 block_da_footprint_limit,
                 tx_uncompressed_size,
-                self.max_uncompressed_block_size,
+                max_uncompressed_block_size,
             ) {
                 // we can't fit this transaction into the block, so we need to mark it as
                 // invalid which also removes all dependent transaction from
                 // the iterator before we can continue
+                self.record_limit_rejection_metrics(&result);
                 log_txn(result);
                 best_txs.mark_invalid(tx.signer(), tx.nonce());
                 continue;
@@ -723,8 +746,7 @@ impl OpPayloadBuilderCtx {
                     }
 
                     let br_tx_da_size = bundle.estimated_da_size;
-                    let br_tx_uncompressed_size =
-                        bundle.backrun_tx.encode_2718_len() as u64;
+                    let br_tx_uncompressed_size = bundle.backrun_tx.encode_2718_len() as u64;
                     if let Err(result) = info.is_tx_over_limits(
                         br_tx_da_size,
                         block_gas_limit,
@@ -734,8 +756,9 @@ impl OpPayloadBuilderCtx {
                         info.da_footprint_scalar,
                         block_da_footprint_limit,
                         br_tx_uncompressed_size,
-                        self.max_uncompressed_block_size,
+                        max_uncompressed_block_size,
                     ) {
+                        self.record_limit_rejection_metrics(&result);
                         log_br_txn(result);
                         continue;
                     }
