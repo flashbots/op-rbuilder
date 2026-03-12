@@ -268,12 +268,24 @@ impl Drop for LocalInstance {
     fn drop(&mut self) {
         if let Some(task_runtime) = self.task_manager.take() {
             let _ = task_runtime.initiate_graceful_shutdown();
-            std::fs::remove_dir_all(self.config().datadir().to_string()).unwrap_or_else(|e| {
-                panic!(
-                    "Failed to remove temporary data directory {}: {e}",
-                    self.config().datadir()
-                )
-            });
+            let datadir = self.config().datadir().to_string();
+            for i in 0..10 {
+                match std::fs::remove_dir_all(&datadir) {
+                    Ok(()) => break,
+                    Err(e) if i < 9 => {
+                        std::thread::sleep(std::time::Duration::from_millis(500));
+                        eprintln!(
+                            "Retrying removal of temporary data directory {datadir} ({}/10): {e}",
+                            i + 1
+                        );
+                    }
+                    Err(e) => {
+                        panic!(
+                            "Failed to remove temporary data directory {datadir} after 10 attempts: {e}"
+                        );
+                    }
+                }
+            }
         }
     }
 }
