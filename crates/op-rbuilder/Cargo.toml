@@ -45,7 +45,7 @@ reth-rpc-eth-types.workspace = true
 reth-rpc-layer.workspace = true
 reth-storage-api.workspace = true
 reth-tasks.workspace = true
-reth-testing-utils.workspace = true
+reth-testing-utils = { workspace = true, optional = true }
 reth-tracing-otlp = { workspace = true, optional = true }
 reth-transaction-pool.workspace = true
 reth-trie.workspace = true
@@ -124,9 +124,8 @@ serde_with.workspace = true
 serde_yaml.workspace = true
 sha3.workspace = true
 shellexpand.workspace = true
-testcontainers.workspace = true
+testcontainers = { workspace = true, optional = true }
 thiserror.workspace = true
-time.workspace = true
 tokio.workspace = true
 tokio-metrics.workspace = true
 tokio-tungstenite.workspace = true
@@ -150,7 +149,9 @@ macros = { path = "../op-rbuilder-test-macros" }
 alloy-provider = { workspace = true, default-features = true, features = [
     "txpool-api",
 ] }
+reth-testing-utils.workspace = true
 tempfile.workspace = true
+testcontainers.workspace = true
 nanoid.workspace = true
 reth-ipc.workspace = true
 reth-node-builder = { workspace = true, features = ["test-utils"] }
@@ -185,6 +186,8 @@ testing = [
     "nanoid",
     "reth-ipc",
     "reth-node-builder/test-utils",
+    "reth-testing-utils",
+    "testcontainers",
     "ctor",
     "macros",
     "rlimit",
