@@ -9,7 +9,7 @@
 ARG FEATURES
 ARG RBUILDER_BIN="op-rbuilder"
 
-FROM rust:1.92-bookworm AS base
+FROM rust:1.94-bookworm AS base
 ARG TARGETPLATFORM
 
 RUN apt-get update \
