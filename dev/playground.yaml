@@ -4,14 +4,14 @@ base_args:
   - op-rbuilder
 
 setup:
-  - cd .. && make op-rbuilder FEATURES=telemetry,loki
+  - cd .. && make op-rbuilder-profiling FEATURES=telemetry,loki
   - docker build -t chain-monitor:dev chain-monitor
 
 recipe:
   op-rbuilder:
     services:
       op-rbuilder:
-        host_path: ../target/debug/op-rbuilder
+        host_path: ../target/profiling/op-rbuilder
         args:
           - node
           - --builder.playground # enabling op-rbuilder to detect playground environment and service configurations
