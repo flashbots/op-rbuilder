@@ -219,10 +219,8 @@ impl BackrunBundlePayloadPool {
                     if effective_fee != target_tx_effective_fee {
                         return false;
                     }
-                } else {
-                    if effective_fee < target_tx_effective_fee {
-                        return false;
-                    }
+                } else if effective_fee < target_tx_effective_fee {
+                    return false;
                 }
 
                 let sender = backrun_tx.signer();

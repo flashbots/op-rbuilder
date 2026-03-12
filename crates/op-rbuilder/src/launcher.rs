@@ -150,11 +150,12 @@ impl Launcher<OpChainSpecParser, OpRbuilderArgs> for BuilderLauncher {
                 if backrun_bundle_enabled {
                     let chain_events = ctx.provider.canonical_state_stream();
                     let task_executor = ctx.task_executor.clone();
-                    ctx.task_executor.spawn_task(maintain_backrun_bundle_pool_future(
-                        backrun_bundle_pool_maintain,
-                        chain_events,
-                        task_executor,
-                    ));
+                    ctx.task_executor
+                        .spawn_task(maintain_backrun_bundle_pool_future(
+                            backrun_bundle_pool_maintain,
+                            chain_events,
+                            task_executor,
+                        ));
                 }
 
                 Ok(())
