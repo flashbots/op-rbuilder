@@ -7059,7 +7059,6 @@ dependencies = [
  "testcontainers",
  "thiserror 1.0.69",
  "tikv-jemallocator",
- "time",
  "tokio",
  "tokio-metrics",
  "tokio-tungstenite",
