@@ -151,6 +151,8 @@ pub struct OpRBuilderMetrics {
     pub flashblocks_time_drift: Histogram,
     /// Time offset we used for first flashblock
     pub first_flashblock_time_offset: Histogram,
+    /// Delay in milliseconds between expected and actual FCU arrival time (positive = late, negative = early)
+    pub fcu_arrival_delay: Histogram,
     /// Number of requests sent to the eth_sendBundle endpoint
     pub bundle_requests: Counter,
     /// Number of valid bundles received at the eth_sendBundle endpoint
