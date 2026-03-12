@@ -24,8 +24,6 @@ use reth_optimism_node::{
 };
 use reth_provider::CanonStateSubscriptions;
 use reth_transaction_pool::TransactionPool;
-use std::sync::Arc;
-
 pub fn launch() -> Result<()> {
     let cli = Cli::parsed();
 
@@ -62,7 +60,7 @@ struct BuilderLauncher;
 impl Launcher<OpChainSpecParser, OpRbuilderArgs> for BuilderLauncher {
     async fn entrypoint(
         self,
-        builder: WithLaunchContext<NodeBuilder<Arc<DatabaseEnv>, OpChainSpec>>,
+        builder: WithLaunchContext<NodeBuilder<DatabaseEnv, OpChainSpec>>,
         builder_args: OpRbuilderArgs,
     ) -> Result<()> {
         let builder_config = BuilderConfig::try_from(builder_args.clone())
@@ -146,13 +144,13 @@ impl Launcher<OpChainSpecParser, OpRbuilderArgs> for BuilderLauncher {
                     tracing::info!("Logging pool transactions");
                     let listener = ctx.pool.all_transactions_event_listener();
                     let task = monitor_tx_pool(listener, reverted_cache_copy);
-                    ctx.task_executor.spawn_critical("txlogging", task);
+                    ctx.task_executor.spawn_critical_task("txlogging", task);
                 }
 
                 if backrun_bundle_enabled {
                     let chain_events = ctx.provider.canonical_state_stream();
                     let task_executor = ctx.task_executor.clone();
-                    ctx.task_executor.spawn(maintain_backrun_bundle_pool_future(
+                    ctx.task_executor.spawn_task(maintain_backrun_bundle_pool_future(
                         backrun_bundle_pool_maintain,
                         chain_events,
                         task_executor,

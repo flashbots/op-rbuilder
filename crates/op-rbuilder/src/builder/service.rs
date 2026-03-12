@@ -85,7 +85,7 @@ impl FlashblocksServiceBuilder {
                 .try_build::<Message>()
                 .wrap_err("failed to build flashblocks p2p node")?;
             let multiaddrs = node.multiaddrs();
-            ctx.task_executor().spawn(async move {
+            ctx.task_executor().spawn_task(async move {
                 if let Err(e) = node.run().await {
                     tracing::error!(error = %e, "p2p node exited");
                 }
@@ -163,7 +163,7 @@ impl FlashblocksServiceBuilder {
             cancel,
         );
 
-        ctx.task_executor().spawn_critical(
+        ctx.task_executor().spawn_critical_task(
             "custom payload builder service",
             Box::pin(
                 task_metrics
@@ -171,7 +171,7 @@ impl FlashblocksServiceBuilder {
                     .instrument(payload_service),
             ),
         );
-        ctx.task_executor().spawn_critical(
+        ctx.task_executor().spawn_critical_task(
             "flashblocks payload handler",
             Box::pin(
                 task_metrics

@@ -33,7 +33,7 @@ async fn maintain_backrun_bundle_pool<N, St>(
             break;
         };
         let pool = pool.clone();
-        task_executor.spawn_blocking(async move {
+        task_executor.spawn_blocking_task(async move {
             pool.on_canonical_state_change(event.tip());
         });
     }
