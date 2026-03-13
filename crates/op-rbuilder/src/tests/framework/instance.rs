@@ -58,7 +58,7 @@ pub struct LocalInstance {
     signer: Signer,
     config: NodeConfig<OpChainSpec>,
     args: OpRbuilderArgs,
-    task_manager: Option<TaskRuntime>,
+    task_runtime: Option<TaskRuntime>,
     exit_future: NodeExitFuture,
     _node_handle: Box<dyn Any + Send>,
     pool_observer: TransactionPoolObserver,
@@ -85,7 +85,7 @@ impl LocalInstance {
         config: NodeConfig<OpChainSpec>,
     ) -> eyre::Result<Self> {
         let mut args = args;
-        let task_manager = task_manager();
+        let task_runtime = task_runtime();
         let op_node = OpNode::new(args.rollup_args.clone());
         let reverted_cache = Cache::builder().max_capacity(100).build();
         let reverted_cache_clone = reverted_cache.clone();
@@ -123,7 +123,7 @@ impl LocalInstance {
 
         let node_builder = NodeBuilder::<_, OpChainSpec>::new(config.clone())
             .with_database(create_test_db(config.clone()))
-            .with_launch_context(task_manager.clone())
+            .with_launch_context(task_runtime.clone())
             .with_types::<OpNode>()
             .with_components(
                 op_node
@@ -191,7 +191,7 @@ impl LocalInstance {
             config,
             exit_future,
             _node_handle: node_handle,
-            task_manager: Some(task_manager),
+            task_runtime: Some(task_runtime),
             pool_observer: TransactionPoolObserver::new(pool_monitor, reverted_cache_clone),
             attestation_server,
         })
@@ -266,7 +266,7 @@ impl LocalInstance {
 
 impl Drop for LocalInstance {
     fn drop(&mut self) {
-        if let Some(task_runtime) = self.task_manager.take() {
+        if let Some(task_runtime) = self.task_runtime.take() {
             let _ = task_runtime.initiate_graceful_shutdown();
             let datadir = self.config().datadir().to_string();
             for i in 0..10 {
@@ -353,7 +353,7 @@ fn chain_spec() -> Arc<OpChainSpec> {
     CHAIN_SPEC.clone()
 }
 
-fn task_manager() -> TaskRuntime {
+fn task_runtime() -> TaskRuntime {
     TaskRuntime::with_existing_handle(tokio::runtime::Handle::current())
         .expect("failed to create task runtime")
 }
