@@ -9,6 +9,7 @@ use reth_optimism_chainspec::OpChainSpec;
     config = NodeConfig::<OpChainSpec> {
         txpool: TxPoolArgs {
             pending_max_count: 50,
+            max_account_slots: 50,
             ..Default::default()
         },
         ..default_node_config()
