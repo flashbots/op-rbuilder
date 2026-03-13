@@ -12,13 +12,13 @@ This directory contains local development environment configuration for `op-rbui
 From the repository root:
 
 ```bash
-builder-playground start dev/playground.yaml
+builder-playground start local-testing/playground.yaml
 ```
 
 Use `--skip-setup` to skip `cargo build` on repeated runs:
 
 ```bash
-builder-playground start dev/playground.yaml --skip-setup
+builder-playground start local-testing/playground.yaml --skip-setup
 ```
 
 Services:

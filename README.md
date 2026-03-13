@@ -126,7 +126,7 @@ cargo test --package op-rbuilder --lib
 
 ## Local Devnet
 
-Local development environment setup and configuration files can be found in [`dev/README.md`](./dev/README.md).
+Local development environment setup and configuration files can be found in [`local-testing/README.md`](./local-testing/README.md).
 
 ## Running GitHub actions locally
 
