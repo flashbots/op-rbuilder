@@ -250,7 +250,7 @@ pub trait BuilderTransactions {
             info.cumulative_uncompressed_bytes += tx_uncompressed_size;
 
             let ctx = ReceiptBuilderCtx {
-                tx: builder_tx.signed_tx.inner(),
+                tx_type: builder_tx.signed_tx.inner().tx_type(),
                 evm: &evm,
                 result,
                 state: &state,

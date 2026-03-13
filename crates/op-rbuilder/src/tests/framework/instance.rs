@@ -33,7 +33,7 @@ use parking_lot::Mutex;
 use reth::{
     args::{DatadirArgs, NetworkArgs, RpcServerArgs},
     core::exit::NodeExitFuture,
-    tasks::TaskManager,
+    tasks::Runtime as TaskRuntime,
 };
 use reth_node_builder::{NodeBuilder, NodeConfig};
 use reth_optimism_chainspec::OpChainSpec;
@@ -58,7 +58,7 @@ pub struct LocalInstance {
     signer: Signer,
     config: NodeConfig<OpChainSpec>,
     args: OpRbuilderArgs,
-    task_manager: Option<TaskManager>,
+    task_runtime: Option<TaskRuntime>,
     exit_future: NodeExitFuture,
     _node_handle: Box<dyn Any + Send>,
     pool_observer: TransactionPoolObserver,
@@ -85,7 +85,7 @@ impl LocalInstance {
         config: NodeConfig<OpChainSpec>,
     ) -> eyre::Result<Self> {
         let mut args = args;
-        let task_manager = task_manager();
+        let task_runtime = task_runtime();
         let op_node = OpNode::new(args.rollup_args.clone());
         let reverted_cache = Cache::builder().max_capacity(100).build();
         let reverted_cache_clone = reverted_cache.clone();
@@ -123,7 +123,7 @@ impl LocalInstance {
 
         let node_builder = NodeBuilder::<_, OpChainSpec>::new(config.clone())
             .with_database(create_test_db(config.clone()))
-            .with_launch_context(task_manager.executor())
+            .with_launch_context(task_runtime.clone())
             .with_types::<OpNode>()
             .with_components(
                 op_node
@@ -191,7 +191,7 @@ impl LocalInstance {
             config,
             exit_future,
             _node_handle: node_handle,
-            task_manager: Some(task_manager),
+            task_runtime: Some(task_runtime),
             pool_observer: TransactionPoolObserver::new(pool_monitor, reverted_cache_clone),
             attestation_server,
         })
@@ -266,14 +266,26 @@ impl LocalInstance {
 
 impl Drop for LocalInstance {
     fn drop(&mut self) {
-        if let Some(task_manager) = self.task_manager.take() {
-            task_manager.graceful_shutdown_with_timeout(Duration::from_secs(3));
-            std::fs::remove_dir_all(self.config().datadir().to_string()).unwrap_or_else(|e| {
-                panic!(
-                    "Failed to remove temporary data directory {}: {e}",
-                    self.config().datadir()
-                )
-            });
+        if let Some(task_runtime) = self.task_runtime.take() {
+            let _ = task_runtime.initiate_graceful_shutdown();
+            let datadir = self.config().datadir().to_string();
+            for i in 0..10 {
+                match std::fs::remove_dir_all(&datadir) {
+                    Ok(()) => break,
+                    Err(e) if i < 9 => {
+                        std::thread::sleep(std::time::Duration::from_millis(500));
+                        eprintln!(
+                            "Retrying removal of temporary data directory {datadir} ({}/10): {e}",
+                            i + 1
+                        );
+                    }
+                    Err(e) => {
+                        panic!(
+                            "Failed to remove temporary data directory {datadir} after 10 attempts: {e}"
+                        );
+                    }
+                }
+            }
         }
     }
 }
@@ -341,8 +353,9 @@ fn chain_spec() -> Arc<OpChainSpec> {
     CHAIN_SPEC.clone()
 }
 
-fn task_manager() -> TaskManager {
-    TaskManager::new(tokio::runtime::Handle::current())
+fn task_runtime() -> TaskRuntime {
+    TaskRuntime::with_existing_handle(tokio::runtime::Handle::current())
+        .expect("failed to create task runtime")
 }
 
 fn pool_component(args: &OpRbuilderArgs) -> OpPoolBuilder<FBPooledTransaction> {
