@@ -251,4 +251,8 @@ pub struct TelemetryArgs {
         default_value = "100"
     )]
     pub sampling_ratio: u64,
+
+    /// Loki endpoint URL for pushing logs (e.g. http://localhost:3100)
+    #[arg(long = "telemetry.loki-url", env = "LOKI_URL")]
+    pub loki_url: Option<String>,
 }

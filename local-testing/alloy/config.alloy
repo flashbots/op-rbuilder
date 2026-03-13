@@ -1,0 +1,62 @@
+loki.write "default" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}
+
+// op-rbuilder pushes logs directly to Loki via tracing-loki feature
+
+// Docker container discovery
+
+discovery.docker "containers" {
+  host = "unix:///var/run/docker.sock"
+}
+
+// Use Docker Compose service label for service identification.
+discovery.relabel "containers" {
+  targets = discovery.docker.containers.targets
+
+  // Use the Docker Compose service name as the "service" label
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    target_label  = "service"
+  }
+
+  // Only keep containers we care about
+  rule {
+    source_labels = ["service"]
+    regex         = "(op-node|op-batcher|rollup-boost|chain-monitor)"
+    action        = "keep"
+  }
+}
+
+// Collect logs from Docker containers
+loki.source.docker "containers" {
+  host       = "unix:///var/run/docker.sock"
+  targets    = discovery.relabel.containers.output
+  forward_to = [loki.process.level_extract.receiver]
+}
+
+// Pipeline: extract log level from all services
+
+loki.process "level_extract" {
+  // reth/tracing format
+  stage.regex {
+    expression = "^\\S+\\s+(?P<level>TRACE|DEBUG|INFO|WARN|ERROR)"
+  }
+
+  // reth/tracing target and message extraction
+  stage.regex {
+    expression = "^\\S+\\s+\\w+\\s+(?P<target>[\\w:]+):\\s+(?P<message>.+?)(?:\\s+\\w+=.*$|$)"
+  }
+
+  stage.labels {
+    values = { level = "", target = "" }
+  }
+
+  stage.structured_metadata {
+    values = { message = "" }
+  }
+
+  forward_to = [loki.write.default.receiver]
+}

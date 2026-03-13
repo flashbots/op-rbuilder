@@ -51,6 +51,11 @@ build: ## Build (debug version)
 op-rbuilder: ## Build op-rbuilder (debug version)
 	cargo build -p op-rbuilder --bin op-rbuilder --features "$(FEATURES)"
 
+.PHONY: op-rbuilder-profiling
+op-rbuilder-profiling: ## Build op-rbuilder with profiling profile (release + debug symbols + frame pointers)
+	RUSTFLAGS="-C force-frame-pointers=yes -C symbol-mangling-version=v0" \
+	cargo build -p op-rbuilder --bin op-rbuilder --features "$(FEATURES)" --profile profiling
+
 .PHONY: build-reproducible
 build-reproducible: ## Build the reth binary into `target` directory with reproducible builds
 	SOURCE_DATE_EPOCH=$(SOURCE_DATE) \

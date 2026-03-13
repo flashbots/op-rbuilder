@@ -32,11 +32,14 @@ rand_chacha.opt-level = 3
 rand_xorshift.opt-level = 3
 unarray.opt-level = 3
 
-# Like release, but with full debug symbols. Useful for e.g. `perf`.
-[profile.debug-fast]
+# Release build with debug symbols and frame pointers for profiling.
+# Prefer `make op-rbuilder-profiling` which also sets v0 symbol mangling for cleaner demangling.
+# See: https://nnethercote.github.io/perf-book/profiling.html
+[profile.profiling]
 inherits = "release"
-debug = true
-lto = "thin"
+debug = true              # full DWARF debug info (file:line + inlined frames)
+strip = false             # preserve symbols
+lto = "thin"              # cross-crate inlining without fat-LTO compile cost
 
 [profile.maxperf]
 inherits = "release"
@@ -192,6 +195,8 @@ testcontainers = "0.27.0"
 tikv-jemallocator = { version = "0.6" }
 vergen = "9.0.4"
 vergen-git2 = "9.0.4"
+opentelemetry = { version = "0.31", features = ["trace"] }
+tracing-loki = "0.2.6"
 
 # tdx attestation
 tdx = { git = "https://github.com/automata-network/tdx-attestation-sdk.git", features = ["configfs"], branch = "main" }
