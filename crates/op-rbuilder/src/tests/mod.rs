@@ -31,6 +31,9 @@ mod forks;
 
 #[cfg(test)]
 mod backrun;
+
+#[cfg(test)]
+mod incremental_trie;
 // If the order of deployment from the signer changes the address will change
 #[cfg(test)]
 const FLASHBLOCKS_NUMBER_ADDRESS: alloy_primitives::Address =
