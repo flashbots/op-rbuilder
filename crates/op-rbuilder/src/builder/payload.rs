@@ -498,6 +498,15 @@ where
                 .ws_pub
                 .publish(&fb_payload)
                 .map_err(PayloadBuilderError::other)?;
+            info!(
+                target: "tx_trace",
+                block_number = ctx.block_number(),
+                flashblock_index = 0u64,
+                byte_size = flashblock_byte_size,
+                total_txs = info.executed_transactions.len(),
+                stage = "fb_published",
+                "[TX_TRACE]"
+            );
             ctx.metrics
                 .flashblock_byte_size_histogram
                 .record(flashblock_byte_size as f64);
@@ -874,6 +883,15 @@ where
                     .ws_pub
                     .publish(&fb_payload)
                     .wrap_err("failed to publish flashblock via websocket")?;
+                info!(
+                    target: "tx_trace",
+                    block_number = ctx.block_number(),
+                    flashblock_index,
+                    byte_size = flashblock_byte_size,
+                    total_txs = info.executed_transactions.len(),
+                    stage = "fb_published",
+                    "[TX_TRACE]"
+                );
                 self.built_fb_payload_tx
                     .try_send(new_payload.clone())
                     .wrap_err("failed to send built payload to handler")?;

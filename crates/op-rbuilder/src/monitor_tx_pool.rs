@@ -3,7 +3,7 @@ use alloy_primitives::B256;
 use futures_util::StreamExt;
 use moka::future::Cache;
 use reth_transaction_pool::{AllTransactionsEvents, FullTransactionEvent};
-use tracing::debug;
+use tracing::{debug, info};
 
 pub(crate) async fn monitor_tx_pool(
     mut new_transactions: AllTransactionsEvents<FBPooledTransaction>,
@@ -20,6 +20,12 @@ async fn transaction_event_log(
 ) {
     match event {
         FullTransactionEvent::Pending(hash) => {
+            info!(
+                target: "tx_trace",
+                tx_hash = %hash,
+                stage = "pool_pending",
+                "[TX_TRACE]"
+            );
             debug!(
                 target = "monitoring",
                 tx_hash = hash.to_string(),
@@ -28,6 +34,12 @@ async fn transaction_event_log(
             )
         }
         FullTransactionEvent::Queued(hash, _) => {
+            info!(
+                target: "tx_trace",
+                tx_hash = %hash,
+                stage = "pool_queued",
+                "[TX_TRACE]"
+            );
             debug!(
                 target = "monitoring",
                 tx_hash = hash.to_string(),
