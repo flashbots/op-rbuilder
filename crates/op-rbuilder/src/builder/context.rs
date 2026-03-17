@@ -401,6 +401,7 @@ impl OpPayloadBuilderCtx {
     ///
     /// Returns `Ok(Some(())` if the job was cancelled.
     #[expect(clippy::too_many_arguments)]
+    #[tracing::instrument(level = "info", name = "execute_pool_txs", skip_all)]
     pub(super) fn execute_best_transactions(
         &self,
         info: &mut ExecutionInfo,
