@@ -480,8 +480,10 @@ where
         let BuildArguments {
             cached_reads,
             config,
-            cancel: block_cancel,
+            cancel: cancellation,
         } = args;
+        // Use `any` as the general cancellation token
+        let block_cancel = cancellation.any_token();
 
         // The build_payload span is created and instrumented in try_build() using
         // tracing::Instrument, which safely manages it across async .await points.
@@ -510,6 +512,11 @@ where
         self.address_gas_limiter.refresh(ctx.block_number());
 
         // Phase 1: Build the fallback block.
+        let fallback_span = if span.is_none() {
+            tracing::Span::none()
+        } else {
+            span!(parent: &span, Level::INFO, "build_fallback")
+        };
         let FallbackBuildOutput {
             ctx,
             mut info,
@@ -518,8 +525,8 @@ where
             mut cache,
             mut transition,
             fb_state: returned_fb_state,
-        } = self
-            .run_blocking_task({
+        } = tracing::Instrument::instrument(
+            self.run_blocking_task({
                 let builder = self.clone();
                 let ctx = ctx;
                 let mut fb_state = fb_state;
@@ -580,8 +587,10 @@ where
                         fb_state,
                     })
                 }
-            })
-            .await?;
+            }),
+            fallback_span,
+        )
+        .await?;
         fb_state = returned_fb_state;
 
         self.built_fb_payload_tx
@@ -737,13 +746,31 @@ where
         let mut committed_txs = FlashblockCommittedTxs::default();
         let parent_hash = ctx.parent_hash();
 
-        // Process flashblocks - async channel receive
+        // State machine: explicit select! at every phase for deterministic cancellation.
         loop {
-            // Wait for signal before building flashblock.
-            let Some(new_fb_cancel) = rx.recv().await else {
-                // Channel closed - block building cancelled
-                self.record_flashblocks_metrics(&ctx, &fb_state, &info, target_flashblocks, &span);
-                return Ok(());
+            // Phase 1: Wait for scheduler trigger, or exit on cancellation.
+            let new_fb_cancel = tokio::select! {
+                // ensures cancellation is checked before trigger.
+                biased;
+                _ = cancellation.resolved_cancelled() => {
+                    Self::record_cancellation_reason(&self.metrics, &cancellation, &span);
+                    self.record_flashblocks_metrics(&ctx, &fb_state, &info, target_flashblocks, &span);
+                    return Ok(());
+                }
+                _ = cancellation.new_fcu_cancelled() => {
+                    Self::record_cancellation_reason(&self.metrics, &cancellation, &span);
+                    self.record_flashblocks_metrics(&ctx, &fb_state, &info, target_flashblocks, &span);
+                    return Ok(());
+                }
+                trigger = rx.recv() => match trigger {
+                    Some(t) => t,
+                    None => {
+                        // Channel closed — scheduler exhausted or canceled
+                        Self::record_cancellation_reason(&self.metrics, &cancellation, &span);
+                        self.record_flashblocks_metrics(&ctx, &fb_state, &info, target_flashblocks, &span);
+                        return Ok(());
+                    }
+                },
             };
 
             debug!(
@@ -762,18 +789,30 @@ where
                     parent: &span,
                     Level::INFO,
                     "build_flashblock",
+                    flashblock_index = fb_state.flashblock_index(),
+                    block_number = ctx.block_number(),
+                    tx_count = tracing::field::Empty,
+                    gas_used = tracing::field::Empty,
                 )
             };
-            let FlashblockBuildOutput {
-                ctx: returned_ctx,
-                build_result,
-                cache: new_cache,
-                transition: new_transition,
-                committed_txs: new_committed,
-                info: new_info,
-                fb_state: returned_fb_state,
-            } = tracing::Instrument::instrument(
-                self.run_blocking_task({
+
+            // Phase 2: Build flashblock (blocking task), or exit on cancellation.
+            // Note: ctx, info, cache, transition, committed_txs, fb_state are moved into
+            // the blocking task closure. If a cancellation branch fires, the blocking task
+            // is dropped (the thread finishes but the oneshot result is discarded).
+            let build_output = tokio::select! {
+                biased;
+                // Suppressed flashblock: we received getResolve during flashblock building
+                _ = cancellation.resolved_cancelled() => {
+                    self.metrics.flashblock_publish_suppressed_total.increment(1);
+                    Self::record_cancellation_reason(&self.metrics, &cancellation, &span);
+                    return Ok(());
+                }
+                _ = cancellation.new_fcu_cancelled() => {
+                    Self::record_cancellation_reason(&self.metrics, &cancellation, &span);
+                    return Ok(());
+                }
+                result = self.run_blocking_task({
                     let builder = self.clone();
                     let ctx = ctx;
                     let block_cancel = block_cancel.clone();
@@ -782,7 +821,11 @@ where
                     let transition = transition;
                     let mut committed_txs = committed_txs;
                     let fb_state = fb_state;
+                    let fb_span = fb_span.clone();
                     move || {
+                        // Enter the flashblock span so child spans are properly parented
+                        let _enter = fb_span.enter();
+
                         // reconstruct state
                         let state_provider = builder.client.state_by_block_hash(parent_hash)?;
                         let mut state = State::builder()
@@ -819,10 +862,18 @@ where
                             fb_state,
                         })
                     }
-                }),
-                fb_span,
-            )
-            .await?;
+                }) => result?,
+            };
+
+            let FlashblockBuildOutput {
+                ctx: returned_ctx,
+                build_result,
+                cache: new_cache,
+                transition: new_transition,
+                committed_txs: new_committed,
+                info: new_info,
+                fb_state: returned_fb_state,
+            } = build_output;
 
             ctx = returned_ctx;
             fb_state = returned_fb_state;
@@ -831,12 +882,29 @@ where
             transition = new_transition;
             committed_txs = new_committed;
 
+            // Record span attributes now that we have results
+            fb_span.record("tx_count", info.executed_transactions.len() as u64);
+            fb_span.record("gas_used", info.cumulative_gas_used);
+
+            // Phase 3: Publish
+            // no .await between check and publish (structural guarantee).
+            // If resolved or new_fcu fired during the build, skip publishing.
+            if cancellation.is_resolved() || cancellation.is_new_fcu() {
+                if cancellation.is_resolved() {
+                    ctx.metrics.flashblock_publish_suppressed_total.increment(1);
+                }
+                Self::record_cancellation_reason(&self.metrics, &cancellation, &span);
+                self.record_flashblocks_metrics(&ctx, &fb_state, &info, target_flashblocks, &span);
+                return Ok(());
+            }
+
             let next_flashblock_state = match build_result {
                 Ok(Some((next_flashblock_state, new_payload))) => {
                     best_payload_tx.send_replace(Some(new_payload));
                     next_flashblock_state
                 }
                 Ok(None) => {
+                    Self::record_cancellation_reason(&self.metrics, &cancellation, &span);
                     self.record_flashblocks_metrics(
                         &ctx,
                         &fb_state,
@@ -847,6 +915,8 @@ where
                     return Ok(());
                 }
                 Err(err) => {
+                    ctx.metrics.payload_job_cancellation_error.increment(1);
+                    span.record("cancellation_reason", "error");
                     error!(
                         target: "payload_builder",
                         id = %fb_payload.payload_id,
@@ -995,8 +1065,7 @@ where
             .collect::<Vec<_>>();
         best_txs.mark_committed(new_transactions);
 
-        // We got block cancelled, we won't need anything from the block at this point
-        // Caution: this assume that block cancel token only cancelled when new FCU is received
+        // Block cancelled (new FCU, getPayload resolved, or deadline). Skip publishing.
         if block_cancel.is_cancelled() {
             return Ok(None);
         }
@@ -1047,8 +1116,8 @@ where
                 fb_payload.index = flashblock_index;
                 fb_payload.base = None;
 
-                // If main token got canceled in here that means we received get_payload and we should drop everything and now update best_payload
-                // To ensure that we will return same blocks as rollup-boost (to leverage caches)
+                // Block canceled (new FCU, getPayload resolved, or deadline).
+                // Don't publish to ensures every published flashblock is a subset of the resolved payload.
                 if block_cancel.is_cancelled() {
                     return Ok(None);
                 }
@@ -1134,7 +1203,31 @@ where
         }
     }
 
-    /// Do some logging and metric recording when we stop build flashblocks
+    /// Records cancellation reason for observability.
+    fn record_cancellation_reason(
+        metrics: &OpRBuilderMetrics,
+        cancellation: &super::cancellation::PayloadJobCancellation,
+        span: &tracing::Span,
+    ) {
+        let reason = cancellation.reason();
+        match reason {
+            super::cancellation::CancellationReason::Resolved => {
+                metrics.payload_job_cancellation_resolved.increment(1)
+            }
+            super::cancellation::CancellationReason::NewFcu => {
+                metrics.payload_job_cancellation_new_fcu.increment(1)
+            }
+            super::cancellation::CancellationReason::Deadline => {
+                metrics.payload_job_cancellation_deadline.increment(1)
+            }
+            super::cancellation::CancellationReason::Complete => {
+                metrics.payload_job_cancellation_complete.increment(1)
+            }
+        }
+        span.record("cancellation_reason", reason.as_str());
+    }
+
+    /// Do some logging and metric recording when we stop building flashblocks
     fn record_flashblocks_metrics(
         &self,
         ctx: &OpPayloadBuilderCtx,
@@ -1169,7 +1262,7 @@ where
             "Flashblocks building complete"
         );
 
-        span.record("flashblock_count", fb_state.flashblock_index());
+        span.record("flashblocks_built", fb_state.flashblock_index());
     }
 }
 
@@ -1197,7 +1290,15 @@ where
                 .number
                 .is_multiple_of(self.config.sampling_ratio)
         {
-            span!(Level::INFO, "build_payload")
+            span!(
+                Level::INFO,
+                "build_payload",
+                payload_id = tracing::field::Empty,
+                block_number = args.config.parent_header.number + 1,
+                parent_hash = %args.config.parent_header.hash(),
+                flashblocks_built = tracing::field::Empty,
+                cancellation_reason = tracing::field::Empty,
+            )
         } else {
             tracing::Span::none()
         };
@@ -1224,6 +1325,7 @@ where
     Ok(info)
 }
 
+#[tracing::instrument(level = "info", name = "seal_block", skip_all)]
 pub(super) fn build_block<DB, P>(
     state: &mut State<DB>,
     ctx: &OpPayloadBuilderCtx,
@@ -1292,6 +1394,7 @@ where
         .unwrap_or(0);
 
     if calculate_state_root {
+        let _state_root_span = span!(Level::INFO, "state_root").entered();
         let state_provider = state.database.as_ref();
 
         // prev_trie_updates is None for the first flashblock.
