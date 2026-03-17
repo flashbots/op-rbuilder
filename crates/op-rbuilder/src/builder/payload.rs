@@ -46,7 +46,7 @@ use reth_revm::{
     State, database::StateProviderDatabase, db::states::bundle_state::BundleRetention,
 };
 use reth_transaction_pool::TransactionPool;
-use reth_trie::{HashedPostState, TrieInput, prefix_set::TriePrefixSetsMut, updates::TrieUpdates};
+use reth_trie::{HashedPostState, TrieInput, updates::TrieUpdates};
 use revm::Database;
 use std::{collections::BTreeMap, sync::Arc, time::Instant};
 use tokio::sync::mpsc;
@@ -112,13 +112,6 @@ pub(super) struct FlashblocksState {
     /// Cached trie updates from previous flashblock for incremental state root calculation.
     /// None only for the first flashblock; populated after each subsequent state root calculation.
     prev_trie_updates: Option<Arc<TrieUpdates>>,
-    /// Cumulative prefix sets from all previous flashblocks in this block.
-    /// Extended into the current flashblock's prefix sets so the trie walker re-visits
-    /// every path that was modified in earlier flashblocks. Without this, reverted storage
-    /// slots can leave stale cached hashes in the incremental trie (the walker skips
-    /// subtrees whose prefix isn't covered, using the cached hash which reflects the
-    /// pre-revert value).
-    cumulative_prefix_sets: Option<TriePrefixSetsMut>,
 }
 
 impl FlashblocksState {
@@ -155,7 +148,6 @@ impl FlashblocksState {
             enable_incremental_state_root: self.enable_incremental_state_root,
             last_flashblock_tx_index: self.last_flashblock_tx_index,
             prev_trie_updates: self.prev_trie_updates.clone(),
-            cumulative_prefix_sets: self.cumulative_prefix_sets.clone(),
         }
     }
 
@@ -1097,7 +1089,6 @@ where
     let mut state_root = B256::ZERO;
     let mut hashed_state = HashedPostState::default();
     let mut trie_updates_to_cache: Option<Arc<TrieUpdates>> = None;
-    let mut prefix_sets_to_cache: Option<TriePrefixSetsMut> = None;
 
     if calculate_state_root {
         let state_provider = state.database.as_ref();
@@ -1109,9 +1100,6 @@ where
         let prev_trie = fb_state
             .as_deref()
             .and_then(|s| s.prev_trie_updates.clone());
-        let prev_cumulative_prefix_sets = fb_state
-            .as_deref()
-            .and_then(|s| s.cumulative_prefix_sets.clone());
         let flashblock_index = fb_state
             .as_deref()
             .map(|s| s.flashblock_index())
@@ -1130,21 +1118,11 @@ where
                 "Using incremental state root calculation with cached trie"
             );
 
-            // Extend current prefix sets with cumulative prefix sets from all
-            // prior flashblocks. This ensures the trie walker re-visits every
-            // path that was modified in earlier flashblocks, even if the slot
-            // reverted (disappeared from cumulative HashedPostState). Without
-            // this, reverted slots leave stale cached hashes in the branch
-            // nodes returned by InMemoryTrieCursor.
-            let mut prefix_sets = hashed_state.construct_prefix_sets();
-            if let Some(prev_sets) = prev_cumulative_prefix_sets {
-                prefix_sets.extend(prev_sets);
-            }
-            // Cache the cumulative prefix sets for the next flashblock
-            prefix_sets_to_cache = Some(prefix_sets.clone());
-
-            let trie_input =
-                TrieInput::new((*prev_trie).clone(), hashed_state.clone(), prefix_sets);
+            let trie_input = TrieInput::new(
+                (*prev_trie).clone(),
+                hashed_state.clone(),
+                hashed_state.construct_prefix_sets(),
+            );
 
             state_provider
                 .state_root_from_nodes_with_updates(trie_input)
@@ -1155,9 +1133,6 @@ where
                 flashblock_index,
                 "Using full state root calculation"
             );
-
-            // Cache prefix sets for the next flashblock's incremental path
-            prefix_sets_to_cache = Some(hashed_state.construct_prefix_sets());
 
             state
                 .database
@@ -1311,7 +1286,6 @@ where
         if let Some(updates) = trie_updates_to_cache.take() {
             fb_state.prev_trie_updates = Some(updates);
         }
-        fb_state.cumulative_prefix_sets = prefix_sets_to_cache;
         let new_txs = fb_state.slice_new_transactions(&info.executed_transactions);
         let new_receipts = fb_state.slice_new_receipts(&info.receipts);
         fb_state.set_last_flashblock_tx_index(info.executed_transactions.len());
