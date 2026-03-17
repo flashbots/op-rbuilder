@@ -1,9 +1,13 @@
 //! Benchmark comparing flashblocks state root calculation with and without incremental trie caching.
 //!
 //! This benchmark simulates building 10 sequential flashblocks, measuring the total time
-//! spent in state root calculation. It compares:
-//! - Without cache: Full state root calculation from database each time
-//! - With cache: Incremental state root using cached trie nodes from previous flashblock
+//! spent in state root calculation. It uses `compute_state_root` — the same function as
+//! the production payload builder — so results reflect real-world performance.
+//!
+//! It compares:
+//! - Without cache: Full state root calculation each time
+//! - With cache (buggy): Incremental using only current prefix sets (no cumulative)
+//! - With cache (fixed): Incremental with cumulative prefix sets
 //!
 //! Run with:
 //! ```
@@ -12,14 +16,15 @@
 
 use alloy_primitives::{Address, B256, U256, keccak256};
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
+use op_rbuilder::builder::state_root::compute_state_root;
 use rand::{Rng, SeedableRng, rngs::StdRng};
 use reth_chainspec::MAINNET;
 use reth_primitives_traits::Account;
 use reth_provider::{
-    DatabaseProviderFactory, HashingWriter, StateRootProvider,
+    DatabaseProviderFactory, HashingWriter, LatestStateProvider,
     test_utils::create_test_provider_factory_with_chain_spec,
 };
-use reth_trie::{HashedPostState, HashedStorage, TrieInput, prefix_set::TriePrefixSetsMut};
+use reth_trie::{HashedPostState, HashedStorage, prefix_set::TriePrefixSetsMut};
 use std::{collections::HashMap, time::Instant};
 
 const SEED: u64 = 42;
@@ -55,7 +60,6 @@ fn generate_test_data(
         };
         accounts.push((address, account));
 
-        // Generate storage for accounts
         if storage_per_account > 0 && rng.random_bool(0.5) {
             let mut slots = Vec::with_capacity(storage_per_account);
             for _ in 0..storage_per_account {
@@ -81,13 +85,11 @@ fn setup_database(
     {
         let provider_rw = provider_factory.provider_rw().unwrap();
 
-        // Insert accounts
         let accounts_iter = accounts.iter().map(|(addr, acc)| (*addr, Some(*acc)));
         provider_rw
             .insert_account_for_hashing(accounts_iter)
             .unwrap();
 
-        // Insert storage
         let storage_entries: Vec<_> = storage
             .iter()
             .map(|(addr, slots)| {
@@ -122,7 +124,6 @@ fn generate_flashblock_changes(
     let mut storage = HashMap::new();
 
     for i in 0..change_size {
-        // Mix of existing and new addresses (70% existing, 30% new)
         let address = if i < base_accounts.len() && rng.random_bool(0.7) {
             base_accounts[rng.random_range(0..base_accounts.len())].0
         } else {
@@ -138,7 +139,6 @@ fn generate_flashblock_changes(
         };
         accounts.push((address, account));
 
-        // Add some storage updates (30% of accounts)
         if rng.random_bool(0.3) {
             let mut slots = Vec::new();
             for _ in 0..rng.random_range(1..10) {
@@ -193,11 +193,9 @@ fn bench_without_cache(
     for hashed_state in flashblock_changes {
         let fb_start = Instant::now();
         let provider = provider_factory.database_provider_ro().unwrap();
-        let latest = reth_provider::LatestStateProvider::new(provider);
+        let latest = LatestStateProvider::new(provider);
         let _ = black_box(
-            latest
-                .state_root_with_updates(hashed_state.clone())
-                .unwrap(),
+            compute_state_root(&latest, hashed_state.clone(), None, None, false).unwrap(),
         );
         individual_times.push(fb_start.elapsed().as_micros());
     }
@@ -205,7 +203,7 @@ fn bench_without_cache(
     (total_start.elapsed().as_micros(), individual_times)
 }
 
-/// Benchmark with incremental trie cache (optimized)
+/// Benchmark with incremental trie cache but NO cumulative prefix sets (buggy path)
 fn bench_with_cache(
     provider_factory: &reth_provider::providers::ProviderFactory<
         reth_provider::test_utils::MockNodeTypesWithDB,
@@ -216,41 +214,30 @@ fn bench_with_cache(
     let mut prev_trie_updates = None;
     let total_start = Instant::now();
 
-    for (i, hashed_state) in flashblock_changes.iter().enumerate() {
+    for hashed_state in flashblock_changes {
         let fb_start = Instant::now();
         let provider = provider_factory.database_provider_ro().unwrap();
+        let latest = LatestStateProvider::new(provider);
 
-        let (state_root, trie_output) = if i == 0 || prev_trie_updates.is_none() {
-            // First flashblock: full calculation
-            let latest = reth_provider::LatestStateProvider::new(provider);
-            latest
-                .state_root_with_updates(hashed_state.clone())
-                .unwrap()
-        } else {
-            // Subsequent flashblocks: incremental calculation
-            let trie_input = TrieInput::new(
-                prev_trie_updates.clone().unwrap(),
-                hashed_state.clone(),
-                hashed_state.construct_prefix_sets(),
-            );
+        // Incremental but without cumulative prefix sets (the bug)
+        let result = compute_state_root(
+            &latest,
+            hashed_state.clone(),
+            prev_trie_updates.as_ref(),
+            None, // no cumulative prefix sets
+            true,
+        )
+        .unwrap();
 
-            let latest = reth_provider::LatestStateProvider::new(provider);
-            latest
-                .state_root_from_nodes_with_updates(trie_input)
-                .unwrap()
-        };
-
-        prev_trie_updates = Some(trie_output);
+        prev_trie_updates = Some(result.trie_updates);
         individual_times.push(fb_start.elapsed().as_micros());
-
-        // Use the result
-        black_box(state_root);
+        black_box(result.state_root);
     }
 
     (total_start.elapsed().as_micros(), individual_times)
 }
 
-/// Benchmark with incremental trie cache + cumulative prefix sets (the fix for stale hashes)
+/// Benchmark with incremental trie cache + cumulative prefix sets (the fix)
 fn bench_with_cache_fixed(
     provider_factory: &reth_provider::providers::ProviderFactory<
         reth_provider::test_utils::MockNodeTypesWithDB,
@@ -262,47 +249,24 @@ fn bench_with_cache_fixed(
     let mut cumulative_prefix_sets: Option<TriePrefixSetsMut> = None;
     let total_start = Instant::now();
 
-    for (i, hashed_state) in flashblock_changes.iter().enumerate() {
+    for hashed_state in flashblock_changes {
         let fb_start = Instant::now();
         let provider = provider_factory.database_provider_ro().unwrap();
+        let latest = LatestStateProvider::new(provider);
 
-        let (state_root, trie_output) = if i == 0 || prev_trie_updates.is_none() {
-            // First flashblock: full calculation
-            let latest = reth_provider::LatestStateProvider::new(provider);
-            latest
-                .state_root_with_updates(hashed_state.clone())
-                .unwrap()
-        } else {
-            // Subsequent flashblocks: incremental with cumulative prefix sets
-            let mut prefix_sets = hashed_state.construct_prefix_sets();
-            if let Some(ref prev_sets) = cumulative_prefix_sets {
-                prefix_sets.extend(prev_sets.clone());
-            }
+        let result = compute_state_root(
+            &latest,
+            hashed_state.clone(),
+            prev_trie_updates.as_ref(),
+            cumulative_prefix_sets.take(),
+            true,
+        )
+        .unwrap();
 
-            let trie_input = TrieInput::new(
-                prev_trie_updates.clone().unwrap(),
-                hashed_state.clone(),
-                prefix_sets,
-            );
-
-            let latest = reth_provider::LatestStateProvider::new(provider);
-            latest
-                .state_root_from_nodes_with_updates(trie_input)
-                .unwrap()
-        };
-
-        // Accumulate prefix sets for next flashblock
-        let current_prefix_sets = hashed_state.construct_prefix_sets();
-        match cumulative_prefix_sets.as_mut() {
-            Some(acc) => acc.extend(current_prefix_sets),
-            None => cumulative_prefix_sets = Some(current_prefix_sets),
-        }
-
-        prev_trie_updates = Some(trie_output);
+        cumulative_prefix_sets = Some(result.cumulative_prefix_sets);
+        prev_trie_updates = Some(result.trie_updates);
         individual_times.push(fb_start.elapsed().as_micros());
-
-        // Use the result
-        black_box(state_root);
+        black_box(result.state_root);
     }
 
     (total_start.elapsed().as_micros(), individual_times)

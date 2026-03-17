@@ -1,20 +1,28 @@
 //! Tests for incremental trie state root calculation across flashblock boundaries.
 //!
+//! These tests call `compute_state_root` — the same function used in the production
+//! payload builder — to ensure correctness of incremental state root calculation.
+//!
 //! Compares three state root computation strategies:
 //!
-//! 1. **Full (ground truth)**: `state_root_with_updates` on cumulative hashed state.
-//! 2. **Incremental**: uses cached trie nodes from fb1 with only fb2's prefix sets.
-//!    Can produce wrong roots when reverted slots leave stale hashes in cached branch nodes.
-//! 3. **Incremental with cumulative prefix sets**: uses cached trie nodes with cumulative
-//!    prefix sets from all prior flashblocks, forcing the walker to re-visit every modified path.
+//! 1. **Full (ground truth)**: `compute_state_root` with no prior trie / incremental disabled.
+//! 2. **Incremental (buggy)**: `compute_state_root` with prior trie but only current prefix sets
+//!    (simulated by discarding cumulative prefix sets between calls).
+//! 3. **Incremental with cumulative prefix sets**: `compute_state_root` with cumulative prefix
+//!    sets carried forward — the correct production path.
 
 use alloy_primitives::{B256, U256, keccak256};
 use proptest::prelude::*;
 use reth_db::{tables, transaction::DbTxMut};
 use reth_primitives_traits::{Account, StorageEntry};
-use reth_provider::{StorageTrieWriter, TrieWriter, test_utils::create_test_provider_factory};
-use reth_trie::{HashedPostState, HashedStorage, StateRoot, StorageRoot, TrieInput};
+use reth_provider::{
+    DatabaseProviderFactory, LatestStateProvider, StorageTrieWriter, TrieWriter,
+    test_utils::create_test_provider_factory,
+};
+use reth_trie::{HashedPostState, HashedStorage, StateRoot};
 use reth_trie_db::{DatabaseStateRoot, DatabaseStorageRoot};
+
+use crate::builder::state_root::compute_state_root;
 
 type InitialAccount = (B256, Account, Vec<(B256, U256)>);
 
@@ -36,13 +44,14 @@ fn insert_account(
 /// Result of simulating two flashblocks with different state root strategies.
 struct FlashblockRoots {
     full: B256,
-    full_per_fb: B256,
-    incremental: B256,
-    incremental_with_cumulative_prefix_sets: B256,
+    incremental_buggy: B256,
+    incremental_fixed: B256,
 }
 
 /// Simulates two flashblocks with a populated trie (DB has branch nodes from prior blocks).
-/// Computes full, incremental, and incremental-with-cumulative-prefix-sets state roots.
+///
+/// Uses `compute_state_root` for both full and incremental paths, exercising
+/// the exact same code path as production.
 fn simulate_flashblocks_with_trie(
     initial_accounts: &[InitialAccount],
     fb1_state: HashedPostState,
@@ -57,9 +66,10 @@ fn simulate_flashblocks_with_trie(
 
     // Populate storage trie tables
     for (hashed_address, _, _) in initial_accounts {
-        let (_, _, storage_updates) = StorageRoot::from_tx_hashed(tx.tx_ref(), *hashed_address)
-            .root_with_updates()
-            .unwrap();
+        let (_, _, storage_updates) =
+            reth_trie::StorageRoot::from_tx_hashed(tx.tx_ref(), *hashed_address)
+                .root_with_updates()
+                .unwrap();
         let sorted_updates = storage_updates.into_sorted();
         tx.write_storage_trie_updates_sorted(core::iter::once((hashed_address, &sorted_updates)))
             .unwrap();
@@ -71,51 +81,45 @@ fn simulate_flashblocks_with_trie(
     tx.write_trie_updates(account_trie_updates).unwrap();
     tx.commit().unwrap();
 
-    let tx = factory.provider_rw().unwrap();
+    // Full (ground truth): compute with no prior trie
+    let provider = factory.database_provider_ro().unwrap();
+    let latest = LatestStateProvider::new(provider);
+    let full_result =
+        compute_state_root(&latest, fb2_cumulative_state.clone(), None, None, false).unwrap();
 
-    // Full (ground truth)
-    let fb2_sorted = fb2_cumulative_state.clone().into_sorted();
-    let (full_root, _) = StateRoot::overlay_root_with_updates(tx.tx_ref(), &fb2_sorted).unwrap();
+    // FB1 incremental: compute state root after first flashblock
+    let provider = factory.database_provider_ro().unwrap();
+    let latest = LatestStateProvider::new(provider);
+    let fb1_result = compute_state_root(&latest, fb1_state, None, None, false).unwrap();
 
-    // Full per-flashblock
-    let fb1_prefix_sets_for_fix = fb1_state.construct_prefix_sets();
-    let fb1_sorted = fb1_state.into_sorted();
-    let (full_per_fb_root, _) =
-        StateRoot::overlay_root_with_updates(tx.tx_ref(), &fb2_sorted).unwrap();
-    assert_eq!(
-        full_root, full_per_fb_root,
-        "BUG: full-per-fb should always match ground truth"
-    );
-
-    // Incremental (only fb2 prefix sets)
-    let (_, fb1_trie_updates) =
-        StateRoot::overlay_root_with_updates(tx.tx_ref(), &fb1_sorted).unwrap();
-    let trie_input = TrieInput::new(
-        fb1_trie_updates.clone(),
+    // Incremental (buggy): use prior trie but discard cumulative prefix sets
+    let provider = factory.database_provider_ro().unwrap();
+    let latest = LatestStateProvider::new(provider);
+    let buggy_result = compute_state_root(
+        &latest,
         fb2_cumulative_state.clone(),
-        fb2_cumulative_state.construct_prefix_sets(),
-    );
-    let sorted_input = reth_trie::TrieInputSorted::from_unsorted(trie_input);
-    let (incremental_root, _) =
-        StateRoot::overlay_root_from_nodes_with_updates(tx.tx_ref(), sorted_input).unwrap();
+        Some(&fb1_result.trie_updates),
+        None, // no cumulative prefix sets — this is the bug
+        true,
+    )
+    .unwrap();
 
-    // Incremental with cumulative prefix sets
-    let mut cumulative_prefix_sets = fb2_cumulative_state.construct_prefix_sets();
-    cumulative_prefix_sets.extend(fb1_prefix_sets_for_fix);
-    let trie_input = TrieInput::new(
-        fb1_trie_updates,
-        fb2_cumulative_state.clone(),
-        cumulative_prefix_sets,
-    );
-    let sorted_input = reth_trie::TrieInputSorted::from_unsorted(trie_input);
-    let (incremental_with_cumulative_prefix_sets_root, _) =
-        StateRoot::overlay_root_from_nodes_with_updates(tx.tx_ref(), sorted_input).unwrap();
+    // Incremental (fixed): use prior trie WITH cumulative prefix sets
+    let provider = factory.database_provider_ro().unwrap();
+    let latest = LatestStateProvider::new(provider);
+    let fixed_result = compute_state_root(
+        &latest,
+        fb2_cumulative_state,
+        Some(&fb1_result.trie_updates),
+        Some(fb1_result.cumulative_prefix_sets),
+        true,
+    )
+    .unwrap();
 
     FlashblockRoots {
-        full: full_root,
-        full_per_fb: full_per_fb_root,
-        incremental: incremental_root,
-        incremental_with_cumulative_prefix_sets: incremental_with_cumulative_prefix_sets_root,
+        full: full_result.state_root,
+        incremental_buggy: buggy_result.state_root,
+        incremental_fixed: fixed_result.state_root,
     }
 }
 
@@ -133,70 +137,62 @@ fn simulate_flashblocks(
     }
     tx.commit().unwrap();
 
-    let tx = factory.provider_rw().unwrap();
+    // Full (ground truth)
+    let provider = factory.database_provider_ro().unwrap();
+    let latest = LatestStateProvider::new(provider);
+    let full_result =
+        compute_state_root(&latest, fb2_cumulative_state.clone(), None, None, false).unwrap();
 
-    let fb2_sorted = fb2_cumulative_state.clone().into_sorted();
-    let (full_root, _) = StateRoot::overlay_root_with_updates(tx.tx_ref(), &fb2_sorted).unwrap();
+    // FB1
+    let provider = factory.database_provider_ro().unwrap();
+    let latest = LatestStateProvider::new(provider);
+    let fb1_result = compute_state_root(&latest, fb1_state, None, None, false).unwrap();
 
-    let fb1_prefix_sets_for_fix = fb1_state.construct_prefix_sets();
-    let fb1_sorted = fb1_state.into_sorted();
-    let (_fb1_full_root, _) =
-        StateRoot::overlay_root_with_updates(tx.tx_ref(), &fb1_sorted).unwrap();
-    let (full_per_fb_root, _) =
-        StateRoot::overlay_root_with_updates(tx.tx_ref(), &fb2_sorted).unwrap();
-    assert_eq!(
-        full_root, full_per_fb_root,
-        "BUG: full-per-fb should always match ground truth"
-    );
-
-    let (_, fb1_trie_updates) =
-        StateRoot::overlay_root_with_updates(tx.tx_ref(), &fb1_sorted).unwrap();
-    let trie_input = TrieInput::new(
-        fb1_trie_updates.clone(),
+    // Incremental (buggy)
+    let provider = factory.database_provider_ro().unwrap();
+    let latest = LatestStateProvider::new(provider);
+    let buggy_result = compute_state_root(
+        &latest,
         fb2_cumulative_state.clone(),
-        fb2_cumulative_state.construct_prefix_sets(),
-    );
-    let sorted_input = reth_trie::TrieInputSorted::from_unsorted(trie_input);
-    let (incremental_root, _) =
-        StateRoot::overlay_root_from_nodes_with_updates(tx.tx_ref(), sorted_input).unwrap();
+        Some(&fb1_result.trie_updates),
+        None,
+        true,
+    )
+    .unwrap();
 
-    let mut cumulative_prefix_sets = fb2_cumulative_state.construct_prefix_sets();
-    cumulative_prefix_sets.extend(fb1_prefix_sets_for_fix);
-    let trie_input = TrieInput::new(
-        fb1_trie_updates,
-        fb2_cumulative_state.clone(),
-        cumulative_prefix_sets,
-    );
-    let sorted_input = reth_trie::TrieInputSorted::from_unsorted(trie_input);
-    let (incremental_with_cumulative_prefix_sets_root, _) =
-        StateRoot::overlay_root_from_nodes_with_updates(tx.tx_ref(), sorted_input).unwrap();
+    // Incremental (fixed)
+    let provider = factory.database_provider_ro().unwrap();
+    let latest = LatestStateProvider::new(provider);
+    let fixed_result = compute_state_root(
+        &latest,
+        fb2_cumulative_state,
+        Some(&fb1_result.trie_updates),
+        Some(fb1_result.cumulative_prefix_sets),
+        true,
+    )
+    .unwrap();
 
     FlashblockRoots {
-        full: full_root,
-        full_per_fb: full_per_fb_root,
-        incremental: incremental_root,
-        incremental_with_cumulative_prefix_sets: incremental_with_cumulative_prefix_sets_root,
+        full: full_result.state_root,
+        incremental_buggy: buggy_result.state_root,
+        incremental_fixed: fixed_result.state_root,
     }
 }
 
 /// Asserts that the incremental path (without cumulative prefix sets) produces a WRONG
 /// root, while the incremental path with cumulative prefix sets produces the CORRECT root.
 fn assert_incremental_mismatch(roots: &FlashblockRoots) {
-    assert_eq!(
-        roots.full, roots.full_per_fb,
-        "full-per-flashblock MUST match ground truth"
-    );
     assert_ne!(
-        roots.full, roots.incremental,
-        "incremental should diverge from ground truth in this scenario, \
+        roots.full, roots.incremental_buggy,
+        "incremental (buggy) should diverge from ground truth in this scenario, \
          but they matched. Full root: {:?}.",
         roots.full
     );
     assert_eq!(
-        roots.full, roots.incremental_with_cumulative_prefix_sets,
+        roots.full, roots.incremental_fixed,
         "incremental with cumulative prefix sets diverges from ground truth. \
          Full root: {:?}, Got: {:?}.",
-        roots.full, roots.incremental_with_cumulative_prefix_sets
+        roots.full, roots.incremental_fixed
     );
 }
 
@@ -359,14 +355,14 @@ proptest! {
 
         let roots = simulate_flashblocks(&initial_accounts, fb1_state, fb2_cumulative);
 
-        // Full-per-fb must always match (already asserted inside simulate_flashblocks)
-        // Incremental should match full (no populated trie = no stored hashes = no stale nodes)
+        // Without populated trie, incremental should match full
+        // (no stored hashes = no stale nodes)
         prop_assert_eq!(
-            roots.full, roots.incremental,
+            roots.full, roots.incremental_buggy,
             "Fuzz: incremental diverged from full (seed={})", seed
         );
         prop_assert_eq!(
-            roots.full, roots.incremental_with_cumulative_prefix_sets,
+            roots.full, roots.incremental_fixed,
             "Fuzz: incremental_with_cumulative_prefix_sets diverged from full (seed={})", seed
         );
     }
