@@ -22,8 +22,9 @@ use tokio::{
     sync::watch,
     time::{Duration, Sleep},
 };
-use tokio_util::sync::CancellationToken;
 use tracing::info;
+
+use super::cancellation::PayloadJobCancellation;
 
 /// A trait for building payloads that encapsulate Ethereum transactions.
 ///
@@ -83,10 +84,11 @@ pub(super) struct BlockPayloadJobGenerator<Client, Builder> {
     builder: Builder,
     /// Whether to ensure only one payload is being processed at a time
     ensure_only_one_payload: bool,
-    /// The last payload being processed
-    last_payload: Arc<Mutex<CancellationToken>>,
+    /// The last payload's cancellation.
+    /// `cancel_new_fcu()` is called when a new FCU arrives
+    last_payload_cancel: Arc<Mutex<PayloadJobCancellation>>,
     /// The extra block deadline in seconds
-    extra_block_deadline: std::time::Duration,
+    extra_block_deadline: Duration,
     /// Stored `cached_reads` for new payload jobs.
     pre_cached: Option<PrecachedState>,
     /// The configured block time
@@ -107,8 +109,8 @@ impl<Client, Builder> BlockPayloadJobGenerator<Client, Builder> {
         config: BasicPayloadJobGeneratorConfig,
         builder: Builder,
         ensure_only_one_payload: bool,
-        extra_block_deadline: std::time::Duration,
-        block_time: std::time::Duration,
+        extra_block_deadline: Duration,
+        block_time: Duration,
         metrics: Arc<crate::metrics::OpRBuilderMetrics>,
     ) -> Self {
         Self {
@@ -117,7 +119,7 @@ impl<Client, Builder> BlockPayloadJobGenerator<Client, Builder> {
             _config: config,
             builder,
             ensure_only_one_payload,
-            last_payload: Arc::new(Mutex::new(CancellationToken::new())),
+            last_payload_cancel: Arc::new(Mutex::new(PayloadJobCancellation::new())),
             extra_block_deadline,
             pre_cached: None,
             block_time,
@@ -176,22 +178,22 @@ where
             .fcu_arrival_delay
             .record(fcu_arrival_delay_ms as f64);
 
-        let cancel_token = if self.ensure_only_one_payload {
-            // Cancel existing payload
+        let cancellation = if self.ensure_only_one_payload {
+            // Cancel existing payload via new_fcu
             {
-                let last_payload = self.last_payload.lock().unwrap();
-                last_payload.cancel();
+                let last_cancel = self.last_payload_cancel.lock().unwrap();
+                last_cancel.cancel_new_fcu();
             }
 
-            // Create and set new cancellation token with a fresh lock
-            let cancel_token = CancellationToken::new();
+            // Create new PayloadJobCancellation and store it
+            let cancellation = PayloadJobCancellation::new();
             {
-                let mut last_payload = self.last_payload.lock().unwrap();
-                *last_payload = cancel_token.clone();
+                let mut last_cancel = self.last_payload_cancel.lock().unwrap();
+                *last_cancel = cancellation.clone();
             }
-            cancel_token
+            cancellation
         } else {
-            CancellationToken::new()
+            PayloadJobCancellation::new()
         };
 
         let parent_header = if parent_hash.is_zero() {
@@ -222,7 +224,7 @@ where
             config,
             rpc_attributes,
             payload_rx: None,
-            cancel: cancel_token,
+            cancel: cancellation,
             deadline,
             cached_reads: self.maybe_pre_cached(parent_header.hash()),
         };
@@ -280,8 +282,8 @@ where
     pub(crate) builder: Builder,
     /// Receiver for the latest payload from the builder task.
     pub(crate) payload_rx: Option<watch::Receiver<Option<Builder::BuiltPayload>>>,
-    /// Cancellation token for the running job
-    pub(crate) cancel: CancellationToken,
+    /// Structured cancellation for the running job
+    pub(crate) cancel: PayloadJobCancellation,
     pub(crate) deadline: Pin<Box<Sleep>>, // Add deadline
     /// Caches all disk reads for the state the new payloads builds on
     pub(crate) cached_reads: Option<CachedReads>,
@@ -312,8 +314,11 @@ where
         info!(target: "payload_builder", payload_kind = ?kind, "Resolve payload job");
 
         let rx = self.payload_rx.take();
-        let cancel = self.cancel.clone();
-        (ResolvePayload::new(rx, cancel), KeepPayloadJobAlive::No)
+        let cancellation = self.cancel.clone();
+        (
+            ResolvePayload::new(rx, cancellation),
+            KeepPayloadJobAlive::No,
+        )
     }
 }
 
@@ -322,8 +327,8 @@ pub(super) struct BuildArguments<Attributes, Payload: BuiltPayload> {
     pub cached_reads: CachedReads,
     /// How to configure the payload.
     pub config: PayloadConfig<Attributes, HeaderTy<Payload::Primitives>>,
-    /// A marker that can be used to cancel the job.
-    pub cancel: CancellationToken,
+    /// Structured cancellation.
+    pub cancel: PayloadJobCancellation,
 }
 
 /// A [PayloadJob] is a future that's being polled by the `PayloadBuilderService`
@@ -336,7 +341,7 @@ where
     pub(super) fn spawn_build_job(&mut self) {
         let builder = self.builder.clone();
         let payload_config = self.config.clone();
-        let cancel = self.cancel.clone();
+        let cancellation = self.cancel.clone();
 
         let (watch_tx, watch_rx) = watch::channel(None);
         self.payload_rx = Some(watch_rx);
@@ -347,7 +352,7 @@ where
             let args = BuildArguments {
                 cached_reads,
                 config: payload_config,
-                cancel,
+                cancel: cancellation,
             };
 
             if let Err(e) = builder.try_build(args, watch_tx).await {
@@ -372,12 +377,12 @@ where
 
         // Check if deadline is reached
         if this.deadline.as_mut().poll(cx).is_ready() {
-            this.cancel.cancel();
+            this.cancel.cancel_deadline();
             tracing::debug!("Deadline reached");
             return Poll::Ready(Ok(()));
         }
 
-        // If cancelled via resolve_kind()
+        // If canceled via any source
         if this.cancel.is_cancelled() {
             tracing::debug!("Job cancelled");
             return Poll::Ready(Ok(()));
@@ -394,7 +399,10 @@ pub(super) struct ResolvePayload<T> {
 }
 
 impl<T: Clone + Send + Sync + 'static> ResolvePayload<T> {
-    fn new(payload_rx: Option<watch::Receiver<Option<T>>>, cancel: CancellationToken) -> Self {
+    fn new(
+        payload_rx: Option<watch::Receiver<Option<T>>>,
+        cancellation: PayloadJobCancellation,
+    ) -> Self {
         let future = async move {
             let Some(mut rx) = payload_rx else {
                 return Err(PayloadBuilderError::Other(
@@ -404,7 +412,7 @@ impl<T: Clone + Send + Sync + 'static> ResolvePayload<T> {
 
             loop {
                 if let Some(payload) = rx.borrow().clone() {
-                    cancel.cancel();
+                    cancellation.cancel_resolved();
                     return Ok(payload);
                 }
 
@@ -487,7 +495,7 @@ mod tests {
     #[tokio::test]
     async fn test_resolve_payload_waits_for_first_value() {
         let (tx, rx) = watch::channel::<Option<MockPayload>>(None);
-        let cancel = CancellationToken::new();
+        let cancel = PayloadJobCancellation::new();
         let resolve = ResolvePayload::new(Some(rx), cancel.clone());
 
         tokio::spawn(async move {
@@ -500,6 +508,7 @@ mod tests {
             .expect("resolve should complete")
             .expect("resolve should return payload");
         assert_eq!(payload, MockPayload(7));
+        assert!(cancel.is_resolved());
         assert!(cancel.is_cancelled());
     }
 
@@ -509,12 +518,13 @@ mod tests {
         tx.send_replace(Some(MockPayload(1)));
         tx.send_replace(Some(MockPayload(2)));
 
-        let cancel = CancellationToken::new();
+        let cancel = PayloadJobCancellation::new();
         let payload = ResolvePayload::new(Some(rx), cancel.clone())
             .await
             .expect("resolve should return payload");
 
         assert_eq!(payload, MockPayload(2));
+        assert!(cancel.is_resolved());
         assert!(cancel.is_cancelled());
     }
 
@@ -523,14 +533,14 @@ mod tests {
         let (tx, rx) = watch::channel::<Option<MockPayload>>(None);
         drop(tx);
 
-        let _ = ResolvePayload::new(Some(rx), CancellationToken::new())
+        let _ = ResolvePayload::new(Some(rx), PayloadJobCancellation::new())
             .await
             .expect_err("resolve should error when sender closes before value");
     }
 
     #[tokio::test]
     async fn test_resolve_payload_errors_if_receiver_missing() {
-        let _ = ResolvePayload::<MockPayload>::new(None, CancellationToken::new())
+        let _ = ResolvePayload::<MockPayload>::new(None, PayloadJobCancellation::new())
             .await
             .expect_err("resolve should error when receiver is missing");
     }
@@ -538,7 +548,7 @@ mod tests {
     #[tokio::test]
     async fn test_resolve_payload_cancels_after_payload_arrives() {
         let (tx, rx) = watch::channel::<Option<MockPayload>>(None);
-        let cancel = CancellationToken::new();
+        let cancel = PayloadJobCancellation::new();
         let handle = tokio::spawn(ResolvePayload::new(Some(rx), cancel.clone()));
 
         sleep(Duration::from_millis(20)).await;
@@ -552,6 +562,7 @@ mod tests {
             .expect("resolve should return payload");
 
         assert_eq!(payload, MockPayload(9));
+        assert!(cancel.is_resolved());
         assert!(cancel.is_cancelled());
     }
 }
