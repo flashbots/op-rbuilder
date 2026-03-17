@@ -127,6 +127,16 @@ pub struct FlashblocksArgs {
     )]
     pub flashblocks_disable_state_root: bool,
 
+    /// Whether to enable incremental state root calculation for flashblocks.
+    /// When enabled, flashblocks reuse cached trie nodes from the previous flashblock
+    /// instead of performing a full state root calculation each time.
+    #[arg(
+        long = "flashblocks.enable-incremental-state-root",
+        default_value = "false",
+        env = "FLASHBLOCKS_ENABLE_INCREMENTAL_STATE_ROOT"
+    )]
+    pub flashblocks_enable_incremental_state_root: bool,
+
     /// Flashblocks number contract address
     ///
     /// This is the address of the contract that will be used to increment the flashblock number.
