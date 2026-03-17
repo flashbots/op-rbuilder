@@ -21,6 +21,11 @@ pub struct FlashblocksConfig {
     /// Should we disable state root calculation for each flashblock
     pub disable_state_root: bool,
 
+    /// Whether to enable incremental state root calculation.
+    /// When true, flashblocks reuse cached trie nodes from the previous flashblock.
+    /// When false (default), every flashblock computes its state root from scratch.
+    pub enable_incremental_state_root: bool,
+
     /// The address of the flashblocks number contract.
     ///
     /// If set a builder tx will be added to the start of every flashblock instead of the regular builder tx.
@@ -62,6 +67,7 @@ impl Default for FlashblocksConfig {
             ws_addr: SocketAddr::new(Ipv4Addr::UNSPECIFIED.into(), 1111),
             interval: Duration::from_millis(250),
             disable_state_root: false,
+            enable_incremental_state_root: false,
             number_contract_address: None,
             number_contract_use_permit: false,
             send_offset_ms: 0,
@@ -97,6 +103,9 @@ impl TryFrom<OpRbuilderArgs> for FlashblocksConfig {
             ws_addr,
             interval,
             disable_state_root,
+            enable_incremental_state_root: args
+                .flashblocks
+                .flashblocks_enable_incremental_state_root,
             number_contract_address,
             number_contract_use_permit,
             send_offset_ms: args.flashblocks.flashblocks_send_offset_ms,

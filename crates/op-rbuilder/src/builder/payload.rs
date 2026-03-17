@@ -104,6 +104,8 @@ pub(super) struct FlashblocksState {
     da_footprint_per_batch: Option<u64>,
     /// Whether to disable state root calculation for each flashblock
     disable_state_root: bool,
+    /// Whether to enable incremental state root calculation using cached trie nodes
+    enable_incremental_state_root: bool,
     /// Index into ExecutionInfo tracking the last consumed flashblock
     /// Used for slicing transactions/receipts per flashblock
     last_flashblock_tx_index: usize,
@@ -113,10 +115,15 @@ pub(super) struct FlashblocksState {
 }
 
 impl FlashblocksState {
-    fn new(target_flashblock_count: u64, disable_state_root: bool) -> Self {
+    fn new(
+        target_flashblock_count: u64,
+        disable_state_root: bool,
+        enable_incremental_state_root: bool,
+    ) -> Self {
         Self {
             target_flashblock_count,
             disable_state_root,
+            enable_incremental_state_root,
             ..Default::default()
         }
     }
@@ -138,6 +145,7 @@ impl FlashblocksState {
             da_per_batch: self.da_per_batch,
             da_footprint_per_batch: self.da_footprint_per_batch,
             disable_state_root: self.disable_state_root,
+            enable_incremental_state_root: self.enable_incremental_state_root,
             last_flashblock_tx_index: self.last_flashblock_tx_index,
             prev_trie_updates: self.prev_trie_updates.clone(),
         }
@@ -419,6 +427,8 @@ where
         );
 
         let disable_state_root = self.config.flashblocks_config.disable_state_root;
+        let enable_incremental_state_root =
+            self.config.flashblocks_config.enable_incremental_state_root;
         let ctx = self
             .get_op_payload_builder_ctx(config.clone(), block_cancel.clone())
             .map_err(|e| PayloadBuilderError::Other(e.into()))?;
@@ -429,6 +439,7 @@ where
                 .flashblocks_config
                 .flashblocks_per_block(self.config.block_time),
             disable_state_root,
+            enable_incremental_state_root,
         );
 
         let state_provider = self.client.state_by_block_hash(ctx.parent().hash())?;
@@ -1083,6 +1094,9 @@ where
         let state_provider = state.database.as_ref();
 
         // prev_trie_updates is None for the first flashblock.
+        let enable_incremental = fb_state
+            .as_deref()
+            .is_some_and(|s| s.enable_incremental_state_root);
         let prev_trie = fb_state
             .as_deref()
             .and_then(|s| s.prev_trie_updates.clone());
@@ -1094,7 +1108,9 @@ where
         hashed_state = state_provider.hashed_post_state(&state.bundle_state);
 
         let trie_output;
-        (state_root, trie_output) = if let Some(prev_trie) = prev_trie {
+        (state_root, trie_output) = if let Some(prev_trie) = prev_trie
+            && enable_incremental
+        {
             // Incremental path: Use cached trie from previous flashblock
             debug!(
                 target: "payload_builder",
@@ -1105,7 +1121,7 @@ where
             let trie_input = TrieInput::new(
                 (*prev_trie).clone(),
                 hashed_state.clone(),
-                hashed_state.construct_prefix_sets(), // Don't freeze - need TriePrefixSetsMut
+                hashed_state.construct_prefix_sets(),
             );
 
             state_provider
