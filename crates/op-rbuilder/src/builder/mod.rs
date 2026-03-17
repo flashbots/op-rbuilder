@@ -19,6 +19,7 @@ mod p2p;
 mod payload;
 mod payload_handler;
 mod service;
+pub mod state_root;
 mod syncer_ctx;
 mod timing;
 mod wspub;
