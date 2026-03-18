@@ -20,7 +20,7 @@ async fn transaction_event_log(
 ) {
     match event {
         FullTransactionEvent::Pending(hash) => {
-            trace!(
+            debug!(
                 target: "tx_trace",
                 tx_hash = %hash,
                 stage = "pool_pending",
@@ -34,7 +34,7 @@ async fn transaction_event_log(
             )
         }
         FullTransactionEvent::Queued(hash, _) => {
-            trace!(
+            debug!(
                 target: "tx_trace",
                 tx_hash = %hash,
                 stage = "pool_queued",
