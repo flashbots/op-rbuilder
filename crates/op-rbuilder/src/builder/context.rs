@@ -452,7 +452,7 @@ impl OpPayloadBuilderCtx {
             let tx_hash = tx.tx_hash();
             let tx_uncompressed_size = tx.encode_2718_len() as u64;
 
-            info!(
+            trace!(
                 target: "tx_trace",
                 tx_hash = ?tx_hash,
                 block_number = self.block_number(),
@@ -572,7 +572,7 @@ impl OpPayloadBuilderCtx {
             // reverted or not, as this is a check against maliciously searchers
             // sending txs that are expensive to compute but always revert.
             let gas_used = result.gas_used();
-            info!(
+            trace!(
                 target: "tx_trace",
                 tx_hash = ?tx_hash,
                 block_number = self.block_number(),
@@ -657,7 +657,7 @@ impl OpPayloadBuilderCtx {
             info.executed_senders.push(tx.signer());
             info.executed_transactions.push(tx.into_inner());
 
-            info!(
+            trace!(
                 target: "tx_trace",
                 tx_hash = ?target_hash,
                 block_number = self.block_number(),
