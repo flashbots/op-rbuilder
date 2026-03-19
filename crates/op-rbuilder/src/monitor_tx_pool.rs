@@ -23,8 +23,7 @@ async fn transaction_event_log(
             debug!(
                 target: "tx_trace",
                 tx_hash = %hash,
-                stage = "pool_pending",
-                "[TX_TRACE]"
+                stage = "pool_pending"
             );
             debug!(
                 target = "monitoring",
@@ -37,8 +36,7 @@ async fn transaction_event_log(
             debug!(
                 target: "tx_trace",
                 tx_hash = %hash,
-                stage = "pool_queued",
-                "[TX_TRACE]"
+                stage = "pool_queued"
             );
             debug!(
                 target = "monitoring",

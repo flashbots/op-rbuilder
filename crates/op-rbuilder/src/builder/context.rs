@@ -457,8 +457,7 @@ impl OpPayloadBuilderCtx {
                 tx_hash = ?tx_hash,
                 block_number = self.block_number(),
                 flashblock_index,
-                stage = "builder_popped",
-                "[TX_TRACE]"
+                stage = "builder_popped"
             );
 
             // exclude reverting transaction if:
@@ -580,8 +579,7 @@ impl OpPayloadBuilderCtx {
                 gas_used,
                 success = result.is_success(),
                 evm_duration_us = tx_simulation_start_time.elapsed().as_micros() as u64,
-                stage = "evm_executed",
-                "[TX_TRACE]"
+                stage = "evm_executed"
             );
             if self
                 .address_gas_limiter
@@ -663,8 +661,7 @@ impl OpPayloadBuilderCtx {
                 block_number = self.block_number(),
                 flashblock_index,
                 cumulative_gas = info.cumulative_gas_used,
-                stage = "builder_committed",
-                "[TX_TRACE]"
+                stage = "builder_committed"
             );
 
             let can_backrun = self.backrun_ctx.args.backruns_enabled

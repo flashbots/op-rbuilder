@@ -505,8 +505,7 @@ where
                 flashblock_index = 0u64,
                 byte_size = flashblock_byte_size,
                 total_txs = info.executed_transactions.len(),
-                stage = "fb_published",
-                "[TX_TRACE]"
+                stage = "fb_published"
             );
             ctx.metrics
                 .flashblock_byte_size_histogram
@@ -891,8 +890,7 @@ where
                     flashblock_index,
                     byte_size = flashblock_byte_size,
                     total_txs = info.executed_transactions.len(),
-                    stage = "fb_published",
-                    "[TX_TRACE]"
+                    stage = "fb_published"
                 );
                 self.built_fb_payload_tx
                     .try_send(new_payload.clone())
@@ -1076,8 +1074,7 @@ where
         target: "tx_trace",
         block_number = ctx.block_number(),
         duration_us = state_transition_merge_time.as_micros() as u64,
-        stage = "state_merge",
-        "[TX_TRACE]"
+        stage = "state_merge"
     );
 
     let block_number = ctx.block_number();
@@ -1193,8 +1190,7 @@ where
             incremental = fb_state.as_deref().and_then(|s| s.prev_trie_updates.as_ref()).is_some(),
             cumulative_gas = info.cumulative_gas_used,
             num_txs = info.executed_transactions.len(),
-            stage = "state_root_computed",
-            "[TX_TRACE]"
+            stage = "state_root_computed"
         );
     }
 
@@ -1321,8 +1317,7 @@ where
         build_block_total_time_since_state_root_start_us = state_root_start_time.elapsed().as_micros() as u64,
         cumulative_gas = info.cumulative_gas_used,
         num_txs = info.executed_transactions.len(),
-        stage = "block_sealed",
-        "[TX_TRACE]"
+        stage = "block_sealed"
     );
 
     // pick the new transactions from the info field and update the last flashblock index
