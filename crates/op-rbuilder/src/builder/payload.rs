@@ -502,7 +502,7 @@ where
                 target: "tx_trace",
                 payload_id = %ctx.payload_id(),
                 block_number = ctx.block_number(),
-                flashblock_index = 0u64,
+                flashblock_index = fb_payload.index,
                 byte_size = flashblock_byte_size,
                 total_txs = info.executed_transactions.len(),
                 stage = "fb_published"
