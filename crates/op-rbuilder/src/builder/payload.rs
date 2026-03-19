@@ -1225,6 +1225,11 @@ where
             }
         }
         span.record("cancellation_reason", reason.as_str());
+        info!(
+            target: "payload_builder",
+            cancellation_reason = reason.as_str(),
+            "Payload job cancelled"
+        );
     }
 
     /// Do some logging and metric recording when we stop building flashblocks
