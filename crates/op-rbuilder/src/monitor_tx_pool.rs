@@ -3,7 +3,7 @@ use alloy_primitives::B256;
 use futures_util::StreamExt;
 use moka::future::Cache;
 use reth_transaction_pool::{AllTransactionsEvents, FullTransactionEvent};
-use tracing::{debug, trace};
+use tracing::{debug};
 
 pub(crate) async fn monitor_tx_pool(
     mut new_transactions: AllTransactionsEvents<FBPooledTransaction>,
@@ -23,12 +23,7 @@ async fn transaction_event_log(
             debug!(
                 target: "tx_trace",
                 tx_hash = %hash,
-                stage = "pool_pending"
-            );
-            debug!(
-                target = "monitoring",
-                tx_hash = hash.to_string(),
-                kind = "pending",
+                stage = "pool_pending",
                 "Transaction event received"
             )
         }
@@ -36,12 +31,7 @@ async fn transaction_event_log(
             debug!(
                 target: "tx_trace",
                 tx_hash = %hash,
-                stage = "pool_queued"
-            );
-            debug!(
-                target = "monitoring",
-                tx_hash = hash.to_string(),
-                kind = "queued",
+                stage = "pool_queued",
                 "Transaction event received"
             )
         }
@@ -49,9 +39,9 @@ async fn transaction_event_log(
             tx_hash,
             block_hash,
         } => debug!(
-            target = "monitoring",
+            target = "tx_trace",
             tx_hash = tx_hash.to_string(),
-            kind = "mined",
+            stage = "mined_in_block",
             block_hash = block_hash.to_string(),
             "Transaction event received"
         ),
@@ -59,9 +49,9 @@ async fn transaction_event_log(
             transaction,
             replaced_by,
         } => debug!(
-            target = "monitoring",
+            target = "tx_trace",
             tx_hash = transaction.hash().to_string(),
-            kind = "replaced",
+            stage = "replaced",
             replaced_by = replaced_by.to_string(),
             "Transaction event received"
         ),
@@ -71,17 +61,17 @@ async fn transaction_event_log(
             reverted_cache.insert(hash, ()).await;
 
             debug!(
-                target = "monitoring",
+                target = "tx_trace",
                 tx_hash = hash.to_string(),
-                kind = "discarded",
+                stage = "discarded",
                 "Transaction event received"
             )
         }
         FullTransactionEvent::Invalid(hash) => {
             debug!(
-                target = "monitoring",
+                target = "tx_trace",
                 tx_hash = hash.to_string(),
-                kind = "invalid",
+                stage = "marked_invalid",
                 "Transaction event received"
             )
         }
