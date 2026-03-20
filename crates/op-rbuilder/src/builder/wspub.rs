@@ -80,6 +80,7 @@ impl WebSocketPublisher {
             message = "Sending flashblock to rollup-boost",
             id = %payload.payload_id,
             index = payload.index,
+            block_number = payload.metadata.block_number,
             base = payload.base.is_some(),
         );
 
