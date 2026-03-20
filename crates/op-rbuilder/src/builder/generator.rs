@@ -567,7 +567,7 @@ mod tests {
             self.new_event(BlockEvent::Started);
             best_payload_tx.send_replace(Some(MockPayload(1)));
 
-            args.cancel.any_token().cancelled().await;
+            args.cancel.cancelled().await;
             self.new_event(BlockEvent::Cancelled);
             Ok(())
         }

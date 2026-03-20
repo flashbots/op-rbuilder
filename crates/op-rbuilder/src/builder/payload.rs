@@ -480,10 +480,8 @@ where
         let BuildArguments {
             cached_reads,
             config,
-            cancel: cancellation,
+            cancel: payload_cancel,
         } = args;
-        // Use `any` as the general cancellation token
-        let block_cancel = cancellation.any_token();
 
         // The build_payload span is created and instrumented in try_build() using
         // tracing::Instrument, which safely manages it across async .await points.
@@ -497,7 +495,7 @@ where
         let enable_incremental_state_root =
             self.config.flashblocks_config.enable_incremental_state_root;
         let ctx = self
-            .get_op_payload_builder_ctx(config.clone(), block_cancel.clone())
+            .get_op_payload_builder_ctx(config.clone(), payload_cancel.token())
             .map_err(|e| PayloadBuilderError::Other(e.into()))?;
 
         // Initialize flashblocks state for this block
@@ -709,7 +707,7 @@ where
             ..fb_state
         };
 
-        let fb_cancel = block_cancel.child_token();
+        let fb_cancel = payload_cancel.child_token();
         let mut ctx = self
             .get_op_payload_builder_ctx(config, fb_cancel.clone())
             .map_err(|e| PayloadBuilderError::Other(e.into()))?;
@@ -720,7 +718,7 @@ where
                 .flashblock_timer
                 .instrument(flashblock_scheduler.run(
                     tx,
-                    block_cancel.clone(),
+                    payload_cancel.token(),
                     fb_cancel,
                     fb_payload.payload_id,
                 )),
@@ -738,13 +736,8 @@ where
             let new_fb_cancel = tokio::select! {
                 // ensures cancellation is checked before trigger.
                 biased;
-                _ = cancellation.resolved_cancelled() => {
-                    Self::record_cancellation_reason(&self.metrics, &cancellation, &span);
-                    self.record_flashblocks_metrics(&ctx, &fb_state, &info, target_flashblocks, &span);
-                    return Ok(());
-                }
-                _ = cancellation.new_fcu_cancelled() => {
-                    Self::record_cancellation_reason(&self.metrics, &cancellation, &span);
+                _ = payload_cancel.cancelled() => {
+                    Self::record_cancellation_reason(&self.metrics, &payload_cancel, &span);
                     self.record_flashblocks_metrics(&ctx, &fb_state, &info, target_flashblocks, &span);
                     return Ok(());
                 }
@@ -752,7 +745,7 @@ where
                     Some(t) => t,
                     None => {
                         // Channel closed — scheduler exhausted or canceled
-                        Self::record_cancellation_reason(&self.metrics, &cancellation, &span);
+                        Self::record_cancellation_reason(&self.metrics, &payload_cancel, &span);
                         self.record_flashblocks_metrics(&ctx, &fb_state, &info, target_flashblocks, &span);
                         return Ok(());
                     }
@@ -788,20 +781,18 @@ where
             // is dropped (the thread finishes but the oneshot result is discarded).
             let build_output = tokio::select! {
                 biased;
-                // Suppressed flashblock: we received getResolve during flashblock building
-                _ = cancellation.resolved_cancelled() => {
-                    self.metrics.flashblock_publish_suppressed_total.increment(1);
-                    Self::record_cancellation_reason(&self.metrics, &cancellation, &span);
-                    return Ok(());
-                }
-                _ = cancellation.new_fcu_cancelled() => {
-                    Self::record_cancellation_reason(&self.metrics, &cancellation, &span);
+                _ = payload_cancel.cancelled() => {
+                    if payload_cancel.is_resolved() {
+                        // Suppressed flashblock: we received getResolve during flashblock building
+                        self.metrics.flashblock_publish_suppressed_total.increment(1);
+                    }
+                    Self::record_cancellation_reason(&self.metrics, &payload_cancel, &span);
                     return Ok(());
                 }
                 result = self.run_blocking_task({
                     let builder = self.clone();
                     let ctx = ctx;
-                    let block_cancel = block_cancel.clone();
+                    let block_cancel = payload_cancel.token();
                     let info = info;
                     let cache = cache;
                     let transition = transition;
@@ -875,11 +866,11 @@ where
             // Phase 3: Publish
             // no .await between check and publish (structural guarantee).
             // If resolved or new_fcu fired during the build, skip publishing.
-            if cancellation.is_resolved() || cancellation.is_new_fcu() {
-                if cancellation.is_resolved() {
+            if payload_cancel.is_resolved() || payload_cancel.is_new_fcu() {
+                if payload_cancel.is_resolved() {
                     ctx.metrics.flashblock_publish_suppressed_total.increment(1);
                 }
-                Self::record_cancellation_reason(&self.metrics, &cancellation, &span);
+                Self::record_cancellation_reason(&self.metrics, &payload_cancel, &span);
                 self.record_flashblocks_metrics(&ctx, &fb_state, &info, target_flashblocks, &span);
                 return Ok(());
             }
@@ -890,7 +881,7 @@ where
                     next_flashblock_state
                 }
                 Ok(None) => {
-                    Self::record_cancellation_reason(&self.metrics, &cancellation, &span);
+                    Self::record_cancellation_reason(&self.metrics, &payload_cancel, &span);
                     self.record_flashblocks_metrics(
                         &ctx,
                         &fb_state,
@@ -1181,25 +1172,28 @@ where
         cancellation: &super::cancellation::PayloadJobCancellation,
         span: &tracing::Span,
     ) {
-        let reason = cancellation.reason();
-        match reason {
-            super::cancellation::CancellationReason::Resolved => {
-                metrics.payload_job_cancellation_resolved.increment(1)
+        let reason_str = match cancellation.reason() {
+            Some(super::cancellation::CancellationReason::Resolved) => {
+                metrics.payload_job_cancellation_resolved.increment(1);
+                "resolved"
             }
-            super::cancellation::CancellationReason::NewFcu => {
-                metrics.payload_job_cancellation_new_fcu.increment(1)
+            Some(super::cancellation::CancellationReason::NewFcu) => {
+                metrics.payload_job_cancellation_new_fcu.increment(1);
+                "new_fcu"
             }
-            super::cancellation::CancellationReason::Deadline => {
-                metrics.payload_job_cancellation_deadline.increment(1)
+            Some(super::cancellation::CancellationReason::Deadline) => {
+                metrics.payload_job_cancellation_deadline.increment(1);
+                "deadline"
             }
-            super::cancellation::CancellationReason::Complete => {
-                metrics.payload_job_cancellation_complete.increment(1)
+            None => {
+                metrics.payload_job_cancellation_complete.increment(1);
+                "complete"
             }
-        }
-        span.record("cancellation_reason", reason.as_str());
+        };
+        span.record("cancellation_reason", reason_str);
         info!(
             target: "payload_builder",
-            cancellation_reason = reason.as_str(),
+            cancellation_reason = reason_str,
             "Payload job cancelled"
         );
     }
