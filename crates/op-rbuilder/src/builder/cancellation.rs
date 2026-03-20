@@ -1,126 +1,115 @@
-use tokio_util::sync::{CancellationToken, WaitForCancellationFuture};
+use std::sync::{
+    Arc,
+    atomic::{AtomicU8, Ordering},
+};
+use tokio_util::sync::CancellationToken;
 
-/// Structured cancellation for a single payload building job.
-///
-/// Three distinct tokens that can distinguish *why* building was stopped:
-/// - `new_fcu`: A new FCU arrived (`ensure_only_one_payload`). Abandon all work.
-/// - `resolved`: `getPayload` was called. Stop building, don't publish new flashblocks.
-/// - `deadline`: The payload job deadline was reached. Stop all work.
-///
-/// `any` fires when ANY of the above fires. It is used for tasks that should stop regardless of cancellation reason.
-///
-/// Use `cancel_new_fcu()`, `cancel_resolved()`, `cancel_deadline()` to fire
-/// a specific source, these also cancel `any` automatically.
-///
-/// These fields must remains private to enforce the invariant that `any` is always canceled
-/// alongside any specific token. Use accessor methods to read token state.
-#[derive(Clone)]
-pub(crate) struct PayloadJobCancellation {
-    new_fcu: CancellationToken,
-    resolved: CancellationToken,
-    deadline: CancellationToken,
-    any: CancellationToken,
-}
+const REASON_NONE: u8 = 0;
 
-/// Why a payload job was canceled.
-#[derive(Debug, Clone, Copy)]
+/// Why a payload job was cancelled.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
 pub(crate) enum CancellationReason {
-    Resolved,
-    NewFcu,
-    Deadline,
-    /// Job completed normally (all scheduled flashblocks built before resolve/fcu).
-    Complete,
+    Resolved = 1,
+    NewFcu = 2,
+    Deadline = 3,
 }
 
 impl CancellationReason {
-    pub(crate) fn as_str(self) -> &'static str {
-        match self {
-            Self::Resolved => "resolved",
-            Self::NewFcu => "new_fcu",
-            Self::Deadline => "deadline",
-            Self::Complete => "complete",
+    fn from_u8(v: u8) -> Option<Self> {
+        match v {
+            1 => Some(Self::Resolved),
+            2 => Some(Self::NewFcu),
+            3 => Some(Self::Deadline),
+            _ => None,
         }
     }
 }
 
+/// Structured cancellation for a single payload building job.
+///
+/// A `CancellationToken` with an atomic reason that records *why* the job was stopped:
+/// - `Resolved`: `getPayload` was called. Stop building, don't publish new flashblocks.
+/// - `NewFcu`: A new FCU arrived (`ensure_only_one_payload`). Abandon all work.
+/// - `Deadline`: The payload job deadline was reached. Stop all work.
+///
+/// Use `cancel_resolved()`, `cancel_new_fcu()`, `cancel_deadline()` to fire the token with specific reason.
+#[derive(Clone)]
+pub(crate) struct PayloadJobCancellation {
+    token: CancellationToken,
+    reason: Arc<AtomicU8>,
+}
+
 impl PayloadJobCancellation {
-    /// Creates a new `PayloadJobCancellation` with all tokens uncancelled.
+    /// Creates a new `PayloadJobCancellation` with the token uncancelled.
     pub(crate) fn new() -> Self {
         Self {
-            new_fcu: CancellationToken::new(),
-            resolved: CancellationToken::new(),
-            deadline: CancellationToken::new(),
-            any: CancellationToken::new(),
+            token: CancellationToken::new(),
+            reason: Arc::new(AtomicU8::new(REASON_NONE)),
         }
     }
 
-    /// Fires `new_fcu` token and `any`.
+    fn cancel_with(&self, reason: CancellationReason) {
+        // First writer wins. If already set, the original reason is preserved.
+        let _ = self.reason.compare_exchange(
+            REASON_NONE,
+            reason as u8,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        );
+        self.token.cancel();
+    }
+
+    /// Cancel with `NewFcu` reason.
     pub(crate) fn cancel_new_fcu(&self) {
-        self.new_fcu.cancel();
-        self.any.cancel();
+        self.cancel_with(CancellationReason::NewFcu);
     }
 
-    /// Fires `resolved` token and `any`.
+    /// Cancel with `Resolved` reason.
     pub(crate) fn cancel_resolved(&self) {
-        self.resolved.cancel();
-        self.any.cancel();
+        self.cancel_with(CancellationReason::Resolved);
     }
 
-    /// Fires `deadline` token and `any`.
+    /// Cancel with `Deadline` reason.
     pub(crate) fn cancel_deadline(&self) {
-        self.deadline.cancel();
-        self.any.cancel();
+        self.cancel_with(CancellationReason::Deadline);
     }
 
     /// Returns true if any cancellation source has fired.
     pub(crate) fn is_cancelled(&self) -> bool {
-        self.any.is_cancelled()
+        self.token.is_cancelled()
     }
 
-    /// Returns true if `resolved` specifically was cancelled.
+    /// Returns true if cancelled with `Resolved` reason.
     pub(crate) fn is_resolved(&self) -> bool {
-        self.resolved.is_cancelled()
+        self.reason() == Some(CancellationReason::Resolved)
     }
 
-    /// Returns true if `new_fcu` specifically was cancelled.
+    /// Returns true if cancelled with `NewFcu` reason.
     pub(crate) fn is_new_fcu(&self) -> bool {
-        self.new_fcu.is_cancelled()
+        self.reason() == Some(CancellationReason::NewFcu)
     }
 
-    /// Future that resolves when `resolved` is cancelled.
-    pub(crate) fn resolved_cancelled(&self) -> WaitForCancellationFuture<'_> {
-        self.resolved.cancelled()
+    /// Future that resolves when cancelled (any reason).
+    pub(crate) fn cancelled(&self) -> tokio_util::sync::WaitForCancellationFuture<'_> {
+        self.token.cancelled()
     }
 
-    /// Future that resolves when `new_fcu` is cancelled.
-    pub(crate) fn new_fcu_cancelled(&self) -> WaitForCancellationFuture<'_> {
-        self.new_fcu.cancelled()
-    }
-
-    /// Returns the `any` token.
+    /// Returns the underlying token.
     /// Passed to blocking tasks and the scheduler.
-    pub(crate) fn any_token(&self) -> CancellationToken {
-        self.any.clone()
+    pub(crate) fn token(&self) -> CancellationToken {
+        self.token.clone()
     }
 
-    /// Creates a child token of `any`.
+    /// Creates a child token.
     /// Useful for per-flashblock cancellation.
-    #[allow(dead_code)]
     pub(crate) fn child_token(&self) -> CancellationToken {
-        self.any.child_token()
+        self.token.child_token()
     }
 
-    /// Returns the reason this job was canceled, or `Complete` if not canceled.
-    pub(crate) fn reason(&self) -> CancellationReason {
-        if self.resolved.is_cancelled() {
-            CancellationReason::Resolved
-        } else if self.new_fcu.is_cancelled() {
-            CancellationReason::NewFcu
-        } else if self.deadline.is_cancelled() {
-            CancellationReason::Deadline
-        } else {
-            CancellationReason::Complete
-        }
+    /// Returns the reason this job was cancelled, or `None` if not cancelled.
+    pub(crate) fn reason(&self) -> Option<CancellationReason> {
+        CancellationReason::from_u8(self.reason.load(Ordering::Acquire))
     }
 }
 
@@ -133,10 +122,8 @@ impl Default for PayloadJobCancellation {
 impl std::fmt::Debug for PayloadJobCancellation {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("PayloadJobCancellation")
-            .field("new_fcu", &self.new_fcu.is_cancelled())
-            .field("resolved", &self.resolved.is_cancelled())
-            .field("deadline", &self.deadline.is_cancelled())
-            .field("any", &self.any.is_cancelled())
+            .field("cancelled", &self.token.is_cancelled())
+            .field("reason", &self.reason())
             .finish()
     }
 }
@@ -147,7 +134,7 @@ mod tests {
     use tokio::time::{Duration, timeout};
 
     #[tokio::test]
-    async fn test_cancel_new_fcu_fires_any() {
+    async fn test_cancel_new_fcu() {
         let cancel = PayloadJobCancellation::new();
         assert!(!cancel.is_cancelled());
 
@@ -155,46 +142,46 @@ mod tests {
         assert!(cancel.is_cancelled());
         assert!(cancel.is_new_fcu());
         assert!(!cancel.is_resolved());
-        assert!(matches!(cancel.reason(), CancellationReason::NewFcu));
+        assert_eq!(cancel.reason(), Some(CancellationReason::NewFcu));
     }
 
     #[tokio::test]
-    async fn test_cancel_resolved_fires_any() {
+    async fn test_cancel_resolved() {
         let cancel = PayloadJobCancellation::new();
         cancel.cancel_resolved();
         assert!(cancel.is_cancelled());
         assert!(cancel.is_resolved());
         assert!(!cancel.is_new_fcu());
-        assert!(matches!(cancel.reason(), CancellationReason::Resolved));
+        assert_eq!(cancel.reason(), Some(CancellationReason::Resolved));
     }
 
     #[tokio::test]
-    async fn test_cancel_deadline_fires_any() {
+    async fn test_cancel_deadline() {
         let cancel = PayloadJobCancellation::new();
         cancel.cancel_deadline();
         assert!(cancel.is_cancelled());
         assert!(!cancel.is_new_fcu());
         assert!(!cancel.is_resolved());
-        assert!(matches!(cancel.reason(), CancellationReason::Deadline));
+        assert_eq!(cancel.reason(), Some(CancellationReason::Deadline));
     }
 
     #[tokio::test]
-    async fn test_any_awaitable() {
+    async fn test_awaitable() {
         let cancel = PayloadJobCancellation::new();
-        let any = cancel.any_token();
+        let token = cancel.token();
 
         tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(10)).await;
             cancel.cancel_resolved();
         });
 
-        timeout(Duration::from_millis(100), any.cancelled())
+        timeout(Duration::from_millis(100), token.cancelled())
             .await
-            .expect("any should fire when resolved fires");
+            .expect("token should fire when resolved fires");
     }
 
     #[tokio::test]
-    async fn test_child_token_cancelled_by_any() {
+    async fn test_child_token_cancelled() {
         let cancel = PayloadJobCancellation::new();
         let child = cancel.child_token();
         assert!(!child.is_cancelled());
@@ -204,8 +191,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_reason_complete_when_not_cancelled() {
+    async fn test_reason_none_when_not_cancelled() {
         let cancel = PayloadJobCancellation::new();
-        assert!(matches!(cancel.reason(), CancellationReason::Complete));
+        assert_eq!(cancel.reason(), None);
+    }
+
+    #[tokio::test]
+    async fn test_first_reason_wins() {
+        let cancel = PayloadJobCancellation::new();
+        cancel.cancel_resolved();
+        cancel.cancel_new_fcu();
+        assert_eq!(cancel.reason(), Some(CancellationReason::Resolved));
     }
 }
