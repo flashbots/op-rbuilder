@@ -3,7 +3,7 @@ use alloy_primitives::B256;
 use futures_util::StreamExt;
 use moka::future::Cache;
 use reth_transaction_pool::{AllTransactionsEvents, FullTransactionEvent};
-use tracing::{trace};
+use tracing::{debug};
 
 pub(crate) async fn monitor_tx_pool(
     mut new_transactions: AllTransactionsEvents<FBPooledTransaction>,
@@ -20,7 +20,7 @@ async fn transaction_event_log(
 ) {
     match event {
         FullTransactionEvent::Pending(hash) => {
-            trace!(
+            debug!(
                 target: "tx_trace",
                 tx_hash = %hash,
                 stage = "pool_pending",
@@ -28,7 +28,7 @@ async fn transaction_event_log(
             )
         }
         FullTransactionEvent::Queued(hash, _) => {
-            trace!(
+            debug!(
                 target: "tx_trace",
                 tx_hash = %hash,
                 stage = "pool_queued",
@@ -38,7 +38,7 @@ async fn transaction_event_log(
         FullTransactionEvent::Mined {
             tx_hash,
             block_hash,
-        } => trace!(
+        } => debug!(
             target = "tx_trace",
             tx_hash = tx_hash.to_string(),
             stage = "mined_in_block",
@@ -48,7 +48,7 @@ async fn transaction_event_log(
         FullTransactionEvent::Replaced {
             transaction,
             replaced_by,
-        } => trace!(
+        } => debug!(
             target = "tx_trace",
             tx_hash = transaction.hash().to_string(),
             stage = "replaced",
@@ -60,7 +60,7 @@ async fn transaction_event_log(
             // eth get transaction receipt method
             reverted_cache.insert(hash, ()).await;
 
-            trace!(
+            debug!(
                 target = "tx_trace",
                 tx_hash = hash.to_string(),
                 stage = "discarded",
@@ -68,7 +68,7 @@ async fn transaction_event_log(
             )
         }
         FullTransactionEvent::Invalid(hash) => {
-            trace!(
+            debug!(
                 target = "tx_trace",
                 tx_hash = hash.to_string(),
                 stage = "marked_invalid",

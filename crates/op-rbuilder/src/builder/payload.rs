@@ -51,7 +51,7 @@ use revm::Database;
 use std::{collections::BTreeMap, sync::Arc, time::Instant};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, info, trace, metadata::Level, span, warn};
+use tracing::{debug, error, info, metadata::Level, span, warn};
 
 /// Converts a reth OpReceipt to an op-alloy OpReceipt
 /// TODO: remove this once reth updates to use the op-alloy defined type as well.
@@ -498,7 +498,7 @@ where
                 .ws_pub
                 .publish(&fb_payload)
                 .map_err(PayloadBuilderError::other)?;
-            trace!(
+            debug!(
                 target: "tx_trace",
                 payload_id = %ctx.payload_id(),
                 block_number = ctx.block_number(),
@@ -883,7 +883,7 @@ where
                     .ws_pub
                     .publish(&fb_payload)
                     .wrap_err("failed to publish flashblock via websocket")?;
-                trace!(
+                debug!(
                     target: "tx_trace",
                     payload_id = %ctx.payload_id(),
                     block_number = ctx.block_number(),
@@ -1070,7 +1070,7 @@ where
         .state_transition_merge_gauge
         .set(state_transition_merge_time);
 
-    trace!(
+    debug!(
         target: "tx_trace",
         block_number = ctx.block_number(),
         duration_us = state_transition_merge_time.as_micros() as u64,
@@ -1182,7 +1182,7 @@ where
             "State root calculation completed"
         );
 
-        trace!(
+        debug!(
             target: "tx_trace",
             block_number = ctx.block_number(),
             flashblock_index = flashblock_index_for_trace,
@@ -1308,7 +1308,7 @@ where
 
     let block_hash = sealed_block.hash();
 
-    trace!(
+    debug!(
         target: "tx_trace",
         block_number = ctx.block_number(),
         flashblock_index = flashblock_index_for_trace,
