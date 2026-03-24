@@ -12,6 +12,7 @@ use crate::{
     gas_limiter::AddressGasLimiter,
     metrics::OpRBuilderMetrics,
     primitives::reth::ExecutionInfo,
+    task_ext::TaskSpawnerExt,
     tokio_metrics::FlashblocksTaskMetrics,
     traits::{ClientBounds, PoolBounds},
 };
@@ -52,7 +53,7 @@ use reth_transaction_pool::TransactionPool;
 use reth_trie::{HashedPostState, TrieInput, updates::TrieUpdates};
 use revm::Database;
 use std::{collections::BTreeMap, ops::Deref, sync::Arc, time::Instant};
-use tokio::sync::{mpsc, oneshot, watch};
+use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, info_span, metadata::Level, span, warn};
 
@@ -381,21 +382,6 @@ where
     BuilderTx: BuilderTransactions + Send + Sync + 'static,
     Tasks: TaskSpawner + Clone + Send + Sync + 'static,
 {
-    /// Helper to spawn a blocking task that returns T in a oneshot channel
-    async fn run_blocking_task<T, F>(&self, task: F) -> Result<T, PayloadBuilderError>
-    where
-        T: Send + 'static,
-        F: FnOnce() -> Result<T, PayloadBuilderError> + Send + 'static,
-    {
-        let (tx, rx) = oneshot::channel();
-        self.executor.spawn_blocking_task(Box::pin(async move {
-            let _ = tx.send(task());
-        }));
-
-        rx.await
-            .map_err(|_| PayloadBuilderError::Other("blocking task dropped".into()))?
-    }
-
     fn get_op_payload_builder_ctx(
         &self,
         config: reth_basic_payload_builder::PayloadConfig<
@@ -527,7 +513,7 @@ where
             mut transition,
             fb_state: returned_fb_state,
         } = tracing::Instrument::instrument(
-            self.run_blocking_task({
+            self.executor.run_blocking_task({
                 let builder = self.clone();
                 move || {
                     builder
@@ -752,7 +738,7 @@ where
                     Self::record_cancellation_reason(&self.metrics, &payload_cancel, &span);
                     return Ok(());
                 }
-                result = self.run_blocking_task({
+                result = self.executor.run_blocking_task({
                     let builder = self.clone();
                     let ctx = ctx;
                     let block_cancel = payload_cancel.token();
