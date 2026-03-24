@@ -44,7 +44,10 @@ use reth_provider::{
     HashedPostStateProvider, ProviderError, StateRootProvider, StorageRootProvider,
 };
 use reth_revm::{
-    State, database::StateProviderDatabase, db::states::bundle_state::BundleRetention,
+    State,
+    cached::CachedReads,
+    database::StateProviderDatabase,
+    db::{CacheState, TransitionState, states::bundle_state::BundleRetention},
 };
 use reth_tasks::Runtime;
 use reth_transaction_pool::TransactionPool;
@@ -53,7 +56,7 @@ use revm::Database;
 use std::{collections::BTreeMap, ops::Deref, sync::Arc, time::Instant};
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, info, metadata::Level, span, warn};
+use tracing::{debug, error, info, info_span, metadata::Level, span, warn};
 
 /// Converts a reth OpReceipt to an op-alloy OpReceipt
 /// TODO: remove this once reth updates to use the op-alloy defined type as well.
@@ -478,7 +481,7 @@ where
         let fallback_span = if span.is_none() {
             tracing::Span::none()
         } else {
-            span!(parent: &span, Level::INFO, "build_fallback")
+            info_span!(parent: &span, "build_fallback")
         };
         let FallbackBuildOutput {
             ctx,
@@ -491,65 +494,10 @@ where
         } = tracing::Instrument::instrument(
             self.run_blocking_task({
                 let builder = self.clone();
-                let ctx = ctx;
-                let mut fb_state = fb_state;
                 move || {
-                    let state_provider = builder.client.state_by_block_hash(ctx.parent().hash())?;
-                    let db = StateProviderDatabase::new(&state_provider);
-
-                    // 1. execute the pre steps and seal an early block with that
-                    let sequencer_tx_start_time = Instant::now();
-                    let mut cached_reads = cached_reads;
-                    let mut state = State::builder()
-                        .with_database(cached_reads.as_db_mut(db))
-                        .with_bundle_update()
-                        .build();
-
-                    let mut info = execute_pre_steps(&mut state, &ctx)?;
-                    let sequencer_tx_time = sequencer_tx_start_time.elapsed();
-                    ctx.metrics.sequencer_tx_duration.record(sequencer_tx_time);
-                    ctx.metrics.sequencer_tx_gauge.set(sequencer_tx_time);
-
-                    // We add first builder tx right after deposits
-                    if !ctx.attributes().no_tx_pool
-                        && let Err(e) = builder.builder_tx.add_builder_txs(
-                            &state_provider,
-                            &mut info,
-                            &ctx,
-                            &mut state,
-                            false,
-                            fb_state.is_first_flashblock(),
-                            fb_state.is_last_flashblock(),
-                        )
-                    {
-                        error!(
-                            target: "payload_builder",
-                            "Error adding builder txs to fallback block: {}",
-                            e
-                        );
-                    };
-
-                    let (payload, fb_payload) = build_block(
-                        &mut state,
-                        &ctx,
-                        Some(&mut fb_state),
-                        &mut info,
-                        !disable_state_root || ctx.attributes().no_tx_pool, // need to calculate state root for CL sync
-                        builder.config.enable_tx_tracking_debug_logs,
-                    )?;
-
-                    // we can safely take from state as we drop it at the end of the scope
-                    let cache = std::mem::take(&mut state.cache);
-                    let transition = state.transition_state.take();
-                    Ok(FallbackBuildOutput {
-                        ctx,
-                        info,
-                        payload,
-                        fb_payload,
-                        cache,
-                        transition,
-                        fb_state,
-                    })
+                    builder
+                        .build_fallback_block(ctx, fb_state, cached_reads, disable_state_root)
+                        .map_err(|e| PayloadBuilderError::Other(e.into()))
                 }
             }),
             fallback_span,
@@ -885,6 +833,70 @@ where
 
             fb_state = next_flashblock_state;
         }
+    }
+
+    /// Execute the pre-steps and seal an early fallback block
+    fn build_fallback_block(
+        &self,
+        ctx: OpPayloadBuilderCtx,
+        mut fb_state: FlashblocksState,
+        mut cached_reads: CachedReads,
+        disable_state_root: bool,
+    ) -> eyre::Result<FallbackBuildOutput<CacheState, Option<TransitionState>>> {
+        let state_provider = self.client.state_by_block_hash(ctx.parent().hash())?;
+        let db = StateProviderDatabase::new(&state_provider);
+
+        let sequencer_tx_start_time = Instant::now();
+        let mut state = State::builder()
+            .with_database(cached_reads.as_db_mut(db))
+            .with_bundle_update()
+            .build();
+
+        let mut info = execute_pre_steps(&mut state, &ctx)?;
+        let sequencer_tx_time = sequencer_tx_start_time.elapsed();
+        ctx.metrics.sequencer_tx_duration.record(sequencer_tx_time);
+        ctx.metrics.sequencer_tx_gauge.set(sequencer_tx_time);
+
+        // We add first builder tx right after deposits
+        if !ctx.attributes().no_tx_pool
+            && let Err(e) = self.builder_tx.add_builder_txs(
+                &state_provider,
+                &mut info,
+                &ctx,
+                &mut state,
+                false,
+                fb_state.is_first_flashblock(),
+                fb_state.is_last_flashblock(),
+            )
+        {
+            error!(
+                target: "payload_builder",
+                "Error adding builder txs to fallback block: {}",
+                e
+            );
+        };
+
+        let (payload, fb_payload) = build_block(
+            &mut state,
+            &ctx,
+            Some(&mut fb_state),
+            &mut info,
+            !disable_state_root || ctx.attributes().no_tx_pool, // need to calculate state root for CL sync
+            self.config.enable_tx_tracking_debug_logs,
+        )?;
+
+        // we can safely take from state as we drop it at the end of the scope
+        let cache = std::mem::take(&mut state.cache);
+        let transition = state.transition_state.take();
+        Ok(FallbackBuildOutput {
+            ctx,
+            info,
+            payload,
+            fb_payload,
+            cache,
+            transition,
+            fb_state,
+        })
     }
 
     #[expect(clippy::too_many_arguments)]
