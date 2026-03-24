@@ -13,7 +13,7 @@ use crate::{
     gas_limiter::AddressGasLimiter,
     metrics::OpRBuilderMetrics,
     primitives::reth::ExecutionInfo,
-    task_ext::TaskSpawnerExt,
+    runtime_ext::RuntimeExt,
     tokio_metrics::FlashblocksTaskMetrics,
     traits::{ClientBounds, PoolBounds},
 };
@@ -280,7 +280,7 @@ pub(super) struct OpPayloadBuilderInner<Pool, Client, BuilderTx> {
     built_payload_tx: mpsc::Sender<OpBuiltPayload>,
     /// WebSocket publisher for broadcasting flashblocks
     /// to all connected subscribers.
-    ws_pub: Arc<WebSocketPublisher>,
+    ws_pub: WebSocketPublisher,
     /// System configuration for the builder
     config: BuilderConfig,
     /// The metrics for the builder
@@ -321,7 +321,7 @@ impl<Pool, Client, BuilderTx> OpPayloadBuilder<Pool, Client, BuilderTx> {
         builder_tx: BuilderTx,
         built_fb_payload_tx: mpsc::Sender<OpBuiltPayload>,
         built_payload_tx: mpsc::Sender<OpBuiltPayload>,
-        ws_pub: Arc<WebSocketPublisher>,
+        ws_pub: WebSocketPublisher,
         metrics: Arc<OpRBuilderMetrics>,
         task_metrics: Arc<FlashblocksTaskMetrics>,
         executor: Runtime,

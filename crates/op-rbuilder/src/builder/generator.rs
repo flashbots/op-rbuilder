@@ -355,8 +355,9 @@ where
                 cancel: cancellation,
             };
 
+            let payload_id = args.config.payload_id;
             if let Err(e) = builder.try_build(args, watch_tx).await {
-                tracing::error!("build task failed: {:?}", e);
+                tracing::error!(id = %payload_id, "build task failed: {:?}", e);
             }
         }));
     }
