@@ -452,13 +452,18 @@ impl OpPayloadBuilderCtx {
             let tx_hash = tx.tx_hash();
             let tx_uncompressed_size = tx.encode_2718_len() as u64;
 
-            debug!(
-                target: "tx_trace",
-                tx_hash = ?tx_hash,
-                block_number = self.block_number(),
-                flashblock_index,
-                stage = "builder_popped"
-            );
+            if std::env::var("ENABLE_TX_TRACKING_DEBUG_LOGS")
+                .map(|v| v.eq_ignore_ascii_case("true"))
+                .unwrap_or(false)
+            {
+                debug!(
+                    target: "tx_trace",
+                    tx_hash = ?tx_hash,
+                    block_number = self.block_number(),
+                    flashblock_index,
+                    stage = "builder_popped"
+                );
+            }
 
             // exclude reverting transaction if:
             // - the transaction comes from a bundle (is_some) and the hash **is not** in reverted hashes
@@ -571,16 +576,21 @@ impl OpPayloadBuilderCtx {
             // reverted or not, as this is a check against maliciously searchers
             // sending txs that are expensive to compute but always revert.
             let gas_used = result.gas_used();
-            debug!(
-                target: "tx_trace",
-                tx_hash = ?tx_hash,
-                block_number = self.block_number(),
-                flashblock_index,
-                gas_used,
-                success = result.is_success(),
-                evm_duration_us = tx_simulation_start_time.elapsed().as_micros() as u64,
-                stage = "evm_executed"
-            );
+            if std::env::var("ENABLE_TX_TRACKING_DEBUG_LOGS")
+                .map(|v| v.eq_ignore_ascii_case("true"))
+                .unwrap_or(false)
+            {
+                debug!(
+                    target: "tx_trace",
+                    tx_hash = ?tx_hash,
+                    block_number = self.block_number(),
+                    flashblock_index,
+                    gas_used,
+                    success = result.is_success(),
+                    evm_duration_us = tx_simulation_start_time.elapsed().as_micros() as u64,
+                    stage = "evm_executed"
+                );
+            }
             if self
                 .address_gas_limiter
                 .consume_gas(tx.signer(), gas_used)
@@ -655,14 +665,19 @@ impl OpPayloadBuilderCtx {
             info.executed_senders.push(tx.signer());
             info.executed_transactions.push(tx.into_inner());
 
-            debug!(
-                target: "tx_trace",
-                tx_hash = ?target_hash,
-                block_number = self.block_number(),
-                flashblock_index,
-                cumulative_gas = info.cumulative_gas_used,
-                stage = "builder_committed"
-            );
+            if std::env::var("ENABLE_TX_TRACKING_DEBUG_LOGS")
+                .map(|v| v.eq_ignore_ascii_case("true"))
+                .unwrap_or(false)
+            {
+                debug!(
+                    target: "tx_trace",
+                    tx_hash = ?target_hash,
+                    block_number = self.block_number(),
+                    flashblock_index,
+                    cumulative_gas = info.cumulative_gas_used,
+                    stage = "builder_committed"
+                );
+            }
 
             let can_backrun = self.backrun_ctx.args.backruns_enabled
                 && tx_succeeded

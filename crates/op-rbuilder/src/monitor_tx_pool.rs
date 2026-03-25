@@ -18,6 +18,12 @@ async fn transaction_event_log(
     event: FullTransactionEvent<FBPooledTransaction>,
     reverted_cache: &Cache<B256, ()>,
 ) {
+    if !std::env::var("ENABLE_TX_TRACKING_DEBUG_LOGS")
+        .map(|v| v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+    {
+        return;
+    }
     match event {
         FullTransactionEvent::Pending(hash) => {
             debug!(
