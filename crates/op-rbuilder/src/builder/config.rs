@@ -5,6 +5,7 @@ use core::{
     net::{Ipv4Addr, SocketAddr},
     time::Duration,
 };
+use tracing::warn;
 
 /// Configuration values that are specific to the flashblocks builder.
 #[derive(Debug, Clone)]
@@ -86,6 +87,12 @@ impl TryFrom<OpRbuilderArgs> for FlashblocksConfig {
     type Error = eyre::Report;
 
     fn try_from(args: OpRbuilderArgs) -> Result<Self, Self::Error> {
+        if !args.flashblocks.enabled {
+            warn!(
+                "Standard building mode is deprecated and this flag will be removed in a future release. Running in flashblocks mode"
+            )
+        }
+
         let interval = Duration::from_millis(args.flashblocks.flashblocks_block_time);
 
         let ws_addr = SocketAddr::new(
