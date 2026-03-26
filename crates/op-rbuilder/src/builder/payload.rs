@@ -509,6 +509,20 @@ where
                 .ws_pub
                 .publish(&fb_payload)
                 .map_err(PayloadBuilderError::other)?;
+            if std::env::var("ENABLE_TX_TRACKING_DEBUG_LOGS")
+                .map(|v| v.eq_ignore_ascii_case("true"))
+                .unwrap_or(false)
+            {
+                debug!(
+                    target: "tx_trace",
+                    payload_id = %ctx.payload_id(),
+                    block_number = ctx.block_number(),
+                    flashblock_index = fb_payload.index,
+                    byte_size = flashblock_byte_size,
+                    total_txs = info.executed_transactions.len(),
+                    stage = "fb_published"
+                );
+            }
             ctx.metrics
                 .flashblock_byte_size_histogram
                 .record(flashblock_byte_size as f64);
@@ -885,6 +899,20 @@ where
                     .ws_pub
                     .publish(&fb_payload)
                     .wrap_err("failed to publish flashblock via websocket")?;
+                if std::env::var("ENABLE_TX_TRACKING_DEBUG_LOGS")
+                    .map(|v| v.eq_ignore_ascii_case("true"))
+                    .unwrap_or(false)
+                {
+                    debug!(
+                        target: "tx_trace",
+                        payload_id = %ctx.payload_id(),
+                        block_number = ctx.block_number(),
+                        flashblock_index,
+                        byte_size = flashblock_byte_size,
+                        total_txs = info.executed_transactions.len(),
+                        stage = "fb_published"
+                    );
+                }
                 self.built_fb_payload_tx
                     .try_send(new_payload.clone())
                     .wrap_err("failed to send built payload to handler")?;
@@ -1051,6 +1079,9 @@ where
     DB: Database<Error = ProviderError> + AsRef<P>,
     P: StateRootProvider + HashedPostStateProvider + StorageRootProvider,
 {
+    let enable_tx_trace_logs = std::env::var("ENABLE_TX_TRACKING_DEBUG_LOGS")
+        .map(|v| v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
     // We use it to preserve state, so we run merge_transitions on transition state at most once
     let untouched_transition_state = state.transition_state.clone();
     let state_merge_start_time = Instant::now();
@@ -1062,6 +1093,15 @@ where
     ctx.metrics
         .state_transition_merge_gauge
         .set(state_transition_merge_time);
+
+    if enable_tx_trace_logs {
+        debug!(
+            target: "tx_trace",
+            block_number = ctx.block_number(),
+            duration_us = state_transition_merge_time.as_micros() as u64,
+            stage = "state_merge"
+        );
+    }
 
     let block_number = ctx.block_number();
     let expected = ctx.parent().number + 1;
@@ -1089,6 +1129,11 @@ where
     let mut state_root = B256::ZERO;
     let mut hashed_state = HashedPostState::default();
     let mut trie_updates_to_cache: Option<Arc<TrieUpdates>> = None;
+
+    let flashblock_index_for_trace = fb_state
+        .as_deref()
+        .map(|s| s.flashblock_index())
+        .unwrap_or(0);
 
     if calculate_state_root {
         let state_provider = state.database.as_ref();
@@ -1167,6 +1212,19 @@ where
             duration_ms = state_root_calculation_time.as_millis(),
             "State root calculation completed"
         );
+
+        if enable_tx_trace_logs {
+            debug!(
+                target: "tx_trace",
+                block_number = ctx.block_number(),
+                flashblock_index = flashblock_index_for_trace,
+                duration_ms = state_root_calculation_time.as_millis() as u64,
+                incremental = fb_state.as_deref().and_then(|s| s.prev_trie_updates.as_ref()).is_some(),
+                cumulative_gas = info.cumulative_gas_used,
+                num_txs = info.executed_transactions.len(),
+                stage = "state_root_computed"
+            );
+        }
     }
 
     let mut requests_hash = None;
@@ -1271,7 +1329,9 @@ where
         "Executed block created"
     );
 
+    let seal_start = Instant::now();
     let sealed_block = Arc::new(block.seal_slow());
+    let seal_duration = seal_start.elapsed();
     debug!(
         target: "payload_builder",
         id = %ctx.payload_id(),
@@ -1280,6 +1340,20 @@ where
     );
 
     let block_hash = sealed_block.hash();
+
+    if enable_tx_trace_logs {
+        debug!(
+            target: "tx_trace",
+            block_number = ctx.block_number(),
+            flashblock_index = flashblock_index_for_trace,
+            block_hash = ?block_hash,
+            seal_duration_us = seal_duration.as_micros() as u64,
+            build_block_total_time_since_state_root_start_us = state_root_start_time.elapsed().as_micros() as u64,
+            cumulative_gas = info.cumulative_gas_used,
+            num_txs = info.executed_transactions.len(),
+            stage = "block_sealed"
+        );
+    }
 
     // pick the new transactions from the info field and update the last flashblock index
     let (new_transactions, new_receipts) = if let Some(fb_state) = fb_state {

@@ -18,20 +18,26 @@ async fn transaction_event_log(
     event: FullTransactionEvent<FBPooledTransaction>,
     reverted_cache: &Cache<B256, ()>,
 ) {
+    if !std::env::var("ENABLE_TX_TRACKING_DEBUG_LOGS")
+        .map(|v| v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+    {
+        return;
+    }
     match event {
         FullTransactionEvent::Pending(hash) => {
             debug!(
-                target = "monitoring",
-                tx_hash = hash.to_string(),
-                kind = "pending",
+                target: "tx_trace",
+                tx_hash = %hash,
+                stage = "pool_pending",
                 "Transaction event received"
             )
         }
         FullTransactionEvent::Queued(hash, _) => {
             debug!(
-                target = "monitoring",
-                tx_hash = hash.to_string(),
-                kind = "queued",
+                target: "tx_trace",
+                tx_hash = %hash,
+                stage = "pool_queued",
                 "Transaction event received"
             )
         }
@@ -39,9 +45,9 @@ async fn transaction_event_log(
             tx_hash,
             block_hash,
         } => debug!(
-            target = "monitoring",
+            target = "tx_trace",
             tx_hash = tx_hash.to_string(),
-            kind = "mined",
+            stage = "mined_in_block",
             block_hash = block_hash.to_string(),
             "Transaction event received"
         ),
@@ -49,9 +55,9 @@ async fn transaction_event_log(
             transaction,
             replaced_by,
         } => debug!(
-            target = "monitoring",
+            target = "tx_trace",
             tx_hash = transaction.hash().to_string(),
-            kind = "replaced",
+            stage = "replaced",
             replaced_by = replaced_by.to_string(),
             "Transaction event received"
         ),
@@ -61,17 +67,17 @@ async fn transaction_event_log(
             reverted_cache.insert(hash, ()).await;
 
             debug!(
-                target = "monitoring",
+                target = "tx_trace",
                 tx_hash = hash.to_string(),
-                kind = "discarded",
+                stage = "discarded",
                 "Transaction event received"
             )
         }
         FullTransactionEvent::Invalid(hash) => {
             debug!(
-                target = "monitoring",
+                target = "tx_trace",
                 tx_hash = hash.to_string(),
-                kind = "invalid",
+                stage = "marked_invalid",
                 "Transaction event received"
             )
         }
