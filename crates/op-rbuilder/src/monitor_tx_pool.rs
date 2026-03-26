@@ -3,7 +3,7 @@ use alloy_primitives::B256;
 use futures_util::StreamExt;
 use moka::future::Cache;
 use reth_transaction_pool::{AllTransactionsEvents, FullTransactionEvent};
-use tracing::{debug};
+use tracing::debug;
 
 pub(crate) async fn monitor_tx_pool(
     mut new_transactions: AllTransactionsEvents<FBPooledTransaction>,
