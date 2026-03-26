@@ -109,14 +109,13 @@ impl FlashblocksServiceBuilder {
         let (built_fb_payload_tx, built_fb_payload_rx) = tokio::sync::mpsc::channel(16);
         let (built_payload_tx, built_payload_rx) = tokio::sync::mpsc::channel(16);
 
-        let ws_pub: Arc<WebSocketPublisher> = WebSocketPublisher::new(
+        let ws_pub = WebSocketPublisher::new(
             flashblocks_config.ws_addr,
             metrics.clone(),
             &task_metrics.websocket_publisher,
             flashblocks_config.ws_subscriber_limit,
         )
-        .wrap_err("failed to create ws publisher")?
-        .into();
+        .wrap_err("failed to create ws publisher")?;
         let payload_builder = OpPayloadBuilder::new(
             OpEvmConfig::optimism(ctx.chain_spec()),
             pool,
@@ -125,9 +124,10 @@ impl FlashblocksServiceBuilder {
             builder_tx,
             built_fb_payload_tx,
             built_payload_tx,
-            ws_pub.clone(),
+            ws_pub,
             metrics.clone(),
             task_metrics.clone(),
+            ctx.task_executor().clone(),
         );
         let payload_job_config = BasicPayloadJobGeneratorConfig::default();
 
