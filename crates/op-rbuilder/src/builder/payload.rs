@@ -46,7 +46,7 @@ use reth_revm::{
     State, database::StateProviderDatabase, db::states::bundle_state::BundleRetention,
 };
 use reth_transaction_pool::TransactionPool;
-use reth_trie::{HashedPostState, TrieInput, updates::TrieUpdates};
+use reth_trie::{HashedPostState, prefix_set::TriePrefixSetsMut, updates::TrieUpdates};
 use revm::Database;
 use std::{collections::BTreeMap, sync::Arc, time::Instant};
 use tokio::sync::mpsc;
@@ -112,6 +112,13 @@ pub(super) struct FlashblocksState {
     /// Cached trie updates from previous flashblock for incremental state root calculation.
     /// None only for the first flashblock; populated after each subsequent state root calculation.
     prev_trie_updates: Option<Arc<TrieUpdates>>,
+    /// Cumulative prefix sets from all previous flashblocks in this block.
+    /// Extended into the current flashblock's prefix sets so the trie walker re-visits
+    /// every path that was modified in earlier flashblocks. Without this, reverted storage
+    /// slots can leave stale cached hashes in the incremental trie (the walker skips
+    /// subtrees whose prefix isn't covered, using the cached hash which reflects the
+    /// pre-revert value).
+    cumulative_prefix_sets: Option<TriePrefixSetsMut>,
 }
 
 impl FlashblocksState {
@@ -148,6 +155,7 @@ impl FlashblocksState {
             enable_incremental_state_root: self.enable_incremental_state_root,
             last_flashblock_tx_index: self.last_flashblock_tx_index,
             prev_trie_updates: self.prev_trie_updates.clone(),
+            cumulative_prefix_sets: self.cumulative_prefix_sets.clone(),
         }
     }
 
@@ -1129,6 +1137,7 @@ where
     let mut state_root = B256::ZERO;
     let mut hashed_state = HashedPostState::default();
     let mut trie_updates_to_cache: Option<Arc<TrieUpdates>> = None;
+    let mut prefix_sets_to_cache: Option<TriePrefixSetsMut> = None;
 
     let flashblock_index_for_trace = fb_state
         .as_deref()
@@ -1138,13 +1147,15 @@ where
     if calculate_state_root {
         let state_provider = state.database.as_ref();
 
-        // prev_trie_updates is None for the first flashblock.
         let enable_incremental = fb_state
             .as_deref()
             .is_some_and(|s| s.enable_incremental_state_root);
         let prev_trie = fb_state
             .as_deref()
             .and_then(|s| s.prev_trie_updates.clone());
+        let prev_cumulative_prefix_sets = fb_state
+            .as_deref()
+            .and_then(|s| s.cumulative_prefix_sets.clone());
         let flashblock_index = fb_state
             .as_deref()
             .map(|s| s.flashblock_index())
@@ -1152,50 +1163,33 @@ where
 
         hashed_state = state_provider.hashed_post_state(&state.bundle_state);
 
-        let trie_output;
-        (state_root, trie_output) = if let Some(prev_trie) = prev_trie
-            && enable_incremental
-        {
-            // Incremental path: Use cached trie from previous flashblock
-            debug!(
+        debug!(
+            target: "payload_builder",
+            flashblock_index,
+            incremental = enable_incremental && prev_trie.is_some(),
+            "Computing state root"
+        );
+
+        let result = super::state_root::compute_state_root(
+            state_provider,
+            hashed_state.clone(),
+            prev_trie.as_deref(),
+            prev_cumulative_prefix_sets,
+            enable_incremental,
+        )
+        .inspect_err(|err| {
+            warn!(
                 target: "payload_builder",
-                flashblock_index,
-                "Using incremental state root calculation with cached trie"
+                parent_header=%ctx.parent().hash(),
+                %err,
+                "failed to calculate state root for payload"
             );
+        })
+        .map_err(PayloadBuilderError::other)?;
 
-            let trie_input = TrieInput::new(
-                (*prev_trie).clone(),
-                hashed_state.clone(),
-                hashed_state.construct_prefix_sets(),
-            );
-
-            state_provider
-                .state_root_from_nodes_with_updates(trie_input)
-                .map_err(PayloadBuilderError::other)?
-        } else {
-            debug!(
-                target: "payload_builder",
-                flashblock_index,
-                "Using full state root calculation"
-            );
-
-            state
-                .database
-                .as_ref()
-                .state_root_with_updates(hashed_state.clone())
-                .inspect_err(|err| {
-                    warn!(
-                        target: "payload_builder",
-                        parent_header=%ctx.parent().hash(),
-                        %err,
-                        "failed to calculate state root for payload"
-                    );
-                })?
-        };
-
-        // Cache trie updates to apply in fb_state later (avoids mut on fb_state parameter).
-        // Wrap in Arc once so the same allocation is reused for both `executed` and fb_state.
-        trie_updates_to_cache = Some(Arc::new(trie_output));
+        state_root = result.state_root;
+        prefix_sets_to_cache = Some(result.cumulative_prefix_sets);
+        trie_updates_to_cache = Some(Arc::new(result.trie_updates));
 
         let state_root_calculation_time = state_root_start_time.elapsed();
         ctx.metrics
@@ -1360,6 +1354,7 @@ where
         if let Some(updates) = trie_updates_to_cache.take() {
             fb_state.prev_trie_updates = Some(updates);
         }
+        fb_state.cumulative_prefix_sets = prefix_sets_to_cache;
         let new_txs = fb_state.slice_new_transactions(&info.executed_transactions);
         let new_receipts = fb_state.slice_new_receipts(&info.receipts);
         fb_state.set_last_flashblock_tx_index(info.executed_transactions.len());
