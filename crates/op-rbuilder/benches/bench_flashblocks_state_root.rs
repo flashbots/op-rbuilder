@@ -1,13 +1,13 @@
 //! Benchmark comparing flashblocks state root calculation with and without incremental trie caching.
 //!
 //! This benchmark simulates building 10 sequential flashblocks, measuring the total time
-//! spent in state root calculation. It uses `compute_state_root` — the same function as
-//! the production payload builder — so results reflect real-world performance.
+//! spent in state root calculation. It uses `StateRootCalculator` — the same
+//! code path as the production payload builder — so results reflect real-world
+//! performance.
 //!
 //! It compares:
 //! - Without cache: Full state root calculation each time
-//! - With cache (buggy): Incremental using only current prefix sets (no cumulative)
-//! - With cache (fixed): Incremental with cumulative prefix sets
+//! - With cache: Incremental using `IncrementalStateRootCalculator`
 //!
 //! Run with:
 //! ```
@@ -16,7 +16,7 @@
 
 use alloy_primitives::{Address, B256, U256, keccak256};
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
-use op_rbuilder::builder::state_root::compute_state_root;
+use op_rbuilder::builder::state_root::StateRootCalculator;
 use rand::{Rng, SeedableRng, rngs::StdRng};
 use reth_chainspec::MAINNET;
 use reth_primitives_traits::Account;
@@ -24,7 +24,7 @@ use reth_provider::{
     DatabaseProviderFactory, HashingWriter, LatestStateProvider,
     test_utils::create_test_provider_factory_with_chain_spec,
 };
-use reth_trie::{HashedPostState, HashedStorage, prefix_set::TriePrefixSetsMut};
+use reth_trie::{HashedPostState, HashedStorage};
 use std::{collections::HashMap, time::Instant};
 
 const SEED: u64 = 42;
@@ -180,7 +180,7 @@ fn to_hashed_post_state(
     }
 }
 
-/// Benchmark without incremental trie cache (baseline)
+/// Benchmark without incremental trie cache (baseline — fresh calculator each flashblock)
 fn bench_without_cache(
     provider_factory: &reth_provider::providers::ProviderFactory<
         reth_provider::test_utils::MockNodeTypesWithDB,
@@ -194,16 +194,17 @@ fn bench_without_cache(
         let fb_start = Instant::now();
         let provider = provider_factory.database_provider_ro().unwrap();
         let latest = LatestStateProvider::new(provider);
-        let _ = black_box(
-            compute_state_root(&latest, hashed_state.clone(), None, None, false).unwrap(),
-        );
+        let output = StateRootCalculator::new(false)
+            .compute(&latest, hashed_state.clone())
+            .unwrap();
         individual_times.push(fb_start.elapsed().as_micros());
+        black_box(output.state_root);
     }
 
     (total_start.elapsed().as_micros(), individual_times)
 }
 
-/// Benchmark with incremental trie cache but NO cumulative prefix sets (buggy path)
+/// Benchmark with incremental trie cache (single calculator across all flashblocks)
 fn bench_with_cache(
     provider_factory: &reth_provider::providers::ProviderFactory<
         reth_provider::test_utils::MockNodeTypesWithDB,
@@ -211,7 +212,7 @@ fn bench_with_cache(
     flashblock_changes: &[HashedPostState],
 ) -> (u128, Vec<u128>) {
     let mut individual_times = Vec::new();
-    let mut prev_trie_updates = None;
+    let mut calc = StateRootCalculator::new(true);
     let total_start = Instant::now();
 
     for hashed_state in flashblock_changes {
@@ -219,54 +220,10 @@ fn bench_with_cache(
         let provider = provider_factory.database_provider_ro().unwrap();
         let latest = LatestStateProvider::new(provider);
 
-        // Incremental but without cumulative prefix sets (the bug)
-        let result = compute_state_root(
-            &latest,
-            hashed_state.clone(),
-            prev_trie_updates.as_ref(),
-            None, // no cumulative prefix sets
-            true,
-        )
-        .unwrap();
+        let output = calc.compute(&latest, hashed_state.clone()).unwrap();
 
-        prev_trie_updates = Some(result.trie_updates);
         individual_times.push(fb_start.elapsed().as_micros());
-        black_box(result.state_root);
-    }
-
-    (total_start.elapsed().as_micros(), individual_times)
-}
-
-/// Benchmark with incremental trie cache + cumulative prefix sets (the fix)
-fn bench_with_cache_fixed(
-    provider_factory: &reth_provider::providers::ProviderFactory<
-        reth_provider::test_utils::MockNodeTypesWithDB,
-    >,
-    flashblock_changes: &[HashedPostState],
-) -> (u128, Vec<u128>) {
-    let mut individual_times = Vec::new();
-    let mut prev_trie_updates = None;
-    let mut cumulative_prefix_sets: Option<TriePrefixSetsMut> = None;
-    let total_start = Instant::now();
-
-    for hashed_state in flashblock_changes {
-        let fb_start = Instant::now();
-        let provider = provider_factory.database_provider_ro().unwrap();
-        let latest = LatestStateProvider::new(provider);
-
-        let result = compute_state_root(
-            &latest,
-            hashed_state.clone(),
-            prev_trie_updates.as_ref(),
-            cumulative_prefix_sets.take(),
-            true,
-        )
-        .unwrap();
-
-        cumulative_prefix_sets = Some(result.cumulative_prefix_sets);
-        prev_trie_updates = Some(result.trie_updates);
-        individual_times.push(fb_start.elapsed().as_micros());
-        black_box(result.state_root);
+        black_box(output.state_root);
     }
 
     (total_start.elapsed().as_micros(), individual_times)
@@ -303,16 +260,10 @@ fn bench_flashblocks_state_root(c: &mut Criterion) {
             b.iter(|| bench_without_cache(&provider_factory, &flashblock_changes))
         });
 
-        // Benchmark with cache (optimized, buggy — only current prefix sets)
+        // Benchmark with incremental cache
         group.bench_function(BenchmarkId::new("with_cache", "10_flashblocks"), |b| {
             b.iter(|| bench_with_cache(&provider_factory, &flashblock_changes))
         });
-
-        // Benchmark with cache + cumulative prefix sets (the fix)
-        group.bench_function(
-            BenchmarkId::new("with_cache_fixed", "10_flashblocks"),
-            |b| b.iter(|| bench_with_cache_fixed(&provider_factory, &flashblock_changes)),
-        );
 
         // Manual comparison run for detailed output
         eprintln!("\nManual timing comparison:");
@@ -322,27 +273,14 @@ fn bench_flashblocks_state_root(c: &mut Criterion) {
         eprintln!("    Per-flashblock: {:?} us", times_without);
 
         let (total_with, times_with) = bench_with_cache(&provider_factory, &flashblock_changes);
-        eprintln!("  WITH cache (buggy): {} us total", total_with);
+        eprintln!("  WITH cache: {} us total", total_with);
         eprintln!("    Per-flashblock: {:?} us", times_with);
-
-        let (total_fixed, times_fixed) =
-            bench_with_cache_fixed(&provider_factory, &flashblock_changes);
-        eprintln!("  WITH cache (fixed): {} us total", total_fixed);
-        eprintln!("    Per-flashblock: {:?} us", times_fixed);
 
         let speedup = total_without as f64 / total_with as f64;
         let improvement = ((total_without - total_with) as f64 / total_without as f64) * 100.0;
         eprintln!(
-            "  Cache (buggy) speedup: {:.2}x ({:.1}% faster)",
+            "  Cache speedup: {:.2}x ({:.1}% faster)",
             speedup, improvement
-        );
-
-        let speedup_fixed = total_without as f64 / total_fixed as f64;
-        let improvement_fixed =
-            ((total_without - total_fixed) as f64 / total_without as f64) * 100.0;
-        eprintln!(
-            "  Cache (fixed) speedup: {:.2}x ({:.1}% faster)",
-            speedup_fixed, improvement_fixed
         );
         eprintln!();
 
