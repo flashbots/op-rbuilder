@@ -1,6 +1,28 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [0.4.1] - 2026-03-30
+
+### Bug Fixes
+
+- Cache env var lookup ([#449](https://github.com/flashbots/op-rbuilder/pull/449))
+- Gate incremental trie behind flag ([#446](https://github.com/flashbots/op-rbuilder/pull/446))
+
+### Features
+
+- Builder-playground dev ([#440](https://github.com/flashbots/op-rbuilder/pull/440))
+- Per-transaction trace log specification ([#447](https://github.com/flashbots/op-rbuilder/pull/447))
+
+### Chore
+
+- Deprecate flashblocks.enabled flag ([#436](https://github.com/flashbots/op-rbuilder/pull/436))
+- Add limit to uncompressed block size ([#437](https://github.com/flashbots/op-rbuilder/pull/437))
+- Organize dependencies and delete unused ones ([#439](https://github.com/flashbots/op-rbuilder/pull/439))
+- Update rust stable 1.94 ([#441](https://github.com/flashbots/op-rbuilder/pull/441))
+- Testcontainers/reth-test behind testing feature ([#442](https://github.com/flashbots/op-rbuilder/pull/442))
+- Bump reth to v1.11.2 ([#444](https://github.com/flashbots/op-rbuilder/pull/444))
+- Deprecate flashblocks.enabled flag ([#448](https://github.com/flashbots/op-rbuilder/pull/448))
+
 ## [0.4.0] - 2026-03-09
 
 ### ⚠️ BREAKING CHANGES
