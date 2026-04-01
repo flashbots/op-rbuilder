@@ -1,4 +1,4 @@
-use super::wspub::WebSocketPublisher;
+use super::{state_root::StateRootCalculator, wspub::WebSocketPublisher};
 use crate::{
     backrun_bundle::BackrunBundlesPayloadCtx,
     builder::{
@@ -46,7 +46,7 @@ use reth_revm::{
     State, database::StateProviderDatabase, db::states::bundle_state::BundleRetention,
 };
 use reth_transaction_pool::TransactionPool;
-use reth_trie::{HashedPostState, TrieInput, updates::TrieUpdates};
+use reth_trie::{HashedPostState, updates::TrieUpdates};
 use revm::Database;
 use std::{collections::BTreeMap, sync::Arc, time::Instant};
 use tokio::sync::mpsc;
@@ -104,14 +104,12 @@ pub(super) struct FlashblocksState {
     da_footprint_per_batch: Option<u64>,
     /// Whether to disable state root calculation for each flashblock
     disable_state_root: bool,
-    /// Whether to enable incremental state root calculation using cached trie nodes
-    enable_incremental_state_root: bool,
     /// Index into ExecutionInfo tracking the last consumed flashblock
     /// Used for slicing transactions/receipts per flashblock
     last_flashblock_tx_index: usize,
-    /// Cached trie updates from previous flashblock for incremental state root calculation.
-    /// None only for the first flashblock; populated after each subsequent state root calculation.
-    prev_trie_updates: Option<Arc<TrieUpdates>>,
+    /// State root calculator. Manages cached trie updates and cumulative prefix
+    /// sets across flashblocks when incremental mode is enabled.
+    state_root_calculator: StateRootCalculator,
 }
 
 impl FlashblocksState {
@@ -123,7 +121,7 @@ impl FlashblocksState {
         Self {
             target_flashblock_count,
             disable_state_root,
-            enable_incremental_state_root,
+            state_root_calculator: StateRootCalculator::new(enable_incremental_state_root),
             ..Default::default()
         }
     }
@@ -145,9 +143,8 @@ impl FlashblocksState {
             da_per_batch: self.da_per_batch,
             da_footprint_per_batch: self.da_footprint_per_batch,
             disable_state_root: self.disable_state_root,
-            enable_incremental_state_root: self.enable_incremental_state_root,
             last_flashblock_tx_index: self.last_flashblock_tx_index,
-            prev_trie_updates: self.prev_trie_updates.clone(),
+            state_root_calculator: self.state_root_calculator.clone(),
         }
     }
 
@@ -1071,7 +1068,7 @@ where
 pub(super) fn build_block<DB, P>(
     state: &mut State<DB>,
     ctx: &OpPayloadBuilderCtx,
-    fb_state: Option<&mut FlashblocksState>,
+    mut fb_state: Option<&mut FlashblocksState>,
     info: &mut ExecutionInfo,
     calculate_state_root: bool,
 ) -> Result<(OpBuiltPayload, OpFlashblockPayload), PayloadBuilderError>
@@ -1138,13 +1135,6 @@ where
     if calculate_state_root {
         let state_provider = state.database.as_ref();
 
-        // prev_trie_updates is None for the first flashblock.
-        let enable_incremental = fb_state
-            .as_deref()
-            .is_some_and(|s| s.enable_incremental_state_root);
-        let prev_trie = fb_state
-            .as_deref()
-            .and_then(|s| s.prev_trie_updates.clone());
         let flashblock_index = fb_state
             .as_deref()
             .map(|s| s.flashblock_index())
@@ -1152,50 +1142,31 @@ where
 
         hashed_state = state_provider.hashed_post_state(&state.bundle_state);
 
-        let trie_output;
-        (state_root, trie_output) = if let Some(prev_trie) = prev_trie
-            && enable_incremental
-        {
-            // Incremental path: Use cached trie from previous flashblock
-            debug!(
-                target: "payload_builder",
-                flashblock_index,
-                "Using incremental state root calculation with cached trie"
-            );
-
-            let trie_input = TrieInput::new(
-                (*prev_trie).clone(),
-                hashed_state.clone(),
-                hashed_state.construct_prefix_sets(),
-            );
-
-            state_provider
-                .state_root_from_nodes_with_updates(trie_input)
-                .map_err(PayloadBuilderError::other)?
-        } else {
-            debug!(
-                target: "payload_builder",
-                flashblock_index,
-                "Using full state root calculation"
-            );
-
-            state
-                .database
-                .as_ref()
-                .state_root_with_updates(hashed_state.clone())
-                .inspect_err(|err| {
-                    warn!(
-                        target: "payload_builder",
-                        parent_header=%ctx.parent().hash(),
-                        %err,
-                        "failed to calculate state root for payload"
-                    );
-                })?
+        let calc = match fb_state.as_deref_mut() {
+            Some(s) => &mut s.state_root_calculator,
+            None => &mut StateRootCalculator::default(),
         };
 
-        // Cache trie updates to apply in fb_state later (avoids mut on fb_state parameter).
-        // Wrap in Arc once so the same allocation is reused for both `executed` and fb_state.
-        trie_updates_to_cache = Some(Arc::new(trie_output));
+        debug!(
+            target: "payload_builder",
+            flashblock_index,
+            incremental = calc.has_cached_trie(),
+            "Computing state root"
+        );
+
+        let output = calc
+            .compute(state_provider, hashed_state.clone())
+            .inspect_err(|err| {
+                warn!(
+                    target: "payload_builder",
+                    parent_header=%ctx.parent().hash(),
+                    %err,
+                    "failed to calculate state root for payload"
+                );
+            })
+            .map_err(PayloadBuilderError::other)?;
+        state_root = output.state_root;
+        trie_updates_to_cache = Some(output.trie_updates);
 
         let state_root_calculation_time = state_root_start_time.elapsed();
         ctx.metrics
@@ -1357,9 +1328,6 @@ where
 
     // pick the new transactions from the info field and update the last flashblock index
     let (new_transactions, new_receipts) = if let Some(fb_state) = fb_state {
-        if let Some(updates) = trie_updates_to_cache.take() {
-            fb_state.prev_trie_updates = Some(updates);
-        }
         let new_txs = fb_state.slice_new_transactions(&info.executed_transactions);
         let new_receipts = fb_state.slice_new_receipts(&info.receipts);
         fb_state.set_last_flashblock_tx_index(info.executed_transactions.len());
