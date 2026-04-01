@@ -183,6 +183,18 @@ pub struct OpRBuilderMetrics {
     pub backrun_transaction_processing_duration: Histogram,
     /// Latest backrun transaction processing duration
     pub backrun_transaction_processing_gauge: Gauge,
+    /// Builds completed but not published due to resolved gate
+    pub flashblock_publish_suppressed_total: Counter,
+    /// Payload job ended because getPayload resolved
+    pub payload_job_cancellation_resolved: Counter,
+    /// Payload job ended because a new FCU arrived
+    pub payload_job_cancellation_new_fcu: Counter,
+    /// Payload job ended because the deadline was reached
+    pub payload_job_cancellation_deadline: Counter,
+    /// Payload job completed normally (all flashblocks built)
+    pub payload_job_cancellation_complete: Counter,
+    /// Payload job ended due to a build error
+    pub payload_job_cancellation_error: Counter,
 }
 
 impl OpRBuilderMetrics {
