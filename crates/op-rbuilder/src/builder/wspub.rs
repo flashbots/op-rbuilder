@@ -83,6 +83,8 @@ impl WebSocketPublisher {
             base = payload.base.is_some(),
         );
 
+        warn!("FBAL: {:#?}", payload.metadata.access_lists);
+
         let serialized = serde_json::to_string(payload)?;
         let utf8_bytes = Utf8Bytes::from(serialized);
         let size = utf8_bytes.len();
