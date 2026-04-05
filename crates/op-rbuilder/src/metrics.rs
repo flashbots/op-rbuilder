@@ -195,7 +195,7 @@ impl OpRBuilderMetrics {
         num_txs_simulated_success: impl IntoF64 + Copy,
         num_txs_simulated_fail: impl IntoF64 + Copy,
         num_bundles_reverted: impl IntoF64,
-        reverted_gas_used: impl IntoF64,
+        reverted_gas_used: u64,
         num_backruns_considered: impl IntoF64 + Copy,
         num_backruns_successful: impl IntoF64 + Copy,
         backrun_transaction_processing_time: impl IntoF64 + Copy,
@@ -217,7 +217,8 @@ impl OpRBuilderMetrics {
         self.payload_num_tx_simulated_fail_gauge
             .set(num_txs_simulated_fail);
         self.bundles_reverted.record(num_bundles_reverted);
-        self.payload_reverted_tx_gas_used.set(reverted_gas_used);
+        self.payload_reverted_tx_gas_used
+            .set(reverted_gas_used as f64);
         self.payload_num_backruns_considered
             .record(num_backruns_considered);
         self.payload_num_backruns_considered_gauge
