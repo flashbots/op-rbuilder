@@ -280,6 +280,7 @@ where
     )
     .wrap_err("failed to execute best transactions")?;
 
+    let enable_tx_tracking_debug_logs = ctx.enable_tx_tracking_debug_logs();
     let builder_ctx = ctx.into_op_payload_builder_ctx(
         payload_config,
         evm_env.clone(),
@@ -287,8 +288,15 @@ where
         cancel,
     );
 
-    let (built_payload, fb_payload) = build_block(&mut state, &builder_ctx, None, &mut info, true)
-        .wrap_err("failed to build flashblock")?;
+    let (built_payload, fb_payload) = build_block(
+        &mut state,
+        &builder_ctx,
+        None,
+        &mut info,
+        true,
+        enable_tx_tracking_debug_logs,
+    )
+    .wrap_err("failed to build flashblock")?;
 
     builder_ctx
         .metrics
