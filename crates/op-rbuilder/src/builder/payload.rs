@@ -9,6 +9,7 @@ use crate::{
         generator::{BlockCell, BuildArguments, PayloadBuilder},
         timing::FlashblockScheduler,
     },
+    evm::OpBlockEvmFactory,
     gas_limiter::AddressGasLimiter,
     metrics::OpRBuilderMetrics,
     primitives::reth::ExecutionInfo,
@@ -351,10 +352,9 @@ where
         };
 
         Ok(OpPayloadBuilderCtx {
-            evm_config: self.evm_config.clone(),
+            evm_factory: OpBlockEvmFactory::new(self.evm_config.clone(), evm_env),
             chain_spec,
             config,
-            evm_env,
             block_env_attributes,
             cancel,
             da_config: self.config.da_config.clone(),
@@ -1023,7 +1023,8 @@ where
     DB: Database<Error = ProviderError> + std::fmt::Debug,
 {
     // 1. apply pre-execution changes
-    ctx.evm_config
+    ctx.evm_factory
+        .evm_config()
         .builder_for_next_block(state, ctx.parent(), ctx.block_env_attributes.clone())
         .map_err(PayloadBuilderError::other)?
         .apply_pre_execution_changes()?;
@@ -1242,7 +1243,7 @@ where
     let header = Header {
         parent_hash: ctx.parent().hash(),
         ommers_hash: EMPTY_OMMER_ROOT_HASH,
-        beneficiary: ctx.evm_env.block_env.beneficiary,
+        beneficiary: ctx.evm_factory.evm_env().block_env.beneficiary,
         state_root,
         transactions_root,
         receipts_root,

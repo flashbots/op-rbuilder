@@ -12,7 +12,7 @@ use op_alloy_consensus::OpTypedTransaction;
 use op_alloy_rpc_types::OpTransactionRequest;
 use op_revm::{OpHaltReason, OpTransactionError};
 use reth_evm::{
-    ConfigureEvm, Evm, EvmError, InvalidTxError, eth::receipt_builder::ReceiptBuilderCtx,
+    Evm, EvmError, InvalidTxError, eth::receipt_builder::ReceiptBuilderCtx,
     precompiles::PrecompilesMap,
 };
 use reth_node_api::PayloadBuilderError;
@@ -197,9 +197,7 @@ pub trait BuilderTransactions {
             is_last_flashblock,
         )?;
 
-        let mut evm = builder_ctx
-            .evm_config
-            .evm_with_env(&mut *db, builder_ctx.evm_env.clone());
+        let mut evm = builder_ctx.evm_factory.evm(&mut *db);
 
         let mut invalid = HashSet::new();
 
@@ -315,7 +313,7 @@ pub trait BuilderTransactions {
         ctx: &OpPayloadBuilderCtx,
         db: &mut State<impl Database>,
     ) -> Result<(), BuilderTransactionError> {
-        let mut evm = ctx.evm_config.evm_with_env(&mut *db, ctx.evm_env.clone());
+        let mut evm = ctx.evm_factory.evm(&mut *db);
         for signed_tx in signed_txs {
             let ResultAndState { state, .. } = evm
                 .transact(&signed_tx)

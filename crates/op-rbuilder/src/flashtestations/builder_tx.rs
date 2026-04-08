@@ -6,7 +6,7 @@ use alloy_rpc_types_eth::TransactionInput;
 use alloy_sol_types::{SolCall, SolEvent, SolValue};
 use core::fmt::Debug;
 use op_alloy_rpc_types::OpTransactionRequest;
-use reth_evm::{ConfigureEvm, Evm, precompiles::PrecompilesMap};
+use reth_evm::{Evm, precompiles::PrecompilesMap};
 use reth_optimism_primitives::OpTransactionSigned;
 use reth_provider::StateProvider;
 use reth_revm::{State, database::StateProviderDatabase};
@@ -119,14 +119,11 @@ impl FlashtestationsBuilderTx {
         state_provider: impl StateProvider + Clone,
         ctx: &OpPayloadBuilderCtx,
     ) -> Result<(), BuilderTransactionError> {
-        let state = StateProviderDatabase::new(state_provider.clone());
         let mut simulation_state = State::builder()
-            .with_database(state)
+            .with_database(StateProviderDatabase::new(state_provider))
             .with_bundle_update()
             .build();
-        let mut evm = ctx
-            .evm_config
-            .evm_with_env(&mut simulation_state, ctx.evm_env.clone());
+        let mut evm = ctx.evm_factory.evm(&mut simulation_state);
         evm.modify_cfg(|cfg| {
             cfg.disable_balance_check = true;
             cfg.disable_nonce_check = true;
@@ -369,7 +366,7 @@ impl BuilderTransactions for FlashtestationsBuilderTx {
             self.set_registered(state_provider, ctx)?;
         }
 
-        let mut evm = ctx.evm_config.evm_with_env(&mut *db, ctx.evm_env.clone());
+        let mut evm = ctx.evm_factory.evm(&mut *db);
         evm.modify_cfg(|cfg| {
             cfg.disable_balance_check = true;
             cfg.disable_block_gas_limit = true;

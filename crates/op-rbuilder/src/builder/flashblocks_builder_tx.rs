@@ -6,7 +6,7 @@ use alloy_rpc_types_eth::TransactionInput;
 use alloy_sol_types::{SolCall, SolEvent, sol};
 use core::fmt::Debug;
 use op_alloy_rpc_types::OpTransactionRequest;
-use reth_evm::{ConfigureEvm, precompiles::PrecompilesMap};
+use reth_evm::precompiles::PrecompilesMap;
 use reth_provider::StateProvider;
 use reth_revm::State;
 use revm::{DatabaseRef, inspector::NoOpInspector};
@@ -274,7 +274,7 @@ impl BuilderTransactions for FlashblocksNumberBuilderTx {
             builder_txs.extend(self.base_builder_tx.simulate_builder_tx(ctx, &mut *db)?);
         } else {
             // we increment the flashblock number for the next flashblock so we don't increment in the last flashblock
-            let mut evm = ctx.evm_config.evm_with_env(&mut *db, ctx.evm_env.clone());
+            let mut evm = ctx.evm_factory.evm(&mut *db);
             evm.modify_cfg(|cfg| {
                 cfg.disable_balance_check = true;
                 cfg.disable_block_gas_limit = true;
