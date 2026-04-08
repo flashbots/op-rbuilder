@@ -75,7 +75,7 @@ where
         let bundle_result = self
             .send_bundle_inner(bundle)
             .await
-            .inspect_err(|err| error!("eth_sendBundle request failed: {err:?}"));
+            .inspect_err(|err| error!(error = ?err, "eth_sendBundle request failed"));
 
         if bundle_result.is_ok() {
             self.metrics.valid_bundles.increment(1);

@@ -66,7 +66,11 @@ impl TxManager {
         attestation: Vec<u8>,
         extra_registration_data: Bytes,
     ) -> Result<(), TxManagerError> {
-        info!(target: "flashtestations", "registering TEE address at {}", self.tee_service_signer.address);
+        info!(
+            target: "flashtestations",
+            address = %self.tee_service_signer.address,
+            "registering TEE address"
+        );
         let quote_bytes = Bytes::from(attestation);
         let wallet =
             PrivateKeySigner::from_bytes(&self.builder_signer.secret.secret_bytes().into())
@@ -81,7 +85,11 @@ impl TxManager {
             .connect(self.rpc_url.as_str())
             .await?;
 
-        info!(target: "flashtestations", "submitting quote to registry at {}", self.registry_address);
+        info!(
+            target: "flashtestations",
+            registry_address = %self.registry_address,
+            "submitting quote to registry"
+        );
 
         // Get permit nonce
         let nonce_call = IERC20Permit::noncesCall {
@@ -150,11 +158,19 @@ impl TxManager {
         };
         match Self::process_pending_tx(provider.send_transaction(tx.into()).await).await {
             Ok(tx_hash) => {
-                info!(target: "flashtestations", tx_hash = %tx_hash, "attestation transaction confirmed successfully");
+                info!(
+                    target: "flashtestations",
+                    tx_hash = %tx_hash,
+                    "attestation transaction confirmed successfully"
+                );
                 Ok(())
             }
             Err(e) => {
-                warn!(target: "flashtestations", error = %e, "attestation transaction failed to be sent");
+                warn!(
+                    target: "flashtestations",
+                    error = %e,
+                    "attestation transaction failed to be sent"
+                );
                 Err(e)
             }
         }

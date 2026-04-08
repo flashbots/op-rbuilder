@@ -23,6 +23,7 @@ use reth_optimism_evm::OpEvmConfig;
 use reth_payload_builder::{PayloadBuilderHandle, PayloadBuilderService};
 use reth_provider::CanonStateSubscriptions;
 use std::{sync::Arc, time::Duration};
+use tracing::{error, info, warn};
 
 #[derive(derive_more::Constructor)]
 pub struct FlashblocksServiceBuilder(pub BuilderConfig);
@@ -87,10 +88,14 @@ impl FlashblocksServiceBuilder {
             let multiaddrs = node.multiaddrs();
             ctx.task_executor().spawn_task(async move {
                 if let Err(e) = node.run().await {
-                    tracing::error!(error = %e, "p2p node exited");
+                    error!(error = %e, "p2p node exited");
                 }
             });
-            tracing::info!(target: "payload_builder", multiaddrs = ?multiaddrs, "flashblocks p2p node started");
+            info!(
+                target: "payload_builder",
+                multiaddrs = ?multiaddrs,
+                "flashblocks p2p node started"
+            );
 
             let incoming_message_rx = incoming_message_rxs
                 .remove(&FLASHBLOCKS_STREAM_PROTOCOL)
@@ -185,7 +190,7 @@ impl FlashblocksServiceBuilder {
             .clone()
             .spawn_metrics_collector(Duration::from_secs(1));
 
-        tracing::info!(target: "payload_builder", "Flashblocks payload builder service started");
+        info!(target: "payload_builder", "Flashblocks payload builder service started");
         Ok(payload_builder_handle)
     }
 }
@@ -210,7 +215,11 @@ where
             {
                 Ok(builder_tx) => Some(builder_tx),
                 Err(e) => {
-                    tracing::warn!(target: "payload_builder", error = %e, "Failed to bootstrap flashtestations, builder will not include flashtestations txs");
+                    warn!(
+                        target: "payload_builder",
+                        error = %e,
+                        "Failed to bootstrap flashtestations, builder will not include flashtestations txs"
+                    );
                     None
                 }
             }

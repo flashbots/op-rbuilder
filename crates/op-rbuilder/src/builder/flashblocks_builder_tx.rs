@@ -112,7 +112,11 @@ impl BuilderTransactions for FlashblocksBuilderTx {
                         builder_txs.extend(flashtestations_builder_txs)
                     }
                     Err(e) => {
-                        warn!(target: "flashtestations", error = ?e, "failed to add flashtestations builder tx")
+                        warn!(
+                            target: "flashtestations",
+                            error = ?e,
+                            "failed to add flashtestations builder tx"
+                        )
                     }
                 }
             }
@@ -295,7 +299,11 @@ impl BuilderTransactions for FlashblocksNumberBuilderTx {
             let tx = match flashblocks_num_tx {
                 Ok(tx) => Some(tx),
                 Err(e) => {
-                    warn!(target: "builder_tx", error = ?e, "flashblocks number contract tx simulation failed, defaulting to fallback builder tx");
+                    warn!(
+                        target: "builder_tx",
+                        error = ?e,
+                        "flashblocks number contract tx simulation failed, defaulting to fallback builder tx"
+                    );
                     self.base_builder_tx
                         .simulate_builder_tx(ctx, &mut *db)?
                         .map(|tx| tx.set_top_of_block())
@@ -328,7 +336,11 @@ impl BuilderTransactions for FlashblocksNumberBuilderTx {
             ) {
                 Ok(flashtestations_builder_txs) => builder_txs.extend(flashtestations_builder_txs),
                 Err(e) => {
-                    warn!(target: "flashtestations", error = ?e, "failed to add flashtestations builder tx")
+                    warn!(
+                        target: "flashtestations",
+                        error = ?e,
+                        "failed to add flashtestations builder tx"
+                    )
                 }
             }
         }

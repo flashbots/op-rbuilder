@@ -378,7 +378,10 @@ impl BuilderTransactions for FlashtestationsBuilderTx {
         let mut builder_txs = Vec::<BuilderTransactionCtx>::new();
 
         if !self.registered.load(std::sync::atomic::Ordering::SeqCst) {
-            info!(target: "flashtestations", "tee service not registered yet, attempting to register");
+            info!(
+                target: "flashtestations",
+                "tee service not registered yet, attempting to register"
+            );
             let register_tx = self.signed_registration_permit_tx(ctx, &mut evm)?;
             builder_txs.push(register_tx);
         }
@@ -389,7 +392,11 @@ impl BuilderTransactions for FlashtestationsBuilderTx {
             match self.signed_block_proof_permit_tx(&info.executed_transactions, ctx, &mut evm) {
                 Ok(block_proof_tx) => builder_txs.push(block_proof_tx),
                 Err(e) => {
-                    warn!(target: "flashtestations", error = ?e, "failed to add permit block proof transaction")
+                    warn!(
+                        target: "flashtestations",
+                        error = ?e,
+                        "failed to add permit block proof transaction"
+                    )
                 }
             }
         }

@@ -720,7 +720,7 @@ where
                 fb_state.is_last_flashblock(),
             )
             .inspect_err(
-                |e| error!(target: "payload_builder", "Error simulating builder txs: {}", e),
+                |e| error!(target: "payload_builder", error = %e, "Error simulating builder txs"),
             )
             .unwrap_or_default();
 
@@ -829,7 +829,7 @@ where
             fb_state.is_first_flashblock(),
             fb_state.is_last_flashblock(),
         ) {
-            error!(target: "payload_builder", "Error simulating builder txs: {}", e);
+            error!(target: "payload_builder", error = %e, "Error simulating builder txs");
         }
 
         let total_block_built_duration = Instant::now();

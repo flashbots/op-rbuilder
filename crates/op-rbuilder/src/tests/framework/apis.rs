@@ -146,11 +146,7 @@ impl<P: Protocol> EngineApi<P> {
         &self,
         payload_id: PayloadId,
     ) -> eyre::Result<<OpEngineTypes as EngineTypes>::ExecutionPayloadEnvelopeV4> {
-        debug!(
-            "Fetching payload with id: {} at {}",
-            payload_id,
-            chrono::Utc::now()
-        );
+        debug!(payload_id = %payload_id, time = %chrono::Utc::now(), "Fetching payload");
         Ok(
             OpEngineApiClient::<OpEngineTypes>::get_payload_v4(&self.client().await, payload_id)
                 .await?,
@@ -164,7 +160,7 @@ impl<P: Protocol> EngineApi<P> {
         parent_beacon_block_root: B256,
         execution_requests: Requests,
     ) -> eyre::Result<PayloadStatus> {
-        debug!("Submitting new payload at {}...", chrono::Utc::now());
+        debug!(time = %chrono::Utc::now(), "Submitting new payload");
         Ok(OpEngineApiClient::<OpEngineTypes>::new_payload_v4(
             &self.client().await,
             payload,
@@ -181,7 +177,7 @@ impl<P: Protocol> EngineApi<P> {
         new_head: B256,
         payload_attributes: Option<<OpEngineTypes as PayloadTypes>::PayloadAttributes>,
     ) -> eyre::Result<ForkchoiceUpdated> {
-        debug!("Updating forkchoice at {}...", chrono::Utc::now());
+        debug!(time = %chrono::Utc::now(), "Updating forkchoice");
         Ok(OpEngineApiClient::<OpEngineTypes>::fork_choice_updated_v3(
             &self.client().await,
             ForkchoiceState {

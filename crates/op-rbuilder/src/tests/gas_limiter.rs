@@ -59,11 +59,7 @@ async fn gas_limiter_blocks_excessive_usage(rbuilder: LocalInstance) -> eyre::Re
             .send()
             .await?;
         sent_txs.push(*big_tx.tx_hash());
-        info!(
-            "Sent big transaction {} from address {}",
-            i + 1,
-            funded_accounts[0].address
-        );
+        info!(n = i + 1, address = %funded_accounts[0].address, "Sent big transaction");
     }
 
     // Meanwhile, the other address should not be throttled

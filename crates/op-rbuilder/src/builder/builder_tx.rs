@@ -210,7 +210,11 @@ pub trait BuilderTransactions {
                 continue;
             }
             if invalid.contains(&builder_tx.signed_tx.signer()) {
-                warn!(target: "payload_builder", tx_hash = ?builder_tx.signed_tx.tx_hash(), "builder signer invalid as previous builder tx reverted");
+                warn!(
+                    target: "payload_builder",
+                    tx_hash = %builder_tx.signed_tx.tx_hash(),
+                    "builder signer invalid as previous builder tx reverted"
+                );
                 continue;
             }
 
@@ -220,11 +224,21 @@ pub trait BuilderTransactions {
                     if let Some(err) = err.as_invalid_tx_err() {
                         if err.is_nonce_too_low() {
                             // if the nonce is too low, we can skip this transaction
-                            trace!(target: "payload_builder", %err, ?builder_tx.signed_tx, "skipping nonce too low builder transaction");
+                            trace!(
+                                target: "payload_builder",
+                                error = %err,
+                                builder_tx = ?builder_tx.signed_tx,
+                                "skipping nonce too low builder transaction"
+                            );
                         } else {
                             // if the transaction is invalid, we can skip it and all of its
                             // descendants
-                            trace!(target: "payload_builder", %err, ?builder_tx.signed_tx, "skipping invalid builder transaction and its descendants");
+                            trace!(
+                                target: "payload_builder",
+                                error = %err,
+                                builder_tx = ?builder_tx.signed_tx,
+                                "skipping invalid builder transaction and its descendants"
+                            );
                             invalid.insert(builder_tx.signed_tx.signer());
                         }
 
@@ -236,7 +250,12 @@ pub trait BuilderTransactions {
             };
 
             if !result.is_success() {
-                warn!(target: "payload_builder", tx_hash = ?builder_tx.signed_tx.tx_hash(), result = ?result, "builder tx reverted");
+                warn!(
+                    target: "payload_builder",
+                    tx_hash = %builder_tx.signed_tx.tx_hash(),
+                    result = ?result,
+                    "builder tx reverted"
+                );
                 invalid.insert(builder_tx.signed_tx.signer());
                 continue;
             }

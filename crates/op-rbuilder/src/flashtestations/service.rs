@@ -29,8 +29,9 @@ pub async fn bootstrap_flashtestations(
     )?;
 
     info!(
-        "Flashtestations TEE address: {}",
-        tee_service_signer.address
+        target: "flashtestations",
+        address = %tee_service_signer.address,
+        "Flashtestations TEE address"
     );
 
     let registry_address = args
@@ -88,7 +89,11 @@ pub async fn bootstrap_flashtestations(
         {
             Ok(_) => true,
             Err(e) => {
-                warn!(error = %e, "Failed to register tee service via rpc");
+                warn!(
+                    target: "flashtestations",
+                    error = %e,
+                    "Failed to register tee service via rpc"
+                );
                 false
             }
         }
@@ -114,7 +119,10 @@ pub async fn bootstrap_flashtestations(
 /// Load ephemeral TEE key from file, or generate and save a new one
 fn load_or_generate_tee_key(key_path: &str, debug: bool, debug_seed: &str) -> eyre::Result<Signer> {
     if debug {
-        info!("Flashtestations debug mode enabled, generating debug key from seed");
+        info!(
+            target: "flashtestations",
+            "Flashtestations debug mode enabled, generating debug key from seed"
+        );
         return Ok(generate_key_from_seed(debug_seed));
     }
 
@@ -125,7 +133,7 @@ fn load_or_generate_tee_key(key_path: &str, debug: bool, debug_seed: &str) -> ey
     }
 
     // Generate new key
-    info!("Generating new ephemeral TEE key");
+    info!(target: "flashtestations", "Generating new ephemeral TEE key");
     let signer = generate_signer();
 
     let key_hex = hex::encode(signer.secret.secret_bytes());
@@ -138,7 +146,14 @@ fn load_or_generate_tee_key(key_path: &str, debug: bool, debug_seed: &str) -> ey
         .mode(0o600)
         .open(path)
         .and_then(|mut file| file.write_all(key_hex.as_bytes()))
-        .inspect_err(|e| warn!("Failed to write key to {}: {:?}", key_path, e))
+        .inspect_err(|e| {
+            warn!(
+                target: "flashtestations",
+                key_path = %key_path,
+                error = ?e,
+                "Failed to write key to path"
+            )
+        })
         .ok();
 
     Ok(signer)
@@ -150,21 +165,25 @@ fn load_tee_key(path: &Path) -> Option<Signer> {
         return None;
     }
 
-    info!("Loading TEE key from {:?}", path);
+    info!(target: "flashtestations", path = ?path, "Loading TEE key");
     let key_hex = fs::read_to_string(path)
-        .inspect_err(|e| warn!("failed to read key file: {:?}", e))
+        .inspect_err(|e| warn!(target: "flashtestations", error = ?e, "failed to read key file"))
         .ok()?;
 
     let secret_bytes = B256::try_from(
         hex::decode(key_hex.trim())
-            .inspect_err(|e| warn!("failed to decode hex from file {:?}", e))
+            .inspect_err(
+                |e| warn!(target: "flashtestations", error = ?e, "failed to decode hex from file"),
+            )
             .ok()?
             .as_slice(),
     )
-    .inspect_err(|e| warn!("failed to parse key from file: {:?}", e))
+    .inspect_err(|e| warn!(target: "flashtestations", error = ?e, "failed to parse key from file"))
     .ok()?;
 
     Signer::try_from_secret(secret_bytes)
-        .inspect_err(|e| warn!("failed to create signer from key: {:?}", e))
+        .inspect_err(
+            |e| warn!(target: "flashtestations", error = ?e, "failed to create signer from key"),
+        )
         .ok()
 }
