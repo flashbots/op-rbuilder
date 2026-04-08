@@ -5,17 +5,17 @@ use alloy_op_evm::block::receipt_builder::OpReceiptBuilder;
 use alloy_primitives::{B256, BlockHash, Bytes, U256};
 use alloy_rpc_types_eth::Withdrawals;
 use op_alloy_consensus::{OpDepositReceipt, OpTxType};
-use op_revm::{OpSpecId, OpTransactionError};
+use op_revm::OpTransactionError;
 use reth::payload::PayloadBuilderAttributes;
 use reth_basic_payload_builder::PayloadConfig;
 use reth_chainspec::{EthChainSpec, EthereumHardforks};
 use reth_evm::{
-    ConfigureEvm, Evm, EvmEnv, EvmError, InvalidTxError, eth::receipt_builder::ReceiptBuilderCtx,
+    ConfigureEvm, Evm, EvmError, InvalidTxError, eth::receipt_builder::ReceiptBuilderCtx,
     op_revm::L1BlockInfo,
 };
 use reth_node_api::PayloadBuilderError;
 use reth_optimism_chainspec::OpChainSpec;
-use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
+use reth_optimism_evm::OpNextBlockEnvAttributes;
 use reth_optimism_forks::OpHardforks;
 use reth_optimism_node::OpPayloadBuilderAttributes;
 use reth_optimism_payload_builder::{
@@ -44,6 +44,7 @@ use tracing::{debug, info, trace};
 
 use crate::{
     backrun_bundle::BackrunBundlesPayloadCtx,
+    evm::OpBlockEvmFactory,
     gas_limiter::AddressGasLimiter,
     metrics::OpRBuilderMetrics,
     primitives::reth::{ExecutionInfo, TxnExecutionResult},
@@ -52,8 +53,8 @@ use crate::{
 
 /// Container type that holds all necessities to build a new payload.
 pub struct OpPayloadBuilderCtx {
-    /// The type that knows how to perform system calls and configure the evm.
-    pub evm_config: OpEvmConfig,
+    /// Factory for creating EVM instances (bundles evm_config + evm_env).
+    pub evm_factory: OpBlockEvmFactory,
     /// The DA config for the payload builder
     pub da_config: OpDAConfig,
     // Gas limit configuration for the payload builder
@@ -62,8 +63,6 @@ pub struct OpPayloadBuilderCtx {
     pub chain_spec: Arc<OpChainSpec>,
     /// How to build the payload.
     pub config: PayloadConfig<OpPayloadBuilderAttributes<OpTransactionSigned>>,
-    /// Evm Settings
-    pub evm_env: EvmEnv<OpSpecId>,
     /// Block env attributes for the current block.
     pub block_env_attributes: OpNextBlockEnvAttributes,
     /// Marker to check whether the job has been cancelled.
@@ -121,23 +120,24 @@ impl OpPayloadBuilderCtx {
             None => self
                 .attributes()
                 .gas_limit
-                .unwrap_or(self.evm_env.block_env.gas_limit),
+                .unwrap_or(self.evm_factory.evm_env().block_env.gas_limit),
         }
     }
 
     /// Returns the block number for the block.
     pub fn block_number(&self) -> u64 {
-        as_u64_saturated!(self.evm_env.block_env.number)
+        as_u64_saturated!(self.evm_factory.evm_env().block_env.number)
     }
 
     /// Returns the current base fee
     pub fn base_fee(&self) -> u64 {
-        self.evm_env.block_env.basefee
+        self.evm_factory.evm_env().block_env.basefee
     }
 
     /// Returns the current blob gas price.
     pub fn get_blob_gasprice(&self) -> Option<u64> {
-        self.evm_env
+        self.evm_factory
+            .evm_env()
             .block_env
             .blob_gasprice()
             .map(|gasprice| gasprice as u64)
@@ -249,7 +249,11 @@ impl OpPayloadBuilderCtx {
         ctx: ReceiptBuilderCtx<'_, OpTxType, E>,
         deposit_nonce: Option<u64>,
     ) -> OpReceipt {
-        let receipt_builder = self.evm_config.block_executor_factory().receipt_builder();
+        let receipt_builder = self
+            .evm_factory
+            .evm_config()
+            .block_executor_factory()
+            .receipt_builder();
         match receipt_builder.build_receipt(ctx) {
             Ok(receipt) => receipt,
             Err(ctx) => {
@@ -282,7 +286,7 @@ impl OpPayloadBuilderCtx {
     ) -> Result<ExecutionInfo, PayloadBuilderError> {
         let mut info = ExecutionInfo::with_capacity(self.attributes().transactions.len());
 
-        let mut evm = self.evm_config.evm_with_env(&mut *db, self.evm_env.clone());
+        let mut evm = self.evm_factory.evm(&mut *db);
 
         for sequencer_tx in &self.attributes().transactions {
             // A sequencer's block should never contain blob transactions.
@@ -428,7 +432,7 @@ impl OpPayloadBuilderCtx {
         let base_fee = self.base_fee();
 
         let tx_da_limit = self.da_config.max_da_tx_size();
-        let mut evm = self.evm_config.evm_with_env(&mut *db, self.evm_env.clone());
+        let mut evm = self.evm_factory.evm(&mut *db);
 
         debug!(
             target: "payload_builder",
@@ -818,7 +822,7 @@ impl OpPayloadBuilderCtx {
                         return Ok(Some(()));
                     }
 
-                    let coinbase = self.evm_env.block_env.beneficiary;
+                    let coinbase = self.evm_factory.evm_env().block_env.beneficiary;
                     let coinbase_balance_before = evm
                         .db_mut()
                         .basic(coinbase)

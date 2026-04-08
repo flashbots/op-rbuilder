@@ -1,13 +1,12 @@
 use crate::{
     backrun_bundle::{BackrunBundleArgs, BackrunBundleGlobalPool, BackrunBundlesPayloadCtx},
     builder::{BuilderConfig, OpPayloadBuilderCtx},
+    evm::OpBlockEvmFactory,
     gas_limiter::{AddressGasLimiter, args::GasLimiterArgs},
     metrics::OpRBuilderMetrics,
     traits::ClientBounds,
 };
-use op_revm::OpSpecId;
 use reth_basic_payload_builder::PayloadConfig;
-use reth_evm::EvmEnv;
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
 use reth_optimism_forks::OpHardforks;
@@ -94,7 +93,7 @@ impl OpPayloadSyncerCtx {
     pub(super) fn into_op_payload_builder_ctx(
         self,
         payload_config: PayloadConfig<OpPayloadBuilderAttributes<OpTransactionSigned>>,
-        evm_env: EvmEnv<OpSpecId>,
+        evm_factory: OpBlockEvmFactory,
         block_env_attributes: OpNextBlockEnvAttributes,
         cancel: CancellationToken,
     ) -> OpPayloadBuilderCtx {
@@ -105,12 +104,11 @@ impl OpPayloadSyncerCtx {
             args: self.backrun_bundle_args,
         };
         OpPayloadBuilderCtx {
-            evm_config: self.evm_config,
+            evm_factory,
             da_config: self.da_config,
             gas_limit_config: OpGasLimitConfig::default(),
             chain_spec: self.chain_spec,
             config: payload_config,
-            evm_env,
             block_env_attributes,
             cancel,
             metrics: self.metrics,

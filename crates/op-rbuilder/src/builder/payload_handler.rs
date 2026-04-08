@@ -1,5 +1,6 @@
 use crate::{
     builder::{p2p::Message, payload::build_block, syncer_ctx::OpPayloadSyncerCtx},
+    evm::OpBlockEvmFactory,
     primitives::reth::ExecutionInfo,
     traits::ClientBounds,
 };
@@ -303,6 +304,8 @@ where
         },
     );
 
+    let evm_factory = OpBlockEvmFactory::new(ctx.evm_config().clone(), evm_env);
+
     execute_transactions(
         &ctx,
         &mut info,
@@ -310,18 +313,14 @@ where
         payload.block().body().transactions.clone(),
         payload.block().header().gas_used,
         timestamp,
-        evm_env.clone(),
+        &evm_factory,
         chain_spec.clone(),
     )
     .wrap_err("failed to execute best transactions")?;
 
     let enable_tx_tracking_debug_logs = ctx.enable_tx_tracking_debug_logs();
-    let builder_ctx = ctx.into_op_payload_builder_ctx(
-        payload_config,
-        evm_env.clone(),
-        block_env_attributes,
-        cancel,
-    );
+    let builder_ctx =
+        ctx.into_op_payload_builder_ctx(payload_config, evm_factory, block_env_attributes, cancel);
 
     let (built_payload, fb_payload) = build_block(
         &mut state,
@@ -367,16 +366,15 @@ fn execute_transactions(
     txs: Vec<op_alloy_consensus::OpTxEnvelope>,
     gas_limit: u64,
     timestamp: u64,
-    evm_env: alloy_evm::EvmEnv<op_revm::OpSpecId>,
+    evm_factory: &OpBlockEvmFactory,
     chain_spec: Arc<OpChainSpec>,
 ) -> eyre::Result<()> {
     use alloy_eips::Encodable2718;
     use alloy_evm::Evm as _;
-    use reth_evm::ConfigureEvm as _;
     use reth_primitives_traits::SignedTransaction;
     use revm::{DatabaseCommit as _, context::result::ResultAndState};
 
-    let mut evm = ctx.evm_config().evm_with_env(&mut *state, evm_env);
+    let mut evm = evm_factory.evm(&mut *state);
 
     for tx in txs {
         // Convert to recovered transaction
@@ -445,8 +443,13 @@ fn execute_transactions(
             cumulative_gas_used: info.cumulative_gas_used,
         };
 
-        info.receipts
-            .push(build_receipt(ctx, receipt_ctx, depositor_nonce, timestamp));
+        info.receipts.push(build_receipt(
+            ctx,
+            evm_factory,
+            receipt_ctx,
+            depositor_nonce,
+            timestamp,
+        ));
 
         evm.db_mut().commit(state);
 
@@ -469,6 +472,7 @@ fn execute_transactions(
 
 fn build_receipt<E: alloy_evm::Evm>(
     ctx: &OpPayloadSyncerCtx,
+    evm_factory: &OpBlockEvmFactory,
     receipt_ctx: ReceiptBuilderCtx<'_, OpTxType, E>,
     deposit_nonce: Option<u64>,
     timestamp: u64,
@@ -478,7 +482,10 @@ fn build_receipt<E: alloy_evm::Evm>(
     use op_alloy_consensus::OpDepositReceipt;
     use reth_evm::ConfigureEvm as _;
 
-    let receipt_builder = ctx.evm_config().block_executor_factory().receipt_builder();
+    let receipt_builder = evm_factory
+        .evm_config()
+        .block_executor_factory()
+        .receipt_builder();
     match receipt_builder.build_receipt(receipt_ctx) {
         Ok(receipt) => receipt,
         Err(receipt_ctx) => {
