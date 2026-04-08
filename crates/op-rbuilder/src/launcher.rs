@@ -162,7 +162,11 @@ impl Launcher<OpChainSpecParser, OpRbuilderArgs> for BuilderLauncher {
                 if builder_args.log_pool_transactions {
                     tracing::info!("Logging pool transactions");
                     let listener = ctx.pool.all_transactions_event_listener();
-                    let task = monitor_tx_pool(listener, reverted_cache_copy);
+                    let task = monitor_tx_pool(
+                        listener,
+                        reverted_cache_copy,
+                        builder_args.enable_tx_tracking_debug_logs,
+                    );
                     ctx.task_executor.spawn_critical_task("txlogging", task);
                 }
 

@@ -8,22 +8,22 @@ use tracing::debug;
 pub(crate) async fn monitor_tx_pool(
     mut new_transactions: AllTransactionsEvents<FBPooledTransaction>,
     reverted_cache: Cache<B256, ()>,
+    enable_tx_tracking_debug_logs: bool,
 ) {
     while let Some(event) = new_transactions.next().await {
-        transaction_event_log(event, &reverted_cache).await;
+        transaction_event_log(event, &reverted_cache, enable_tx_tracking_debug_logs).await;
     }
 }
 
 async fn transaction_event_log(
     event: FullTransactionEvent<FBPooledTransaction>,
     reverted_cache: &Cache<B256, ()>,
+    enable_tx_tracking_debug_logs: bool,
 ) {
-    if !std::env::var("ENABLE_TX_TRACKING_DEBUG_LOGS")
-        .map(|v| v.eq_ignore_ascii_case("true"))
-        .unwrap_or(false)
-    {
+    if !enable_tx_tracking_debug_logs {
         return;
     }
+
     match event {
         FullTransactionEvent::Pending(hash) => {
             debug!(

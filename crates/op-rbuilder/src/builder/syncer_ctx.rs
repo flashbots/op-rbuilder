@@ -37,6 +37,8 @@ pub(super) struct OpPayloadSyncerCtx {
     backrun_bundle_pool: BackrunBundleGlobalPool,
     /// Backrun bundle configuration
     backrun_bundle_args: BackrunBundleArgs,
+    /// Enable transaction tracking logs
+    enable_tx_tracking_debug_logs: bool,
 }
 
 impl OpPayloadSyncerCtx {
@@ -59,6 +61,7 @@ impl OpPayloadSyncerCtx {
             metrics,
             backrun_bundle_pool: builder_config.backrun_bundle_pool.clone(),
             backrun_bundle_args: builder_config.backrun_bundle_args.clone(),
+            enable_tx_tracking_debug_logs: builder_config.enable_tx_tracking_debug_logs,
         })
     }
 
@@ -72,6 +75,10 @@ impl OpPayloadSyncerCtx {
 
     pub(super) fn max_uncompressed_block_size(&self) -> Option<u64> {
         self.max_uncompressed_block_size
+    }
+
+    pub(super) fn enable_tx_tracking_debug_logs(&self) -> bool {
+        self.enable_tx_tracking_debug_logs
     }
 
     /// Returns true if regolith is active for the payload.
@@ -111,6 +118,7 @@ impl OpPayloadSyncerCtx {
             max_uncompressed_block_size: self.max_uncompressed_block_size,
             address_gas_limiter: AddressGasLimiter::new(GasLimiterArgs::default()),
             backrun_ctx,
+            enable_tx_tracking_debug_logs: self.enable_tx_tracking_debug_logs,
         }
     }
 }

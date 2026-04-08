@@ -78,6 +78,8 @@ pub struct OpPayloadBuilderCtx {
     pub address_gas_limiter: AddressGasLimiter,
     /// Backrun bundles context.
     pub backrun_ctx: BackrunBundlesPayloadCtx,
+    /// Enable tx tracking logs
+    pub enable_tx_tracking_debug_logs: bool,
 }
 
 impl OpPayloadBuilderCtx {
@@ -240,9 +242,7 @@ impl OpPayloadBuilderCtx {
     pub fn chain_id(&self) -> u64 {
         self.chain_spec.chain_id()
     }
-}
 
-impl OpPayloadBuilderCtx {
     /// Constructs a receipt for the given transaction.
     pub fn build_receipt<E: Evm>(
         &self,
@@ -374,9 +374,7 @@ impl OpPayloadBuilderCtx {
 
         Ok(info)
     }
-}
 
-impl OpPayloadBuilderCtx {
     fn record_limit_rejection_metrics(&self, result: &TxnExecutionResult) {
         match result {
             TxnExecutionResult::TransactionDALimitExceeded => {
@@ -425,9 +423,6 @@ impl OpPayloadBuilderCtx {
         let base_fee = self.base_fee();
 
         let tx_da_limit = self.da_config.max_da_tx_size();
-        let enable_tx_trace_logs = std::env::var("ENABLE_TX_TRACKING_DEBUG_LOGS")
-            .map(|v| v.eq_ignore_ascii_case("true"))
-            .unwrap_or(false);
         let mut evm = self.evm_config.evm_with_env(&mut *db, self.evm_env.clone());
 
         debug!(
@@ -455,7 +450,7 @@ impl OpPayloadBuilderCtx {
             let tx_hash = tx.tx_hash();
             let tx_uncompressed_size = tx.encode_2718_len() as u64;
 
-            if enable_tx_trace_logs {
+            if self.enable_tx_tracking_debug_logs {
                 debug!(
                     target: "tx_trace",
                     tx_hash = ?tx_hash,
@@ -576,7 +571,7 @@ impl OpPayloadBuilderCtx {
             // reverted or not, as this is a check against maliciously searchers
             // sending txs that are expensive to compute but always revert.
             let gas_used = result.gas_used();
-            if enable_tx_trace_logs {
+            if self.enable_tx_tracking_debug_logs {
                 debug!(
                     target: "tx_trace",
                     tx_hash = ?tx_hash,
@@ -662,7 +657,7 @@ impl OpPayloadBuilderCtx {
             info.executed_senders.push(tx.signer());
             info.executed_transactions.push(tx.into_inner());
 
-            if enable_tx_trace_logs {
+            if self.enable_tx_tracking_debug_logs {
                 debug!(
                     target: "tx_trace",
                     tx_hash = ?target_hash,

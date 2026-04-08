@@ -364,6 +364,7 @@ where
             max_uncompressed_block_size: self.config.max_uncompressed_block_size,
             address_gas_limiter: self.address_gas_limiter.clone(),
             backrun_ctx,
+            enable_tx_tracking_debug_logs: self.config.enable_tx_tracking_debug_logs,
         })
     }
 
@@ -452,6 +453,7 @@ where
             Some(&mut fb_state),
             &mut info,
             !disable_state_root || ctx.attributes().no_tx_pool, // need to calculate state root for CL sync
+            self.config.enable_tx_tracking_debug_logs,
         )?;
 
         self.built_fb_payload_tx
@@ -478,10 +480,7 @@ where
                 .ws_pub
                 .publish(&fb_payload)
                 .map_err(PayloadBuilderError::other)?;
-            if std::env::var("ENABLE_TX_TRACKING_DEBUG_LOGS")
-                .map(|v| v.eq_ignore_ascii_case("true"))
-                .unwrap_or(false)
-            {
+            if self.config.enable_tx_tracking_debug_logs {
                 debug!(
                     target: "tx_trace",
                     payload_id = %ctx.payload_id(),
@@ -841,6 +840,7 @@ where
             Some(fb_state),
             info,
             !disable_state_root || ctx.attributes().no_tx_pool,
+            self.config.enable_tx_tracking_debug_logs,
         );
         let total_block_built_duration = total_block_built_duration.elapsed();
         ctx.metrics
@@ -868,10 +868,7 @@ where
                     .ws_pub
                     .publish(&fb_payload)
                     .wrap_err("failed to publish flashblock via websocket")?;
-                if std::env::var("ENABLE_TX_TRACKING_DEBUG_LOGS")
-                    .map(|v| v.eq_ignore_ascii_case("true"))
-                    .unwrap_or(false)
-                {
+                if self.config.enable_tx_tracking_debug_logs {
                     debug!(
                         target: "tx_trace",
                         payload_id = %ctx.payload_id(),
@@ -1043,14 +1040,12 @@ pub(super) fn build_block<DB, P>(
     fb_state: Option<&mut FlashblocksState>,
     info: &mut ExecutionInfo,
     calculate_state_root: bool,
+    enable_tx_tracking_debug_logs: bool,
 ) -> Result<(OpBuiltPayload, OpFlashblockPayload), PayloadBuilderError>
 where
     DB: Database<Error = ProviderError> + AsRef<P>,
     P: StateRootProvider + HashedPostStateProvider + StorageRootProvider,
 {
-    let enable_tx_trace_logs = std::env::var("ENABLE_TX_TRACKING_DEBUG_LOGS")
-        .map(|v| v.eq_ignore_ascii_case("true"))
-        .unwrap_or(false);
     // We use it to preserve state, so we run merge_transitions on transition state at most once
     let untouched_transition_state = state.transition_state.clone();
     let state_merge_start_time = Instant::now();
@@ -1063,7 +1058,7 @@ where
         .state_transition_merge_gauge
         .set(state_transition_merge_time);
 
-    if enable_tx_trace_logs {
+    if enable_tx_tracking_debug_logs {
         debug!(
             target: "tx_trace",
             block_number = ctx.block_number(),
@@ -1182,7 +1177,7 @@ where
             "State root calculation completed"
         );
 
-        if enable_tx_trace_logs {
+        if enable_tx_tracking_debug_logs {
             debug!(
                 target: "tx_trace",
                 block_number = ctx.block_number(),
@@ -1310,7 +1305,7 @@ where
 
     let block_hash = sealed_block.hash();
 
-    if enable_tx_trace_logs {
+    if enable_tx_tracking_debug_logs {
         debug!(
             target: "tx_trace",
             block_number = ctx.block_number(),

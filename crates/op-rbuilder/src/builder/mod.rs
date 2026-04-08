@@ -96,6 +96,9 @@ pub struct BuilderConfig {
 
     /// Flashblocks configuration
     pub flashblocks_config: FlashblocksConfig,
+
+    /// Enable transaction tracking logs
+    pub enable_tx_tracking_debug_logs: bool,
 }
 
 impl Default for BuilderConfig {
@@ -115,6 +118,7 @@ impl Default for BuilderConfig {
             backrun_bundle_pool: BackrunBundleGlobalPool::new(false),
             backrun_bundle_args: BackrunBundleArgs::default(),
             flashblocks_config: FlashblocksConfig::default(),
+            enable_tx_tracking_debug_logs: false,
         }
     }
 }
@@ -142,6 +146,7 @@ impl TryFrom<OpRbuilderArgs> for BuilderConfig {
             ),
             backrun_bundle_args: args.backrun_bundle.clone(),
             flashblocks_config,
+            enable_tx_tracking_debug_logs: false,
         })
     }
 }

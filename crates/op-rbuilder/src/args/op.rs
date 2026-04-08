@@ -53,6 +53,17 @@ pub struct OpRbuilderArgs {
     #[arg(long = "builder.enable-revert-protection", default_value = "false")]
     pub enable_revert_protection: bool,
 
+    /// Enables logs to trace transaction lifecycle as it is added to the
+    /// mempool and added to a block. Requires `RUST_LOG=tx_trace=debug` in
+    /// addition to this flag.
+    ///
+    /// Note: this flag can only be set via the env var `ENABLE_TX_TRACKING_DEBUG_LOGS`.
+    ///
+    /// TODO: Remove this flag since it's redundant with just setting
+    /// `RUST_LOG=tx_trace=debug`.
+    #[arg(skip = std::env::var("ENABLE_TX_TRACKING_DEBUG_LOGS").is_ok_and(|v| v.eq_ignore_ascii_case("true")))]
+    pub enable_tx_tracking_debug_logs: bool,
+
     /// Path to builder playgorund to automatically start up the node connected to it
     #[arg(
         long = "builder.playground",
