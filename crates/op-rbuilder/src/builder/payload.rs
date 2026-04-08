@@ -27,7 +27,6 @@ use op_alloy_rpc_types_engine::{
     OpFlashblockPayloadMetadata,
 };
 use reth::payload::PayloadBuilderAttributes;
-use reth_basic_payload_builder::BuildOutcome;
 use reth_chainspec::EthChainSpec;
 use reth_evm::{ConfigureEvm, execute::BlockBuilder};
 use reth_execution_types::BlockExecutionOutput;
@@ -231,8 +230,6 @@ impl FlashblocksState {
     }
 }
 
-// Flashblocks-specific helper methods moved to FlashblocksState
-
 /// Optimism's payload builder
 #[derive(Debug, Clone)]
 pub(super) struct OpPayloadBuilder<Pool, Client, BuilderTx> {
@@ -291,34 +288,6 @@ impl<Pool, Client, BuilderTx> OpPayloadBuilder<Pool, Client, BuilderTx> {
             address_gas_limiter,
             task_metrics,
         }
-    }
-}
-
-impl<Pool, Client, BuilderTx> reth_basic_payload_builder::PayloadBuilder
-    for OpPayloadBuilder<Pool, Client, BuilderTx>
-where
-    Pool: Clone + Send + Sync,
-    Client: Clone + Send + Sync,
-    BuilderTx: Clone + Send + Sync,
-{
-    type Attributes = OpPayloadBuilderAttributes<OpTransactionSigned>;
-    type BuiltPayload = OpBuiltPayload;
-
-    fn try_build(
-        &self,
-        _args: reth_basic_payload_builder::BuildArguments<Self::Attributes, Self::BuiltPayload>,
-    ) -> Result<BuildOutcome<Self::BuiltPayload>, PayloadBuilderError> {
-        unimplemented!()
-    }
-
-    fn build_empty_payload(
-        &self,
-        _config: reth_basic_payload_builder::PayloadConfig<
-            Self::Attributes,
-            reth_basic_payload_builder::HeaderForPayload<Self::BuiltPayload>,
-        >,
-    ) -> Result<Self::BuiltPayload, PayloadBuilderError> {
-        unimplemented!()
     }
 }
 
