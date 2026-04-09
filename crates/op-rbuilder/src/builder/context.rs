@@ -1,11 +1,9 @@
 use alloy_consensus::{Transaction, conditional::BlockConditionalAttributes};
 use alloy_eips::{Encodable2718, Typed2718};
 use alloy_evm::Database;
-use alloy_primitives::{B256, BlockHash, Bytes, U256};
-use alloy_rpc_types_eth::Withdrawals;
+use alloy_primitives::{B256, BlockHash, U256};
 use op_revm::L1BlockInfo;
 use reth_basic_payload_builder::PayloadConfig;
-use reth_chainspec::EthChainSpec;
 use reth_evm::{Evm, EvmError, InvalidTxError, eth::receipt_builder::ReceiptBuilderCtx};
 use reth_node_api::PayloadBuilderError;
 use reth_optimism_chainspec::OpChainSpec;
@@ -136,21 +134,9 @@ impl OpPayloadJobCtx {
         self.parent().hash()
     }
 
-    /// Returns the timestamp
-    pub fn timestamp(&self) -> u64 {
-        self.attributes().timestamp()
-    }
-
     /// Returns the builder attributes.
     pub(super) const fn attributes(&self) -> &OpPayloadBuilderAttributes<OpTransactionSigned> {
         &self.config.attributes
-    }
-
-    /// Returns the withdrawals if shanghai is active.
-    pub fn withdrawals(&self) -> Option<&Withdrawals> {
-        self.hardforks
-            .is_shanghai_active()
-            .then(|| &self.attributes().payload_attributes.withdrawals)
     }
 
     /// Returns the block gas limit to target.
@@ -181,55 +167,6 @@ impl OpPayloadJobCtx {
             .block_env
             .blob_gasprice()
             .map(|gasprice| gasprice as u64)
-    }
-
-    /// Returns the blob fields for the header.
-    ///
-    /// This will return the culmative DA bytes * scalar after Jovian
-    /// after Ecotone, this will always return Some(0) as blobs aren't supported
-    /// pre Ecotone, these fields aren't used.
-    pub fn blob_fields(&self, info: &ExecutionInfo) -> (Option<u64>, Option<u64>) {
-        // For payload validation
-        if let Some(blob_fields) = info.optional_blob_fields {
-            return blob_fields;
-        }
-        // Compute from execution info
-        if self.hardforks.is_jovian_active() {
-            let scalar = info
-                .da_footprint_scalar
-                .expect("Scalar must be defined for Jovian blocks");
-            let result = info.cumulative_da_bytes_used * scalar as u64;
-            (Some(0), Some(result))
-        } else if self.hardforks.is_ecotone_active() {
-            (Some(0), Some(0))
-        } else {
-            (None, None)
-        }
-    }
-
-    /// Returns the extra data for the block.
-    ///
-    /// After holocene this extracts the extradata from the payload
-    pub fn extra_data(&self) -> Result<Bytes, PayloadBuilderError> {
-        if self.hardforks.is_jovian_active() {
-            self.attributes()
-                .get_jovian_extra_data(
-                    self.chain_spec.base_fee_params_at_timestamp(
-                        self.attributes().payload_attributes.timestamp,
-                    ),
-                )
-                .map_err(PayloadBuilderError::other)
-        } else if self.hardforks.is_holocene_active() {
-            self.attributes()
-                .get_holocene_extra_data(
-                    self.chain_spec.base_fee_params_at_timestamp(
-                        self.attributes().payload_attributes.timestamp,
-                    ),
-                )
-                .map_err(PayloadBuilderError::other)
-        } else {
-            Ok(Default::default())
-        }
     }
 
     /// Returns the current fee settings for transactions from the mempool

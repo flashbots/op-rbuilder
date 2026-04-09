@@ -7,7 +7,7 @@ use crate::{
         generator::BlockPayloadJobGenerator,
         p2p::{AGENT_VERSION, FLASHBLOCKS_STREAM_PROTOCOL, Message},
         payload_handler::PayloadHandler,
-        syncer_ctx::OpPayloadSyncerCtx,
+        syncer_config::OpPayloadSyncerConfig,
         wspub::WebSocketPublisher,
     },
     flashtestations::service::bootstrap_flashtestations,
@@ -80,7 +80,7 @@ impl FlashblocksServiceBuilder {
                 .with_protocol(FLASHBLOCKS_STREAM_PROTOCOL)
                 .with_known_peers(known_peers)
                 .with_port(flashblocks_config.p2p_port)
-                .with_cancellation_token(cancel.clone())
+                .with_cancellation_token(cancel)
                 .with_max_peer_count(flashblocks_config.p2p_max_peer_count)
                 .try_build::<Message>()
                 .wrap_err("failed to build flashblocks p2p node")?;
@@ -145,13 +145,9 @@ impl FlashblocksServiceBuilder {
         let (payload_service, payload_builder_handle) =
             PayloadBuilderService::new(payload_generator, ctx.provider().canonical_state_stream());
 
-        let syncer_ctx = OpPayloadSyncerCtx::new(
-            &ctx.provider().clone(),
-            self.0,
-            OpEvmConfig::optimism(ctx.chain_spec()),
-            metrics,
-        )
-        .wrap_err("failed to create flashblocks payload builder context")?;
+        let syncer_config =
+            OpPayloadSyncerConfig::new(self.0, OpEvmConfig::optimism(ctx.chain_spec()))
+                .wrap_err("failed to create flashblocks payload builder context")?;
 
         let payload_handler = PayloadHandler::new(
             built_fb_payload_rx,
@@ -159,10 +155,10 @@ impl FlashblocksServiceBuilder {
             incoming_message_rx,
             outgoing_message_tx,
             payload_service.payload_events_handle(),
-            syncer_ctx,
+            syncer_config,
             ctx.provider().clone(),
             ctx.task_executor().clone(),
-            cancel,
+            metrics,
         );
 
         ctx.task_executor().spawn_critical_task(
