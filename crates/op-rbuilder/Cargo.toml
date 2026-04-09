@@ -36,7 +36,7 @@ reth-node-core.workspace = true
 reth-payload-builder.workspace = true
 reth-payload-primitives.workspace = true
 reth-payload-util.workspace = true
-reth-primitives.workspace = true
+reth-ethereum-primitives.workspace = true
 reth-primitives-traits.workspace = true
 reth-provider.workspace = true
 reth-revm.workspace = true
@@ -45,7 +45,6 @@ reth-rpc-eth-types.workspace = true
 reth-rpc-layer.workspace = true
 reth-storage-api.workspace = true
 reth-tasks.workspace = true
-reth-testing-utils = { workspace = true, optional = true }
 reth-tracing-otlp = { workspace = true, optional = true }
 reth-transaction-pool.workspace = true
 reth-trie.workspace = true
@@ -151,7 +150,6 @@ macros = { path = "../op-rbuilder-test-macros" }
 alloy-provider = { workspace = true, default-features = true, features = [
     "txpool-api",
 ] }
-reth-testing-utils.workspace = true
 tempfile.workspace = true
 testcontainers.workspace = true
 nanoid.workspace = true
@@ -188,7 +186,6 @@ testing = [
     "nanoid",
     "reth-ipc",
     "reth-node-builder/test-utils",
-    "reth-testing-utils",
     "testcontainers",
     "ctor",
     "macros",

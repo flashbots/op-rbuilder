@@ -5,13 +5,11 @@ use alloy_op_evm::block::receipt_builder::OpReceiptBuilder;
 use alloy_primitives::{B256, BlockHash, Bytes, U256};
 use alloy_rpc_types_eth::Withdrawals;
 use op_alloy_consensus::{OpDepositReceipt, OpTxType};
-use op_revm::OpTransactionError;
-use reth::payload::PayloadBuilderAttributes;
+use op_revm::L1BlockInfo;
 use reth_basic_payload_builder::PayloadConfig;
 use reth_chainspec::{EthChainSpec, EthereumHardforks};
 use reth_evm::{
     ConfigureEvm, Evm, EvmError, InvalidTxError, eth::receipt_builder::ReceiptBuilderCtx,
-    op_revm::L1BlockInfo,
 };
 use reth_node_api::PayloadBuilderError;
 use reth_optimism_chainspec::OpChainSpec;
@@ -29,14 +27,11 @@ use reth_optimism_txpool::{
     interop::{MaybeInteropTransaction, is_valid_interop},
 };
 use reth_payload_builder::PayloadId;
-use reth_primitives::SealedHeader;
-use reth_primitives_traits::{InMemorySize, SignedTransaction};
+use reth_primitives_traits::{InMemorySize, SealedHeader, SignedTransaction};
 use reth_revm::{State, context::Block};
 use reth_transaction_pool::{BestTransactionsAttributes, PoolTransaction};
 use revm::{
-    Database as _, DatabaseCommit,
-    context::result::{InvalidTransaction, ResultAndState},
-    interpreter::as_u64_saturated,
+    Database as _, DatabaseCommit, context::result::ResultAndState, interpreter::as_u64_saturated,
 };
 use std::{sync::Arc, time::Instant};
 use tokio_util::sync::CancellationToken;
@@ -110,7 +105,7 @@ impl OpPayloadBuilderCtx {
     pub fn withdrawals(&self) -> Option<&Withdrawals> {
         self.chain_spec
             .is_shanghai_active_at_timestamp(self.attributes().timestamp())
-            .then(|| &self.attributes().payload_attributes.withdrawals)
+            .then(|| &self.attributes().withdrawals)
     }
 
     /// Returns the block gas limit to target.
@@ -174,17 +169,15 @@ impl OpPayloadBuilderCtx {
         if self.is_jovian_active() {
             self.attributes()
                 .get_jovian_extra_data(
-                    self.chain_spec.base_fee_params_at_timestamp(
-                        self.attributes().payload_attributes.timestamp,
-                    ),
+                    self.chain_spec
+                        .base_fee_params_at_timestamp(self.attributes().timestamp),
                 )
                 .map_err(PayloadBuilderError::other)
         } else if self.is_holocene_active() {
             self.attributes()
                 .get_holocene_extra_data(
-                    self.chain_spec.base_fee_params_at_timestamp(
-                        self.attributes().payload_attributes.timestamp,
-                    ),
+                    self.chain_spec
+                        .base_fee_params_at_timestamp(self.attributes().timestamp),
                 )
                 .map_err(PayloadBuilderError::other)
         } else {
@@ -562,7 +555,7 @@ impl OpPayloadBuilderCtx {
                         } else {
                             // if the transaction is invalid, we can skip it and all of its
                             // descendants
-                            log_txn(TxnExecutionResult::InternalError(err.clone()));
+                            log_txn(TxnExecutionResult::InternalError(err.to_string()));
                             trace!(
                                 target: "payload_builder",
                                 error = %err,
@@ -779,9 +772,9 @@ impl OpPayloadBuilderCtx {
                     let Some(backrun_priority_fee) =
                         bundle.backrun_tx.effective_tip_per_gas(base_fee)
                     else {
-                        log_br_txn(TxnExecutionResult::InternalError(OpTransactionError::Base(
-                            InvalidTransaction::GasPriceLessThanBasefee,
-                        )));
+                        log_br_txn(TxnExecutionResult::InternalError(
+                            "gas price less than base fee".to_string(),
+                        ));
                         continue;
                     };
 
@@ -839,7 +832,7 @@ impl OpPayloadBuilderCtx {
                         Ok(res) => res,
                         Err(err) => {
                             if let Some(err) = err.as_invalid_tx_err() {
-                                log_br_txn(TxnExecutionResult::InternalError(err.clone()));
+                                log_br_txn(TxnExecutionResult::InternalError(err.to_string()));
                             } else {
                                 log_br_txn(TxnExecutionResult::EvmError);
                             }

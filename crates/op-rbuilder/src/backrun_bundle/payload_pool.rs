@@ -2,7 +2,7 @@ use alloy_consensus::Transaction;
 use alloy_primitives::{Address, B256, U256};
 use dashmap::DashMap;
 use reth_optimism_primitives::OpTransactionSigned;
-use reth_primitives::Recovered;
+use reth_primitives_traits::Recovered;
 use revm::state::AccountInfo;
 use std::{
     cmp::Ordering,

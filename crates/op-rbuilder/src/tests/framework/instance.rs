@@ -354,8 +354,7 @@ fn chain_spec() -> Arc<OpChainSpec> {
 }
 
 fn task_runtime() -> TaskRuntime {
-    TaskRuntime::with_existing_handle(tokio::runtime::Handle::current())
-        .expect("failed to create task runtime")
+    TaskRuntime::test()
 }
 
 fn pool_component(args: &OpRbuilderArgs) -> OpPoolBuilder<FBPooledTransaction> {
