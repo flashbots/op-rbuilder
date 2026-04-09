@@ -186,19 +186,6 @@ min-info-logs = ["tracing/release_max_level_info"]
 min-debug-logs = ["tracing/release_max_level_debug"]
 min-trace-logs = ["tracing/release_max_level_trace"]
 
-testing = [
-    "nanoid",
-    "reth-ipc",
-    "reth-node-builder/test-utils",
-    "testcontainers",
-    "ctor",
-    "macros",
-    "rlimit",
-    "hyper",
-    "hyper-util",
-    "http-body-util",
-]
-
 telemetry = ["reth-tracing-otlp", "opentelemetry"]
 loki = ["tracing-loki", "telemetry"]
 
@@ -209,7 +196,3 @@ harness = false
 [[bin]]
 name = "op-rbuilder"
 path = "src/bin/op-rbuilder/main.rs"
-
-[[bin]]
-name = "tester"
-required-features = ["testing"]

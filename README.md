@@ -97,32 +97,15 @@ Default `debug` level trace logs can be found at:
 - `~/Library/Caches/op-rbuilder/logs` on macOS
 - `%localAppData%/op-rbuilder/logs` on Windows
 
-## Integration Testing
+## Testing
 
-op-rbuilder has an integration test framework that runs the builder against mock engine api payloads and ensures that the builder produces valid blocks.
-
-You can run the tests using the command
+You can run op-rbuilder's test suite using the command
 
 ```bash
-just run-tests
+make test
 ```
 
-or the following sequence:
-
-```bash
-# Ensure you have op-reth installed in your path,
-# you can download it with the command below and move it to a location in your path
-./scripts/ci/download-op-reth.sh
-
-# Generate a genesis file
-cargo run -p op-rbuilder --features="testing" --bin tester -- genesis --output genesis.json
-
-# Build the op-rbuilder binary
-cargo build -p op-rbuilder --bin op-rbuilder
-
-# Run the integration tests
-cargo test --package op-rbuilder --lib
-```
+This runs both unit tests and integration tests.
 
 ## Local Devnet
 

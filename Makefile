@@ -69,10 +69,6 @@ build-reproducible: ## Build the reth binary into `target` directory with reprod
 tdx-quote-provider: ## Build tdx-quote-provider (debug version)
 	cargo build -p tdx-quote-provider --bin tdx-quote-provider --features "$(FEATURES)"
 
-.PHONY: tester
-tester: ## Build tester (debug version)
-	cargo build -p op-rbuilder --bin tester --features "testing,$(FEATURES)"
-
 .PHONY: docker-image-rbuilder
 docker-image-rbuilder: ## Build a rbuilder Docker image
 	docker build --platform linux/amd64 --target rbuilder-runtime --build-arg FEATURES="$(FEATURES)"  . -t rbuilder
@@ -85,7 +81,7 @@ lint: ## Run the linters
 	cargo +nightly clippy --all-targets --all-features -- -D warnings
 
 .PHONY: test
-test: ## Run the tests for rbuilder and op-rbuilder
+test: ## Run the tests for op-rbuilder
 	cargo nextest run --workspace --all-targets --all-features --retries 2
 
 .PHONY: lt
