@@ -13,7 +13,7 @@ use crate::tx::MaybeFlashblockFilter;
 /// - Reverted txs aren't re-simulated (would waste work).
 ///
 /// A fresh instance is created per block, so exclusions do not leak between blocks.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub(super) struct FlashblockTxCache {
     /// Transactions already committed to state.
     committed: HashSet<TxHash>,

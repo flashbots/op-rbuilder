@@ -191,6 +191,15 @@ pub struct OpRBuilderMetrics {
     pub backrun_transaction_processing_duration: Histogram,
     /// Latest backrun transaction processing duration
     pub backrun_transaction_processing_gauge: Gauge,
+    /// Duration the continuous builder ran before being interrupted/completing
+    pub continuous_build_duration: Histogram,
+    /// How stale the best candidate was when published (time since sealed)
+    /// A high stale value can either mean no improvement in new candidates or slow candidate building
+    pub candidate_staleness: Histogram,
+    /// Number of candidates evaluated per flashblock interval
+    pub continuous_candidates_evaluated: Histogram,
+    /// Number of candidates that improved the latest best candidate
+    pub continuous_candidates_improved: Histogram,
     /// Builds completed but not published due to resolved gate
     pub flashblock_publish_suppressed_total: Counter,
     /// Payload job ended because getPayload resolved

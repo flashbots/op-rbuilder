@@ -54,10 +54,22 @@ use reth_tasks::Runtime;
 use reth_transaction_pool::TransactionPool;
 use reth_trie::{HashedPostState, updates::TrieUpdates};
 use revm::Database;
-use std::{collections::BTreeMap, ops::Deref, sync::Arc, time::Instant};
+use std::{
+    collections::BTreeMap,
+    ops::Deref,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
+    time::{Duration, Instant},
+};
 use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, info_span, metadata::Level, span, warn};
+
+#[path = "continuous.rs"]
+mod continuous;
+use continuous::ContinuousBuildState;
 
 /// Converts a reth OpReceipt to an op-alloy OpReceipt
 /// TODO: remove this once reth updates to use the op-alloy defined type as well.
@@ -304,6 +316,8 @@ pub(super) struct OpPayloadBuilderInner<Pool, Client, BuilderTx> {
     address_gas_limiter: AddressGasLimiter,
     /// Tokio task metrics for monitoring spawned tasks
     task_metrics: Arc<FlashblocksTaskMetrics>,
+    /// Monotonic epoch that advances on pool mutations.
+    pool_change_epoch: Arc<AtomicU64>,
     /// Task executor used to offload blocking work.
     executor: Runtime,
 }
@@ -337,6 +351,7 @@ impl<Pool, Client, BuilderTx> OpPayloadBuilder<Pool, Client, BuilderTx> {
         ws_pub: WebSocketPublisher,
         metrics: Arc<OpRBuilderMetrics>,
         task_metrics: Arc<FlashblocksTaskMetrics>,
+        pool_change_epoch: Arc<AtomicU64>,
         executor: Runtime,
     ) -> Self {
         let address_gas_limiter = AddressGasLimiter::new(config.gas_limiter_config.clone());
@@ -353,6 +368,7 @@ impl<Pool, Client, BuilderTx> OpPayloadBuilder<Pool, Client, BuilderTx> {
                 builder_tx,
                 address_gas_limiter,
                 task_metrics,
+                pool_change_epoch,
                 executor,
             }),
         }
@@ -661,6 +677,28 @@ where
         // and reconstruct State<DB> inside each sync scope.
         let mut tx_cache = FlashblockTxCache::default();
         let parent_hash = ctx.parent_hash();
+
+        // Gate: continuous build mode
+        if self.config.flashblocks_config.continuous_build {
+            return self
+                .run_continuous_flashblocks(
+                    &span,
+                    &best_payload_tx,
+                    &payload_cancel,
+                    target_flashblocks,
+                    parent_hash,
+                    rx,
+                    ContinuousBuildState {
+                        ctx,
+                        info,
+                        cache,
+                        transition,
+                        tx_cache,
+                        fb_state,
+                    },
+                )
+                .await;
+        }
 
         // State machine: explicit select! at every phase for deterministic cancellation.
         loop {
