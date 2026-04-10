@@ -312,8 +312,8 @@ mod tests {
         // BTreeSet iteration: highest fee first
         #[allow(clippy::mutable_key_type)]
         let mut set = BTreeSet::new();
-        set.insert(low.clone());
-        set.insert(high.clone());
+        set.insert(low);
+        set.insert(high);
         let fees: Vec<_> = set
             .iter()
             .map(|o| o.bundle.estimated_effective_priority_fee)
@@ -339,8 +339,8 @@ mod tests {
             .build();
 
         pool.add_bundle(b1.clone());
-        pool.add_bundle(b2.clone());
-        pool.add_bundle(b3.clone());
+        pool.add_bundle(b2);
+        pool.add_bundle(b3);
 
         // per_tx_bundle_counts
         let mut counts: Vec<_> = pool.per_tx_bundle_counts().collect();
