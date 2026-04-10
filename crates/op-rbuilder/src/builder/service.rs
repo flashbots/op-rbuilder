@@ -143,6 +143,8 @@ impl FlashblocksServiceBuilder {
             payload_builder,
             true,
             self.0.block_time_leeway,
+            self.0.block_time,
+            metrics.clone(),
         );
 
         let (payload_service, payload_builder_handle) =

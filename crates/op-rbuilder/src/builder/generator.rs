@@ -81,6 +81,10 @@ pub(super) struct BlockPayloadJobGenerator<Client, Tasks, Builder> {
     extra_block_deadline: std::time::Duration,
     /// Stored `cached_reads` for new payload jobs.
     pre_cached: Option<PrecachedState>,
+    /// The configured block time
+    block_time: std::time::Duration,
+    /// Metrics for recording telemetry
+    metrics: Arc<crate::metrics::OpRBuilderMetrics>,
 }
 
 // === impl EmptyBlockPayloadJobGenerator ===
@@ -88,6 +92,7 @@ pub(super) struct BlockPayloadJobGenerator<Client, Tasks, Builder> {
 impl<Client, Tasks, Builder> BlockPayloadJobGenerator<Client, Tasks, Builder> {
     /// Creates a new [EmptyBlockPayloadJobGenerator] with the given config and custom
     /// [PayloadBuilder]
+    #[expect(clippy::too_many_arguments)]
     pub(super) fn with_builder(
         client: Client,
         executor: Tasks,
@@ -95,6 +100,8 @@ impl<Client, Tasks, Builder> BlockPayloadJobGenerator<Client, Tasks, Builder> {
         builder: Builder,
         ensure_only_one_payload: bool,
         extra_block_deadline: std::time::Duration,
+        block_time: std::time::Duration,
+        metrics: Arc<crate::metrics::OpRBuilderMetrics>,
     ) -> Self {
         Self {
             client,
@@ -105,6 +112,8 @@ impl<Client, Tasks, Builder> BlockPayloadJobGenerator<Client, Tasks, Builder> {
             last_payload: Arc::new(Mutex::new(CancellationToken::new())),
             extra_block_deadline,
             pre_cached: None,
+            block_time,
+            metrics,
         }
     }
 
@@ -139,6 +148,21 @@ where
         &self,
         attributes: <Builder as PayloadBuilder>::Attributes,
     ) -> Result<Self::Job, PayloadBuilderError> {
+        // Calculate and record FCU arrival delay metric in milliseconds
+        // Expected: FCU should arrive at (payload_timestamp - block_time)
+        // Positive delay = FCU arrived late, Negative = FCU arrived early
+        let timestamp = attributes.timestamp();
+        let now = SystemTime::now();
+        let expected_fcu_arrival =
+            SystemTime::UNIX_EPOCH + Duration::from_secs(timestamp) - self.block_time;
+        let fcu_arrival_delay_ms = now
+            .duration_since(expected_fcu_arrival)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or_else(|e| -(e.duration().as_millis() as i64));
+        self.metrics
+            .fcu_arrival_delay
+            .record(fcu_arrival_delay_ms as f64);
+
         let cancel_token = if self.ensure_only_one_payload {
             // Cancel existing payload
             {
@@ -168,7 +192,11 @@ where
                 .ok_or_else(|| PayloadBuilderError::MissingParentBlock(attributes.parent()))?
         };
 
-        info!("Spawn block building job");
+        info!(
+            target: "payload_builder",
+            id = %attributes.payload_id(),
+            "Spawn block building job",
+        );
 
         // The deadline is critical for payload availability. If we reach the deadline,
         // the payload job stops and cannot be queried again. With tight deadlines close
@@ -683,6 +711,8 @@ mod tests {
             builder.clone(),
             false,
             std::time::Duration::from_secs(1),
+            std::time::Duration::from_secs(2),
+            Arc::new(crate::metrics::OpRBuilderMetrics::default()),
         );
 
         // this is not nice but necessary
