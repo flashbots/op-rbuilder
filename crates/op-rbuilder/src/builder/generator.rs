@@ -9,8 +9,7 @@ use reth_payload_builder::{
     BuildNewPayload, KeepPayloadJobAlive, PayloadBuilderError, PayloadId, PayloadJob,
     PayloadJobGenerator,
 };
-use reth_payload_primitives::BuiltPayload;
-use reth_payload_primitives::PayloadAttributes;
+use reth_payload_primitives::{BuiltPayload, PayloadAttributes};
 use reth_primitives_traits::HeaderTy;
 use reth_provider::CanonStateNotification;
 use reth_revm::cached::CachedReads;
@@ -450,15 +449,6 @@ fn job_deadline(unix_timestamp_secs: u64) -> std::time::Duration {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_eips::eip7685::Requests;
-    use alloy_primitives::U256;
-    use reth_node_api::NodePrimitives;
-    use reth_optimism_payload_builder::{
-        OpPayloadAttrs, OpPayloadPrimitives, payload::OpPayloadBuilderAttributes,
-    };
-    use reth_optimism_primitives::OpPrimitives;
-    use reth_payload_primitives::BuiltPayloadExecutedBlock;
-    use reth_primitives_traits::SealedBlock;
     use tokio::{
         task,
         time::{Duration, sleep},
@@ -529,100 +519,6 @@ mod tests {
         // Waiter should get the latest value
         let result = cell.wait_for_value().await;
         assert_eq!(result, 43);
-    }
-
-    #[derive(Debug, Clone)]
-    struct MockBuilder<N> {
-        events: Arc<Mutex<Vec<BlockEvent>>>,
-        _marker: std::marker::PhantomData<N>,
-    }
-
-    impl<N> MockBuilder<N> {
-        fn new() -> Self {
-            Self {
-                events: Arc::new(Mutex::new(vec![])),
-                _marker: std::marker::PhantomData,
-            }
-        }
-
-        fn new_event(&self, event: BlockEvent) {
-            let mut events = self.events.lock().unwrap();
-            events.push(event);
-        }
-
-        fn get_events(&self) -> Vec<BlockEvent> {
-            let mut events = self.events.lock().unwrap();
-            std::mem::take(&mut *events)
-        }
-    }
-
-    #[derive(Clone, Debug, Default)]
-    struct MockPayload;
-
-    impl BuiltPayload for MockPayload {
-        type Primitives = OpPrimitives;
-
-        fn block(&self) -> &SealedBlock<<Self::Primitives as NodePrimitives>::Block> {
-            unimplemented!()
-        }
-
-        /// Returns the fees collected for the built block
-        fn fees(&self) -> U256 {
-            unimplemented!()
-        }
-
-        /// Returns the entire execution data for the built block, if available.
-        fn executed_block(&self) -> Option<BuiltPayloadExecutedBlock<Self::Primitives>> {
-            None
-        }
-
-        /// Returns the EIP-7865 requests for the payload if any.
-        fn requests(&self) -> Option<Requests> {
-            unimplemented!()
-        }
-    }
-
-    #[derive(Debug, PartialEq, Clone)]
-    enum BlockEvent {
-        Started,
-        Cancelled,
-    }
-
-    #[async_trait::async_trait]
-    impl<N> PayloadBuilder for MockBuilder<N>
-    where
-        N: OpPayloadPrimitives,
-    {
-        type RpcAttributes = OpPayloadAttrs;
-        type Attributes = OpPayloadBuilderAttributes<N::SignedTx>;
-        type BuiltPayload = MockPayload;
-
-        fn from_rpc_attrs(
-            parent: B256,
-            id: PayloadId,
-            attrs: Self::RpcAttributes,
-        ) -> Result<Self::Attributes, PayloadBuilderError> {
-            OpPayloadBuilderAttributes::from_rpc_attrs(parent, id, attrs.0)
-                .map_err(|e| PayloadBuilderError::Other(Box::new(e)))
-        }
-
-        fn try_build(
-            &self,
-            args: BuildArguments<Self::Attributes, Self::BuiltPayload>,
-            _best_payload: BlockCell<Self::BuiltPayload>,
-        ) -> Result<(), PayloadBuilderError> {
-            self.new_event(BlockEvent::Started);
-
-            loop {
-                if args.cancel.is_cancelled() {
-                    self.new_event(BlockEvent::Cancelled);
-                    return Ok(());
-                }
-
-                // Small sleep to prevent tight loop
-                std::thread::sleep(Duration::from_millis(10));
-            }
-        }
     }
 
     #[tokio::test]
