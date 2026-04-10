@@ -16,7 +16,7 @@
 
 use alloy_primitives::{Address, B256, U256, keccak256};
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
-use op_rbuilder::builder::state_root::StateRootCalculator;
+use op_rbuilder::builder::StateRootCalculator;
 use rand::{Rng, SeedableRng, rngs::StdRng};
 use reth_chainspec::MAINNET;
 use reth_primitives_traits::Account;

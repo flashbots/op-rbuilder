@@ -1107,9 +1107,10 @@ where
 
         hashed_state = state_provider.hashed_post_state(&state.bundle_state);
 
+        let mut default_calc = StateRootCalculator::default();
         let calc = match fb_state.as_deref_mut() {
             Some(s) => &mut s.state_root_calculator,
-            None => &mut StateRootCalculator::default(),
+            None => &mut default_calc,
         };
 
         debug!(
@@ -1155,7 +1156,7 @@ where
                 block_number = ctx.block_number(),
                 flashblock_index = flashblock_index_for_trace,
                 duration_ms = state_root_calculation_time.as_millis() as u64,
-                incremental = fb_state.as_deref().and_then(|s| s.prev_trie_updates.as_ref()).is_some(),
+                incremental = fb_state.as_deref().is_some_and(|s| s.state_root_calculator.has_cached_trie()),
                 cumulative_gas = info.cumulative_gas_used,
                 num_txs = info.executed_transactions.len(),
                 stage = "state_root_computed"
@@ -1253,9 +1254,7 @@ where
         recovered_block: Arc::new(recovered_block),
         execution_output: Arc::new(execution_output),
         trie_updates: either::Either::Left(
-            trie_updates_to_cache
-                .clone()
-                .unwrap_or_else(|| Arc::new(TrieUpdates::default())),
+            trie_updates_to_cache.unwrap_or_else(|| Arc::new(TrieUpdates::default())),
         ),
         hashed_state: either::Either::Left(Arc::new(hashed_state)),
     };

@@ -671,11 +671,12 @@ async fn test_incremental_state_root(rbuilder: LocalInstance) -> eyre::Result<()
     }
 
     let flashblocks = flashblocks_listener.get_flashblocks();
-    // 3 blocks × ~5 flashblocks each (1000ms / 200ms)
+    // 3 blocks × 6 flashblocks each: 1 base/fallback (index 0) + 5 incremental
+    // flashblocks (1000ms / 200ms).
     assert_eq!(
-        15,
+        18,
         flashblocks.len(),
-        "Expected 15 flashblocks across 3 blocks, got {}",
+        "Expected 18 flashblocks across 3 blocks, got {}",
         flashblocks.len()
     );
 

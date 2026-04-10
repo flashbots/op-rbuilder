@@ -46,11 +46,6 @@ impl StateRootCalculator {
         }
     }
 
-    /// Whether this calculator uses incremental computation.
-    pub fn is_incremental(&self) -> bool {
-        self.incremental
-    }
-
     /// Whether the next [`Self::compute`] call will use cached trie state.
     pub fn has_cached_trie(&self) -> bool {
         self.prev_trie_updates.is_some()
@@ -67,9 +62,9 @@ impl StateRootCalculator {
         let (state_root, trie_updates, cumulative_prefix_sets) = if let Some(prev_trie) =
             &self.prev_trie_updates
         {
-            // Incremental path: extend current prefix sets with cumulative sets
-            // from all prior flashblocks so the walker re-visits every modified
-            // path, even if a slot reverted.
+            // Extend current prefix sets with cumulative sets from all prior
+            // flashblocks so the walker re-visits every previously modified
+            // path, even if a slot reverted to its original value.
             let mut prefix_sets = hashed_state.construct_prefix_sets();
             if let Some(prev_sets) = self.cumulative_prefix_sets.take() {
                 prefix_sets.extend(prev_sets);
@@ -82,7 +77,9 @@ impl StateRootCalculator {
 
             (state_root, trie_updates, Some(cumulative))
         } else {
-            // Full path: compute from scratch.
+            // No cached trie: compute from scratch. Seed the cumulative
+            // prefix sets when incremental mode is enabled so the next call
+            // can build on this result.
             let (state_root, trie_updates) =
                 state_provider.state_root_with_updates(hashed_state.clone())?;
 
@@ -139,12 +136,16 @@ mod tests {
         }
     }
 
-    /// Simulates two flashblocks with a populated trie (DB has branch nodes from prior
-    /// blocks) and returns (full_root, incremental_root).
-    fn simulate_flashblocks_with_trie(
+    /// Simulates two flashblocks and returns (full_root, incremental_root).
+    ///
+    /// When `populate_trie` is true, the DB is seeded with branch nodes from a
+    /// prior trie computation (mimicking a node that has been running for a
+    /// while). When false, only hashed account/storage rows are inserted.
+    fn simulate_flashblocks(
         initial_accounts: &[InitialAccount],
         fb1_state: HashedPostState,
         fb2_cumulative_state: HashedPostState,
+        populate_trie: bool,
     ) -> (B256, B256) {
         let factory = create_test_provider_factory();
         let tx = factory.provider_rw().unwrap();
@@ -153,24 +154,27 @@ mod tests {
             insert_account(tx.tx_ref(), *hashed_address, *account, storage);
         }
 
-        // Populate storage trie tables
-        for (hashed_address, _, _) in initial_accounts {
-            let (_, _, storage_updates) =
-                reth_trie::StorageRoot::from_tx_hashed(tx.tx_ref(), *hashed_address)
-                    .root_with_updates()
-                    .unwrap();
-            let sorted_updates = storage_updates.into_sorted();
-            tx.write_storage_trie_updates_sorted(core::iter::once((
-                hashed_address,
-                &sorted_updates,
-            )))
-            .unwrap();
+        if populate_trie {
+            // Populate storage trie tables
+            for (hashed_address, _, _) in initial_accounts {
+                let (_, _, storage_updates) =
+                    reth_trie::StorageRoot::from_tx_hashed(tx.tx_ref(), *hashed_address)
+                        .root_with_updates()
+                        .unwrap();
+                let sorted_updates = storage_updates.into_sorted();
+                tx.write_storage_trie_updates_sorted(core::iter::once((
+                    hashed_address,
+                    &sorted_updates,
+                )))
+                .unwrap();
+            }
+
+            // Populate account trie table
+            let (_initial_root, account_trie_updates) =
+                StateRoot::from_tx(tx.tx_ref()).root_with_updates().unwrap();
+            tx.write_trie_updates(account_trie_updates).unwrap();
         }
 
-        // Populate account trie table
-        let (_initial_root, account_trie_updates) =
-            StateRoot::from_tx(tx.tx_ref()).root_with_updates().unwrap();
-        tx.write_trie_updates(account_trie_updates).unwrap();
         tx.commit().unwrap();
 
         // Full (ground truth): fresh calculator, single call
@@ -181,42 +185,6 @@ mod tests {
             .unwrap();
 
         // Incremental: calculator across both flashblocks
-        let mut calc = StateRootCalculator::new(true);
-
-        let provider = factory.database_provider_ro().unwrap();
-        let latest = LatestStateProvider::new(provider);
-        calc.compute(&latest, fb1_state).unwrap();
-
-        let provider = factory.database_provider_ro().unwrap();
-        let latest = LatestStateProvider::new(provider);
-        let incremental = calc.compute(&latest, fb2_cumulative_state).unwrap();
-
-        (full.state_root, incremental.state_root)
-    }
-
-    /// Simulates two flashblocks WITHOUT a populated trie and returns
-    /// (full_root, incremental_root).
-    fn simulate_flashblocks(
-        initial_accounts: &[InitialAccount],
-        fb1_state: HashedPostState,
-        fb2_cumulative_state: HashedPostState,
-    ) -> (B256, B256) {
-        let factory = create_test_provider_factory();
-        let tx = factory.provider_rw().unwrap();
-
-        for (hashed_address, account, storage) in initial_accounts {
-            insert_account(tx.tx_ref(), *hashed_address, *account, storage);
-        }
-        tx.commit().unwrap();
-
-        // Full (ground truth)
-        let provider = factory.database_provider_ro().unwrap();
-        let latest = LatestStateProvider::new(provider);
-        let full = StateRootCalculator::new(false)
-            .compute(&latest, fb2_cumulative_state.clone())
-            .unwrap();
-
-        // Incremental
         let mut calc = StateRootCalculator::new(true);
 
         let provider = factory.database_provider_ro().unwrap();
@@ -279,7 +247,7 @@ mod tests {
         );
 
         let (full, incremental) =
-            simulate_flashblocks_with_trie(&initial_accounts, fb1_state, fb2_cumulative);
+            simulate_flashblocks(&initial_accounts, fb1_state, fb2_cumulative, true);
         assert_eq!(
             full, incremental,
             "incremental state root diverges from ground truth. \
@@ -387,7 +355,7 @@ mod tests {
             }
 
             let (full, incremental) =
-                simulate_flashblocks(&initial_accounts, fb1_state, fb2_cumulative);
+                simulate_flashblocks(&initial_accounts, fb1_state, fb2_cumulative, false);
             prop_assert_eq!(
                 full, incremental,
                 "Fuzz: incremental diverged from full (seed={})", seed
