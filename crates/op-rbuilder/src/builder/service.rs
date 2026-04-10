@@ -130,7 +130,7 @@ impl FlashblocksServiceBuilder {
             builder_tx,
             built_fb_payload_tx,
             built_payload_tx,
-            ws_pub.clone(),
+            ws_pub,
             metrics.clone(),
             task_metrics.clone(),
         );
@@ -143,6 +143,8 @@ impl FlashblocksServiceBuilder {
             payload_builder,
             true,
             self.0.block_time_leeway,
+            self.0.block_time,
+            metrics.clone(),
         );
 
         let (payload_service, payload_builder_handle) =
@@ -152,7 +154,7 @@ impl FlashblocksServiceBuilder {
             &ctx.provider().clone(),
             self.0,
             OpEvmConfig::optimism(ctx.chain_spec()),
-            metrics.clone(),
+            metrics,
         )
         .wrap_err("failed to create flashblocks payload builder context")?;
 
@@ -186,9 +188,7 @@ impl FlashblocksServiceBuilder {
         );
 
         // Spawn the tokio metrics collector (records metrics every second)
-        task_metrics
-            .clone()
-            .spawn_metrics_collector(Duration::from_secs(1));
+        task_metrics.spawn_metrics_collector(Duration::from_secs(1));
 
         info!(target: "payload_builder", "Flashblocks payload builder service started");
         Ok(payload_builder_handle)

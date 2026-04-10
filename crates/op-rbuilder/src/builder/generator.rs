@@ -78,6 +78,10 @@ pub(super) struct BlockPayloadJobGenerator<Client, Builder> {
     extra_block_deadline: std::time::Duration,
     /// Stored `cached_reads` for new payload jobs.
     pre_cached: Option<PrecachedState>,
+    /// The configured block time
+    block_time: std::time::Duration,
+    /// Metrics for recording telemetry
+    metrics: Arc<crate::metrics::OpRBuilderMetrics>,
 }
 
 // === impl EmptyBlockPayloadJobGenerator ===
@@ -85,6 +89,7 @@ pub(super) struct BlockPayloadJobGenerator<Client, Builder> {
 impl<Client, Builder> BlockPayloadJobGenerator<Client, Builder> {
     /// Creates a new [EmptyBlockPayloadJobGenerator] with the given config and custom
     /// [PayloadBuilder]
+    #[expect(clippy::too_many_arguments)]
     pub(super) fn with_builder(
         client: Client,
         executor: Runtime,
@@ -92,6 +97,8 @@ impl<Client, Builder> BlockPayloadJobGenerator<Client, Builder> {
         builder: Builder,
         ensure_only_one_payload: bool,
         extra_block_deadline: std::time::Duration,
+        block_time: std::time::Duration,
+        metrics: Arc<crate::metrics::OpRBuilderMetrics>,
     ) -> Self {
         Self {
             client,
@@ -102,6 +109,8 @@ impl<Client, Builder> BlockPayloadJobGenerator<Client, Builder> {
             last_payload: Arc::new(Mutex::new(CancellationToken::new())),
             extra_block_deadline,
             pre_cached: None,
+            block_time,
+            metrics,
         }
     }
 
@@ -141,6 +150,21 @@ where
         // Convert RPC attributes to builder attributes
         let builder_attributes = Builder::from_rpc_attrs(parent_hash, id, build.attributes)?;
 
+        // Calculate and record FCU arrival delay metric in milliseconds
+        // Expected: FCU should arrive at (payload_timestamp - block_time)
+        // Positive delay = FCU arrived late, Negative = FCU arrived early
+        let timestamp = rpc_attributes.timestamp();
+        let now = SystemTime::now();
+        let expected_fcu_arrival =
+            SystemTime::UNIX_EPOCH + Duration::from_secs(timestamp) - self.block_time;
+        let fcu_arrival_delay_ms = now
+            .duration_since(expected_fcu_arrival)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or_else(|e| -(e.duration().as_millis() as i64));
+        self.metrics
+            .fcu_arrival_delay
+            .record(fcu_arrival_delay_ms as f64);
+
         let cancel_token = if self.ensure_only_one_payload {
             // Cancel existing payload
             {
@@ -170,7 +194,11 @@ where
                 .ok_or_else(|| PayloadBuilderError::MissingParentBlock(parent_hash))?
         };
 
-        info!("Spawn block building job");
+        info!(
+            target: "payload_builder",
+            id = %id,
+            "Spawn block building job",
+        );
 
         let deadline = job_deadline(rpc_attributes.timestamp()) + self.extra_block_deadline;
 
@@ -543,7 +571,8 @@ mod tests {
         assert_eq!(deadline, Duration::from_secs(1));
     }
 
-    // TODO: Re-enable after adapting to reth 2.0 APIs (reth_testing_utils removed)
+    // TODO: Re-enable after adapting to reth 2.0 APIs (reth_testing_utils removed,
+    // new_payload_job signature changed to take BuildNewPayload<RpcAttributes>).
     // #[tokio::test]
     // async fn test_payload_generator() { ... }
 }

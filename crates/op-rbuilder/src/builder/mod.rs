@@ -144,7 +144,7 @@ impl TryFrom<OpRbuilderArgs> for BuilderConfig {
             backrun_bundle_pool: BackrunBundleGlobalPool::new(
                 args.backrun_bundle.enforce_strict_priority_fee_ordering,
             ),
-            backrun_bundle_args: args.backrun_bundle.clone(),
+            backrun_bundle_args: args.backrun_bundle,
             flashblocks_config,
             enable_tx_tracking_debug_logs: false,
         })

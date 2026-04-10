@@ -86,7 +86,7 @@ impl BuilderTransactions for FlashblocksBuilderTx {
 
         if is_first_flashblock {
             let flashblocks_builder_tx = self.base_builder_tx.simulate_builder_tx(ctx, &mut *db)?;
-            builder_txs.extend(flashblocks_builder_tx.clone());
+            builder_txs.extend(flashblocks_builder_tx);
         }
 
         if is_last_flashblock {

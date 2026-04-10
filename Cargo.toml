@@ -51,6 +51,7 @@ incremental = false
 unreachable_pub = "deny"
 
 [workspace.lints.clippy]
+redundant_clone = "warn"
 unused_async = "warn"
 
 [workspace.dependencies]

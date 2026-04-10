@@ -516,12 +516,12 @@ where
         }
 
         // We adjust our flashblocks timings based on time the fcu block building signal arrived
-        let timestamp = config.attributes.timestamp();
         let flashblock_scheduler = FlashblockScheduler::new(
             &self.config.flashblocks_config,
             self.config.block_time,
-            timestamp,
+            config.attributes.timestamp(),
         );
+
         info!(
             target: "payload_builder",
             id = %fb_payload.payload_id,

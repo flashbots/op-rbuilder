@@ -278,7 +278,7 @@ where
         };
 
     let payload_config = PayloadConfig::new(
-        Arc::new(SealedHeader::new(parent_header.clone(), parent_hash)),
+        Arc::new(SealedHeader::new(parent_header, parent_hash)),
         OpPayloadBuilderAttributes {
             id: payload.id(),
             parent: parent_hash,
@@ -309,7 +309,7 @@ where
         payload.block().header().gas_used,
         timestamp,
         &evm_factory,
-        chain_spec.clone(),
+        chain_spec,
     )
     .wrap_err("failed to execute best transactions")?;
 
