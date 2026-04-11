@@ -256,6 +256,23 @@ pub trait BuilderTransactions {
 
             let tx_uncompressed_size = builder_tx.signed_tx.inner().encode_2718_len() as u64;
 
+            // Skip the builder tx if including it would push the cumulative
+            // uncompressed block size over the configured limit. The state
+            // changes from the simulation are dropped (we never call commit).
+            if let Some(limit) = builder_ctx.max_uncompressed_block_size
+                && info.cumulative_uncompressed_bytes + tx_uncompressed_size > limit
+            {
+                warn!(
+                    target: "payload_builder",
+                    tx_hash = %builder_tx.signed_tx.tx_hash(),
+                    cumulative_uncompressed = info.cumulative_uncompressed_bytes,
+                    tx_uncompressed_size,
+                    limit,
+                    "skipping builder tx: would exceed max uncompressed block size"
+                );
+                continue;
+            }
+
             // Add gas used by the transaction to cumulative gas used, before creating the receipt
             let gas_used = result.gas_used();
             info.cumulative_gas_used += gas_used;
