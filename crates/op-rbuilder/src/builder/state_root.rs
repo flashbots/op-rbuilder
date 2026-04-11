@@ -59,44 +59,36 @@ impl StateRootCalculator {
         state_provider: &(impl StateRootProvider + ?Sized),
         hashed_state: HashedPostState,
     ) -> Result<StateRootOutput, ProviderError> {
-        let (state_root, trie_updates, cumulative_prefix_sets) = if let Some(prev_trie) =
-            &self.prev_trie_updates
-        {
-            // Extend current prefix sets with cumulative sets from all prior
-            // flashblocks so the walker re-visits every previously modified
-            // path, even if a slot reverted to its original value.
-            let mut prefix_sets = hashed_state.construct_prefix_sets();
-            if let Some(prev_sets) = self.cumulative_prefix_sets.take() {
-                prefix_sets.extend(prev_sets);
-            }
-            let cumulative = prefix_sets.clone();
+        if !self.incremental {
+            let (state_root, trie_updates) =
+                state_provider.state_root_with_updates(hashed_state)?;
+            return Ok(StateRootOutput {
+                state_root,
+                trie_updates: Arc::new(trie_updates),
+            });
+        }
 
+        // Incremental path: build cumulative prefix sets (seed on the first
+        // call, extend on subsequent calls) so reverted slots in a later
+        // flashblock force the walker to re-visit previously modified
+        // subtrees and invalidate their stale cached hashes.
+        let mut prefix_sets = hashed_state.construct_prefix_sets();
+        if let Some(prev_sets) = self.cumulative_prefix_sets.take() {
+            prefix_sets.extend(prev_sets);
+        }
+        let cumulative = prefix_sets.clone();
+
+        let (state_root, trie_updates) = if let Some(prev_trie) = &self.prev_trie_updates {
             let trie_input = TrieInput::new(prev_trie.as_ref().clone(), hashed_state, prefix_sets);
-            let (state_root, trie_updates) =
-                state_provider.state_root_from_nodes_with_updates(trie_input)?;
-
-            (state_root, trie_updates, Some(cumulative))
+            state_provider.state_root_from_nodes_with_updates(trie_input)?
         } else {
-            // No cached trie: compute from scratch. Seed the cumulative
-            // prefix sets when incremental mode is enabled so the next call
-            // can build on this result.
-            let (state_root, trie_updates) =
-                state_provider.state_root_with_updates(hashed_state.clone())?;
-
-            let cumulative_prefix_sets = if self.incremental {
-                Some(hashed_state.construct_prefix_sets())
-            } else {
-                None
-            };
-
-            (state_root, trie_updates, cumulative_prefix_sets)
+            // First call: full computation that seeds the cache for subsequent calls.
+            state_provider.state_root_with_updates(hashed_state)?
         };
 
         let trie_updates = Arc::new(trie_updates);
-        if self.incremental {
-            self.prev_trie_updates = Some(Arc::clone(&trie_updates));
-            self.cumulative_prefix_sets = cumulative_prefix_sets;
-        }
+        self.prev_trie_updates = Some(Arc::clone(&trie_updates));
+        self.cumulative_prefix_sets = Some(cumulative);
 
         Ok(StateRootOutput {
             state_root,
