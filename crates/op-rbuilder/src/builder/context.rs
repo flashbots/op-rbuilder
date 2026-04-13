@@ -418,7 +418,7 @@ impl OpPayloadBuilderCtx {
         let mut num_txs_simulated_success = 0;
         let mut num_txs_simulated_fail = 0;
         let mut num_bundles_reverted = 0;
-        let mut reverted_gas_used = 0;
+        let mut reverted_gas_used: u64 = 0;
         let mut num_backruns_considered = 0usize;
         let mut num_backruns_successful = 0usize;
         let mut backrun_processing_time = std::time::Duration::ZERO;
@@ -611,7 +611,7 @@ impl OpPayloadBuilderCtx {
                 self.metrics.successful_tx_gas_used.record(gas_used as f64);
             } else {
                 num_txs_simulated_fail += 1;
-                reverted_gas_used += gas_used as i32;
+                reverted_gas_used += gas_used;
                 self.metrics.reverted_tx_gas_used.record(gas_used as f64);
                 if is_bundle_tx {
                     num_bundles_reverted += 1;
@@ -862,7 +862,7 @@ impl OpPayloadBuilderCtx {
                     if !br_result.is_success() {
                         num_txs_simulated_fail += 1;
                         num_bundles_reverted += 1;
-                        reverted_gas_used += br_gas_used as i32;
+                        reverted_gas_used += br_gas_used;
                         self.metrics.reverted_tx_gas_used.record(br_gas_used as f64);
                         log_br_txn(TxnExecutionResult::RevertedAndExcluded);
                         continue;
