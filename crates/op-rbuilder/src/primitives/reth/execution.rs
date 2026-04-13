@@ -2,7 +2,6 @@
 use alloy_primitives::{Address, U256};
 use core::fmt::Debug;
 use derive_more::Display;
-use op_revm::OpTransactionError;
 use reth_optimism_primitives::{OpReceipt, OpTransactionSigned};
 
 #[derive(Debug, Display)]
@@ -16,7 +15,7 @@ pub enum TxnExecutionResult {
     NonceTooLow,
     InteropFailed,
     #[display("InternalError({_0})")]
-    InternalError(OpTransactionError),
+    InternalError(String),
     EvmError,
     Success,
     Reverted,

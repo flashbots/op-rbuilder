@@ -8,8 +8,7 @@ use reth_optimism_txpool::{
     OpPooledTransaction, OpPooledTx, conditional::MaybeConditionalTransaction,
     estimated_da_size::DataAvailabilitySized, interop::MaybeInteropTransaction,
 };
-use reth_primitives::{Recovered, kzg::KzgSettings};
-use reth_primitives_traits::InMemorySize;
+use reth_primitives_traits::{InMemorySize, Recovered};
 use reth_transaction_pool::{EthBlobTransactionSidecar, EthPoolTransaction, PoolTransaction};
 
 pub type FBPooledTransaction = WithFlashbotsMetadata<OpPooledTransaction>;
@@ -95,6 +94,10 @@ where
 
     fn into_consensus(self) -> Recovered<Self::Consensus> {
         self.inner.into_consensus()
+    }
+
+    fn consensus_ref(&self) -> Recovered<&Self::Consensus> {
+        self.inner.consensus_ref()
     }
 
     fn from_pooled(tx: Recovered<Self::Pooled>) -> Self {
@@ -223,7 +226,7 @@ where
     fn validate_blob(
         &self,
         _sidecar: &BlobTransactionSidecarVariant,
-        _settings: &KzgSettings,
+        _settings: &alloy_eips::eip4844::env_settings::KzgSettings,
     ) -> Result<(), BlobTransactionValidationError> {
         Err(BlobTransactionValidationError::NotBlobTransaction(
             self.ty(),

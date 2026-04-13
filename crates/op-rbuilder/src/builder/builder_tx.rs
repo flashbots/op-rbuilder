@@ -2,10 +2,7 @@ use alloy_consensus::TxEip1559;
 use alloy_eips::{Encodable2718, eip7623::TOTAL_COST_FLOOR_PER_TOKEN};
 use alloy_evm::{Database, rpc::TryIntoTxEnv};
 use alloy_op_evm::OpEvm;
-use alloy_primitives::{
-    Address, B256, Bytes, TxKind, U256,
-    map::{HashMap, HashSet},
-};
+use alloy_primitives::{Address, B256, Bytes, TxKind, U256, map::HashSet};
 use alloy_sol_types::{ContractError, Revert, SolCall, SolError, SolInterface};
 use core::fmt::Debug;
 use op_alloy_consensus::OpTypedTransaction;
@@ -17,7 +14,7 @@ use reth_evm::{
 };
 use reth_node_api::PayloadBuilderError;
 use reth_optimism_primitives::OpTransactionSigned;
-use reth_primitives::Recovered;
+use reth_primitives_traits::Recovered;
 use reth_provider::{ProviderError, StateProvider};
 use reth_revm::{State, database::StateProviderDatabase};
 use reth_rpc_api::eth::EthTxEnvError;
@@ -25,7 +22,6 @@ use revm::{
     DatabaseCommit, DatabaseRef,
     context::result::{EVMError, ExecutionResult, ResultAndState},
     inspector::NoOpInspector,
-    state::Account,
 };
 use tracing::{trace, warn};
 
@@ -37,7 +33,7 @@ use crate::{
 pub struct SimulationSuccessResult<T: SolCall> {
     pub gas_used: u64,
     pub output: T::Return,
-    pub state_changes: HashMap<Address, Account>,
+    pub state_changes: revm::state::EvmState,
 }
 
 #[derive(Debug, Clone)]
@@ -260,6 +256,23 @@ pub trait BuilderTransactions {
 
             let tx_uncompressed_size = builder_tx.signed_tx.inner().encode_2718_len() as u64;
 
+            // Skip the builder tx if including it would push the cumulative
+            // uncompressed block size over the configured limit. The state
+            // changes from the simulation are dropped (we never call commit).
+            if let Some(limit) = builder_ctx.max_uncompressed_block_size
+                && info.cumulative_uncompressed_bytes + tx_uncompressed_size > limit
+            {
+                warn!(
+                    target: "payload_builder",
+                    tx_hash = %builder_tx.signed_tx.tx_hash(),
+                    cumulative_uncompressed = info.cumulative_uncompressed_bytes,
+                    tx_uncompressed_size,
+                    limit,
+                    "skipping builder tx: would exceed max uncompressed block size"
+                );
+                continue;
+            }
+
             // Add gas used by the transaction to cumulative gas used, before creating the receipt
             let gas_used = result.gas_used();
             info.cumulative_gas_used += gas_used;
@@ -349,8 +362,14 @@ pub trait BuilderTransactions {
         evm: &mut OpEvm<impl Database, NoOpInspector, PrecompilesMap>,
     ) -> Result<SimulationSuccessResult<T>, BuilderTransactionError> {
         let evm_env = alloy_evm::EvmEnv::from((evm.cfg.clone(), evm.block.clone()));
-        let tx_env = tx.try_into_tx_env(&evm_env)?;
-        let to = tx_env.base.kind.into_to().unwrap_or_default();
+        let base_request: alloy_rpc_types_eth::TransactionRequest = tx.into();
+        let base_tx_env: revm::context::TxEnv = base_request.try_into_tx_env(&evm_env)?;
+        let to = base_tx_env.kind.into_to().unwrap_or_default();
+        let tx_env = alloy_op_evm::OpTx(op_revm::OpTransaction {
+            base: base_tx_env,
+            enveloped_tx: Some(Bytes::new()),
+            deposit: Default::default(),
+        });
 
         let ResultAndState { result, state } = match evm.transact(tx_env) {
             Ok(res) => res,
@@ -367,10 +386,7 @@ pub trait BuilderTransactions {
 
         match result {
             ExecutionResult::Success {
-                output,
-                gas_used,
-                logs,
-                ..
+                output, gas, logs, ..
             } => {
                 let topics: HashSet<B256> = logs
                     .into_iter()
@@ -395,7 +411,7 @@ pub trait BuilderTransactions {
                     )
                 })?;
                 Ok(SimulationSuccessResult::<T> {
-                    gas_used,
+                    gas_used: gas.spent(),
                     output: return_output,
                     state_changes: state,
                 })

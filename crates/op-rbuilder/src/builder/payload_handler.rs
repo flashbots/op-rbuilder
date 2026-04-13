@@ -10,10 +10,7 @@ use eyre::{WrapErr as _, bail};
 use op_alloy_consensus::OpTxType;
 use op_alloy_rpc_types_engine::OpFlashblockPayload;
 use op_revm::L1BlockInfo;
-use reth::{
-    revm::{State, database::StateProviderDatabase},
-    tasks::TaskSpawner,
-};
+use reth::revm::{State, database::StateProviderDatabase};
 use reth_basic_payload_builder::PayloadConfig;
 use reth_node_builder::Events;
 use reth_optimism_chainspec::OpChainSpec;
@@ -23,8 +20,8 @@ use reth_optimism_forks::OpHardforks;
 use reth_optimism_node::{OpEngineTypes, OpPayloadBuilderAttributes};
 use reth_optimism_payload_builder::OpBuiltPayload;
 use reth_optimism_primitives::OpReceipt;
-use reth_payload_builder::EthPayloadBuilderAttributes;
 use reth_primitives_traits::SealedHeader;
+use reth_tasks::Runtime;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{error, info, trace, warn};
@@ -33,7 +30,7 @@ use tracing::{error, info, trace, warn};
 ///
 /// In the case of a payload built by this node, it is broadcast to peers and an event is sent to the payload builder.
 /// In the case of a payload received from a peer, it is executed and if successful, an event is sent to the payload builder.
-pub(crate) struct PayloadHandler<Client, Tasks> {
+pub(crate) struct PayloadHandler<Client> {
     // receives new flashblock payloads built by this builder.
     built_fb_payload_rx: mpsc::Receiver<OpBuiltPayload>,
     // receives new full block payloads built by this builder.
@@ -49,14 +46,13 @@ pub(crate) struct PayloadHandler<Client, Tasks> {
     // chain client
     client: Client,
     // task executor
-    task_executor: Tasks,
+    task_executor: Runtime,
     cancel: tokio_util::sync::CancellationToken,
 }
 
-impl<Client, Tasks> PayloadHandler<Client, Tasks>
+impl<Client> PayloadHandler<Client>
 where
     Client: ClientBounds + 'static,
-    Tasks: TaskSpawner + Clone + Unpin + 'static,
 {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
@@ -67,7 +63,7 @@ where
         payload_events_handle: tokio::sync::broadcast::Sender<Events<OpEngineTypes>>,
         ctx: OpPayloadSyncerCtx,
         client: Client,
-        task_executor: Tasks,
+        task_executor: Runtime,
         cancel: tokio_util::sync::CancellationToken,
     ) -> Self {
         Self {
@@ -284,24 +280,23 @@ where
     let payload_config = PayloadConfig::new(
         Arc::new(SealedHeader::new(parent_header, parent_hash)),
         OpPayloadBuilderAttributes {
+            id: payload.id(),
+            parent: parent_hash,
+            suggested_fee_recipient: payload.block().sealed_header().beneficiary,
+            withdrawals: payload
+                .block()
+                .body()
+                .withdrawals
+                .clone()
+                .unwrap_or_default(),
+            parent_beacon_block_root: payload.block().sealed_header().parent_beacon_block_root,
+            timestamp,
+            prev_randao: payload.block().sealed_header().mix_hash,
             eip_1559_params: eip_1559_parameters,
             min_base_fee,
-            payload_attributes: EthPayloadBuilderAttributes {
-                id: payload.id(),    // unused
-                parent: parent_hash, // unused
-                suggested_fee_recipient: payload.block().sealed_header().beneficiary,
-                withdrawals: payload
-                    .block()
-                    .body()
-                    .withdrawals
-                    .clone()
-                    .unwrap_or_default(),
-                parent_beacon_block_root: payload.block().sealed_header().parent_beacon_block_root,
-                timestamp,
-                prev_randao: payload.block().sealed_header().mix_hash,
-            },
             ..Default::default()
         },
+        payload.id(),
     );
 
     let evm_factory = OpBlockEvmFactory::new(ctx.evm_config().clone(), evm_env);
