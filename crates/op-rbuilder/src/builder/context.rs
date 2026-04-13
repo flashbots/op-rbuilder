@@ -621,6 +621,7 @@ impl OpPayloadBuilderCtx {
                     info!(
                         target: "payload_builder",
                         tx_hash = %tx.tx_hash(),
+                        signer = %tx.signer(),
                         result = ?result,
                         "skipping reverted transaction"
                     );
