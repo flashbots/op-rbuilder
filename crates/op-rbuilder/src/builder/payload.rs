@@ -362,6 +362,7 @@ where
             max_uncompressed_block_size: self.config.max_uncompressed_block_size,
             address_gas_limiter: self.address_gas_limiter.clone(),
             backrun_ctx,
+            exclude_reverts_between_flashblocks: self.config.exclude_reverts_between_flashblocks,
             enable_tx_tracking_debug_logs: self.config.enable_tx_tracking_debug_logs,
         })
     }
@@ -800,6 +801,12 @@ where
             .map(|tx| tx.tx_hash())
             .collect();
         best_txs.mark_commited(new_transactions);
+
+        // Remove reverted bundle txs from the pool so they aren't re-simulated in future blocks
+        if !info.reverted_bundle_tx_hashes.is_empty() {
+            let hashes = info.reverted_bundle_tx_hashes.drain(..).collect();
+            self.pool.remove_transactions(hashes);
+        }
 
         // We got block cancelled, we won't need anything from the block at this point
         // Caution: this assume that block cancel token only cancelled when new FCU is received

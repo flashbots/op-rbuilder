@@ -70,6 +70,7 @@ impl<T> ClientBounds for T where
 {
 }
 
-pub trait PayloadTxsBounds: PayloadTransactions<Transaction = FBPooledTransaction> {}
-
-impl<T> PayloadTxsBounds for T where T: PayloadTransactions<Transaction = FBPooledTransaction> {}
+pub trait PayloadTxsBounds: PayloadTransactions<Transaction = FBPooledTransaction> {
+    /// Mark a transaction hash as excluded so it is skipped in subsequent flashblocks.
+    fn mark_excluded(&mut self, _hash: alloy_primitives::TxHash) {}
+}

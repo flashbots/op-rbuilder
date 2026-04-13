@@ -36,6 +36,8 @@ pub(super) struct OpPayloadSyncerCtx {
     backrun_bundle_pool: BackrunBundleGlobalPool,
     /// Backrun bundle configuration
     backrun_bundle_args: BackrunBundleArgs,
+    /// Skip reverted txs in subsequent flashblocks
+    exclude_reverts_between_flashblocks: bool,
     /// Enable transaction tracking logs
     enable_tx_tracking_debug_logs: bool,
 }
@@ -60,6 +62,7 @@ impl OpPayloadSyncerCtx {
             metrics,
             backrun_bundle_pool: builder_config.backrun_bundle_pool.clone(),
             backrun_bundle_args: builder_config.backrun_bundle_args.clone(),
+            exclude_reverts_between_flashblocks: builder_config.exclude_reverts_between_flashblocks,
             enable_tx_tracking_debug_logs: builder_config.enable_tx_tracking_debug_logs,
         })
     }
@@ -116,6 +119,7 @@ impl OpPayloadSyncerCtx {
             max_uncompressed_block_size: self.max_uncompressed_block_size,
             address_gas_limiter: AddressGasLimiter::new(GasLimiterArgs::default()),
             backrun_ctx,
+            exclude_reverts_between_flashblocks: self.exclude_reverts_between_flashblocks,
             enable_tx_tracking_debug_logs: self.enable_tx_tracking_debug_logs,
         }
     }

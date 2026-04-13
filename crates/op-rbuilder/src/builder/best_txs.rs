@@ -16,6 +16,9 @@ where
     // Transactions that were already commited to the state. Using them again would cause NonceTooLow
     // so we skip them
     commited_transactions: HashSet<TxHash>,
+    // Transactions that reverted and were excluded. Skipped in subsequent flashblocks to avoid
+    // redundant re-simulation.
+    excluded_tx_hashes: HashSet<TxHash>,
 }
 
 impl<T, I> BestFlashblocksTxs<T, I>
@@ -28,6 +31,7 @@ where
             inner,
             current_flashblock_number: 0,
             commited_transactions: Default::default(),
+            excluded_tx_hashes: Default::default(),
         }
     }
 
@@ -60,6 +64,11 @@ where
             let tx = self.inner.next(ctx)?;
             // Skip transaction we already included
             if self.commited_transactions.contains(tx.hash()) {
+                continue;
+            }
+
+            // Skip transactions that reverted in a previous flashblock
+            if self.excluded_tx_hashes.contains(tx.hash()) {
                 continue;
             }
 
@@ -97,6 +106,15 @@ where
     /// Proxy to inner iterator
     fn mark_invalid(&mut self, sender: Address, nonce: u64) {
         self.inner.mark_invalid(sender, nonce);
+    }
+}
+
+impl<I> crate::traits::PayloadTxsBounds for BestFlashblocksTxs<crate::tx::FBPooledTransaction, I>
+where
+    I: Iterator<Item = Arc<ValidPoolTransaction<crate::tx::FBPooledTransaction>>>,
+{
+    fn mark_excluded(&mut self, hash: TxHash) {
+        self.excluded_tx_hashes.insert(hash);
     }
 }
 
@@ -233,5 +251,135 @@ mod tests {
         assert_eq!(tx3.hash(), &tx_3_hash);
         // Check that it's empty
         assert!(iterator.next(()).is_none(), "Iterator should be empty");
+    }
+
+    /// Excluded txs persist across flashblocks (refresh_iterator) within the same block,
+    /// but a new iterator (new block) starts with a clean excluded set.
+    #[test]
+    fn test_excluded_txs_persist_within_block_cleared_between_blocks() {
+        let mut pool = PendingPool::new(CoinbaseTipOrdering::<MockFbTransaction>::default());
+        let mut f = MockFbTransactionFactory::default();
+
+        let tx_1 = f.create_eip1559();
+        let tx_1_hash = *tx_1.hash();
+        let tx_2 = f.create_eip1559();
+        let tx_2_hash = *tx_2.hash();
+        let tx_3 = f.create_eip1559();
+        let tx_3_hash = *tx_3.hash();
+        pool.add_transaction(Arc::new(tx_1), 0);
+        pool.add_transaction(Arc::new(tx_2), 0);
+        pool.add_transaction(Arc::new(tx_3), 0);
+
+        // === Block 1 ===
+        let mut iter = BestFlashblocksTxs::new(BestPayloadTransactions::new(pool.best()));
+
+        // Flashblock 0: all 3 returned, tx_2 reverts so we exclude it
+        iter.refresh_iterator(BestPayloadTransactions::new(pool.best()), 0);
+        let got_1 = iter.next(()).unwrap();
+        assert_eq!(got_1.hash(), &tx_1_hash);
+        let got_2 = iter.next(()).unwrap();
+        assert_eq!(got_2.hash(), &tx_2_hash);
+        // tx_2 reverted — exclude it
+        iter.excluded_tx_hashes.insert(tx_2_hash);
+        let got_3 = iter.next(()).unwrap();
+        assert_eq!(got_3.hash(), &tx_3_hash);
+        assert!(iter.next(()).is_none());
+        // Commit successful txs
+        iter.mark_commited(vec![tx_1_hash, tx_3_hash]);
+
+        // Flashblock 1: tx_1/tx_3 committed, tx_2 excluded — nothing returned
+        iter.refresh_iterator(BestPayloadTransactions::new(pool.best()), 1);
+        assert!(iter.next(()).is_none(), "tx_2 should be excluded");
+
+        // Flashblock 2: tx_2 still excluded
+        iter.refresh_iterator(BestPayloadTransactions::new(pool.best()), 2);
+        assert!(iter.next(()).is_none(), "tx_2 should still be excluded");
+
+        // === Block 2: fresh iterator, exclusions cleared ===
+        let mut iter2 = BestFlashblocksTxs::new(BestPayloadTransactions::new(pool.best()));
+        iter2.refresh_iterator(BestPayloadTransactions::new(pool.best()), 0);
+        let mut count = 0;
+        while iter2.next(()).is_some() {
+            count += 1;
+        }
+        assert_eq!(
+            count, 3,
+            "New block should see all 3 txs — exclusions not inherited"
+        );
+    }
+
+    /// Only the excluded tx is skipped — other txs in the pool are unaffected.
+    #[test]
+    fn test_excluded_tx_does_not_affect_other_txs() {
+        let mut pool = PendingPool::new(CoinbaseTipOrdering::<MockFbTransaction>::default());
+        let mut f = MockFbTransactionFactory::default();
+
+        let tx_1 = f.create_eip1559();
+        let tx_1_hash = *tx_1.hash();
+        let tx_2 = f.create_eip1559();
+        let tx_2_hash = *tx_2.hash();
+        let tx_3 = f.create_eip1559();
+        let tx_3_hash = *tx_3.hash();
+        pool.add_transaction(Arc::new(tx_1), 0);
+        pool.add_transaction(Arc::new(tx_2), 0);
+        pool.add_transaction(Arc::new(tx_3), 0);
+
+        let mut iter = BestFlashblocksTxs::new(BestPayloadTransactions::new(pool.best()));
+
+        // Flashblock 0: exclude tx_1 only
+        iter.refresh_iterator(BestPayloadTransactions::new(pool.best()), 0);
+        let got_1 = iter.next(()).unwrap();
+        assert_eq!(got_1.hash(), &tx_1_hash);
+        iter.excluded_tx_hashes.insert(tx_1_hash);
+        // tx_2 and tx_3 should still be returned
+        let got_2 = iter.next(()).unwrap();
+        assert_eq!(got_2.hash(), &tx_2_hash);
+        let got_3 = iter.next(()).unwrap();
+        assert_eq!(got_3.hash(), &tx_3_hash);
+        assert!(iter.next(()).is_none());
+
+        // Flashblock 1: tx_1 excluded, tx_2 and tx_3 available
+        iter.refresh_iterator(BestPayloadTransactions::new(pool.best()), 1);
+        let got = iter.next(()).unwrap();
+        assert_eq!(got.hash(), &tx_2_hash);
+        let got = iter.next(()).unwrap();
+        assert_eq!(got.hash(), &tx_3_hash);
+        assert!(iter.next(()).is_none(), "only tx_1 should be excluded");
+    }
+
+    /// Multiple txs can be excluded independently.
+    #[test]
+    fn test_multiple_excluded_txs() {
+        let mut pool = PendingPool::new(CoinbaseTipOrdering::<MockFbTransaction>::default());
+        let mut f = MockFbTransactionFactory::default();
+
+        let tx_1 = f.create_eip1559();
+        let tx_1_hash = *tx_1.hash();
+        let tx_2 = f.create_eip1559();
+        let tx_2_hash = *tx_2.hash();
+        let tx_3 = f.create_eip1559();
+        let tx_3_hash = *tx_3.hash();
+        pool.add_transaction(Arc::new(tx_1), 0);
+        pool.add_transaction(Arc::new(tx_2), 0);
+        pool.add_transaction(Arc::new(tx_3), 0);
+
+        let mut iter = BestFlashblocksTxs::new(BestPayloadTransactions::new(pool.best()));
+
+        // Flashblock 0: exclude tx_1 and tx_3
+        iter.refresh_iterator(BestPayloadTransactions::new(pool.best()), 0);
+        iter.next(()).unwrap(); // tx_1
+        iter.excluded_tx_hashes.insert(tx_1_hash);
+        iter.next(()).unwrap(); // tx_2
+        iter.next(()).unwrap(); // tx_3
+        iter.excluded_tx_hashes.insert(tx_3_hash);
+
+        // Flashblock 1: only tx_2 should be returned
+        iter.refresh_iterator(BestPayloadTransactions::new(pool.best()), 1);
+        let got = iter.next(()).unwrap();
+        assert_eq!(got.hash(), &tx_2_hash);
+        assert!(
+            iter.next(()).is_none(),
+            "tx_1 and tx_3 should both be excluded"
+        );
     }
 }
