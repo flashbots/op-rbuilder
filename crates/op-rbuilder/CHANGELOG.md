@@ -7,12 +7,12 @@ All notable changes to this project will be documented in this file.
 
 - Skip re-simulation of reverted txs between flashblocks ([#462](https://github.com/flashbots/op-rbuilder/pull/462))
 - Metrics: record fcu delay ([#443](https://github.com/flashbots/op-rbuilder/pull/443))
+- Add enable_tx_tracking_debug_logs flag to not check env vars during runtime ([#452](https://github.com/flashbots/op-rbuilder/pull/452))
 
 ### Chore
 
 - Upgrade reth to 2.0 ([#459](https://github.com/flashbots/op-rbuilder/pull/459))
 - Standardize logging ([#456](https://github.com/flashbots/op-rbuilder/pull/456))
-- Add enable_tx_tracking_debug_logs flag to not check env vars during runtime ([#452](https://github.com/flashbots/op-rbuilder/pull/452))
 - Use derive_more::Deref for WithFlashbotsMetadata ([#453](https://github.com/flashbots/op-rbuilder/pull/453))
 - Remove reth_basic_payload_builder::PayloadBuilder impl ([#454](https://github.com/flashbots/op-rbuilder/pull/454))
 - Remove unused file ([#455](https://github.com/flashbots/op-rbuilder/pull/455))
