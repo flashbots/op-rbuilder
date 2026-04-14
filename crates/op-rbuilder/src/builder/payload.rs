@@ -388,11 +388,12 @@ where
             extra_data,
         };
 
-        let evm_config = self.evm_config.clone();
-
-        let evm_env = evm_config
-            .next_evm_env(&config.parent_header, &block_env_attributes)
-            .wrap_err("failed to create next evm env")?;
+        let evm_factory = OpBlockEvmFactory::for_next_block(
+            self.evm_config.clone(),
+            &config.parent_header,
+            &block_env_attributes,
+        )
+        .wrap_err("failed to create next evm env")?;
 
         let backrun_ctx = BackrunBundlesPayloadCtx {
             pool: self
@@ -403,7 +404,7 @@ where
         };
 
         Ok(OpPayloadBuilderCtx {
-            evm_factory: OpBlockEvmFactory::new(self.evm_config.clone(), evm_env),
+            evm_factory,
             chain_spec,
             config,
             block_env_attributes,

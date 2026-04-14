@@ -159,6 +159,16 @@ pub struct OpRBuilderMetrics {
     pub bundles_reverted: Histogram,
     /// Histogram of eth_sendBundle request duration
     pub bundle_receive_duration: Histogram,
+    /// Number of bundles dropped by pre-simulation (reverted)
+    pub bundle_pre_simulation_reverts: Counter,
+    /// Number of bundles that passed pre-simulation
+    pub bundle_pre_simulation_passes: Counter,
+    /// Histogram of bundle pre-simulation duration
+    pub bundle_pre_simulation_duration: Histogram,
+    /// Number of updates to the tip state for the top of block simulator
+    pub presim_tip_state_updates: Counter,
+    /// Number of pending txs evicted due to failing top of block simulation
+    pub presim_pending_evictions: Counter,
     /// Transactions rejected by per-tx DA size limit
     pub tx_da_size_exceeded_total: Counter,
     /// Transactions rejected by cumulative block DA limit

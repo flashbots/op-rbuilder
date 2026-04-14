@@ -1,6 +1,7 @@
 use alloy_provider::{PendingTransactionBuilder, Provider};
 use macros::rb_test;
 use op_alloy_network::Optimism;
+use std::time::Duration;
 
 use crate::{
     args::OpRbuilderArgs,
@@ -437,6 +438,47 @@ async fn check_transaction_receipt_status_message(rbuilder: LocalInstance) -> ey
     let receipt = provider.get_transaction_receipt(*tx_hash).await;
 
     assert!(receipt.is_err());
+
+    Ok(())
+}
+
+/// Pre-simulation evicts reverting bundles from the pool asynchronously after
+/// they are accepted. The handler accepts the bundle immediately; a background
+/// task runs the simulation and removes the transaction when it reverts.
+#[rb_test(args = OpRbuilderArgs {
+    enable_revert_protection: true,
+    pre_simulate_bundles: true,
+    ..Default::default()
+})]
+async fn presim_rejects_reverting_bundle(rbuilder: LocalInstance) -> eyre::Result<()> {
+    let driver = rbuilder.driver().await?;
+    // Build a block to ensure the maintain_tip_state task has processed the
+    // canonical state notification and populated the simulator's tip state.
+    driver.build_new_block().await?;
+
+    // The handler accepts the bundle immediately; presim runs in the background
+    let bundle = driver
+        .create_transaction()
+        .random_reverting_transaction()
+        .with_reverted_hash()
+        .with_bundle(BundleOpts::default())
+        .send()
+        .await?;
+
+    let tx_hash = *bundle.tx_hash();
+
+    // Wait for the background pre-simulation task to evict the reverting tx
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        if rbuilder.pool().is_dropped(tx_hash) {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "reverting bundle was not evicted by pre-simulation within timeout"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
 
     Ok(())
 }
