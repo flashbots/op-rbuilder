@@ -72,6 +72,8 @@ pub struct OpPayloadBuilderCtx {
     pub address_gas_limiter: AddressGasLimiter,
     /// Backrun bundles context.
     pub backrun_ctx: BackrunBundlesPayloadCtx,
+    /// Skip reverted txs in subsequent flashblocks
+    pub exclude_reverts_between_flashblocks: bool,
     /// Enable tx tracking logs
     pub enable_tx_tracking_debug_logs: bool,
 }
@@ -625,6 +627,10 @@ impl OpPayloadBuilderCtx {
                         result = ?result,
                         "skipping reverted transaction"
                     );
+                    if self.exclude_reverts_between_flashblocks {
+                        best_txs.mark_excluded(B256::new(*tx_hash));
+                        info.reverted_bundle_tx_hashes.push(B256::new(*tx_hash));
+                    }
                     best_txs.mark_invalid(tx.signer(), tx.nonce());
                     continue;
                 } else {
