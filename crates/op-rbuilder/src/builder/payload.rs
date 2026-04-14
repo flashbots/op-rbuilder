@@ -7,11 +7,11 @@ use crate::{
         builder_tx::BuilderTransactions,
         context::OpPayloadBuilderCtx,
         generator::{BuildArguments, PayloadBuilder},
-        timing::FlashblockScheduler,
+        timing::{FlashblockScheduler, compute_slot_offset_ms},
     },
     evm::OpBlockEvmFactory,
     gas_limiter::AddressGasLimiter,
-    metrics::OpRBuilderMetrics,
+    metrics::{OpRBuilderMetrics, record_flashblock_publish_timing},
     primitives::reth::ExecutionInfo,
     runtime_ext::RuntimeExt,
     tokio_metrics::FlashblocksTaskMetrics,
@@ -515,6 +515,11 @@ where
                 .ws_pub
                 .publish(&fb_payload)
                 .map_err(PayloadBuilderError::other)?;
+
+            let slot_offset_ms =
+                compute_slot_offset_ms(config.attributes.timestamp(), self.config.block_time);
+            record_flashblock_publish_timing(fb_payload.index, slot_offset_ms);
+
             if self.config.enable_tx_tracking_debug_logs {
                 debug!(
                     target: "tx_trace",
@@ -523,6 +528,7 @@ where
                     flashblock_index = fb_payload.index,
                     byte_size = flashblock_byte_size,
                     total_txs = info.executed_transactions.len(),
+                    slot_offset_ms,
                     stage = "fb_published"
                 );
             }
@@ -1084,6 +1090,12 @@ where
                     .ws_pub
                     .publish(&fb_payload)
                     .wrap_err("failed to publish flashblock via websocket")?;
+
+                // Record slot-relative publish timing (ms since slot start)
+                let slot_offset_ms =
+                    compute_slot_offset_ms(ctx.attributes().timestamp(), self.config.block_time);
+                record_flashblock_publish_timing(flashblock_index, slot_offset_ms);
+
                 if self.config.enable_tx_tracking_debug_logs {
                     debug!(
                         target: "tx_trace",
@@ -1092,6 +1104,7 @@ where
                         flashblock_index,
                         byte_size = flashblock_byte_size,
                         total_txs = info.executed_transactions.len(),
+                        slot_offset_ms,
                         stage = "fb_published"
                     );
                 }
