@@ -9,6 +9,7 @@ pub type OpBlockEvmFactory = BlockEvmFactory<OpEvmConfig>;
 ///
 /// Instead of threading a `ConfigureEvm` impl + `EvmEnv` separately through
 /// types that need to create an EVM, pass a single `BlockEvmFactory`.
+#[derive(Clone)]
 pub struct BlockEvmFactory<C: ConfigureEvm> {
     evm_config: C,
     evm_env: EvmEnvFor<C>,

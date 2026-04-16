@@ -193,6 +193,14 @@ pub struct OpRBuilderMetrics {
     pub payload_job_cancellation_complete: Counter,
     /// Payload job ended due to a build error
     pub payload_job_cancellation_error: Counter,
+    /// Duration of the top-of-block pre-simulation pass
+    pub presim_duration: Histogram,
+    /// Number of transactions simulated by the pre-simulation pass
+    pub presim_txs_simulated: Histogram,
+    /// Number of transactions excluded by the pre-simulation pass
+    pub presim_txs_excluded: Counter,
+    /// Cumulative gas saved by excluding reverting txs in pre-simulation
+    pub presim_gas_saved: Counter,
 }
 
 impl OpRBuilderMetrics {
