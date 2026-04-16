@@ -9,6 +9,7 @@ pub mod metrics;
 mod monitor_tx_pool;
 pub mod primitives;
 pub mod revert_protection;
+pub(crate) mod runtime_ext;
 pub mod tokio_metrics;
 pub mod traits;
 pub mod tx;

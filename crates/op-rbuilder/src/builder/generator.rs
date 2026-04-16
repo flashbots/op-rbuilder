@@ -19,11 +19,12 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 use tokio::{
-    sync::{Notify, oneshot},
+    sync::watch,
     time::{Duration, Sleep},
 };
-use tokio_util::sync::CancellationToken;
 use tracing::info;
+
+use super::cancellation::PayloadJobCancellation;
 
 /// A trait for building payloads that encapsulate Ethereum transactions.
 ///
@@ -50,10 +51,21 @@ pub(super) trait PayloadBuilder: Send + Sync + Clone {
     ) -> Result<Self::Attributes, PayloadBuilderError>;
 
     /// Tries to build a transaction payload using provided arguments.
-    fn try_build(
+    ///
+    /// Constructs a transaction payload based on the given arguments,
+    /// returning a `Result` indicating success or an error if building fails.
+    ///
+    /// # Arguments
+    ///
+    /// - `args`: Build arguments containing necessary components.
+    ///
+    /// # Returns
+    ///
+    /// A `Result` indicating the build outcome or an error.
+    async fn try_build(
         &self,
         args: BuildArguments<Self::Attributes, Self::BuiltPayload>,
-        best_payload: BlockCell<Self::BuiltPayload>,
+        best_payload_tx: watch::Sender<Option<Self::BuiltPayload>>,
     ) -> Result<(), PayloadBuilderError>;
 }
 
@@ -72,10 +84,11 @@ pub(super) struct BlockPayloadJobGenerator<Client, Builder> {
     builder: Builder,
     /// Whether to ensure only one payload is being processed at a time
     ensure_only_one_payload: bool,
-    /// The last payload being processed
-    last_payload: Arc<Mutex<CancellationToken>>,
+    /// The last payload's cancellation.
+    /// `cancel_new_fcu()` is called when a new FCU arrives
+    last_payload_cancel: Arc<Mutex<PayloadJobCancellation>>,
     /// The extra block deadline in seconds
-    extra_block_deadline: std::time::Duration,
+    extra_block_deadline: Duration,
     /// Stored `cached_reads` for new payload jobs.
     pre_cached: Option<PrecachedState>,
     /// The configured block time
@@ -96,8 +109,8 @@ impl<Client, Builder> BlockPayloadJobGenerator<Client, Builder> {
         config: BasicPayloadJobGeneratorConfig,
         builder: Builder,
         ensure_only_one_payload: bool,
-        extra_block_deadline: std::time::Duration,
-        block_time: std::time::Duration,
+        extra_block_deadline: Duration,
+        block_time: Duration,
         metrics: Arc<crate::metrics::OpRBuilderMetrics>,
     ) -> Self {
         Self {
@@ -106,7 +119,7 @@ impl<Client, Builder> BlockPayloadJobGenerator<Client, Builder> {
             _config: config,
             builder,
             ensure_only_one_payload,
-            last_payload: Arc::new(Mutex::new(CancellationToken::new())),
+            last_payload_cancel: Arc::new(Mutex::new(PayloadJobCancellation::new())),
             extra_block_deadline,
             pre_cached: None,
             block_time,
@@ -165,22 +178,22 @@ where
             .fcu_arrival_delay
             .record(fcu_arrival_delay_ms as f64);
 
-        let cancel_token = if self.ensure_only_one_payload {
-            // Cancel existing payload
+        let cancellation = if self.ensure_only_one_payload {
+            // Cancel existing payload via new_fcu
             {
-                let last_payload = self.last_payload.lock().unwrap();
-                last_payload.cancel();
+                let last_cancel = self.last_payload_cancel.lock().unwrap();
+                last_cancel.cancel_new_fcu();
             }
 
-            // Create and set new cancellation token with a fresh lock
-            let cancel_token = CancellationToken::new();
+            // Create new PayloadJobCancellation and store it
+            let cancellation = PayloadJobCancellation::new();
             {
-                let mut last_payload = self.last_payload.lock().unwrap();
-                *last_payload = cancel_token.clone();
+                let mut last_cancel = self.last_payload_cancel.lock().unwrap();
+                *last_cancel = cancellation.clone();
             }
-            cancel_token
+            cancellation
         } else {
-            CancellationToken::new()
+            PayloadJobCancellation::new()
         };
 
         let parent_header = if parent_hash.is_zero() {
@@ -210,10 +223,9 @@ where
             builder: self.builder.clone(),
             config,
             rpc_attributes,
-            cell: BlockCell::new(),
-            cancel: cancel_token,
+            payload_rx: None,
+            cancel: cancellation,
             deadline,
-            build_complete: None,
             cached_reads: self.maybe_pre_cached(parent_header.hash()),
         };
 
@@ -268,12 +280,11 @@ where
     ///
     /// See [PayloadBuilder]
     pub(crate) builder: Builder,
-    /// The cell that holds the built payload.
-    pub(crate) cell: BlockCell<Builder::BuiltPayload>,
-    /// Cancellation token for the running job
-    pub(crate) cancel: CancellationToken,
+    /// Receiver for the latest payload from the builder task.
+    pub(crate) payload_rx: Option<watch::Receiver<Option<Builder::BuiltPayload>>>,
+    /// Structured cancellation for the running job
+    pub(crate) cancel: PayloadJobCancellation,
     pub(crate) deadline: Pin<Box<Sleep>>, // Add deadline
-    pub(crate) build_complete: Option<oneshot::Receiver<Result<(), PayloadBuilderError>>>,
     /// Caches all disk reads for the state the new payloads builds on
     pub(crate) cached_reads: Option<CachedReads>,
 }
@@ -282,7 +293,7 @@ impl<Builder> PayloadJob for BlockPayloadJob<Builder>
 where
     Builder: PayloadBuilder + Unpin + 'static,
     Builder::Attributes: Unpin + Clone,
-    Builder::BuiltPayload: Unpin + Clone,
+    Builder::BuiltPayload: Unpin + Clone + Send + Sync + 'static,
 {
     type PayloadAttributes = Builder::RpcAttributes;
     type ResolvePayloadFuture = ResolvePayload<Self::BuiltPayload>;
@@ -302,11 +313,12 @@ where
     ) -> (Self::ResolvePayloadFuture, KeepPayloadJobAlive) {
         info!(target: "payload_builder", payload_kind = ?kind, "Resolve payload job");
 
-        // check if self.cell has a payload
-        self.cancel.cancel();
-
-        let resolve_future = ResolvePayload::new(self.cell.wait_for_value());
-        (resolve_future, KeepPayloadJobAlive::No)
+        let rx = self.payload_rx.take();
+        let cancellation = self.cancel.clone();
+        (
+            ResolvePayload::new(rx, cancellation),
+            KeepPayloadJobAlive::No,
+        )
     }
 }
 
@@ -315,8 +327,8 @@ pub(super) struct BuildArguments<Attributes, Payload: BuiltPayload> {
     pub cached_reads: CachedReads,
     /// How to configure the payload.
     pub config: PayloadConfig<Attributes, HeaderTy<Payload::Primitives>>,
-    /// A marker that can be used to cancel the job.
-    pub cancel: CancellationToken,
+    /// Structured cancellation.
+    pub cancel: PayloadJobCancellation,
 }
 
 /// A [PayloadJob] is a future that's being polled by the `PayloadBuilderService`
@@ -329,21 +341,24 @@ where
     pub(super) fn spawn_build_job(&mut self) {
         let builder = self.builder.clone();
         let payload_config = self.config.clone();
-        let cell = self.cell.clone();
-        let cancel = self.cancel.clone();
+        let cancellation = self.cancel.clone();
 
-        let (tx, rx) = oneshot::channel();
-        self.build_complete = Some(rx);
+        let (watch_tx, watch_rx) = watch::channel(None);
+        self.payload_rx = Some(watch_rx);
         let cached_reads = self.cached_reads.take().unwrap_or_default();
-        self.executor.spawn_blocking_task(Box::pin(async move {
+        // try_build is not in a blocking task!
+        // We have to make sure any blocking work is handled individually within payload builder
+        self.executor.spawn_task(Box::pin(async move {
             let args = BuildArguments {
                 cached_reads,
                 config: payload_config,
-                cancel,
+                cancel: cancellation,
             };
 
-            let result = builder.try_build(args, cell);
-            let _ = tx.send(result);
+            let payload_id = args.config.payload_id;
+            if let Err(e) = builder.try_build(args, watch_tx).await {
+                tracing::error!(id = %payload_id, "build task failed: {:?}", e);
+            }
         }));
     }
 }
@@ -363,12 +378,12 @@ where
 
         // Check if deadline is reached
         if this.deadline.as_mut().poll(cx).is_ready() {
-            this.cancel.cancel();
+            this.cancel.cancel_deadline();
             tracing::debug!("Deadline reached");
             return Poll::Ready(Ok(()));
         }
 
-        // If cancelled via resolve_kind()
+        // If canceled via any source
         if this.cancel.is_cancelled() {
             tracing::debug!("Job cancelled");
             return Poll::Ready(Ok(()));
@@ -378,86 +393,50 @@ where
     }
 }
 
-// A future that resolves when a payload becomes available in the BlockCell
+/// A future that resolves with the latest payload value, waiting for the first publish if needed.
+/// We wrap the inner future in this one to have a concrete type we can easily instantiate it.
 pub(super) struct ResolvePayload<T> {
-    future: WaitForValue<T>,
+    future: futures_util::future::BoxFuture<'static, Result<T, PayloadBuilderError>>,
 }
 
-impl<T> ResolvePayload<T> {
-    pub(super) fn new(future: WaitForValue<T>) -> Self {
+impl<T: Clone + Send + Sync + 'static> ResolvePayload<T> {
+    fn new(
+        payload_rx: Option<watch::Receiver<Option<T>>>,
+        cancellation: PayloadJobCancellation,
+    ) -> Self {
+        let future = async move {
+            let Some(mut rx) = payload_rx else {
+                return Err(PayloadBuilderError::Other(
+                    "payload receiver missing".into(),
+                ));
+            };
+
+            loop {
+                if let Some(payload) = rx.borrow().clone() {
+                    cancellation.cancel_resolved();
+                    return Ok(payload);
+                }
+
+                rx.changed().await.map_err(|_| {
+                    PayloadBuilderError::Other("builder exited before producing payload".into())
+                })?;
+            }
+        }
+        .boxed();
+
         Self { future }
     }
 }
 
-impl<T: Clone> Future for ResolvePayload<T> {
+impl<T: Unpin> Future for ResolvePayload<T> {
     type Output = Result<T, PayloadBuilderError>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        match self.get_mut().future.poll_unpin(cx) {
-            Poll::Ready(value) => Poll::Ready(Ok(value)),
-            Poll::Pending => Poll::Pending,
-        }
+        self.get_mut().future.as_mut().poll(cx)
     }
 }
 
-#[derive(Clone)]
-pub(super) struct BlockCell<T> {
-    inner: Arc<Mutex<Option<T>>>,
-    notify: Arc<Notify>,
-}
-
-impl<T: Clone> BlockCell<T> {
-    pub(super) fn new() -> Self {
-        Self {
-            inner: Arc::new(Mutex::new(None)),
-            notify: Arc::new(Notify::new()),
-        }
-    }
-
-    pub(super) fn set(&self, value: T) {
-        let mut inner = self.inner.lock().unwrap();
-        *inner = Some(value);
-        self.notify.notify_one();
-    }
-
-    pub(super) fn get(&self) -> Option<T> {
-        let inner = self.inner.lock().unwrap();
-        inner.clone()
-    }
-
-    // Return a future that resolves when value is set
-    pub(super) fn wait_for_value(&self) -> WaitForValue<T> {
-        WaitForValue { cell: self.clone() }
-    }
-}
-
-#[derive(Clone)]
-// Future that resolves when a value is set in BlockCell
-pub(super) struct WaitForValue<T> {
-    cell: BlockCell<T>,
-}
-
-impl<T: Clone> Future for WaitForValue<T> {
-    type Output = T;
-
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        if let Some(value) = self.cell.get() {
-            Poll::Ready(value)
-        } else {
-            // Instead of register, we use notified() to get a future
-            cx.waker().wake_by_ref();
-            Poll::Pending
-        }
-    }
-}
-
-impl<T: Clone> Default for BlockCell<T> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-fn job_deadline(unix_timestamp_secs: u64) -> std::time::Duration {
+fn job_deadline(unix_timestamp_secs: u64) -> Duration {
     let unix_now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
@@ -477,77 +456,10 @@ fn job_deadline(unix_timestamp_secs: u64) -> std::time::Duration {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tokio::{
-        task,
-        time::{Duration, sleep},
-    };
+    use tokio::time::{Duration, sleep, timeout};
 
-    #[tokio::test]
-    async fn test_block_cell_wait_for_value() {
-        let cell = BlockCell::new();
-
-        // Spawn a task that will set the value after a delay
-        let cell_clone = cell.clone();
-        task::spawn(async move {
-            sleep(Duration::from_millis(100)).await;
-            cell_clone.set(42);
-        });
-
-        // Wait for the value and verify
-        let wait_future = cell.wait_for_value();
-        let result = wait_future.await;
-        assert_eq!(result, 42);
-    }
-
-    #[tokio::test]
-    async fn test_block_cell_immediate_value() {
-        let cell = BlockCell::new();
-        cell.set(42);
-
-        // Value should be immediately available
-        let wait_future = cell.wait_for_value();
-        let result = wait_future.await;
-        assert_eq!(result, 42);
-    }
-
-    #[tokio::test]
-    async fn test_block_cell_multiple_waiters() {
-        let cell = BlockCell::new();
-
-        // Spawn multiple waiters
-        let wait1 = task::spawn({
-            let cell = cell.clone();
-            async move { cell.wait_for_value().await }
-        });
-
-        let wait2 = task::spawn({
-            let cell = cell.clone();
-            async move { cell.wait_for_value().await }
-        });
-
-        // Set value after a delay
-        sleep(Duration::from_millis(100)).await;
-        cell.set(42);
-
-        // All waiters should receive the value
-        assert_eq!(wait1.await.unwrap(), 42);
-        assert_eq!(wait2.await.unwrap(), 42);
-    }
-
-    #[tokio::test]
-    async fn test_block_cell_update_value() {
-        let cell = BlockCell::new();
-
-        // Set initial value
-        cell.set(42);
-
-        // Set new value
-        cell.set(43);
-
-        // Waiter should get the latest value
-        let result = cell.wait_for_value().await;
-        assert_eq!(result, 43);
-    }
+    #[derive(Clone, Debug, Default, PartialEq, Eq)]
+    struct MockPayload(u64);
 
     #[tokio::test]
     async fn test_job_deadline() {
@@ -575,4 +487,83 @@ mod tests {
     // new_payload_job signature changed to take BuildNewPayload<RpcAttributes>).
     // #[tokio::test]
     // async fn test_payload_generator() { ... }
+
+    // TODO: Re-enable after adapting to reth 2.0 APIs (reth_testing_utils removed,
+    // executor is now a concrete `Runtime` so CountingTaskExecutor can no longer be plugged in).
+    // #[tokio::test]
+    // async fn test_spawn_build_job_uses_async_executor() { ... }
+
+    #[tokio::test]
+    async fn test_resolve_payload_waits_for_first_value() {
+        let (tx, rx) = watch::channel::<Option<MockPayload>>(None);
+        let cancel = PayloadJobCancellation::new();
+        let resolve = ResolvePayload::new(Some(rx), cancel.clone());
+
+        tokio::spawn(async move {
+            sleep(Duration::from_millis(50)).await;
+            tx.send_replace(Some(MockPayload(7)));
+        });
+
+        let payload = timeout(Duration::from_secs(1), resolve)
+            .await
+            .expect("resolve should complete")
+            .expect("resolve should return payload");
+        assert_eq!(payload, MockPayload(7));
+        assert!(cancel.is_resolved());
+        assert!(cancel.is_cancelled());
+    }
+
+    #[tokio::test]
+    async fn test_resolve_payload_returns_latest_value() {
+        let (tx, rx) = watch::channel::<Option<MockPayload>>(None);
+        tx.send_replace(Some(MockPayload(1)));
+        tx.send_replace(Some(MockPayload(2)));
+
+        let cancel = PayloadJobCancellation::new();
+        let payload = ResolvePayload::new(Some(rx), cancel.clone())
+            .await
+            .expect("resolve should return payload");
+
+        assert_eq!(payload, MockPayload(2));
+        assert!(cancel.is_resolved());
+        assert!(cancel.is_cancelled());
+    }
+
+    #[tokio::test]
+    async fn test_resolve_payload_errors_if_builder_exits_without_payload() {
+        let (tx, rx) = watch::channel::<Option<MockPayload>>(None);
+        drop(tx);
+
+        let _ = ResolvePayload::new(Some(rx), PayloadJobCancellation::new())
+            .await
+            .expect_err("resolve should error when sender closes before value");
+    }
+
+    #[tokio::test]
+    async fn test_resolve_payload_errors_if_receiver_missing() {
+        let _ = ResolvePayload::<MockPayload>::new(None, PayloadJobCancellation::new())
+            .await
+            .expect_err("resolve should error when receiver is missing");
+    }
+
+    #[tokio::test]
+    async fn test_resolve_payload_cancels_after_payload_arrives() {
+        let (tx, rx) = watch::channel::<Option<MockPayload>>(None);
+        let cancel = PayloadJobCancellation::new();
+        let handle = tokio::spawn(ResolvePayload::new(Some(rx), cancel.clone()));
+
+        sleep(Duration::from_millis(20)).await;
+        assert!(!cancel.is_cancelled());
+
+        tx.send_replace(Some(MockPayload(9)));
+        let payload = timeout(Duration::from_secs(1), handle)
+            .await
+            .expect("task should finish")
+            .expect("task should not panic")
+            .expect("resolve should return payload");
+
+        assert_eq!(payload, MockPayload(9));
+        assert!(cancel.is_resolved());
+        assert!(cancel.is_cancelled());
+    }
 }
