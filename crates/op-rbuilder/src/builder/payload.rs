@@ -645,6 +645,11 @@ where
         // Top-of-block pre-simulation: run once before the flashblock loop
         // to filter reverting txs from the pool, so the expensive EVM sim
         // doesn't burn flashblock-building time on the critical path.
+        //
+        // Note: presim uses a fresh state from parent_hash rather than the
+        // warmed fallback cache. This is slightly less accurate (misses
+        // sequencer deposit state) but avoids the complexity of threading
+        // the cache through an extra blocking task.
         if self.config.presim_enabled {
             let presim_span = if span.is_none() {
                 tracing::Span::none()
@@ -652,7 +657,8 @@ where
                 info_span!(parent: &span, "presim")
             };
             let random_coinbase = self.config.presim_random_coinbase;
-            let evm_factory = ctx.evm_factory.clone();
+            let evm_config = self.evm_config.clone();
+            let evm_env = ctx.evm_factory.evm_env().clone();
             let best_tx_attrs = ctx.best_transaction_attributes();
             let presim = tracing::Instrument::instrument(
                 self.executor.run_blocking_task({
@@ -665,7 +671,8 @@ where
                         Ok(presimulate_pool_txs(
                             &builder.pool,
                             &state_provider,
-                            &evm_factory,
+                            &evm_config,
+                            &evm_env,
                             best_tx_attrs,
                             random_coinbase,
                             &builder.metrics,

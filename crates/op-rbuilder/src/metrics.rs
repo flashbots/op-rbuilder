@@ -194,7 +194,7 @@ pub struct OpRBuilderMetrics {
     /// Payload job ended due to a build error
     pub payload_job_cancellation_error: Counter,
     /// Duration of the top-of-block pre-simulation pass
-    pub presim_duration: Histogram,
+    pub presim_pass_duration: Histogram,
     /// Number of transactions simulated by the pre-simulation pass
     pub presim_txs_simulated: Histogram,
     /// Number of transactions excluded by the pre-simulation pass
