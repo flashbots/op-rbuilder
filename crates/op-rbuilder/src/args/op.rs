@@ -195,15 +195,10 @@ pub struct FlashblocksArgs {
     pub flashblocks_send_offset_ms: i64,
 
     /// Time in milliseconds to build the last flashblock early before the end of the slot.
-    /// This serves as a buffer time to account for the last flashblock being delayed
-    /// at the end of the slot due to processing the final block.
-    ///
-    /// Default 100ms: with the 250ms flashblock interval default and a 2s block, the last
-    /// flashblock is scheduled at t=slot_end. With zero buffer it typically can't publish
-    /// before `getPayload` and is silently dropped, leaving one of the block's flashblock
-    /// slots permanently empty. 100ms of buffer gives the final flashblock enough headroom
-    /// to build and publish (measured p99 build time is ~6ms) while only moving the dead
-    /// zone at end-of-block earlier by 100ms.
+    /// This gives the final flashblock headroom to build and publish before `getPayload`;
+    /// without it the last flashblock is prone to being dropped, leaving one of the block's
+    /// flashblock slots empty. The trade-off is moving the end-of-block dead zone earlier
+    /// by the same amount.
     #[arg(
         long = "flashblocks.end-buffer-ms",
         env = "FLASHBLOCK_END_BUFFER_MS",
