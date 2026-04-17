@@ -646,10 +646,14 @@ where
         // to filter reverting txs from the pool, so the expensive EVM sim
         // doesn't burn flashblock-building time on the critical path.
         //
+        // Fail-open: if presim errors (e.g. state provider unavailable),
+        // we log and continue — presim is an optimization, not required
+        // for correctness.
+        //
         // Note: presim uses a fresh state from parent_hash rather than the
-        // warmed fallback cache. This is slightly less accurate (misses
-        // sequencer deposit state) but avoids the complexity of threading
-        // the cache through an extra blocking task.
+        // warmed fallback cache. Txs arriving mid-block after presim are
+        // caught by the existing exclude_reverts_between_flashblocks
+        // mechanism during building (defense in depth).
         if self.config.presim_enabled {
             let presim_span = if span.is_none() {
                 tracing::Span::none()
@@ -681,10 +685,21 @@ where
                 }),
                 presim_span,
             )
-            .await?;
+            .await;
 
-            for hash in presim.excluded {
-                tx_cache.mark_excluded(hash);
+            match presim {
+                Ok(result) => {
+                    for hash in result.excluded {
+                        tx_cache.mark_excluded(hash);
+                    }
+                }
+                Err(err) => {
+                    warn!(
+                        target: "payload_builder",
+                        error = %err,
+                        "presim: failed, continuing without pre-simulation"
+                    );
+                }
             }
         }
 
