@@ -45,7 +45,7 @@ use reth_provider::StateProvider;
 use reth_revm::{State, database::StateProviderDatabase};
 use reth_transaction_pool::{BestTransactionsAttributes, PoolTransaction, TransactionPool};
 use std::time::{Duration, Instant};
-use tracing::debug;
+use tracing::{debug, info};
 
 use crate::{metrics::OpRBuilderMetrics, tx::FBPooledTransaction};
 
@@ -151,7 +151,7 @@ where
         .record(result.excluded.len() as f64);
     metrics.presim_gas_saved.increment(gas_saved);
 
-    debug!(
+    info!(
         target: "payload_builder",
         simulated,
         excluded = result.excluded.len(),

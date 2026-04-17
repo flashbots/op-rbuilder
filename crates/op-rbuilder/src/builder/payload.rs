@@ -689,6 +689,11 @@ where
 
             match presim {
                 Ok(result) => {
+                    info!(
+                        target: "payload_builder",
+                        excluded = result.excluded.len(),
+                        "presim: completed, marking excluded txs"
+                    );
                     for hash in result.excluded {
                         tx_cache.mark_excluded(hash);
                     }

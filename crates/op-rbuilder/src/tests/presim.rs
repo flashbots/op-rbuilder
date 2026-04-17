@@ -19,6 +19,10 @@ async fn presim_filters_reverting_tx_without_revert_protection(
 ) -> eyre::Result<()> {
     let driver = rbuilder.driver().await?;
 
+    // Build an initial block so that parent state is fully committed
+    // (accounts funded, genesis applied) before presim runs.
+    let _ = driver.build_new_block().await?;
+
     let valid_tx = driver
         .create_transaction()
         .random_valid_transfer()
@@ -100,6 +104,9 @@ async fn presim_disabled_by_default_includes_reverts(rbuilder: LocalInstance) ->
 })]
 async fn presim_without_random_coinbase(rbuilder: LocalInstance) -> eyre::Result<()> {
     let driver = rbuilder.driver().await?;
+
+    // Build initial block for stable parent state.
+    let _ = driver.build_new_block().await?;
 
     let reverting_tx = driver
         .create_transaction()
