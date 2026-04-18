@@ -61,6 +61,27 @@ pub struct OpRbuilderArgs {
     )]
     pub exclude_reverts_between_flashblocks: bool,
 
+    /// Pre-simulate pending pool transactions at the top of each block
+    /// and exclude any that revert before the flashblock building loop
+    /// begins. Moves the simulation cost of adversarial reverting txs
+    /// off the critical path of flashblock production.
+    #[arg(
+        long = "builder.enable-presim",
+        default_value = "false",
+        env = "BUILDER_ENABLE_PRESIM"
+    )]
+    pub enable_presim: bool,
+
+    /// Use a random coinbase address during pre-simulation so that
+    /// adversaries cannot detect the simulation environment by checking
+    /// the `COINBASE` opcode. Has no effect when presim is disabled.
+    #[arg(
+        long = "builder.presim-random-coinbase",
+        default_value = "true",
+        env = "BUILDER_PRESIM_RANDOM_COINBASE"
+    )]
+    pub presim_random_coinbase: bool,
+
     /// Enables logs to trace transaction lifecycle as it is added to the
     /// mempool and added to a block. Requires `RUST_LOG=tx_trace=debug` in
     /// addition to this flag.

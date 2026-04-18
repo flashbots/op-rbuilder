@@ -7,6 +7,7 @@ use crate::{
         builder_tx::BuilderTransactions,
         context::OpPayloadBuilderCtx,
         generator::{BuildArguments, PayloadBuilder},
+        presim::presimulate_pool_txs,
         timing::FlashblockScheduler,
     },
     evm::OpBlockEvmFactory,
@@ -640,6 +641,72 @@ where
         // and reconstruct State<DB> inside each sync scope.
         let mut tx_cache = FlashblockTxCache::default();
         let parent_hash = ctx.parent_hash();
+
+        // Top-of-block pre-simulation: run once before the flashblock loop
+        // to filter reverting txs from the pool, so the expensive EVM sim
+        // doesn't burn flashblock-building time on the critical path.
+        //
+        // Fail-open: if presim errors (e.g. state provider unavailable),
+        // we log and continue — presim is an optimization, not required
+        // for correctness.
+        //
+        // Note: presim uses a fresh state from parent_hash rather than the
+        // warmed fallback cache. Txs arriving mid-block after presim are
+        // caught by the existing exclude_reverts_between_flashblocks
+        // mechanism during building (defense in depth).
+        if self.config.presim_enabled {
+            let presim_span = if span.is_none() {
+                tracing::Span::none()
+            } else {
+                info_span!(parent: &span, "presim")
+            };
+            let random_coinbase = self.config.presim_random_coinbase;
+            let evm_config = self.evm_config.clone();
+            let evm_env = ctx.evm_factory.evm_env().clone();
+            let best_tx_attrs = ctx.best_transaction_attributes();
+            let presim = tracing::Instrument::instrument(
+                self.executor.run_blocking_task({
+                    let builder = self.clone();
+                    move || -> Result<_, PayloadBuilderError> {
+                        let state_provider = builder
+                            .client
+                            .state_by_block_hash(parent_hash)
+                            .map_err(PayloadBuilderError::from)?;
+                        Ok(presimulate_pool_txs(
+                            &builder.pool,
+                            &state_provider,
+                            &evm_config,
+                            &evm_env,
+                            best_tx_attrs,
+                            random_coinbase,
+                            &builder.metrics,
+                        ))
+                    }
+                }),
+                presim_span,
+            )
+            .await;
+
+            match presim {
+                Ok(result) => {
+                    info!(
+                        target: "payload_builder",
+                        excluded = result.excluded.len(),
+                        "presim: completed, marking excluded txs"
+                    );
+                    for hash in result.excluded {
+                        tx_cache.mark_excluded(hash);
+                    }
+                }
+                Err(err) => {
+                    warn!(
+                        target: "payload_builder",
+                        error = %err,
+                        "presim: failed, continuing without pre-simulation"
+                    );
+                }
+            }
+        }
 
         // State machine: explicit select! at every phase for deterministic cancellation.
         loop {

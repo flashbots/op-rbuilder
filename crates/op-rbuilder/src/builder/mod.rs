@@ -19,6 +19,7 @@ mod generator;
 mod p2p;
 mod payload;
 mod payload_handler;
+mod presim;
 mod service;
 mod syncer_ctx;
 mod timing;
@@ -102,6 +103,17 @@ pub struct BuilderConfig {
 
     /// Enable transaction tracking logs
     pub enable_tx_tracking_debug_logs: bool,
+
+    /// Pre-simulate pending pool transactions at the top of each block
+    /// and exclude any that revert from the flashblock loop. Moves the
+    /// simulation cost of adversarial reverting txs off the critical
+    /// path.
+    pub presim_enabled: bool,
+
+    /// Use a random coinbase address during pre-simulation. Prevents
+    /// adversaries from detecting the simulation environment by
+    /// branching on the `COINBASE` opcode.
+    pub presim_random_coinbase: bool,
 }
 
 impl Default for BuilderConfig {
@@ -123,6 +135,8 @@ impl Default for BuilderConfig {
             flashblocks_config: FlashblocksConfig::default(),
             exclude_reverts_between_flashblocks: false,
             enable_tx_tracking_debug_logs: false,
+            presim_enabled: false,
+            presim_random_coinbase: true,
         }
     }
 }
@@ -152,6 +166,8 @@ impl TryFrom<OpRbuilderArgs> for BuilderConfig {
             flashblocks_config,
             exclude_reverts_between_flashblocks: args.exclude_reverts_between_flashblocks,
             enable_tx_tracking_debug_logs: false,
+            presim_enabled: args.enable_presim,
+            presim_random_coinbase: args.presim_random_coinbase,
         })
     }
 }
