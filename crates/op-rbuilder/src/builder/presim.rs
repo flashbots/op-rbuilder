@@ -101,9 +101,9 @@ where
         env.block_env.beneficiary = Address::random();
     }
 
-    // Read-only simulation — no bundle tracking needed.
     let mut state = State::builder()
         .with_database(StateProviderDatabase::new(&state_provider))
+        .with_bundle_update()
         .build();
 
     let best = pool.best_transactions_with_attributes(best_tx_attrs);
@@ -139,7 +139,22 @@ where
                 result.excluded.push(tx_hash);
                 gas_saved = gas_saved.saturating_add(gas);
             }
-            Err(_) | Ok(_) => {}
+            Ok(exec) => {
+                debug!(
+                    target: "payload_builder",
+                    %tx_hash,
+                    gas_used = exec.result.gas_used(),
+                    "presim: transaction succeeded, keeping"
+                );
+            }
+            Err(ref err) => {
+                debug!(
+                    target: "payload_builder",
+                    %tx_hash,
+                    error = %err,
+                    "presim: EVM error, keeping transaction"
+                );
+            }
         }
     }
 
