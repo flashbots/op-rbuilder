@@ -2,7 +2,7 @@ use alloy_primitives::{Address, hex};
 use metrics::IntoF64;
 use reth_metrics::{
     Metrics,
-    metrics::{Counter, Gauge, Histogram, gauge},
+    metrics::{Counter, Gauge, Histogram, gauge, histogram},
 };
 
 use crate::{
@@ -247,17 +247,11 @@ impl OpRBuilderMetrics {
 /// Record the slot-relative time at which a flashblock was published.
 /// `offset_ms` is the time elapsed since slot start (payload_timestamp - block_time)
 pub fn record_flashblock_publish_timing(flashblock_index: u64, offset_ms: f64) {
-    static LABELS: &[&str] = &["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10"];
-    let index_str = LABELS
-        .get(flashblock_index as usize)
-        .copied()
-        .unwrap_or("unknown");
-    let labels: [(&str, &str); 1] = [("flashblock_index", index_str)];
-    gauge!(
+    histogram!(
         "op_rbuilder_flashblock_publish_timing_milliseconds",
-        &labels
+        "flashblock_index" => flashblock_index.to_string()
     )
-    .set(offset_ms);
+    .record(offset_ms);
 }
 
 /// Set gauge metrics for some flags so we can inspect which ones are set
