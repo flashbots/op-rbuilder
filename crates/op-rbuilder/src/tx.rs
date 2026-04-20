@@ -19,10 +19,11 @@ pub struct WithFlashbotsMetadata<T> {
     #[deref]
     inner: T,
 
-    /// Reverted hashes for bundle transactions. If the transaction is a bundle,
-    /// this is the list of hashes of the transactions that reverted. If the
-    /// transaction is not a bundle, this is `None`.
-    reverted_hashes: Option<Vec<B256>>,
+    /// Hashes within a bundle that the submitter permits to revert without
+    /// causing the bundle to be excluded. Sourced from the bundle's
+    /// `reverting_tx_hashes` field. `None` for non-bundle transactions;
+    /// `Some(vec![])` for bundles that permit no reverts.
+    allowed_revert_hashes: Option<Vec<B256>>,
 
     /// Minimum flashblock number constraint
     min_flashblock_number: Option<u64>,
@@ -36,19 +37,19 @@ impl<T> WithFlashbotsMetadata<T> {
     pub fn new(inner: T) -> Self {
         Self {
             inner,
-            reverted_hashes: None,
+            allowed_revert_hashes: None,
             min_flashblock_number: None,
             max_flashblock_number: None,
         }
     }
 
-    pub fn with_reverted_hashes(mut self, reverted_hashes: Vec<B256>) -> Self {
-        self.reverted_hashes = Some(reverted_hashes);
+    pub fn with_allowed_revert_hashes(mut self, allowed_revert_hashes: Vec<B256>) -> Self {
+        self.allowed_revert_hashes = Some(allowed_revert_hashes);
         self
     }
 
-    pub fn reverted_hashes(&self) -> &Option<Vec<B256>> {
-        &self.reverted_hashes
+    pub fn allowed_revert_hashes(&self) -> &Option<Vec<B256>> {
+        &self.allowed_revert_hashes
     }
 }
 

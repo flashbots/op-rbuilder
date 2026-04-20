@@ -447,7 +447,7 @@ impl OpPayloadBuilderCtx {
 
         while let Some(tx) = best_txs.next(()) {
             let interop = tx.interop_deadline();
-            let reverted_hashes = tx.reverted_hashes().clone();
+            let allowed_revert_hashes = tx.allowed_revert_hashes().clone();
             let conditional = tx.conditional().cloned();
 
             let tx_da_size = tx.estimated_da_size();
@@ -466,12 +466,13 @@ impl OpPayloadBuilderCtx {
             }
 
             // exclude reverting transaction if:
-            // - the transaction comes from a bundle (is_some) and the hash **is not** in reverted hashes
-            // Note that we need to use the Option to signal whether the transaction comes from a bundle,
-            // otherwise, we would exclude all transactions that are not in the reverted hashes.
-            let is_bundle_tx = reverted_hashes.is_some();
+            // - the transaction comes from a bundle (is_some) and the hash **is not** in the
+            //   bundle's allowed-revert list.
+            // the Option distinguishes bundle vs non-bundle txs; otherwise non-bundle txs would
+            // also be excluded on revert since they're never in the list.
+            let is_bundle_tx = allowed_revert_hashes.is_some();
             let exclude_reverting_txs =
-                is_bundle_tx && !reverted_hashes.unwrap().contains(&tx_hash);
+                is_bundle_tx && !allowed_revert_hashes.unwrap().contains(&tx_hash);
 
             let log_txn = |result: TxnExecutionResult| {
                 debug!(
