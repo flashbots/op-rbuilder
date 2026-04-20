@@ -447,10 +447,23 @@ impl OpPayloadBuilderCtx {
 
         while let Some(tx) = best_txs.next(()) {
             let interop = tx.interop_deadline();
-            let allowed_revert_hashes = tx.allowed_revert_hashes().clone();
             let conditional = tx.conditional().cloned();
-
             let tx_da_size = tx.estimated_da_size();
+
+            // exclude reverting transaction if:
+            // - the transaction comes from a bundle (is_some) and the hash **is not** in the
+            //   bundle's allowed-revert list.
+            // the Option distinguishes bundle vs non-bundle txs; otherwise non-bundle txs would
+            // also be excluded on revert since they're never in the list.
+            //
+            // computed via a borrow while the pool tx is still in scope, so we don't clone the
+            // allowed-revert list per tx.
+            let is_bundle_tx = tx.allowed_revert_hashes().is_some();
+            let exclude_reverting_txs = tx
+                .allowed_revert_hashes()
+                .as_ref()
+                .is_some_and(|allowed| !allowed.contains(tx.hash()));
+
             let tx = tx.into_consensus();
             let tx_hash = tx.tx_hash();
             let tx_uncompressed_size = tx.encode_2718_len() as u64;
@@ -464,15 +477,6 @@ impl OpPayloadBuilderCtx {
                     stage = "builder_popped"
                 );
             }
-
-            // exclude reverting transaction if:
-            // - the transaction comes from a bundle (is_some) and the hash **is not** in the
-            //   bundle's allowed-revert list.
-            // the Option distinguishes bundle vs non-bundle txs; otherwise non-bundle txs would
-            // also be excluded on revert since they're never in the list.
-            let is_bundle_tx = allowed_revert_hashes.is_some();
-            let exclude_reverting_txs =
-                is_bundle_tx && !allowed_revert_hashes.unwrap().contains(&tx_hash);
 
             let log_txn = |result: TxnExecutionResult| {
                 debug!(
