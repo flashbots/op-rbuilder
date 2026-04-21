@@ -474,15 +474,17 @@ impl OpPayloadBuilderCtx {
                 is_bundle_tx && !reverted_hashes.unwrap().contains(&tx_hash);
 
             let log_txn = |result: TxnExecutionResult| {
-                trace!(
-                    target: "payload_builder",
-                    id = %self.payload_id(),
-                    tx_hash = %tx_hash,
-                    tx_da_size,
-                    exclude_reverting_txs,
-                    result = %result,
-                    "Considering transaction",
-                );
+                if self.enable_tx_tracking_debug_logs {
+                    debug!(
+                        target: "tx_trace",
+                        id = %self.payload_id(),
+                        tx_hash = %tx_hash,
+                        tx_da_size,
+                        exclude_reverting_txs,
+                        result = %result,
+                        "Considering transaction",
+                    );
+                }
             };
 
             num_txs_considered += 1;
@@ -761,12 +763,14 @@ impl OpPayloadBuilderCtx {
                     let br_hash = bundle.backrun_tx.hash();
 
                     let log_br_txn = |result: TxnExecutionResult| {
-                        trace!(
-                            target: "payload_builder",
-                            message = "Considering backrun",
-                            tx_hash = %br_hash,
-                            result = %result,
-                        )
+                        if self.enable_tx_tracking_debug_logs {
+                            debug!(
+                                target: "tx_trace",
+                                message = "Considering backrun",
+                                tx_hash = %br_hash,
+                                result = %result,
+                            )
+                        }
                     };
 
                     num_txs_considered += 1;
