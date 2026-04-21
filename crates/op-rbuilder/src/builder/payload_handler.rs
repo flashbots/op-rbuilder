@@ -105,7 +105,7 @@ where
                     if let Err(e) = payload_events_handle.send(Events::BuiltPayload(payload.clone())) {
                         warn!(
                             target: "payload_builder",
-                            error = ?e,
+                            error = %e,
                             "failed to send BuiltPayload event"
                         );
                     }
@@ -139,7 +139,7 @@ where
                                         if let Err(e) = payload_events_handle.send(Events::BuiltPayload(payload)) {
                                             warn!(
                                                 target: "payload_builder",
-                                                error = ?e,
+                                                error = %e,
                                                 "failed to send BuiltPayload event on synced block"
                                             );
                                         }
@@ -147,7 +147,7 @@ where
                                     Err(e) => {
                                         error!(
                                             target: "payload_builder",
-                                            error = ?e,
+                                            error = %e,
                                             "failed to execute external received flashblock"
                                         );
                                     }
@@ -179,7 +179,8 @@ where
 
     info!(
         target: "payload_builder",
-        header = ?payload.block().header(),
+        block_hash = %payload.block().hash(),
+        block_number = payload.block().header().number(),
         "executing external flashblock"
     );
 
@@ -242,7 +243,7 @@ where
                 trace!(
                     target: "payload_builder",
                     len = extra_data.len(),
-                    data = ?extra_data,
+                    data = %extra_data,
                     "invalid extra data length in flashblock for jovian fork"
                 );
                 bail!("extra data length should be 17 bytes");
@@ -258,7 +259,7 @@ where
                 trace!(
                     target: "payload_builder",
                     len = extra_data.len(),
-                    data = ?extra_data,
+                    data = %extra_data,
                     "invalid extra data length in flashblock for holocene fork"
                 );
                 bail!("extra data length should be 9 bytes");
@@ -269,7 +270,7 @@ where
                 trace!(
                     target: "payload_builder",
                     len = extra_data.len(),
-                    data = ?extra_data,
+                    data = %extra_data,
                     "invalid extra data length in flashblock for pre holocene fork"
                 );
                 bail!("extra data length should be 0 bytes");
@@ -347,7 +348,8 @@ where
 
     info!(
         target: "payload_builder",
-        header = ?built_payload.block().header(),
+        block_hash = %built_payload.block().hash(),
+        block_number = built_payload.block().header().number(),
         "successfully executed external flashblock"
     );
     Ok((built_payload, fb_payload))
