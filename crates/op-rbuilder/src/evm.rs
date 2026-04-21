@@ -1,6 +1,7 @@
 use alloy_evm::Database;
 use reth_evm::{ConfigureEvm, EvmEnvFor, EvmFor};
 use reth_optimism_evm::OpEvmConfig;
+use reth_primitives_traits::HeaderTy;
 
 pub type OpBlockEvmFactory = BlockEvmFactory<OpEvmConfig>;
 
@@ -20,6 +21,15 @@ impl<C: ConfigureEvm> BlockEvmFactory<C> {
             evm_config,
             evm_env,
         }
+    }
+
+    pub fn for_next_block(
+        evm_config: C,
+        parent: &HeaderTy<C::Primitives>,
+        attributes: &C::NextBlockEnvCtx,
+    ) -> Result<Self, C::Error> {
+        let evm_env = evm_config.next_evm_env(parent, attributes)?;
+        Ok(Self::new(evm_config, evm_env))
     }
 
     pub fn evm<'a, DB: Database>(&self, db: &'a mut DB) -> EvmFor<C, &'a mut DB> {
