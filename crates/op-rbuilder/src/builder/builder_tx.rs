@@ -221,7 +221,7 @@ pub trait BuilderTransactions {
                             trace!(
                                 target: "payload_builder",
                                 error = %err,
-                                builder_tx = ?builder_tx.signed_tx,
+                                tx_hash = %builder_tx.signed_tx.tx_hash(),
                                 "skipping nonce too low builder transaction"
                             );
                         } else {
@@ -230,7 +230,7 @@ pub trait BuilderTransactions {
                             trace!(
                                 target: "payload_builder",
                                 error = %err,
-                                builder_tx = ?builder_tx.signed_tx,
+                                tx_hash = %builder_tx.signed_tx.tx_hash(),
                                 "skipping invalid builder transaction and its descendants"
                             );
                             invalid.insert(builder_tx.signed_tx.signer());

@@ -90,7 +90,7 @@ where
         let bundle_result = self
             .send_bundle_inner(bundle)
             .await
-            .inspect_err(|err| error!(error = ?err, "eth_sendBundle request failed"));
+            .inspect_err(|err| error!(error = %err, "eth_sendBundle request failed"));
 
         if bundle_result.is_ok() {
             self.metrics.valid_bundles.increment(1);
@@ -208,7 +208,7 @@ where
                         pool.remove_transaction(sim_tx_hash);
                     }
                     Err(e) => {
-                        error!(error = ?e, "pre-simulation task failed");
+                        error!(error = %e, "pre-simulation task failed");
                     }
                 }
                 metrics

@@ -391,7 +391,7 @@ impl BuilderTransactions for FlashtestationsBuilderTx {
                 Err(e) => {
                     warn!(
                         target: "flashtestations",
-                        error = ?e,
+                        error = %e,
                         "failed to add permit block proof transaction"
                     )
                 }

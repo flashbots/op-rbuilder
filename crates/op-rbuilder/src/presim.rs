@@ -210,7 +210,7 @@ pub(crate) async fn maintain_pending_simulations<Pool, St>(
                 }
                 Ok(true) => {}
                 Err(e) => {
-                    error!(tx_hash = %tx_hash, error = ?e, "background simulation failed");
+                    error!(tx_hash = %tx_hash, error = %e, "background simulation failed");
                 }
             }
         });
