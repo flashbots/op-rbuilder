@@ -569,13 +569,13 @@ where
             config.attributes.timestamp(),
         );
 
+        let target_flashblocks = flashblock_scheduler.target_flashblocks();
         info!(
             target: "payload_builder",
             id = %fb_payload.payload_id,
-            schedule = ?flashblock_scheduler,
+            target_flashblocks,
             "Computed flashblock timing schedule"
         );
-        let target_flashblocks = flashblock_scheduler.target_flashblocks();
 
         let expected_flashblocks = self
             .config
@@ -817,7 +817,7 @@ where
                         id = %fb_payload.payload_id,
                         flashblock_index = fb_state.flashblock_index(),
                         block_number = ctx.block_number(),
-                        ?err,
+                        %err,
                         "Failed to build flashblock",
                     );
                     return Err(PayloadBuilderError::Other(err.into()));
@@ -1157,17 +1157,6 @@ where
                     target_da_footprint_for_batch,
                 );
 
-                info!(
-                    target: "payload_builder",
-                    event = "flashblock_built",
-                    id = %ctx.payload_id(),
-                    flashblock_index = flashblock_index,
-                    current_gas = info.cumulative_gas_used,
-                    current_da = info.cumulative_da_bytes_used,
-                    target_flashblocks = fb_state.target_flashblock_count(),
-                    "Flashblock built"
-                );
-
                 Ok(Some((next_flashblock_state, new_payload)))
             }
         }
@@ -1377,6 +1366,10 @@ where
         .as_deref()
         .map(|s| s.flashblock_index())
         .unwrap_or(0);
+    let target_flashblock_count_for_trace = fb_state
+        .as_deref()
+        .map(|s| s.target_flashblock_count())
+        .unwrap_or(0);
 
     if calculate_state_root {
         let _state_root_span = span!(Level::INFO, "state_root").entered();
@@ -1567,23 +1560,26 @@ where
         ),
         hashed_state: either::Either::Left(Arc::new(hashed_state)),
     };
-    debug!(
-        target: "payload_builder",
-        id = %ctx.payload_id(),
-        "Executed block created"
-    );
 
     let seal_start = Instant::now();
     let sealed_block = Arc::new(block.seal_slow());
     let seal_duration = seal_start.elapsed();
-    debug!(
+    let block_hash = sealed_block.hash();
+
+    info!(
         target: "payload_builder",
         id = %ctx.payload_id(),
-        ?sealed_block,
-        "Sealed built block"
+        block_number = ctx.block_number(),
+        block_hash = %block_hash,
+        flashblock_index = flashblock_index_for_trace,
+        target_flashblocks = target_flashblock_count_for_trace,
+        tx_count = info.executed_transactions.len(),
+        gas_used = info.cumulative_gas_used,
+        da_used = info.cumulative_da_bytes_used,
+        state_root = %state_root,
+        seal_duration_us = seal_duration.as_micros() as u64,
+        "Block sealed"
     );
-
-    let block_hash = sealed_block.hash();
 
     if enable_tx_tracking_debug_logs {
         debug!(
