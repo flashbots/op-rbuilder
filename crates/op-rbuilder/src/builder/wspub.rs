@@ -74,7 +74,7 @@ impl WebSocketPublisher {
         // Serialize the payload to a UTF-8 string
         // serialize only once, then just copy around only a pointer
         // to the serialized data for each subscription.
-        info!(
+        debug!(
             target: "payload_builder",
             event = "flashblock_sent",
             message = "Sending flashblock to rollup-boost",
