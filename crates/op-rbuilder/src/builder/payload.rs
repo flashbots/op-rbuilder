@@ -74,6 +74,7 @@ fn convert_receipt(receipt: &OpReceipt) -> op_alloy_consensus::OpReceipt {
                 deposit_receipt_version: r.deposit_receipt_version,
             })
         }
+        OpReceipt::PostExec(r) => op_alloy_consensus::OpReceipt::PostExec(r.clone()),
     }
 }
 
