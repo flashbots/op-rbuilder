@@ -167,7 +167,7 @@ where
 
         let pool_transaction =
             FBPooledTransaction::from(OpPooledTransaction::from_pooled(recovered.clone()))
-                .with_reverted_hashes(bundle.reverting_tx_hashes.clone().unwrap_or_default())
+                .with_allowed_revert_hashes(bundle.reverting_tx_hashes.clone().unwrap_or_default())
                 .with_min_flashblock_number(conditional.min_flashblock_number)
                 .with_max_flashblock_number(conditional.max_flashblock_number)
                 .with_conditional(conditional.transaction_conditional);
