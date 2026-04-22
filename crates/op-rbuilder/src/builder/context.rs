@@ -600,6 +600,7 @@ impl OpPayloadBuilderCtx {
                     stage = "evm_executed"
                 );
             }
+
             if self
                 .address_gas_limiter
                 .consume_gas(tx.signer(), gas_used)

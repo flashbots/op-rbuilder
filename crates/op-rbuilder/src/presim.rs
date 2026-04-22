@@ -196,6 +196,11 @@ pub(crate) async fn maintain_pending_simulations<Pool, St>(
             continue;
         };
 
+        // Only simulate txs that enable revert protection
+        if tx.transaction.reverted_hashes().is_none() {
+            continue;
+        }
+
         let simulator = simulator.clone();
         let pool = pool.clone();
         let metrics = metrics.clone();
