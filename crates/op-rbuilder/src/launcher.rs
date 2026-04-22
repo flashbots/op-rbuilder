@@ -1,5 +1,9 @@
+use std::sync::Arc;
+
 use eyre::Result;
+use futures::FutureExt;
 use reth_optimism_rpc::OpEthApiBuilder;
+use tracing::info;
 
 use crate::{
     args::*,
@@ -7,8 +11,9 @@ use crate::{
         BackrunBundleApiServer, BackrunBundleRpc, maintain_backrun_bundle_pool_future,
     },
     builder::{BuilderConfig, FlashblocksServiceBuilder},
-    metrics::{VERSION, record_flag_gauge_metrics},
+    metrics::{OpRBuilderMetrics, VERSION, record_flag_gauge_metrics},
     monitor_tx_pool::monitor_tx_pool,
+    presim::{TopOfBlockSimulator, maintain_pending_simulations, maintain_tip_state},
     revert_protection::{EthApiExtServer, RevertProtectionExt},
     tx::FBPooledTransaction,
 };
@@ -18,11 +23,12 @@ use reth_cli_commands::launcher::Launcher;
 use reth_db::mdbx::DatabaseEnv;
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_cli::chainspec::OpChainSpecParser;
+use reth_optimism_evm::OpEvmConfig;
 use reth_optimism_node::{
     OpNode,
     node::{OpAddOns, OpAddOnsBuilder, OpEngineValidatorBuilder, OpPoolBuilder},
 };
-use reth_provider::CanonStateSubscriptions;
+use reth_provider::{CanonStateSubscriptions, ChainSpecProvider};
 use reth_transaction_pool::TransactionPool;
 pub fn launch() -> Result<()> {
     let cli = Cli::parsed();
@@ -94,8 +100,17 @@ impl Launcher<OpChainSpecParser, OpRbuilderArgs> for BuilderLauncher {
         let reverted_cache = Cache::builder().max_capacity(100).build();
         let reverted_cache_copy = reverted_cache.clone();
         let backrun_bundle_enabled = builder_args.backrun_bundle.backruns_enabled;
+        let block_time_secs = builder_config.block_time.as_millis() as u64 / 1000;
         let backrun_bundle_pool = builder_config.backrun_bundle_pool.clone();
         let backrun_bundle_pool_maintain = backrun_bundle_pool.clone();
+
+        let simulator = if builder_args.pre_simulate_bundles {
+            Some(Arc::new(TopOfBlockSimulator::new()))
+        } else {
+            None
+        };
+        let simulator_for_rpc = simulator.clone();
+        let simulator_for_maintenance = simulator.clone();
 
         let addons: OpAddOns<_, OpEthApiBuilder, OpEngineValidatorBuilder> =
             OpAddOnsBuilder::default()
@@ -128,7 +143,7 @@ impl Launcher<OpChainSpecParser, OpRbuilderArgs> for BuilderLauncher {
             .with_add_ons(addons)
             .extend_rpc_modules(move |ctx| {
                 if builder_args.enable_revert_protection {
-                    tracing::info!("Revert protection enabled");
+                    info!("Revert protection enabled");
 
                     let pool = ctx.pool().clone();
                     let provider = ctx.provider().clone();
@@ -137,6 +152,7 @@ impl Launcher<OpChainSpecParser, OpRbuilderArgs> for BuilderLauncher {
                         provider,
                         ctx.registry.eth_api().clone(),
                         reverted_cache,
+                        simulator_for_rpc,
                     );
 
                     ctx.modules
@@ -160,7 +176,7 @@ impl Launcher<OpChainSpecParser, OpRbuilderArgs> for BuilderLauncher {
             .on_node_started(move |ctx| {
                 VERSION.register_version_metrics();
                 if builder_args.log_pool_transactions {
-                    tracing::info!("Logging pool transactions");
+                    info!("Logging pool transactions");
                     let listener = ctx.pool.all_transactions_event_listener();
                     let task = monitor_tx_pool(
                         listener,
@@ -179,6 +195,34 @@ impl Launcher<OpChainSpecParser, OpRbuilderArgs> for BuilderLauncher {
                             chain_events,
                             task_executor,
                         ));
+                }
+
+                if let Some(simulator) = simulator_for_maintenance {
+                    let metrics = Arc::new(OpRBuilderMetrics::default());
+                    let chain_events = ctx.provider.canonical_state_stream();
+                    let evm_config = OpEvmConfig::optimism(ctx.provider.chain_spec());
+                    ctx.task_executor.spawn_task(
+                        maintain_tip_state(
+                            simulator.clone(),
+                            ctx.provider.clone(),
+                            evm_config,
+                            block_time_secs,
+                            metrics.clone(),
+                            chain_events,
+                        )
+                        .boxed(),
+                    );
+
+                    let pending_events = ctx.pool.all_transactions_event_listener();
+                    ctx.task_executor.spawn_task(
+                        maintain_pending_simulations(
+                            simulator,
+                            ctx.pool.clone(),
+                            metrics,
+                            pending_events,
+                        )
+                        .boxed(),
+                    );
                 }
 
                 Ok(())

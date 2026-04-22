@@ -7,11 +7,11 @@ use crate::{
         builder_tx::BuilderTransactions,
         context::OpPayloadBuilderCtx,
         generator::{BuildArguments, PayloadBuilder},
-        timing::FlashblockScheduler,
+        timing::{FlashblockScheduler, compute_slot_offset_ms},
     },
     evm::OpBlockEvmFactory,
     gas_limiter::AddressGasLimiter,
-    metrics::OpRBuilderMetrics,
+    metrics::{OpRBuilderMetrics, record_flashblock_publish_timing},
     primitives::reth::ExecutionInfo,
     runtime_ext::RuntimeExt,
     tokio_metrics::FlashblocksTaskMetrics,
@@ -388,11 +388,12 @@ where
             extra_data,
         };
 
-        let evm_config = self.evm_config.clone();
-
-        let evm_env = evm_config
-            .next_evm_env(&config.parent_header, &block_env_attributes)
-            .wrap_err("failed to create next evm env")?;
+        let evm_factory = OpBlockEvmFactory::for_next_block(
+            self.evm_config.clone(),
+            &config.parent_header,
+            &block_env_attributes,
+        )
+        .wrap_err("failed to create next evm env")?;
 
         let backrun_ctx = BackrunBundlesPayloadCtx {
             pool: self
@@ -403,7 +404,7 @@ where
         };
 
         Ok(OpPayloadBuilderCtx {
-            evm_factory: OpBlockEvmFactory::new(self.evm_config.clone(), evm_env),
+            evm_factory,
             chain_spec,
             config,
             block_env_attributes,
@@ -515,6 +516,11 @@ where
                 .ws_pub
                 .publish(&fb_payload)
                 .map_err(PayloadBuilderError::other)?;
+
+            let slot_offset_ms =
+                compute_slot_offset_ms(config.attributes.timestamp(), self.config.block_time);
+            record_flashblock_publish_timing(fb_payload.index, slot_offset_ms);
+
             if self.config.enable_tx_tracking_debug_logs {
                 debug!(
                     target: "tx_trace",
@@ -523,6 +529,7 @@ where
                     flashblock_index = fb_payload.index,
                     byte_size = flashblock_byte_size,
                     total_txs = info.executed_transactions.len(),
+                    slot_offset_ms,
                     stage = "fb_published"
                 );
             }
@@ -562,13 +569,13 @@ where
             config.attributes.timestamp(),
         );
 
+        let target_flashblocks = flashblock_scheduler.target_flashblocks();
         info!(
             target: "payload_builder",
             id = %fb_payload.payload_id,
-            schedule = ?flashblock_scheduler,
+            target_flashblocks,
             "Computed flashblock timing schedule"
         );
-        let target_flashblocks = flashblock_scheduler.target_flashblocks();
 
         let expected_flashblocks = self
             .config
@@ -810,7 +817,7 @@ where
                         id = %fb_payload.payload_id,
                         flashblock_index = fb_state.flashblock_index(),
                         block_number = ctx.block_number(),
-                        ?err,
+                        %err,
                         "Failed to build flashblock",
                     );
                     return Err(PayloadBuilderError::Other(err.into()));
@@ -1084,6 +1091,12 @@ where
                     .ws_pub
                     .publish(&fb_payload)
                     .wrap_err("failed to publish flashblock via websocket")?;
+
+                // Record slot-relative publish timing (ms since slot start)
+                let slot_offset_ms =
+                    compute_slot_offset_ms(ctx.attributes().timestamp(), self.config.block_time);
+                record_flashblock_publish_timing(flashblock_index, slot_offset_ms);
+
                 if self.config.enable_tx_tracking_debug_logs {
                     debug!(
                         target: "tx_trace",
@@ -1092,6 +1105,7 @@ where
                         flashblock_index,
                         byte_size = flashblock_byte_size,
                         total_txs = info.executed_transactions.len(),
+                        slot_offset_ms,
                         stage = "fb_published"
                     );
                 }
@@ -1141,17 +1155,6 @@ where
                     target_gas_for_batch,
                     target_da_for_batch,
                     target_da_footprint_for_batch,
-                );
-
-                info!(
-                    target: "payload_builder",
-                    event = "flashblock_built",
-                    id = %ctx.payload_id(),
-                    flashblock_index = flashblock_index,
-                    current_gas = info.cumulative_gas_used,
-                    current_da = info.cumulative_da_bytes_used,
-                    target_flashblocks = fb_state.target_flashblock_count(),
-                    "Flashblock built"
                 );
 
                 Ok(Some((next_flashblock_state, new_payload)))
@@ -1363,6 +1366,10 @@ where
         .as_deref()
         .map(|s| s.flashblock_index())
         .unwrap_or(0);
+    let target_flashblock_count_for_trace = fb_state
+        .as_deref()
+        .map(|s| s.target_flashblock_count())
+        .unwrap_or(0);
 
     if calculate_state_root {
         let _state_root_span = span!(Level::INFO, "state_root").entered();
@@ -1553,23 +1560,26 @@ where
         ),
         hashed_state: either::Either::Left(Arc::new(hashed_state)),
     };
-    debug!(
-        target: "payload_builder",
-        id = %ctx.payload_id(),
-        "Executed block created"
-    );
 
     let seal_start = Instant::now();
     let sealed_block = Arc::new(block.seal_slow());
     let seal_duration = seal_start.elapsed();
-    debug!(
+    let block_hash = sealed_block.hash();
+
+    info!(
         target: "payload_builder",
         id = %ctx.payload_id(),
-        ?sealed_block,
-        "Sealed built block"
+        block_number = ctx.block_number(),
+        block_hash = %block_hash,
+        flashblock_index = flashblock_index_for_trace,
+        target_flashblocks = target_flashblock_count_for_trace,
+        tx_count = info.executed_transactions.len(),
+        gas_used = info.cumulative_gas_used,
+        da_used = info.cumulative_da_bytes_used,
+        state_root = %state_root,
+        seal_duration_us = seal_duration.as_micros() as u64,
+        "Block sealed"
     );
-
-    let block_hash = sealed_block.hash();
 
     if enable_tx_tracking_debug_logs {
         debug!(

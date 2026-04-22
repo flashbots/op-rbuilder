@@ -432,7 +432,7 @@ impl OpPayloadBuilderCtx {
 
         debug!(
             target: "payload_builder",
-            id = ?self.payload_id(),
+            id = %self.payload_id(),
             block_da_limit = ?block_da_limit,
             tx_da_limit = ?tx_da_limit,
             block_gas_limit = ?block_gas_limit,
@@ -479,15 +479,17 @@ impl OpPayloadBuilderCtx {
             }
 
             let log_txn = |result: TxnExecutionResult| {
-                debug!(
-                    target: "payload_builder",
-                    id = ?self.payload_id(),
-                    tx_hash = %tx_hash,
-                    tx_da_size = ?tx_da_size,
-                    exclude_reverting_txs = ?exclude_reverting_txs,
-                    result = %result,
-                    "Considering transaction",
-                );
+                if self.enable_tx_tracking_debug_logs {
+                    debug!(
+                        target: "tx_trace",
+                        id = %self.payload_id(),
+                        tx_hash = %tx_hash,
+                        tx_da_size,
+                        exclude_reverting_txs,
+                        result = %result,
+                        "Considering transaction",
+                    );
+                }
             };
 
             num_txs_considered += 1;
@@ -626,11 +628,11 @@ impl OpPayloadBuilderCtx {
                 }
                 if exclude_reverting_txs {
                     log_txn(TxnExecutionResult::RevertedAndExcluded);
-                    info!(
+                    trace!(
                         target: "payload_builder",
                         tx_hash = %tx.tx_hash(),
                         signer = %tx.signer(),
-                        result = ?result,
+                        gas_used,
                         "skipping reverted transaction"
                     );
                     if self.exclude_reverts_between_flashblocks {
@@ -766,12 +768,14 @@ impl OpPayloadBuilderCtx {
                     let br_hash = bundle.backrun_tx.hash();
 
                     let log_br_txn = |result: TxnExecutionResult| {
-                        debug!(
-                            target: "payload_builder",
-                            message = "Considering backrun",
-                            tx_hash = %br_hash,
-                            result = %result,
-                        )
+                        if self.enable_tx_tracking_debug_logs {
+                            debug!(
+                                target: "tx_trace",
+                                message = "Considering backrun",
+                                tx_hash = %br_hash,
+                                result = %result,
+                            )
+                        }
                     };
 
                     num_txs_considered += 1;
@@ -946,9 +950,9 @@ impl OpPayloadBuilderCtx {
             backrun_processing_time,
         );
 
-        debug!(
+        info!(
             target: "payload_builder",
-            id = ?self.payload_id(),
+            id = %self.payload_id(),
             txs_executed = num_txs_considered,
             txs_applied = num_txs_simulated_success,
             txs_rejected = num_txs_simulated_fail,

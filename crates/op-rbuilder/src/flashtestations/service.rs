@@ -150,7 +150,7 @@ fn load_or_generate_tee_key(key_path: &str, debug: bool, debug_seed: &str) -> ey
             warn!(
                 target: "flashtestations",
                 key_path = %key_path,
-                error = ?e,
+                error = %e,
                 "Failed to write key to path"
             )
         })
@@ -165,25 +165,25 @@ fn load_tee_key(path: &Path) -> Option<Signer> {
         return None;
     }
 
-    info!(target: "flashtestations", path = ?path, "Loading TEE key");
+    info!(target: "flashtestations", path = %path.display(), "Loading TEE key");
     let key_hex = fs::read_to_string(path)
-        .inspect_err(|e| warn!(target: "flashtestations", error = ?e, "failed to read key file"))
+        .inspect_err(|e| warn!(target: "flashtestations", error = %e, "failed to read key file"))
         .ok()?;
 
     let secret_bytes = B256::try_from(
         hex::decode(key_hex.trim())
             .inspect_err(
-                |e| warn!(target: "flashtestations", error = ?e, "failed to decode hex from file"),
+                |e| warn!(target: "flashtestations", error = %e, "failed to decode hex from file"),
             )
             .ok()?
             .as_slice(),
     )
-    .inspect_err(|e| warn!(target: "flashtestations", error = ?e, "failed to parse key from file"))
+    .inspect_err(|e| warn!(target: "flashtestations", error = %e, "failed to parse key from file"))
     .ok()?;
 
     Signer::try_from_secret(secret_bytes)
         .inspect_err(
-            |e| warn!(target: "flashtestations", error = ?e, "failed to create signer from key"),
+            |e| warn!(target: "flashtestations", error = %e, "failed to create signer from key"),
         )
         .ok()
 }

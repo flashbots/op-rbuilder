@@ -61,6 +61,15 @@ pub struct OpRbuilderArgs {
     )]
     pub exclude_reverts_between_flashblocks: bool,
 
+    /// Whether to pre-simulate bundle transactions against the current head state
+    /// and reject them if they revert, before adding to the pool.
+    #[arg(
+        long = "builder.pre-simulate-bundles",
+        default_value = "false",
+        env = "PRE_SIMULATE_BUNDLES"
+    )]
+    pub pre_simulate_bundles: bool,
+
     /// Enables logs to trace transaction lifecycle as it is added to the
     /// mempool and added to a block. Requires `RUST_LOG=tx_trace=debug` in
     /// addition to this flag.

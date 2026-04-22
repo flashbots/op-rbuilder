@@ -114,7 +114,7 @@ impl BuilderTransactions for FlashblocksBuilderTx {
                     Err(e) => {
                         warn!(
                             target: "flashtestations",
-                            error = ?e,
+                            error = %e,
                             "failed to add flashtestations builder tx"
                         )
                     }
@@ -301,7 +301,7 @@ impl BuilderTransactions for FlashblocksNumberBuilderTx {
                 Err(e) => {
                     warn!(
                         target: "builder_tx",
-                        error = ?e,
+                        error = %e,
                         "flashblocks number contract tx simulation failed, defaulting to fallback builder tx"
                     );
                     self.base_builder_tx
@@ -338,7 +338,7 @@ impl BuilderTransactions for FlashblocksNumberBuilderTx {
                 Err(e) => {
                     warn!(
                         target: "flashtestations",
-                        error = ?e,
+                        error = %e,
                         "failed to add flashtestations builder tx"
                     )
                 }

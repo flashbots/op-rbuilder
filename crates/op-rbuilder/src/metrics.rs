@@ -2,7 +2,7 @@ use alloy_primitives::{Address, hex};
 use metrics::IntoF64;
 use reth_metrics::{
     Metrics,
-    metrics::{Counter, Gauge, Histogram, gauge},
+    metrics::{Counter, Gauge, Histogram, gauge, histogram},
 };
 
 use crate::{
@@ -159,6 +159,16 @@ pub struct OpRBuilderMetrics {
     pub bundles_reverted: Histogram,
     /// Histogram of eth_sendBundle request duration
     pub bundle_receive_duration: Histogram,
+    /// Number of bundles dropped by pre-simulation (reverted)
+    pub bundle_pre_simulation_reverts: Counter,
+    /// Number of bundles that passed pre-simulation
+    pub bundle_pre_simulation_passes: Counter,
+    /// Histogram of bundle pre-simulation duration
+    pub bundle_pre_simulation_duration: Histogram,
+    /// Number of updates to the tip state for the top of block simulator
+    pub presim_tip_state_updates: Counter,
+    /// Number of pending txs evicted due to failing top of block simulation
+    pub presim_pending_evictions: Counter,
     /// Transactions rejected by per-tx DA size limit
     pub tx_da_size_exceeded_total: Counter,
     /// Transactions rejected by cumulative block DA limit
@@ -244,6 +254,16 @@ impl OpRBuilderMetrics {
     }
 }
 
+/// Record the slot-relative time at which a flashblock was published.
+/// `offset_ms` is the time elapsed since slot start (payload_timestamp - block_time)
+pub fn record_flashblock_publish_timing(flashblock_index: u64, offset_ms: f64) {
+    histogram!(
+        "op_rbuilder_flashblock_publish_timing_milliseconds",
+        "flashblock_index" => flashblock_index.to_string()
+    )
+    .record(offset_ms);
+}
+
 /// Set gauge metrics for some flags so we can inspect which ones are set
 /// and which ones aren't.
 pub fn record_flag_gauge_metrics(builder_args: &OpRbuilderArgs) {
@@ -260,30 +280,17 @@ pub fn record_tee_metrics(raw_quote: &[u8], tee_address: &Address) -> eyre::Resu
     let parsed_quote = parse_report_body(raw_quote)?;
     let workload_id = compute_workload_id_from_parsed(&parsed_quote);
 
-    let workload_id_hex = hex::encode(workload_id);
-    let mr_td_hex = hex::encode(parsed_quote.mr_td);
-    let rt_mr0_hex = hex::encode(parsed_quote.rt_mr0);
-
-    let tee_address_static: &'static str = Box::leak(tee_address.to_string().into_boxed_str());
-    let workload_id_static: &'static str = Box::leak(workload_id_hex.into_boxed_str());
-    let mr_td_static: &'static str = Box::leak(mr_td_hex.into_boxed_str());
-    let rt_mr0_static: &'static str = Box::leak(rt_mr0_hex.into_boxed_str());
-
     // Record TEE address
-    let tee_address_labels: [(&str, &str); 1] = [("tee_address", tee_address_static)];
-    gauge!("op_rbuilder_tee_address", &tee_address_labels).set(1);
+    gauge!("op_rbuilder_tee_address", "tee_address" => tee_address.to_string()).set(1);
 
     // Record workload ID
-    let workload_labels: [(&str, &str); 1] = [("workload_id", workload_id_static)];
-    gauge!("op_rbuilder_tee_workload_id", &workload_labels).set(1);
+    gauge!("op_rbuilder_tee_workload_id", "workload_id" => hex::encode(workload_id)).set(1);
 
     // Record MRTD (TEE measurement)
-    let mr_td_labels: [(&str, &str); 1] = [("mr_td", mr_td_static)];
-    gauge!("op_rbuilder_tee_mr_td", &mr_td_labels).set(1);
+    gauge!("op_rbuilder_tee_mr_td", "mr_td" => hex::encode(parsed_quote.mr_td)).set(1);
 
     // Record RTMR0 (runtime measurement register 0)
-    let rt_mr0_labels: [(&str, &str); 1] = [("rt_mr0", rt_mr0_static)];
-    gauge!("op_rbuilder_tee_rt_mr0", &rt_mr0_labels).set(1);
+    gauge!("op_rbuilder_tee_rt_mr0", "rt_mr0" => hex::encode(parsed_quote.rt_mr0)).set(1);
 
     Ok(())
 }

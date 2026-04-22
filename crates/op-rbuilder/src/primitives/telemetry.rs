@@ -9,6 +9,7 @@ fn default_trace_filter() -> Targets {
         .with_default(LevelFilter::WARN)
         .with_target("op_rbuilder", LevelFilter::INFO)
         .with_target("payload_builder", LevelFilter::DEBUG)
+        .with_target("tx_trace", LevelFilter::DEBUG)
 }
 
 /// Setup telemetry layer with sampling and custom endpoint configuration
