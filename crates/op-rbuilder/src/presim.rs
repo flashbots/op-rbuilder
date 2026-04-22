@@ -196,6 +196,12 @@ pub(crate) async fn maintain_pending_simulations<Pool, St>(
             continue;
         };
 
+        // Only simulate txs that enable revert protection since if they don't
+        // then the sender will just pay gas fees
+        if !tx.transaction.revert_protected() {
+            continue;
+        }
+
         let simulator = simulator.clone();
         let pool = pool.clone();
         let metrics = metrics.clone();

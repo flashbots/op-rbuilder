@@ -48,8 +48,18 @@ impl<T> WithFlashbotsMetadata<T> {
         self
     }
 
-    pub fn allowed_revert_hashes(&self) -> &Option<Vec<B256>> {
-        &self.allowed_revert_hashes
+    pub fn is_bundle(&self) -> bool {
+        self.allowed_revert_hashes.is_some()
+    }
+}
+
+impl<T: PoolTransaction> WithFlashbotsMetadata<T> {
+    // We exclude reverting transactions if the transaction is a bundle and the
+    // hash **is not** in the bundle's allowed-to-revert list
+    pub fn revert_protected(&self) -> bool {
+        self.allowed_revert_hashes
+            .as_ref()
+            .is_some_and(|allowed| !allowed.contains(self.inner.hash()))
     }
 }
 
