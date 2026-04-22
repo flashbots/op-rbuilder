@@ -102,17 +102,22 @@ jobs:
         run: |
           git config --global --add safe.directory "$(pwd)"
           . $HOME/.cargo/env
-          # AArch64 static link overflows the small-code-model 32-bit GOT page
-          # offset (R_AARCH64_LD64_GOTPAGE_LO15) once the binary is large enough,
-          # which the reth v2.0.0 / op-reth v2.1.0 bump tipped past. Force the
-          # large code model on aarch64 so symbol references can address the
-          # full GOT. x86_64 doesn't need it.
-          EXTRA_RUSTFLAGS=""
+          # AArch64 static (`+crt-static`) link with glibc overflows the
+          # small-code-model 32-bit GOT page offset
+          # (R_AARCH64_LD64_GOTPAGE_LO15) once the binary is large enough,
+          # which the reth v2.0.0 / op-reth v2.1.0 bump tipped past. The
+          # natural fix (`-C code-model=large`) is incompatible with glibc's
+          # general-dynamic TLS in LLVM ("ELF TLS only supported in small
+          # memory model or in local exec TLS model"), so instead drop
+          # `+crt-static` for aarch64 and accept dynamic glibc linking on
+          # that target only. x86_64 retains the static build unchanged.
           if [ "${{ matrix.configs.target }}" = "aarch64-unknown-linux-gnu" ]; then
-            EXTRA_RUSTFLAGS="-C code-model=large"
+            CRT_STATIC_FLAG=""
+          else
+            CRT_STATIC_FLAG="-C target-feature=+crt-static"
           fi
           SOURCE_DATE_EPOCH=$(git log -1 --pretty=%ct) \
-          RUSTFLAGS="-C target-feature=+crt-static -C link-arg=-static-libgcc -C link-arg=-Wl,--build-id=none -C metadata='' $EXTRA_RUSTFLAGS --remap-path-prefix=$(pwd)=." \
+          RUSTFLAGS="$CRT_STATIC_FLAG -C link-arg=-static-libgcc -C link-arg=-Wl,--build-id=none -C metadata='' --remap-path-prefix=$(pwd)=." \
           CARGO_INCREMENTAL=0 \
           LC_ALL=C \
           TZ=UTC \
