@@ -202,9 +202,6 @@ where
                     }
                     Ok(false) => {
                         metrics.bundle_pre_simulation_reverts.increment(1);
-                        metrics
-                            .bundle_pre_simulation_duration
-                            .record(sim_start.elapsed());
                         pool.remove_transaction(sim_tx_hash);
                     }
                     Err(e) => {
