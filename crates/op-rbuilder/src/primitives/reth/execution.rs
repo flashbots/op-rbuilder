@@ -13,7 +13,6 @@ pub enum TxnExecutionResult {
     TransactionGasLimitExceeded(u64, u64, u64),
     SequencerTransaction,
     NonceTooLow,
-    InteropFailed,
     #[display("InternalError({_0})")]
     InternalError(String),
     EvmError,

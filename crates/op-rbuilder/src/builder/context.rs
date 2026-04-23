@@ -22,9 +22,7 @@ use reth_optimism_payload_builder::{
 };
 use reth_optimism_primitives::{OpReceipt, OpTransactionSigned};
 use reth_optimism_txpool::{
-    conditional::MaybeConditionalTransaction,
-    estimated_da_size::DataAvailabilitySized,
-    interop::{MaybeInteropTransaction, is_valid_interop},
+    conditional::MaybeConditionalTransaction, estimated_da_size::DataAvailabilitySized,
 };
 use reth_payload_builder::PayloadId;
 use reth_primitives_traits::{InMemorySize, SealedHeader, SignedTransaction};
@@ -446,7 +444,6 @@ impl OpPayloadBuilderCtx {
         };
 
         while let Some(tx) = best_txs.next(()) {
-            let interop = tx.interop_deadline();
             let conditional = tx.conditional().cloned();
             let tx_da_size = tx.estimated_da_size();
 
@@ -500,19 +497,6 @@ impl OpPayloadBuilderCtx {
             {
                 best_txs.mark_invalid(tx.signer(), tx.nonce());
                 continue;
-            }
-
-            // TODO: remove this condition and feature once we are comfortable enabling interop for everything
-            if cfg!(feature = "interop") {
-                // We skip invalid cross chain txs, they would be removed on the next block update in
-                // the maintenance job
-                if let Some(interop) = interop
-                    && !is_valid_interop(interop, self.config.attributes.timestamp())
-                {
-                    log_txn(TxnExecutionResult::InteropFailed);
-                    best_txs.mark_invalid(tx.signer(), tx.nonce());
-                    continue;
-                }
             }
 
             // ensure we still have capacity for this transaction
