@@ -54,6 +54,7 @@ impl Signer {
             OpTypedTransaction::Eip1559(tx) => tx.signature_hash(),
             OpTypedTransaction::Eip7702(tx) => tx.signature_hash(),
             OpTypedTransaction::Deposit(_) => B256::ZERO,
+            OpTypedTransaction::PostExec(_) => B256::ZERO,
         };
         let signature = self.sign_message(signature_hash)?;
         let signed = OpTransactionSigned::new_unhashed(tx, signature);
