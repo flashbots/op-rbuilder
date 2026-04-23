@@ -2,6 +2,8 @@ use crate::{
     args::OpRbuilderArgs,
     backrun_bundle::{BackrunBundleApiServer, BackrunBundleRpc},
     builder::{BuilderConfig, FlashblocksServiceBuilder},
+    metrics::OpRBuilderMetrics,
+    presim::{TopOfBlockSimulator, maintain_pending_simulations, maintain_tip_state},
     revert_protection::{EthApiExtServer, RevertProtectionExt},
     tests::{
         EngineApi, Ipc, TEE_DEBUG_ADDRESS, TransactionPoolObserver, builder_signer, create_test_db,
@@ -37,11 +39,13 @@ use reth::{
 };
 use reth_node_builder::{NodeBuilder, NodeConfig};
 use reth_optimism_chainspec::OpChainSpec;
+use reth_optimism_evm::OpEvmConfig;
 use reth_optimism_node::{
     OpNode,
     node::{OpAddOns, OpAddOnsBuilder, OpEngineValidatorBuilder, OpPoolBuilder},
 };
 use reth_optimism_rpc::OpEthApiBuilder;
+use reth_provider::{CanonStateSubscriptions, ChainSpecProvider};
 use reth_transaction_pool::{AllTransactionsEvents, TransactionPool};
 use std::{
     net::SocketAddr,
@@ -112,6 +116,15 @@ impl LocalInstance {
         let da_config = builder_config.da_config.clone();
         let gas_limit_config = builder_config.gas_limit_config.clone();
         let backrun_bundle_pool = builder_config.backrun_bundle_pool.clone();
+        let block_time_secs = builder_config.block_time.as_millis() as u64 / 1000;
+
+        let simulator = if args.pre_simulate_bundles {
+            Some(Arc::new(TopOfBlockSimulator::new()))
+        } else {
+            None
+        };
+        let simulator_for_rpc = simulator.clone();
+        let simulator_for_maintenance = simulator.clone();
 
         let addons: OpAddOns<_, OpEthApiBuilder, OpEngineValidatorBuilder> =
             OpAddOnsBuilder::default()
@@ -143,6 +156,7 @@ impl LocalInstance {
                         provider,
                         ctx.registry.eth_api().clone(),
                         reverted_cache,
+                        simulator_for_rpc,
                     );
 
                     ctx.modules
@@ -170,6 +184,34 @@ impl LocalInstance {
                 txpool_ready_tx
                     .send(ctx.pool.all_transactions_event_listener())
                     .expect("Failed to send txpool ready signal");
+
+                if let Some(simulator) = simulator_for_maintenance {
+                    let metrics = Arc::new(OpRBuilderMetrics::default());
+                    let chain_events = ctx.provider.canonical_state_stream();
+                    let evm_config = OpEvmConfig::optimism(ctx.provider.chain_spec());
+                    ctx.task_executor.spawn_task(
+                        maintain_tip_state(
+                            simulator.clone(),
+                            ctx.provider.clone(),
+                            evm_config,
+                            block_time_secs,
+                            metrics.clone(),
+                            chain_events,
+                        )
+                        .boxed(),
+                    );
+
+                    let pending_events = ctx.pool.all_transactions_event_listener();
+                    ctx.task_executor.spawn_task(
+                        maintain_pending_simulations(
+                            simulator,
+                            ctx.pool.clone(),
+                            metrics,
+                            pending_events,
+                        )
+                        .boxed(),
+                    );
+                }
 
                 Ok(())
             });
@@ -346,8 +388,7 @@ fn chain_spec() -> Arc<OpChainSpec> {
 }
 
 fn task_runtime() -> TaskRuntime {
-    TaskRuntime::with_existing_handle(tokio::runtime::Handle::current())
-        .expect("failed to create task runtime")
+    TaskRuntime::test()
 }
 
 fn pool_component(args: &OpRbuilderArgs) -> OpPoolBuilder<FBPooledTransaction> {

@@ -3,16 +3,17 @@ use crate::{
     backrun_bundle::BackrunBundlesPayloadCtx,
     builder::{
         BuilderConfig,
-        best_txs::BestFlashblocksTxs,
+        best_txs::{FlashblockPoolTxCursor, FlashblockTxCache},
         builder_tx::BuilderTransactions,
         context::OpPayloadBuilderCtx,
-        generator::{BlockCell, BuildArguments, PayloadBuilder},
-        timing::FlashblockScheduler,
+        generator::{BuildArguments, PayloadBuilder},
+        timing::{FlashblockScheduler, compute_slot_offset_ms},
     },
     evm::OpBlockEvmFactory,
     gas_limiter::AddressGasLimiter,
-    metrics::OpRBuilderMetrics,
+    metrics::{OpRBuilderMetrics, record_flashblock_publish_timing},
     primitives::reth::ExecutionInfo,
+    runtime_ext::RuntimeExt,
     tokio_metrics::FlashblocksTaskMetrics,
     traits::{ClientBounds, PoolBounds},
 };
@@ -27,7 +28,6 @@ use op_alloy_rpc_types_engine::{
     OpFlashblockPayload, OpFlashblockPayloadBase, OpFlashblockPayloadDelta,
     OpFlashblockPayloadMetadata,
 };
-use reth::payload::PayloadBuilderAttributes;
 use reth_chainspec::EthChainSpec;
 use reth_evm::{ConfigureEvm, execute::BlockBuilder};
 use reth_execution_types::BlockExecutionOutput;
@@ -36,22 +36,28 @@ use reth_optimism_consensus::{calculate_receipt_root_no_memo_optimism, isthmus};
 use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
 use reth_optimism_forks::OpHardforks;
 use reth_optimism_node::{OpBuiltPayload, OpPayloadBuilderAttributes};
+use reth_optimism_payload_builder::OpPayloadAttrs;
 use reth_optimism_primitives::{OpReceipt, OpTransactionSigned};
+use reth_payload_builder::PayloadId;
 use reth_payload_util::BestPayloadTransactions;
 use reth_primitives_traits::RecoveredBlock;
 use reth_provider::{
     HashedPostStateProvider, ProviderError, StateRootProvider, StorageRootProvider,
 };
 use reth_revm::{
-    State, database::StateProviderDatabase, db::states::bundle_state::BundleRetention,
+    State,
+    cached::CachedReads,
+    database::StateProviderDatabase,
+    db::{CacheState, TransitionState, states::bundle_state::BundleRetention},
 };
+use reth_tasks::Runtime;
 use reth_transaction_pool::TransactionPool;
 use reth_trie::{HashedPostState, updates::TrieUpdates};
 use revm::Database;
-use std::{collections::BTreeMap, sync::Arc, time::Instant};
-use tokio::sync::mpsc;
+use std::{collections::BTreeMap, ops::Deref, sync::Arc, time::Instant};
+use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, info, metadata::Level, span, warn};
+use tracing::{debug, error, info, info_span, metadata::Level, span, warn};
 
 /// Converts a reth OpReceipt to an op-alloy OpReceipt
 /// TODO: remove this once reth updates to use the op-alloy defined type as well.
@@ -68,10 +74,12 @@ fn convert_receipt(receipt: &OpReceipt) -> op_alloy_consensus::OpReceipt {
                 deposit_receipt_version: r.deposit_receipt_version,
             })
         }
+        OpReceipt::PostExec(r) => op_alloy_consensus::OpReceipt::PostExec(r.clone()),
     }
 }
 
-type NextBestFlashblocksTxs<Pool> = BestFlashblocksTxs<
+type NextFlashblockPoolTxCursor<'a, Pool> = FlashblockPoolTxCursor<
+    'a,
     <Pool as TransactionPool>::Transaction,
     Box<
         dyn reth_transaction_pool::BestTransactions<
@@ -110,6 +118,26 @@ pub(super) struct FlashblocksState {
     /// State root calculator. Manages cached trie updates and cumulative prefix
     /// sets across flashblocks when incremental mode is enabled.
     state_root_calculator: StateRootCalculator,
+}
+
+struct FallbackBuildOutput<Cache, Transition> {
+    ctx: OpPayloadBuilderCtx,
+    info: ExecutionInfo,
+    payload: OpBuiltPayload,
+    fb_payload: OpFlashblockPayload,
+    cache: Cache,
+    transition: Transition,
+    fb_state: FlashblocksState,
+}
+
+struct FlashblockBuildOutput<Cache, Transition> {
+    ctx: OpPayloadBuilderCtx,
+    build_result: eyre::Result<Option<(FlashblocksState, OpBuiltPayload)>>,
+    cache: Cache,
+    transition: Transition,
+    tx_cache: FlashblockTxCache,
+    info: ExecutionInfo,
+    fb_state: FlashblocksState,
 }
 
 impl FlashblocksState {
@@ -229,33 +257,56 @@ impl FlashblocksState {
 }
 
 /// Optimism's payload builder
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub(super) struct OpPayloadBuilder<Pool, Client, BuilderTx> {
+    inner: Arc<OpPayloadBuilderInner<Pool, Client, BuilderTx>>,
+}
+
+#[derive(Debug)]
+pub(super) struct OpPayloadBuilderInner<Pool, Client, BuilderTx> {
     /// The type responsible for creating the evm.
-    pub evm_config: OpEvmConfig,
+    evm_config: OpEvmConfig,
     /// The transaction pool
-    pub pool: Pool,
+    pool: Pool,
     /// Node client
-    pub client: Client,
+    client: Client,
     /// Sender for sending built flashblock payloads to [`PayloadHandler`],
     /// which broadcasts outgoing flashblock payloads via p2p.
-    pub built_fb_payload_tx: mpsc::Sender<OpBuiltPayload>,
+    built_fb_payload_tx: mpsc::Sender<OpBuiltPayload>,
     /// Sender for sending built full block payloads to [`PayloadHandler`],
     /// which updates the engine tree state.
-    pub built_payload_tx: mpsc::Sender<OpBuiltPayload>,
+    built_payload_tx: mpsc::Sender<OpBuiltPayload>,
     /// WebSocket publisher for broadcasting flashblocks
     /// to all connected subscribers.
-    pub ws_pub: Arc<WebSocketPublisher>,
+    ws_pub: WebSocketPublisher,
     /// System configuration for the builder
-    pub config: BuilderConfig,
+    config: BuilderConfig,
     /// The metrics for the builder
-    pub metrics: Arc<OpRBuilderMetrics>,
+    metrics: Arc<OpRBuilderMetrics>,
     /// The end of builder transaction type
-    pub builder_tx: BuilderTx,
+    builder_tx: BuilderTx,
     /// Rate limiting based on gas. This is an optional feature.
-    pub address_gas_limiter: AddressGasLimiter,
+    address_gas_limiter: AddressGasLimiter,
     /// Tokio task metrics for monitoring spawned tasks
-    pub task_metrics: Arc<FlashblocksTaskMetrics>,
+    task_metrics: Arc<FlashblocksTaskMetrics>,
+    /// Task executor used to offload blocking work.
+    executor: Runtime,
+}
+
+impl<Pool, Client, BuilderTx> Deref for OpPayloadBuilder<Pool, Client, BuilderTx> {
+    type Target = OpPayloadBuilderInner<Pool, Client, BuilderTx>;
+
+    fn deref(&self) -> &Self::Target {
+        self.inner.as_ref()
+    }
+}
+
+impl<Pool, Client, BuilderTx> Clone for OpPayloadBuilder<Pool, Client, BuilderTx> {
+    fn clone(&self) -> Self {
+        Self {
+            inner: Arc::clone(&self.inner),
+        }
+    }
 }
 
 impl<Pool, Client, BuilderTx> OpPayloadBuilder<Pool, Client, BuilderTx> {
@@ -268,32 +319,36 @@ impl<Pool, Client, BuilderTx> OpPayloadBuilder<Pool, Client, BuilderTx> {
         builder_tx: BuilderTx,
         built_fb_payload_tx: mpsc::Sender<OpBuiltPayload>,
         built_payload_tx: mpsc::Sender<OpBuiltPayload>,
-        ws_pub: Arc<WebSocketPublisher>,
+        ws_pub: WebSocketPublisher,
         metrics: Arc<OpRBuilderMetrics>,
         task_metrics: Arc<FlashblocksTaskMetrics>,
+        executor: Runtime,
     ) -> Self {
         let address_gas_limiter = AddressGasLimiter::new(config.gas_limiter_config.clone());
         Self {
-            evm_config,
-            pool,
-            client,
-            built_fb_payload_tx,
-            built_payload_tx,
-            ws_pub,
-            config,
-            metrics,
-            builder_tx,
-            address_gas_limiter,
-            task_metrics,
+            inner: Arc::new(OpPayloadBuilderInner {
+                evm_config,
+                pool,
+                client,
+                built_fb_payload_tx,
+                built_payload_tx,
+                ws_pub,
+                config,
+                metrics,
+                builder_tx,
+                address_gas_limiter,
+                task_metrics,
+                executor,
+            }),
         }
     }
 }
 
 impl<Pool, Client, BuilderTx> OpPayloadBuilder<Pool, Client, BuilderTx>
 where
-    Pool: PoolBounds,
-    Client: ClientBounds,
-    BuilderTx: BuilderTransactions + Send + Sync,
+    Pool: PoolBounds + 'static,
+    Client: ClientBounds + 'static,
+    BuilderTx: BuilderTransactions + Send + Sync + 'static,
 {
     fn get_op_payload_builder_ctx(
         &self,
@@ -327,18 +382,16 @@ where
                 .attributes
                 .gas_limit
                 .unwrap_or(config.parent_header.gas_limit),
-            parent_beacon_block_root: config
-                .attributes
-                .payload_attributes
-                .parent_beacon_block_root,
+            parent_beacon_block_root: config.attributes.parent_beacon_block_root,
             extra_data,
         };
 
-        let evm_config = self.evm_config.clone();
-
-        let evm_env = evm_config
-            .next_evm_env(&config.parent_header, &block_env_attributes)
-            .wrap_err("failed to create next evm env")?;
+        let evm_factory = OpBlockEvmFactory::for_next_block(
+            self.evm_config.clone(),
+            &config.parent_header,
+            &block_env_attributes,
+        )
+        .wrap_err("failed to create next evm env")?;
 
         let backrun_ctx = BackrunBundlesPayloadCtx {
             pool: self
@@ -349,7 +402,7 @@ where
         };
 
         Ok(OpPayloadBuilderCtx {
-            evm_factory: OpBlockEvmFactory::new(self.evm_config.clone(), evm_env),
+            evm_factory,
             chain_spec,
             config,
             block_env_attributes,
@@ -361,6 +414,7 @@ where
             max_uncompressed_block_size: self.config.max_uncompressed_block_size,
             address_gas_limiter: self.address_gas_limiter.clone(),
             backrun_ctx,
+            exclude_reverts_between_flashblocks: self.config.exclude_reverts_between_flashblocks,
             enable_tx_tracking_debug_logs: self.config.enable_tx_tracking_debug_logs,
         })
     }
@@ -373,31 +427,28 @@ where
     /// Given build arguments including an Optimism client, transaction pool,
     /// and configuration, this function creates a transaction payload. Returns
     /// a result indicating success with the payload or an error in case of failure.
-    fn build_payload(
+    async fn build_payload(
         &self,
         args: BuildArguments<OpPayloadBuilderAttributes<OpTransactionSigned>, OpBuiltPayload>,
-        best_payload: BlockCell<OpBuiltPayload>,
+        best_payload_tx: watch::Sender<Option<OpBuiltPayload>>,
     ) -> Result<(), PayloadBuilderError> {
         let block_build_start_time = Instant::now();
         let BuildArguments {
-            mut cached_reads,
+            cached_reads,
             config,
-            cancel: block_cancel,
+            cancel: payload_cancel,
         } = args;
 
         // The build_payload span is created and instrumented in try_build() using
         // tracing::Instrument, which safely manages it across async .await points.
         let span = tracing::Span::current();
-        span.record(
-            "payload_id",
-            config.attributes.payload_attributes.id.to_string(),
-        );
+        span.record("payload_id", config.attributes.id.to_string());
 
         let disable_state_root = self.config.flashblocks_config.disable_state_root;
         let enable_incremental_state_root =
             self.config.flashblocks_config.enable_incremental_state_root;
         let ctx = self
-            .get_op_payload_builder_ctx(config.clone(), block_cancel.clone())
+            .get_op_payload_builder_ctx(config.clone(), payload_cancel.token())
             .map_err(|e| PayloadBuilderError::Other(e.into()))?;
 
         // Initialize flashblocks state for this block
@@ -409,49 +460,35 @@ where
             enable_incremental_state_root,
         );
 
-        let state_provider = self.client.state_by_block_hash(ctx.parent().hash())?;
-        let db = StateProviderDatabase::new(&state_provider);
         self.address_gas_limiter.refresh(ctx.block_number());
 
-        // 1. execute the pre steps and seal an early block with that
-        let sequencer_tx_start_time = Instant::now();
-        let mut state = State::builder()
-            .with_database(cached_reads.as_db_mut(db))
-            .with_bundle_update()
-            .build();
-
-        let mut info = execute_pre_steps(&mut state, &ctx)?;
-        let sequencer_tx_time = sequencer_tx_start_time.elapsed();
-        ctx.metrics.sequencer_tx_duration.record(sequencer_tx_time);
-        ctx.metrics.sequencer_tx_gauge.set(sequencer_tx_time);
-
-        // We add first builder tx right after deposits
-        if !ctx.attributes().no_tx_pool
-            && let Err(e) = self.builder_tx.add_builder_txs(
-                &state_provider,
-                &mut info,
-                &ctx,
-                &mut state,
-                false,
-                fb_state.is_first_flashblock(),
-                fb_state.is_last_flashblock(),
-            )
-        {
-            error!(
-                target: "payload_builder",
-                "Error adding builder txs to fallback block: {}",
-                e
-            );
+        // Phase 1: Build the fallback block.
+        let fallback_span = if span.is_none() {
+            tracing::Span::none()
+        } else {
+            info_span!(parent: &span, "build_fallback")
         };
-
-        let (payload, fb_payload) = build_block(
-            &mut state,
-            &ctx,
-            Some(&mut fb_state),
-            &mut info,
-            !disable_state_root || ctx.attributes().no_tx_pool, // need to calculate state root for CL sync
-            self.config.enable_tx_tracking_debug_logs,
-        )?;
+        let FallbackBuildOutput {
+            ctx,
+            mut info,
+            payload,
+            fb_payload,
+            mut cache,
+            mut transition,
+            fb_state: returned_fb_state,
+        } = tracing::Instrument::instrument(
+            self.executor.run_blocking_task({
+                let builder = self.clone();
+                move || {
+                    builder
+                        .build_fallback_block(ctx, fb_state, cached_reads, disable_state_root)
+                        .map_err(|e| PayloadBuilderError::Other(e.into()))
+                }
+            }),
+            fallback_span,
+        )
+        .await?;
+        fb_state = returned_fb_state;
 
         self.built_fb_payload_tx
             .try_send(payload.clone())
@@ -463,7 +500,7 @@ where
                 "Failed to send updated payload"
             );
         }
-        best_payload.set(payload);
+        best_payload_tx.send_replace(Some(payload));
 
         info!(
             target: "payload_builder",
@@ -477,6 +514,11 @@ where
                 .ws_pub
                 .publish(&fb_payload)
                 .map_err(PayloadBuilderError::other)?;
+
+            let slot_offset_ms =
+                compute_slot_offset_ms(config.attributes.timestamp(), self.config.block_time);
+            record_flashblock_publish_timing(fb_payload.index, slot_offset_ms);
+
             if self.config.enable_tx_tracking_debug_logs {
                 debug!(
                     target: "tx_trace",
@@ -485,6 +527,7 @@ where
                     flashblock_index = fb_payload.index,
                     byte_size = flashblock_byte_size,
                     total_txs = info.executed_transactions.len(),
+                    slot_offset_ms,
                     stage = "fb_published"
                 );
             }
@@ -524,13 +567,13 @@ where
             config.attributes.timestamp(),
         );
 
+        let target_flashblocks = flashblock_scheduler.target_flashblocks();
         info!(
             target: "payload_builder",
             id = %fb_payload.payload_id,
-            schedule = ?flashblock_scheduler,
+            target_flashblocks,
             "Computed flashblock timing schedule"
         );
-        let target_flashblocks = flashblock_scheduler.target_flashblocks();
 
         let expected_flashblocks = self
             .config
@@ -580,46 +623,59 @@ where
             ..fb_state
         };
 
-        let fb_cancel = block_cancel.child_token();
+        let fb_cancel = payload_cancel.child_token();
         let mut ctx = self
             .get_op_payload_builder_ctx(config, fb_cancel.clone())
             .map_err(|e| PayloadBuilderError::Other(e.into()))?;
 
-        // Create best_transaction iterator
-        let mut best_txs = BestFlashblocksTxs::new(BestPayloadTransactions::new(
-            self.pool
-                .best_transactions_with_attributes(ctx.best_transaction_attributes()),
-        ));
-
-        let (tx, rx) = std::sync::mpsc::sync_channel((expected_flashblocks + 1) as usize);
+        let (tx, mut rx) = mpsc::channel((expected_flashblocks + 1) as usize);
         tokio::spawn(
             self.task_metrics
                 .flashblock_timer
                 .instrument(flashblock_scheduler.run(
                     tx,
-                    block_cancel.clone(),
+                    payload_cancel.token(),
                     fb_cancel,
                     fb_payload.payload_id,
                 )),
         );
 
-        // Process flashblocks - block on async channel receive
+        // State data was extracted in Phase 1 block scope above.
+        // We carry (CacheState, Option<TransitionState>) between iterations
+        // and reconstruct State<DB> inside each sync scope.
+        let mut tx_cache = FlashblockTxCache::default();
+        let parent_hash = ctx.parent_hash();
+
+        // State machine: explicit select! at every phase for deterministic cancellation.
         loop {
-            // Wait for signal before building flashblock.
-            if let Ok(new_fb_cancel) = rx.recv() {
-                debug!(
-                    target: "payload_builder",
-                    id = %fb_payload.payload_id,
-                    flashblock_index = fb_state.flashblock_index(),
-                    block_number = ctx.block_number(),
-                    "Received signal to build flashblock",
-                );
-                ctx = ctx.with_cancel(new_fb_cancel);
-            } else {
-                // Channel closed - block building cancelled
-                self.record_flashblocks_metrics(&ctx, &fb_state, &info, target_flashblocks, &span);
-                return Ok(());
-            }
+            // Phase 1: Wait for scheduler trigger, or exit on cancellation.
+            let new_fb_cancel = tokio::select! {
+                // ensures cancellation is checked before trigger.
+                biased;
+                _ = payload_cancel.cancelled() => {
+                    Self::record_cancellation_reason(&self.metrics, &payload_cancel, &span);
+                    self.record_flashblocks_metrics(&ctx, &fb_state, &info, target_flashblocks, &span);
+                    return Ok(());
+                }
+                trigger = rx.recv() => match trigger {
+                    Some(t) => t,
+                    None => {
+                        // Channel closed — scheduler exhausted or canceled
+                        Self::record_cancellation_reason(&self.metrics, &payload_cancel, &span);
+                        self.record_flashblocks_metrics(&ctx, &fb_state, &info, target_flashblocks, &span);
+                        return Ok(());
+                    }
+                },
+            };
+
+            debug!(
+                target: "payload_builder",
+                id = %fb_payload.payload_id,
+                flashblock_index = fb_state.flashblock_index(),
+                block_number = ctx.block_number(),
+                "Received signal to build flashblock",
+            );
+            ctx = ctx.with_cancel(new_fb_cancel);
 
             let fb_span = if span.is_none() {
                 tracing::Span::none()
@@ -628,23 +684,120 @@ where
                     parent: &span,
                     Level::INFO,
                     "build_flashblock",
+                    flashblock_index = fb_state.flashblock_index(),
+                    block_number = ctx.block_number(),
+                    tx_count = tracing::field::Empty,
+                    gas_used = tracing::field::Empty,
                 )
             };
-            let _entered = fb_span.enter();
 
-            // Build flashblock after receiving signal
-            let next_flashblock_state = match self.build_next_flashblock(
-                &ctx,
-                &mut fb_state,
-                &mut info,
-                &mut state,
-                &state_provider,
-                &mut best_txs,
-                &block_cancel,
-                &best_payload,
-            ) {
-                Ok(Some(next_flashblock_state)) => next_flashblock_state,
+            // Phase 2: Build flashblock (blocking task), or exit on cancellation.
+            // Note: ctx, info, cache, transition, committed_txs, fb_state are moved into
+            // the blocking task closure. If a cancellation branch fires, the blocking task
+            // is dropped (the thread finishes but the oneshot result is discarded).
+            let build_output = tokio::select! {
+                biased;
+                _ = payload_cancel.cancelled() => {
+                    if payload_cancel.is_resolved() {
+                        // Suppressed flashblock: we received getResolve during flashblock building
+                        self.metrics.flashblock_publish_suppressed_total.increment(1);
+                    }
+                    Self::record_cancellation_reason(&self.metrics, &payload_cancel, &span);
+                    return Ok(());
+                }
+                result = self.executor.run_blocking_task({
+                    let builder = self.clone();
+                    let ctx = ctx;
+                    let block_cancel = payload_cancel.token();
+                    let info = info;
+                    let cache = cache;
+                    let transition = transition;
+                    let mut tx_cache = tx_cache;
+                    let fb_state = fb_state;
+                    let fb_span = fb_span.clone();
+                    move || {
+                        // Enter the flashblock span so child spans are properly parented
+                        let _enter = fb_span.enter();
+
+                        // reconstruct state
+                        let state_provider = builder.client.state_by_block_hash(parent_hash)?;
+                        let mut state = State::builder()
+                            .with_database(StateProviderDatabase::new(&state_provider))
+                            .with_cached_prestate(cache)
+                            .with_bundle_update()
+                            .build();
+                        state.transition_state = transition;
+
+                        let mut best_txs = FlashblockPoolTxCursor::new(&mut tx_cache);
+
+                        let mut info = info;
+                        let mut fb_state = fb_state;
+                        let result = builder.build_next_flashblock(
+                            &ctx,
+                            &mut fb_state,
+                            &mut info,
+                            &mut state,
+                            &state_provider,
+                            &mut best_txs,
+                            &block_cancel,
+                        );
+
+                        let cache = std::mem::take(&mut state.cache);
+                        let transition_state = state.transition_state.take();
+
+                        Ok(FlashblockBuildOutput {
+                            ctx,
+                            build_result: result,
+                            cache,
+                            transition: transition_state,
+                            tx_cache,
+                            info,
+                            fb_state,
+                        })
+                    }
+                }) => result?,
+            };
+
+            let FlashblockBuildOutput {
+                ctx: returned_ctx,
+                build_result,
+                cache: new_cache,
+                transition: new_transition,
+                tx_cache: new_tx_cache,
+                info: new_info,
+                fb_state: returned_fb_state,
+            } = build_output;
+
+            ctx = returned_ctx;
+            fb_state = returned_fb_state;
+            info = new_info;
+            cache = new_cache;
+            transition = new_transition;
+            tx_cache = new_tx_cache;
+
+            // Record span attributes now that we have results
+            fb_span.record("tx_count", info.executed_transactions.len() as u64);
+            fb_span.record("gas_used", info.cumulative_gas_used);
+
+            // Phase 3: Publish
+            // no .await between check and publish (structural guarantee).
+            // If resolved or new_fcu fired during the build, skip publishing.
+            if payload_cancel.is_resolved() || payload_cancel.is_new_fcu() {
+                if payload_cancel.is_resolved() {
+                    ctx.metrics.flashblock_publish_suppressed_total.increment(1);
+                }
+                Self::record_cancellation_reason(&self.metrics, &payload_cancel, &span);
+                self.record_flashblocks_metrics(&ctx, &fb_state, &info, target_flashblocks, &span);
+                return Ok(());
+            }
+
+            let next_flashblock_state = match build_result {
+                Ok(Some((next_flashblock_state, new_payload))) => {
+                    best_payload_tx.send_replace(Some(new_payload));
+                    next_flashblock_state
+                }
                 Ok(None) => {
+                    Self::record_cancellation_reason(&self.metrics, &payload_cancel, &span);
                     self.record_flashblocks_metrics(
                         &ctx,
                         &fb_state,
@@ -655,12 +808,14 @@ where
                     return Ok(());
                 }
                 Err(err) => {
+                    ctx.metrics.payload_job_cancellation_error.increment(1);
+                    span.record("cancellation_reason", "error");
                     error!(
                         target: "payload_builder",
                         id = %fb_payload.payload_id,
                         flashblock_index = fb_state.flashblock_index(),
                         block_number = ctx.block_number(),
-                        ?err,
+                        %err,
                         "Failed to build flashblock",
                     );
                     return Err(PayloadBuilderError::Other(err.into()));
@@ -671,8 +826,73 @@ where
         }
     }
 
+    /// Execute the pre-steps and seal an early fallback block
+    fn build_fallback_block(
+        &self,
+        ctx: OpPayloadBuilderCtx,
+        mut fb_state: FlashblocksState,
+        mut cached_reads: CachedReads,
+        disable_state_root: bool,
+    ) -> eyre::Result<FallbackBuildOutput<CacheState, Option<TransitionState>>> {
+        let state_provider = self.client.state_by_block_hash(ctx.parent().hash())?;
+        let db = StateProviderDatabase::new(&state_provider);
+
+        let sequencer_tx_start_time = Instant::now();
+        let mut state = State::builder()
+            .with_database(cached_reads.as_db_mut(db))
+            .with_bundle_update()
+            .build();
+
+        let mut info = execute_pre_steps(&mut state, &ctx)?;
+        let sequencer_tx_time = sequencer_tx_start_time.elapsed();
+        ctx.metrics.sequencer_tx_duration.record(sequencer_tx_time);
+        ctx.metrics.sequencer_tx_gauge.set(sequencer_tx_time);
+
+        // We add first builder tx right after deposits
+        if !ctx.attributes().no_tx_pool
+            && let Err(e) = self.builder_tx.add_builder_txs(
+                &state_provider,
+                &mut info,
+                &ctx,
+                &mut state,
+                false,
+                fb_state.is_first_flashblock(),
+                fb_state.is_last_flashblock(),
+            )
+        {
+            error!(
+                target: "payload_builder",
+                "Error adding builder txs to fallback block: {}",
+                e
+            );
+        };
+
+        let (payload, fb_payload) = build_block(
+            &mut state,
+            &ctx,
+            Some(&mut fb_state),
+            &mut info,
+            !disable_state_root || ctx.attributes().no_tx_pool, // need to calculate state root for CL sync
+            self.config.enable_tx_tracking_debug_logs,
+        )?;
+
+        // we can safely take from state as we drop it at the end of the scope
+        let cache = std::mem::take(&mut state.cache);
+        let transition = state.transition_state.take();
+        Ok(FallbackBuildOutput {
+            ctx,
+            info,
+            payload,
+            fb_payload,
+            cache,
+            transition,
+            fb_state,
+        })
+    }
+
     #[expect(clippy::too_many_arguments)]
     fn build_next_flashblock<
+        'a,
         DB: Database<Error = ProviderError> + std::fmt::Debug + AsRef<P>,
         P: StateRootProvider + HashedPostStateProvider + StorageRootProvider,
     >(
@@ -682,10 +902,9 @@ where
         info: &mut ExecutionInfo,
         state: &mut State<DB>,
         state_provider: impl reth::providers::StateProvider + Clone,
-        best_txs: &mut NextBestFlashblocksTxs<Pool>,
+        best_txs: &mut NextFlashblockPoolTxCursor<'a, Pool>,
         block_cancel: &CancellationToken,
-        best_payload: &BlockCell<OpBuiltPayload>,
-    ) -> eyre::Result<Option<FlashblocksState>> {
+    ) -> eyre::Result<Option<(FlashblocksState, OpBuiltPayload)>> {
         let flashblock_index = fb_state.flashblock_index();
         let mut target_gas_for_batch = fb_state.target_gas_for_batch();
         let mut target_da_for_batch = fb_state.target_da_for_batch();
@@ -800,11 +1019,16 @@ where
             .slice_new_transactions(&info.executed_transactions)
             .iter()
             .map(|tx| tx.tx_hash())
-            .collect();
-        best_txs.mark_commited(new_transactions);
+            .collect::<Vec<_>>();
+        best_txs.mark_committed(new_transactions);
 
-        // We got block cancelled, we won't need anything from the block at this point
-        // Caution: this assume that block cancel token only cancelled when new FCU is received
+        // Remove reverted bundle txs from the pool so they aren't re-simulated in future blocks
+        if !info.reverted_bundle_tx_hashes.is_empty() {
+            let hashes = info.reverted_bundle_tx_hashes.drain(..).collect();
+            self.pool.remove_transactions(hashes);
+        }
+
+        // Block cancelled (new FCU, getPayload resolved, or deadline). Skip publishing.
         if block_cancel.is_cancelled() {
             return Ok(None);
         }
@@ -856,8 +1080,8 @@ where
                 fb_payload.index = flashblock_index;
                 fb_payload.base = None;
 
-                // If main token got canceled in here that means we received get_payload and we should drop everything and now update best_payload
-                // To ensure that we will return same blocks as rollup-boost (to leverage caches)
+                // Block canceled (new FCU, getPayload resolved, or deadline).
+                // Don't publish to ensures every published flashblock is a subset of the resolved payload.
                 if block_cancel.is_cancelled() {
                     return Ok(None);
                 }
@@ -865,6 +1089,12 @@ where
                     .ws_pub
                     .publish(&fb_payload)
                     .wrap_err("failed to publish flashblock via websocket")?;
+
+                // Record slot-relative publish timing (ms since slot start)
+                let slot_offset_ms =
+                    compute_slot_offset_ms(ctx.attributes().timestamp(), self.config.block_time);
+                record_flashblock_publish_timing(flashblock_index, slot_offset_ms);
+
                 if self.config.enable_tx_tracking_debug_logs {
                     debug!(
                         target: "tx_trace",
@@ -873,6 +1103,7 @@ where
                         flashblock_index,
                         byte_size = flashblock_byte_size,
                         total_txs = info.executed_transactions.len(),
+                        slot_offset_ms,
                         stage = "fb_published"
                     );
                 }
@@ -886,8 +1117,6 @@ where
                         "Failed to send updated payload"
                     );
                 }
-                best_payload.set(new_payload);
-
                 // Record flashblock build duration
                 ctx.metrics
                     .flashblock_build_duration
@@ -926,23 +1155,44 @@ where
                     target_da_footprint_for_batch,
                 );
 
-                info!(
-                    target: "payload_builder",
-                    event = "flashblock_built",
-                    id = %ctx.payload_id(),
-                    flashblock_index = flashblock_index,
-                    current_gas = info.cumulative_gas_used,
-                    current_da = info.cumulative_da_bytes_used,
-                    target_flashblocks = fb_state.target_flashblock_count(),
-                    "Flashblock built"
-                );
-
-                Ok(Some(next_flashblock_state))
+                Ok(Some((next_flashblock_state, new_payload)))
             }
         }
     }
 
-    /// Do some logging and metric recording when we stop build flashblocks
+    /// Records cancellation reason for observability.
+    fn record_cancellation_reason(
+        metrics: &OpRBuilderMetrics,
+        cancellation: &super::cancellation::PayloadJobCancellation,
+        span: &tracing::Span,
+    ) {
+        let reason_str = match cancellation.reason() {
+            Some(super::cancellation::CancellationReason::Resolved) => {
+                metrics.payload_job_cancellation_resolved.increment(1);
+                "resolved"
+            }
+            Some(super::cancellation::CancellationReason::NewFcu) => {
+                metrics.payload_job_cancellation_new_fcu.increment(1);
+                "new_fcu"
+            }
+            Some(super::cancellation::CancellationReason::Deadline) => {
+                metrics.payload_job_cancellation_deadline.increment(1);
+                "deadline"
+            }
+            None => {
+                metrics.payload_job_cancellation_complete.increment(1);
+                "complete"
+            }
+        };
+        span.record("cancellation_reason", reason_str);
+        info!(
+            target: "payload_builder",
+            cancellation_reason = reason_str,
+            "Payload job cancelled"
+        );
+    }
+
+    /// Do some logging and metric recording when we stop building flashblocks
     fn record_flashblocks_metrics(
         &self,
         ctx: &OpPayloadBuilderCtx,
@@ -977,24 +1227,34 @@ where
             "Flashblocks building complete"
         );
 
-        span.record("flashblock_count", fb_state.flashblock_index());
+        span.record("flashblocks_built", fb_state.flashblock_index());
     }
 }
 
 #[async_trait::async_trait]
 impl<Pool, Client, BuilderTx> PayloadBuilder for OpPayloadBuilder<Pool, Client, BuilderTx>
 where
-    Pool: PoolBounds,
-    Client: ClientBounds,
-    BuilderTx: BuilderTransactions + Clone + Send + Sync,
+    Pool: PoolBounds + 'static,
+    Client: ClientBounds + 'static,
+    BuilderTx: BuilderTransactions + Send + Sync + 'static,
 {
+    type RpcAttributes = OpPayloadAttrs;
     type Attributes = OpPayloadBuilderAttributes<OpTransactionSigned>;
     type BuiltPayload = OpBuiltPayload;
 
-    fn try_build(
+    fn from_rpc_attrs(
+        parent: B256,
+        id: PayloadId,
+        attrs: Self::RpcAttributes,
+    ) -> Result<Self::Attributes, PayloadBuilderError> {
+        OpPayloadBuilderAttributes::from_rpc_attrs(parent, id, attrs.0)
+            .map_err(|e| PayloadBuilderError::Other(Box::new(e)))
+    }
+
+    async fn try_build(
         &self,
         args: BuildArguments<Self::Attributes, Self::BuiltPayload>,
-        best_payload: BlockCell<Self::BuiltPayload>,
+        best_payload_tx: watch::Sender<Option<Self::BuiltPayload>>,
     ) -> Result<(), PayloadBuilderError> {
         let span = if cfg!(feature = "telemetry")
             && args
@@ -1003,12 +1263,19 @@ where
                 .number
                 .is_multiple_of(self.config.sampling_ratio)
         {
-            span!(Level::INFO, "build_payload")
+            span!(
+                Level::INFO,
+                "build_payload",
+                payload_id = tracing::field::Empty,
+                block_number = args.config.parent_header.number + 1,
+                parent_hash = %args.config.parent_header.hash(),
+                flashblocks_built = tracing::field::Empty,
+                cancellation_reason = tracing::field::Empty,
+            )
         } else {
             tracing::Span::none()
         };
-        let _entered = span.enter();
-        self.build_payload(args, best_payload)
+        tracing::Instrument::instrument(self.build_payload(args, best_payload_tx), span).await
     }
 }
 
@@ -1032,6 +1299,7 @@ where
     Ok(info)
 }
 
+#[tracing::instrument(level = "info", name = "seal_block", skip_all)]
 pub(super) fn build_block<DB, P>(
     state: &mut State<DB>,
     ctx: &OpPayloadBuilderCtx,
@@ -1096,8 +1364,13 @@ where
         .as_deref()
         .map(|s| s.flashblock_index())
         .unwrap_or(0);
+    let target_flashblock_count_for_trace = fb_state
+        .as_deref()
+        .map(|s| s.target_flashblock_count())
+        .unwrap_or(0);
 
     if calculate_state_root {
+        let _state_root_span = span!(Level::INFO, "state_root").entered();
         let state_provider = state.database.as_ref();
 
         let flashblock_index = fb_state
@@ -1221,8 +1494,8 @@ where
         receipts_root,
         withdrawals_root,
         logs_bloom,
-        timestamp: ctx.attributes().payload_attributes.timestamp,
-        mix_hash: ctx.attributes().payload_attributes.prev_randao,
+        timestamp: ctx.attributes().timestamp,
+        mix_hash: ctx.attributes().prev_randao,
         nonce: BEACON_NONCE.into(),
         base_fee_per_gas: Some(ctx.base_fee()),
         number: ctx.parent().number + 1,
@@ -1230,7 +1503,7 @@ where
         difficulty: U256::ZERO,
         gas_used: info.cumulative_gas_used,
         extra_data,
-        parent_beacon_block_root: ctx.attributes().payload_attributes.parent_beacon_block_root,
+        parent_beacon_block_root: ctx.attributes().parent_beacon_block_root,
         blob_gas_used,
         excess_blob_gas,
         requests_hash,
@@ -1258,23 +1531,26 @@ where
         ),
         hashed_state: either::Either::Left(Arc::new(hashed_state)),
     };
-    debug!(
-        target: "payload_builder",
-        id = %ctx.payload_id(),
-        "Executed block created"
-    );
 
     let seal_start = Instant::now();
     let sealed_block = Arc::new(block.seal_slow());
     let seal_duration = seal_start.elapsed();
-    debug!(
+    let block_hash = sealed_block.hash();
+
+    info!(
         target: "payload_builder",
         id = %ctx.payload_id(),
-        ?sealed_block,
-        "Sealed built block"
+        block_number = ctx.block_number(),
+        block_hash = %block_hash,
+        flashblock_index = flashblock_index_for_trace,
+        target_flashblocks = target_flashblock_count_for_trace,
+        tx_count = info.executed_transactions.len(),
+        gas_used = info.cumulative_gas_used,
+        da_used = info.cumulative_da_bytes_used,
+        state_root = %state_root,
+        seal_duration_us = seal_duration.as_micros() as u64,
+        "Block sealed"
     );
-
-    let block_hash = sealed_block.hash();
 
     if enable_tx_tracking_debug_logs {
         debug!(
@@ -1327,21 +1603,19 @@ where
         payload_id: ctx.payload_id(),
         index: 0,
         base: Some(OpFlashblockPayloadBase {
-            parent_beacon_block_root: ctx
-                .attributes()
-                .payload_attributes
-                .parent_beacon_block_root
-                .ok_or_else(|| {
+            parent_beacon_block_root: ctx.attributes().parent_beacon_block_root.ok_or_else(
+                || {
                     PayloadBuilderError::Other(
                         eyre::eyre!("parent beacon block root not found").into(),
                     )
-                })?,
+                },
+            )?,
             parent_hash: ctx.parent().hash(),
             fee_recipient: ctx.attributes().suggested_fee_recipient(),
-            prev_randao: ctx.attributes().payload_attributes.prev_randao,
+            prev_randao: ctx.attributes().prev_randao,
             block_number: ctx.parent().number + 1,
             gas_limit: ctx.block_gas_limit(),
-            timestamp: ctx.attributes().payload_attributes.timestamp,
+            timestamp: ctx.attributes().timestamp,
             extra_data: ctx.extra_data()?,
             base_fee_per_gas: U256::from(ctx.base_fee()),
         }),

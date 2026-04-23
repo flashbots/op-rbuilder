@@ -53,6 +53,23 @@ pub struct OpRbuilderArgs {
     #[arg(long = "builder.enable-revert-protection", default_value = "false")]
     pub enable_revert_protection: bool,
 
+    /// Skip re-simulating reverted transactions in subsequent flashblocks within the same block.
+    #[arg(
+        long = "builder.exclude-reverts-between-flashblocks",
+        default_value = "false",
+        env = "BUILDER_EXCLUDE_REVERTS_BETWEEN_FLASHBLOCKS"
+    )]
+    pub exclude_reverts_between_flashblocks: bool,
+
+    /// Whether to pre-simulate bundle transactions against the current head state
+    /// and reject them if they revert, before adding to the pool.
+    #[arg(
+        long = "builder.pre-simulate-bundles",
+        default_value = "false",
+        env = "PRE_SIMULATE_BUNDLES"
+    )]
+    pub pre_simulate_bundles: bool,
+
     /// Enables logs to trace transaction lifecycle as it is added to the
     /// mempool and added to a block. Requires `RUST_LOG=tx_trace=debug` in
     /// addition to this flag.

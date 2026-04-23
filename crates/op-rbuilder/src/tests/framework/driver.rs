@@ -329,7 +329,11 @@ impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
         let latest = self.latest().await?.header.hash;
         let response = self
             .engine_api
-            .update_forkchoice(latest, latest, Some(attribs))
+            .update_forkchoice(
+                latest,
+                latest,
+                Some(reth_optimism_payload_builder::OpPayloadAttrs(attribs)),
+            )
             .await?;
 
         Ok(response)

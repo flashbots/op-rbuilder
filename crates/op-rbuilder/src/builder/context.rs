@@ -5,13 +5,11 @@ use alloy_op_evm::block::receipt_builder::OpReceiptBuilder;
 use alloy_primitives::{B256, BlockHash, Bytes, U256};
 use alloy_rpc_types_eth::Withdrawals;
 use op_alloy_consensus::{OpDepositReceipt, OpTxType};
-use op_revm::OpTransactionError;
-use reth::payload::PayloadBuilderAttributes;
+use op_revm::L1BlockInfo;
 use reth_basic_payload_builder::PayloadConfig;
 use reth_chainspec::{EthChainSpec, EthereumHardforks};
 use reth_evm::{
     ConfigureEvm, Evm, EvmError, InvalidTxError, eth::receipt_builder::ReceiptBuilderCtx,
-    op_revm::L1BlockInfo,
 };
 use reth_node_api::PayloadBuilderError;
 use reth_optimism_chainspec::OpChainSpec;
@@ -24,19 +22,14 @@ use reth_optimism_payload_builder::{
 };
 use reth_optimism_primitives::{OpReceipt, OpTransactionSigned};
 use reth_optimism_txpool::{
-    conditional::MaybeConditionalTransaction,
-    estimated_da_size::DataAvailabilitySized,
-    interop::{MaybeInteropTransaction, is_valid_interop},
+    conditional::MaybeConditionalTransaction, estimated_da_size::DataAvailabilitySized,
 };
 use reth_payload_builder::PayloadId;
-use reth_primitives::SealedHeader;
-use reth_primitives_traits::{InMemorySize, SignedTransaction};
+use reth_primitives_traits::{InMemorySize, SealedHeader, SignedTransaction};
 use reth_revm::{State, context::Block};
 use reth_transaction_pool::{BestTransactionsAttributes, PoolTransaction};
 use revm::{
-    Database as _, DatabaseCommit,
-    context::result::{InvalidTransaction, ResultAndState},
-    interpreter::as_u64_saturated,
+    Database as _, DatabaseCommit, context::result::ResultAndState, interpreter::as_u64_saturated,
 };
 use std::{sync::Arc, time::Instant};
 use tokio_util::sync::CancellationToken;
@@ -77,6 +70,8 @@ pub struct OpPayloadBuilderCtx {
     pub address_gas_limiter: AddressGasLimiter,
     /// Backrun bundles context.
     pub backrun_ctx: BackrunBundlesPayloadCtx,
+    /// Skip reverted txs in subsequent flashblocks
+    pub exclude_reverts_between_flashblocks: bool,
     /// Enable tx tracking logs
     pub enable_tx_tracking_debug_logs: bool,
 }
@@ -110,7 +105,7 @@ impl OpPayloadBuilderCtx {
     pub fn withdrawals(&self) -> Option<&Withdrawals> {
         self.chain_spec
             .is_shanghai_active_at_timestamp(self.attributes().timestamp())
-            .then(|| &self.attributes().payload_attributes.withdrawals)
+            .then(|| &self.attributes().withdrawals)
     }
 
     /// Returns the block gas limit to target.
@@ -174,17 +169,15 @@ impl OpPayloadBuilderCtx {
         if self.is_jovian_active() {
             self.attributes()
                 .get_jovian_extra_data(
-                    self.chain_spec.base_fee_params_at_timestamp(
-                        self.attributes().payload_attributes.timestamp,
-                    ),
+                    self.chain_spec
+                        .base_fee_params_at_timestamp(self.attributes().timestamp),
                 )
                 .map_err(PayloadBuilderError::other)
         } else if self.is_holocene_active() {
             self.attributes()
                 .get_holocene_extra_data(
-                    self.chain_spec.base_fee_params_at_timestamp(
-                        self.attributes().payload_attributes.timestamp,
-                    ),
+                    self.chain_spec
+                        .base_fee_params_at_timestamp(self.attributes().timestamp),
                 )
                 .map_err(PayloadBuilderError::other)
         } else {
@@ -408,6 +401,7 @@ impl OpPayloadBuilderCtx {
     ///
     /// Returns `Ok(Some(())` if the job was cancelled.
     #[expect(clippy::too_many_arguments)]
+    #[tracing::instrument(level = "info", skip_all)]
     pub(super) fn execute_best_transactions(
         &self,
         info: &mut ExecutionInfo,
@@ -425,7 +419,7 @@ impl OpPayloadBuilderCtx {
         let mut num_txs_simulated_success = 0;
         let mut num_txs_simulated_fail = 0;
         let mut num_bundles_reverted = 0;
-        let mut reverted_gas_used = 0;
+        let mut reverted_gas_used: u64 = 0;
         let mut num_backruns_considered = 0usize;
         let mut num_backruns_successful = 0usize;
         let mut backrun_processing_time = std::time::Duration::ZERO;
@@ -436,7 +430,7 @@ impl OpPayloadBuilderCtx {
 
         debug!(
             target: "payload_builder",
-            id = ?self.payload_id(),
+            id = %self.payload_id(),
             block_da_limit = ?block_da_limit,
             tx_da_limit = ?tx_da_limit,
             block_gas_limit = ?block_gas_limit,
@@ -450,11 +444,23 @@ impl OpPayloadBuilderCtx {
         };
 
         while let Some(tx) = best_txs.next(()) {
-            let interop = tx.interop_deadline();
-            let reverted_hashes = tx.reverted_hashes().clone();
             let conditional = tx.conditional().cloned();
-
             let tx_da_size = tx.estimated_da_size();
+
+            // exclude reverting transaction if:
+            // - the transaction comes from a bundle (is_some) and the hash **is not** in the
+            //   bundle's allowed-revert list.
+            // the Option distinguishes bundle vs non-bundle txs; otherwise non-bundle txs would
+            // also be excluded on revert since they're never in the list.
+            //
+            // computed via a borrow while the pool tx is still in scope, so we don't clone the
+            // allowed-revert list per tx.
+            let is_bundle_tx = tx.allowed_revert_hashes().is_some();
+            let exclude_reverting_txs = tx
+                .allowed_revert_hashes()
+                .as_ref()
+                .is_some_and(|allowed| !allowed.contains(tx.hash()));
+
             let tx = tx.into_consensus();
             let tx_hash = tx.tx_hash();
             let tx_uncompressed_size = tx.encode_2718_len() as u64;
@@ -469,24 +475,18 @@ impl OpPayloadBuilderCtx {
                 );
             }
 
-            // exclude reverting transaction if:
-            // - the transaction comes from a bundle (is_some) and the hash **is not** in reverted hashes
-            // Note that we need to use the Option to signal whether the transaction comes from a bundle,
-            // otherwise, we would exclude all transactions that are not in the reverted hashes.
-            let is_bundle_tx = reverted_hashes.is_some();
-            let exclude_reverting_txs =
-                is_bundle_tx && !reverted_hashes.unwrap().contains(&tx_hash);
-
             let log_txn = |result: TxnExecutionResult| {
-                debug!(
-                    target: "payload_builder",
-                    id = ?self.payload_id(),
-                    tx_hash = %tx_hash,
-                    tx_da_size = ?tx_da_size,
-                    exclude_reverting_txs = ?exclude_reverting_txs,
-                    result = %result,
-                    "Considering transaction",
-                );
+                if self.enable_tx_tracking_debug_logs {
+                    debug!(
+                        target: "tx_trace",
+                        id = %self.payload_id(),
+                        tx_hash = %tx_hash,
+                        tx_da_size,
+                        exclude_reverting_txs,
+                        result = %result,
+                        "Considering transaction",
+                    );
+                }
             };
 
             num_txs_considered += 1;
@@ -497,19 +497,6 @@ impl OpPayloadBuilderCtx {
             {
                 best_txs.mark_invalid(tx.signer(), tx.nonce());
                 continue;
-            }
-
-            // TODO: remove this condition and feature once we are comfortable enabling interop for everything
-            if cfg!(feature = "interop") {
-                // We skip invalid cross chain txs, they would be removed on the next block update in
-                // the maintenance job
-                if let Some(interop) = interop
-                    && !is_valid_interop(interop, self.config.attributes.timestamp())
-                {
-                    log_txn(TxnExecutionResult::InteropFailed);
-                    best_txs.mark_invalid(tx.signer(), tx.nonce());
-                    continue;
-                }
             }
 
             // ensure we still have capacity for this transaction
@@ -562,7 +549,7 @@ impl OpPayloadBuilderCtx {
                         } else {
                             // if the transaction is invalid, we can skip it and all of its
                             // descendants
-                            log_txn(TxnExecutionResult::InternalError(err.clone()));
+                            log_txn(TxnExecutionResult::InternalError(err.to_string()));
                             trace!(
                                 target: "payload_builder",
                                 error = %err,
@@ -618,19 +605,24 @@ impl OpPayloadBuilderCtx {
                 self.metrics.successful_tx_gas_used.record(gas_used as f64);
             } else {
                 num_txs_simulated_fail += 1;
-                reverted_gas_used += gas_used as i32;
+                reverted_gas_used += gas_used;
                 self.metrics.reverted_tx_gas_used.record(gas_used as f64);
                 if is_bundle_tx {
                     num_bundles_reverted += 1;
                 }
                 if exclude_reverting_txs {
                     log_txn(TxnExecutionResult::RevertedAndExcluded);
-                    info!(
+                    trace!(
                         target: "payload_builder",
                         tx_hash = %tx.tx_hash(),
-                        result = ?result,
+                        signer = %tx.signer(),
+                        gas_used,
                         "skipping reverted transaction"
                     );
+                    if self.exclude_reverts_between_flashblocks {
+                        best_txs.mark_excluded(B256::new(*tx_hash));
+                        info.reverted_bundle_tx_hashes.push(B256::new(*tx_hash));
+                    }
                     best_txs.mark_invalid(tx.signer(), tx.nonce());
                     continue;
                 } else {
@@ -760,12 +752,14 @@ impl OpPayloadBuilderCtx {
                     let br_hash = bundle.backrun_tx.hash();
 
                     let log_br_txn = |result: TxnExecutionResult| {
-                        debug!(
-                            target: "payload_builder",
-                            message = "Considering backrun",
-                            tx_hash = %br_hash,
-                            result = %result,
-                        )
+                        if self.enable_tx_tracking_debug_logs {
+                            debug!(
+                                target: "tx_trace",
+                                message = "Considering backrun",
+                                tx_hash = %br_hash,
+                                result = %result,
+                            )
+                        }
                     };
 
                     num_txs_considered += 1;
@@ -779,9 +773,9 @@ impl OpPayloadBuilderCtx {
                     let Some(backrun_priority_fee) =
                         bundle.backrun_tx.effective_tip_per_gas(base_fee)
                     else {
-                        log_br_txn(TxnExecutionResult::InternalError(OpTransactionError::Base(
-                            InvalidTransaction::GasPriceLessThanBasefee,
-                        )));
+                        log_br_txn(TxnExecutionResult::InternalError(
+                            "gas price less than base fee".to_string(),
+                        ));
                         continue;
                     };
 
@@ -839,7 +833,7 @@ impl OpPayloadBuilderCtx {
                         Ok(res) => res,
                         Err(err) => {
                             if let Some(err) = err.as_invalid_tx_err() {
-                                log_br_txn(TxnExecutionResult::InternalError(err.clone()));
+                                log_br_txn(TxnExecutionResult::InternalError(err.to_string()));
                             } else {
                                 log_br_txn(TxnExecutionResult::EvmError);
                             }
@@ -868,7 +862,7 @@ impl OpPayloadBuilderCtx {
                     if !br_result.is_success() {
                         num_txs_simulated_fail += 1;
                         num_bundles_reverted += 1;
-                        reverted_gas_used += br_gas_used as i32;
+                        reverted_gas_used += br_gas_used;
                         self.metrics.reverted_tx_gas_used.record(br_gas_used as f64);
                         log_br_txn(TxnExecutionResult::RevertedAndExcluded);
                         continue;
@@ -940,9 +934,9 @@ impl OpPayloadBuilderCtx {
             backrun_processing_time,
         );
 
-        debug!(
+        info!(
             target: "payload_builder",
-            id = ?self.payload_id(),
+            id = %self.payload_id(),
             txs_executed = num_txs_considered,
             txs_applied = num_txs_simulated_success,
             txs_rejected = num_txs_simulated_fail,

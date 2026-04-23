@@ -1,7 +1,8 @@
 use core::time::Duration;
-use std::{ops::Rem, sync::mpsc::SyncSender};
+use std::{ops::Rem, time::SystemTime};
 
 use reth_payload_builder::PayloadId;
+use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, warn};
 
@@ -61,7 +62,7 @@ impl FlashblockScheduler {
     /// Runs the scheduler, sending flashblock triggers at the scheduled times.
     pub(super) async fn run(
         self,
-        tx: SyncSender<CancellationToken>,
+        tx: mpsc::Sender<CancellationToken>,
         block_cancel: CancellationToken,
         mut fb_cancel: CancellationToken,
         payload_id: PayloadId,
@@ -89,7 +90,7 @@ impl FlashblockScheduler {
                         "Sending flashblock trigger"
                     );
 
-                    if tx.send(fb_cancel.clone()).is_err() {
+                    if tx.send(fb_cancel.clone()).await.is_err() {
                         // receiver channel was dropped, return. this will only
                         // happen if the `build_payload` function returns, due
                         // to payload building error or the main cancellation
@@ -248,6 +249,17 @@ impl std::fmt::Debug for FlashblockScheduler {
             }))
             .finish()
     }
+}
+
+/// Compute the elapsed time in ms since the start of the slot.
+/// Slot start defined as `payload_timestamp - block_time`.
+pub(super) fn compute_slot_offset_ms(payload_timestamp: u64, block_time: Duration) -> f64 {
+    let slot_start = SystemTime::UNIX_EPOCH + Duration::from_secs(payload_timestamp) - block_time;
+    SystemTime::now()
+        .duration_since(slot_start)
+        .unwrap_or_default()
+        .as_secs_f64()
+        * 1000.0
 }
 
 #[cfg(test)]

@@ -11,6 +11,7 @@ use crate::{
 
 mod best_txs;
 mod builder_tx;
+pub(crate) mod cancellation;
 mod config;
 mod context;
 mod flashblocks_builder_tx;
@@ -64,9 +65,8 @@ pub struct BuilderConfig {
     // the payload job stops and cannot be queried again. With tight deadlines close
     // to the block number, we risk reaching the deadline before the node queries the payload.
     //
-    // Adding 0.5 seconds as wiggle room since block times are shorter here.
-    // TODO: A better long-term solution would be to implement cancellation logic
-    // that cancels existing jobs when receiving new block building requests.
+    // SlotCancellation now distinguishes new_fcu/resolved/deadline, so the leeway
+    // is mainly for the batcher avalanche scenario described below.
     //
     // When batcher's max channel duration is big enough (e.g. 10m), the
     // sequencer would send an avalanche of FCUs/getBlockByNumber on
@@ -99,6 +99,9 @@ pub struct BuilderConfig {
     /// Flashblocks configuration
     pub flashblocks_config: FlashblocksConfig,
 
+    /// Skip re-simulating reverted transactions in subsequent flashblocks
+    pub exclude_reverts_between_flashblocks: bool,
+
     /// Enable transaction tracking logs
     pub enable_tx_tracking_debug_logs: bool,
 }
@@ -120,6 +123,7 @@ impl Default for BuilderConfig {
             backrun_bundle_pool: BackrunBundleGlobalPool::new(false),
             backrun_bundle_args: BackrunBundleArgs::default(),
             flashblocks_config: FlashblocksConfig::default(),
+            exclude_reverts_between_flashblocks: false,
             enable_tx_tracking_debug_logs: false,
         }
     }
@@ -148,6 +152,7 @@ impl TryFrom<OpRbuilderArgs> for BuilderConfig {
             ),
             backrun_bundle_args: args.backrun_bundle,
             flashblocks_config,
+            exclude_reverts_between_flashblocks: args.exclude_reverts_between_flashblocks,
             enable_tx_tracking_debug_logs: false,
         })
     }
