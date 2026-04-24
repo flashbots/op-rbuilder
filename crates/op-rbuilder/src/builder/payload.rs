@@ -4,7 +4,7 @@ use crate::{
     builder::{
         BuilderConfig,
         best_txs::{FlashblockPoolTxCursor, FlashblockTxCache},
-        builder_tx::BuilderTransactions,
+        builder_tx::{BuilderTransactions, reserve_builder_tx_budget},
         context::OpPayloadBuilderCtx,
         generator::{BuildArguments, PayloadBuilder},
         timing::{FlashblockScheduler, compute_slot_offset_ms},
@@ -972,49 +972,15 @@ where
 
         // only reserve builder tx gas / da size that has not been committed yet
         // committed builder txs would have counted towards the gas / da used
-        let builder_tx_gas = builder_txs
-            .iter()
-            .filter(|tx| !tx.is_top_of_block)
-            .fold(0, |acc, tx| acc + tx.gas_used);
-        let builder_tx_da_size: u64 = builder_txs
-            .iter()
-            .filter(|tx| !tx.is_top_of_block)
-            .fold(0, |acc, tx| acc + tx.da_size);
-        let builder_tx_uncompressed_size: u64 = builder_txs
-            .iter()
-            .filter(|tx| !tx.is_top_of_block)
-            .fold(0, |acc, tx| {
-                acc + tx.signed_tx.inner().encode_2718_len() as u64
-            });
-        target_gas_for_batch = target_gas_for_batch.saturating_sub(builder_tx_gas);
-
-        // saturating sub just in case, we will log an error if da_limit too small for builder_tx_da_size
-        if let Some(da_limit) = target_da_for_batch.as_mut() {
-            *da_limit = da_limit.saturating_sub(builder_tx_da_size);
-        }
-
-        if let (Some(footprint), Some(scalar)) = (
-            target_da_footprint_for_batch.as_mut(),
+        let max_uncompressed_block_size = reserve_builder_tx_budget(
+            &builder_txs,
+            &mut target_gas_for_batch,
+            &mut target_da_for_batch,
+            &mut target_da_footprint_for_batch,
             info.da_footprint_scalar,
-        ) {
-            *footprint = footprint.saturating_sub(builder_tx_da_size.saturating_mul(scalar as u64));
-        }
-
-        let max_uncompressed_block_size = ctx
-            .max_uncompressed_block_size
-            .map(|limit| limit.saturating_sub(builder_tx_uncompressed_size));
-        if let Some(limit) = ctx.max_uncompressed_block_size
-            && info.cumulative_uncompressed_bytes
-                >= limit.saturating_sub(builder_tx_uncompressed_size)
-        {
-            error!(
-                target: "payload_builder",
-                current_uncompressed = info.cumulative_uncompressed_bytes,
-                reserved_builder_tx_uncompressed = builder_tx_uncompressed_size,
-                limit,
-                "Builder tx uncompressed size subtraction caused max_uncompressed_block_size to be 0. No transaction would be included."
-            );
-        }
+            ctx.max_uncompressed_block_size,
+            info.cumulative_uncompressed_bytes,
+        );
 
         let best_txs_start_time = Instant::now();
         best_txs.refresh_iterator(

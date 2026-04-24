@@ -23,7 +23,7 @@ use revm::{
     context::result::{EVMError, ExecutionResult, ResultAndState},
     inspector::NoOpInspector,
 };
-use tracing::{trace, warn};
+use tracing::{error, trace, warn};
 
 use crate::{
     builder::context::OpPayloadBuilderCtx, primitives::reth::ExecutionInfo, tx_signer::Signer,
@@ -531,4 +531,162 @@ pub fn get_balance(
     db.basic_ref(address)
         .map(|acc| acc.unwrap_or_default().balance)
         .map_err(|_| BuilderTransactionError::AccountLoadFailed(address))
+}
+
+/// Adjust batch gas/DA/uncompressed limits to reserve capacity for bottom-of-block builder txs.
+/// Returns the adjusted `max_uncompressed_block_size`.
+pub(super) fn reserve_builder_tx_budget(
+    builder_txs: &[BuilderTransactionCtx],
+    target_gas: &mut u64,
+    target_da: &mut Option<u64>,
+    target_da_footprint: &mut Option<u64>,
+    da_footprint_scalar: Option<u16>,
+    ctx_max_uncompressed: Option<u64>,
+    cumulative_uncompressed: u64,
+) -> Option<u64> {
+    let bottom_txs = builder_txs.iter().filter(|tx| !tx.is_top_of_block);
+
+    let mut builder_tx_gas: u64 = 0;
+    let mut builder_tx_da_size: u64 = 0;
+    let mut builder_tx_uncompressed_size: u64 = 0;
+    for tx in bottom_txs {
+        builder_tx_gas += tx.gas_used;
+        builder_tx_da_size += tx.da_size;
+        builder_tx_uncompressed_size += tx.signed_tx.inner().encode_2718_len() as u64;
+    }
+
+    *target_gas = target_gas.saturating_sub(builder_tx_gas);
+
+    if let Some(da_limit) = target_da.as_mut() {
+        *da_limit = da_limit.saturating_sub(builder_tx_da_size);
+    }
+
+    if let (Some(footprint), Some(scalar)) = (target_da_footprint.as_mut(), da_footprint_scalar) {
+        *footprint = footprint.saturating_sub(builder_tx_da_size.saturating_mul(u64::from(scalar)));
+    }
+
+    let max_uncompressed =
+        ctx_max_uncompressed.map(|limit| limit.saturating_sub(builder_tx_uncompressed_size));
+    if let Some(limit) = ctx_max_uncompressed
+        && cumulative_uncompressed >= limit.saturating_sub(builder_tx_uncompressed_size)
+    {
+        error!(
+            target: "payload_builder",
+            current_uncompressed = cumulative_uncompressed,
+            reserved_builder_tx_uncompressed = builder_tx_uncompressed_size,
+            limit,
+            "Builder tx uncompressed size subtraction caused max_uncompressed_block_size to be 0. \
+             No transaction would be included."
+        );
+    }
+
+    max_uncompressed
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn mock_builder_tx(gas_used: u64, da_size: u64, top_of_block: bool) -> BuilderTransactionCtx {
+        let signer = Signer::random();
+        let signed = signer
+            .sign_tx(OpTypedTransaction::Legacy(Default::default()))
+            .unwrap();
+        BuilderTransactionCtx {
+            gas_used,
+            da_size,
+            signed_tx: signed,
+            is_top_of_block: top_of_block,
+        }
+    }
+
+    #[test]
+    fn test_reserve_budget_empty_txs() {
+        let mut gas = 1_000_000;
+        let mut da = Some(10_000u64);
+        let mut footprint = Some(50_000u64);
+
+        let result = reserve_builder_tx_budget(
+            &[],
+            &mut gas,
+            &mut da,
+            &mut footprint,
+            Some(1),
+            Some(100_000),
+            0,
+        );
+
+        assert_eq!(gas, 1_000_000, "gas unchanged");
+        assert_eq!(da, Some(10_000), "da unchanged");
+        assert_eq!(footprint, Some(50_000), "footprint unchanged");
+        assert_eq!(result, Some(100_000), "uncompressed unchanged");
+    }
+
+    #[test]
+    fn test_reserve_budget_only_bottom_txs_counted() {
+        let txs = vec![
+            mock_builder_tx(100_000, 500, true), // top-of-block — should be ignored
+            mock_builder_tx(50_000, 200, false), // bottom — counted
+        ];
+        let mut gas = 1_000_000;
+        let mut da = Some(10_000u64);
+        let mut footprint = None;
+
+        reserve_builder_tx_budget(&txs, &mut gas, &mut da, &mut footprint, None, None, 0);
+
+        assert_eq!(gas, 950_000, "only bottom tx gas subtracted");
+        assert_eq!(da, Some(9_800), "only bottom tx da subtracted");
+    }
+
+    #[test]
+    fn test_reserve_budget_saturating_sub() {
+        let txs = vec![mock_builder_tx(2_000_000, 50_000, false)];
+        let mut gas = 1_000_000;
+        let mut da = Some(10_000u64);
+        let mut footprint = Some(100u64);
+
+        reserve_builder_tx_budget(&txs, &mut gas, &mut da, &mut footprint, Some(1), None, 0);
+
+        assert_eq!(gas, 0, "gas saturates at 0");
+        assert_eq!(da, Some(0), "da saturates at 0");
+        assert_eq!(footprint, Some(0), "footprint saturates at 0");
+    }
+
+    #[test]
+    fn test_reserve_budget_da_none_untouched() {
+        let txs = vec![mock_builder_tx(100, 200, false)];
+        let mut gas = 1_000;
+        let mut da: Option<u64> = None;
+        let mut footprint: Option<u64> = None;
+
+        reserve_builder_tx_budget(&txs, &mut gas, &mut da, &mut footprint, None, None, 0);
+
+        assert_eq!(gas, 900);
+        assert_eq!(da, None, "None da stays None");
+        assert_eq!(footprint, None, "None footprint stays None");
+    }
+
+    #[test]
+    fn test_reserve_budget_uncompressed_limit_reduction() {
+        let txs = vec![mock_builder_tx(0, 0, false)];
+        // The tx has some encoded size even with default fields
+        let mut gas = 1_000_000;
+
+        let result = reserve_builder_tx_budget(
+            &txs,
+            &mut gas,
+            &mut None,
+            &mut None,
+            None,
+            Some(1_000_000),
+            0,
+        );
+
+        // Result should be Some(1_000_000 - encoded_size)
+        assert!(result.is_some());
+        assert!(
+            result.unwrap() < 1_000_000,
+            "uncompressed limit reduced by tx encoded size"
+        );
+    }
 }
