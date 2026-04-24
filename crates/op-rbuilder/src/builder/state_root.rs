@@ -158,8 +158,8 @@ mod tests {
                         reth_trie_db::DatabaseTrieCursorFactory<_, LegacyKeyAdapter>,
                         reth_trie_db::DatabaseHashedCursorFactory<_>,
                     >>::from_tx_hashed(tx.tx_ref(), *hashed_address)
-                        .root_with_updates()
-                        .unwrap();
+                    .root_with_updates()
+                    .unwrap();
                 let sorted_updates = storage_updates.into_sorted();
                 tx.write_storage_trie_updates_sorted(core::iter::once((
                     hashed_address,
