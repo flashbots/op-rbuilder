@@ -121,6 +121,8 @@ impl OpPayloadSyncerCtx {
             backrun_ctx,
             exclude_reverts_between_flashblocks: self.exclude_reverts_between_flashblocks,
             enable_tx_tracking_debug_logs: self.enable_tx_tracking_debug_logs,
+            disable_state_root: false,
+            enable_incremental_state_root: false,
         }
     }
 }

@@ -74,6 +74,10 @@ pub struct OpPayloadBuilderCtx {
     pub exclude_reverts_between_flashblocks: bool,
     /// Enable tx tracking logs
     pub enable_tx_tracking_debug_logs: bool,
+    /// Whether to disable state root calculation for each flashblock
+    pub disable_state_root: bool,
+    /// Whether to enable incremental state root calculation using cached trie nodes
+    pub enable_incremental_state_root: bool,
 }
 
 impl OpPayloadBuilderCtx {

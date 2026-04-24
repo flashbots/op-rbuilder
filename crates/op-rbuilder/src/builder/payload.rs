@@ -110,8 +110,6 @@ pub(super) struct FlashblocksState {
     da_per_batch: Option<u64>,
     /// DA footprint limit per flashblock
     da_footprint_per_batch: Option<u64>,
-    /// Whether to disable state root calculation for each flashblock
-    disable_state_root: bool,
     /// Index into ExecutionInfo tracking the last consumed flashblock
     /// Used for slicing transactions/receipts per flashblock
     last_flashblock_tx_index: usize,
@@ -141,14 +139,9 @@ struct FlashblockBuildOutput<Cache, Transition> {
 }
 
 impl FlashblocksState {
-    fn new(
-        target_flashblock_count: u64,
-        disable_state_root: bool,
-        enable_incremental_state_root: bool,
-    ) -> Self {
+    fn new(target_flashblock_count: u64, enable_incremental_state_root: bool) -> Self {
         Self {
             target_flashblock_count,
-            disable_state_root,
             state_root_calculator: StateRootCalculator::new(enable_incremental_state_root),
             ..Default::default()
         }
@@ -170,7 +163,6 @@ impl FlashblocksState {
             gas_per_batch: self.gas_per_batch,
             da_per_batch: self.da_per_batch,
             da_footprint_per_batch: self.da_footprint_per_batch,
-            disable_state_root: self.disable_state_root,
             last_flashblock_tx_index: self.last_flashblock_tx_index,
             state_root_calculator: self.state_root_calculator.clone(),
         }
@@ -259,10 +251,6 @@ impl FlashblocksState {
 
     fn target_da_footprint_for_batch(&self) -> Option<u64> {
         self.target_da_footprint_for_batch
-    }
-
-    fn disable_state_root(&self) -> bool {
-        self.disable_state_root
     }
 
     fn set_last_flashblock_tx_index(&mut self, index: usize) {
@@ -443,6 +431,11 @@ where
             backrun_ctx,
             exclude_reverts_between_flashblocks: self.config.exclude_reverts_between_flashblocks,
             enable_tx_tracking_debug_logs: self.config.enable_tx_tracking_debug_logs,
+            disable_state_root: self.config.flashblocks_config.disable_state_root,
+            enable_incremental_state_root: self
+                .config
+                .flashblocks_config
+                .enable_incremental_state_root,
         })
     }
 
@@ -471,9 +464,6 @@ where
         let span = tracing::Span::current();
         span.record("payload_id", config.attributes.id.to_string());
 
-        let disable_state_root = self.config.flashblocks_config.disable_state_root;
-        let enable_incremental_state_root =
-            self.config.flashblocks_config.enable_incremental_state_root;
         let ctx = self
             .get_op_payload_builder_ctx(config.clone(), payload_cancel.token())
             .map_err(|e| PayloadBuilderError::Other(e.into()))?;
@@ -483,8 +473,7 @@ where
             self.config
                 .flashblocks_config
                 .flashblocks_per_block(self.config.block_time),
-            disable_state_root,
-            enable_incremental_state_root,
+            ctx.enable_incremental_state_root,
         );
 
         self.address_gas_limiter.refresh(ctx.block_number());
@@ -508,7 +497,7 @@ where
                 let builder = self.clone();
                 move || {
                     builder
-                        .build_fallback_block(ctx, fb_state, cached_reads, disable_state_root)
+                        .build_fallback_block(ctx, fb_state, cached_reads)
                         .map_err(|e| PayloadBuilderError::Other(e.into()))
                 }
             }),
@@ -859,7 +848,6 @@ where
         ctx: OpPayloadBuilderCtx,
         mut fb_state: FlashblocksState,
         mut cached_reads: CachedReads,
-        disable_state_root: bool,
     ) -> eyre::Result<FallbackBuildOutput<CacheState, Option<TransitionState>>> {
         let state_provider = self.client.state_by_block_hash(ctx.parent().hash())?;
         let db = StateProviderDatabase::new(&state_provider);
@@ -899,7 +887,7 @@ where
             &ctx,
             Some(&mut fb_state),
             &mut info,
-            !disable_state_root || ctx.attributes().no_tx_pool, // need to calculate state root for CL sync
+            !ctx.disable_state_root || ctx.attributes().no_tx_pool, // need to calculate state root for CL sync
             self.config.enable_tx_tracking_debug_logs,
         )?;
 
@@ -1047,13 +1035,12 @@ where
         }
 
         let total_block_built_duration = Instant::now();
-        let disable_state_root = fb_state.disable_state_root();
         let build_result = build_block(
             state,
             ctx,
             Some(fb_state),
             info,
-            !disable_state_root || ctx.attributes().no_tx_pool,
+            !ctx.disable_state_root || ctx.attributes().no_tx_pool,
             self.config.enable_tx_tracking_debug_logs,
         );
         let total_block_built_duration = total_block_built_duration.elapsed();
@@ -1628,7 +1615,7 @@ mod tests {
         target_da: Option<u64>,
         target_da_footprint: Option<u64>,
     ) -> FlashblocksState {
-        FlashblocksState::new(5, false, false).with_batch_limits(
+        FlashblocksState::new(5, false).with_batch_limits(
             gas_per_batch,
             da_per_batch,
             da_footprint_per_batch,
@@ -1697,7 +1684,7 @@ mod tests {
 
     #[test]
     fn test_next_after_seal_preserves_config() {
-        let state = FlashblocksState::new(10, true, true).with_batch_limits(
+        let state = FlashblocksState::new(10, true).with_batch_limits(
             50_000,
             Some(500),
             Some(250),
@@ -1709,6 +1696,5 @@ mod tests {
         let next = state.next_after_seal(Some(500), Some(250));
 
         assert_eq!(next.target_flashblock_count, 10);
-        assert!(next.disable_state_root);
     }
 }
