@@ -621,3 +621,64 @@ async fn progressive_lag_reduces_flashblocks(rbuilder: LocalInstance) -> eyre::R
 
     flashblocks_listener.stop().await
 }
+
+/// Verify that incremental state root computation produces valid blocks.
+///
+/// The test framework calls `new_payload` on each built block, which validates the
+/// state root against the node's own EVM execution. If the incremental trie produces
+/// an incorrect state root, `new_payload` will return `Invalid` and the block build
+/// will fail.
+#[rb_test(args = OpRbuilderArgs {
+    chain_block_time: 1000,
+    flashblocks: FlashblocksArgs {
+        flashblocks_port: 1239,
+        flashblocks_addr: "127.0.0.1".into(),
+        flashblocks_block_time: 200,
+        flashblocks_enable_incremental_state_root: true,
+        ..Default::default()
+    },
+    ..Default::default()
+})]
+async fn test_incremental_state_root(rbuilder: LocalInstance) -> eyre::Result<()> {
+    use alloy_primitives::B256;
+
+    let driver = rbuilder.driver().await?;
+    let flashblocks_listener = rbuilder.spawn_flashblocks_listener();
+
+    // Build multiple blocks with transactions to exercise the incremental trie
+    // across flashblock boundaries within each block.
+    for _ in 0..3 {
+        for _ in 0..3 {
+            let _ = driver
+                .create_transaction()
+                .random_valid_transfer()
+                .send()
+                .await?;
+        }
+        let block = driver.build_new_block_with_current_timestamp(None).await?;
+
+        // Block was accepted by new_payload (state root validated by the node).
+        // Also verify the state root is actually computed (non-zero).
+        assert_ne!(
+            block.header.state_root,
+            B256::ZERO,
+            "State root should be computed with incremental trie enabled"
+        );
+        assert!(
+            block.transactions.len() >= 3,
+            "Block should contain user transactions"
+        );
+    }
+
+    let flashblocks = flashblocks_listener.get_flashblocks();
+    // 3 blocks × 6 flashblocks each: 1 base/fallback (index 0) + 5 incremental
+    // flashblocks (1000ms / 200ms).
+    assert_eq!(
+        18,
+        flashblocks.len(),
+        "Expected 18 flashblocks across 3 blocks, got {}",
+        flashblocks.len()
+    );
+
+    flashblocks_listener.stop().await
+}

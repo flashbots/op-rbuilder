@@ -20,6 +20,7 @@ mod p2p;
 mod payload;
 mod payload_handler;
 mod service;
+mod state_root;
 mod syncer_ctx;
 mod timing;
 mod wspub;
@@ -31,6 +32,7 @@ pub use builder_tx::{
 pub use config::FlashblocksConfig;
 pub use context::OpPayloadBuilderCtx;
 pub use service::FlashblocksServiceBuilder;
+pub use state_root::StateRootCalculator;
 
 /// Configuration values that are applicable to any type of block builder.
 #[derive(Debug, Clone)]

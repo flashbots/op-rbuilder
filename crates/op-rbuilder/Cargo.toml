@@ -155,6 +155,9 @@ testcontainers.workspace = true
 nanoid.workspace = true
 reth-ipc.workspace = true
 reth-node-builder = { workspace = true, features = ["test-utils"] }
+reth-trie-db.workspace = true
+proptest = "1.10"
+criterion = { version = "0.5", features = ["html_reports"] }
 ctor.workspace = true
 rlimit.workspace = true
 hyper.workspace = true
@@ -197,6 +200,10 @@ testing = [
 
 telemetry = ["reth-tracing-otlp", "opentelemetry"]
 loki = ["tracing-loki", "telemetry"]
+
+[[bench]]
+name = "bench_flashblocks_state_root"
+harness = false
 
 [[bin]]
 name = "op-rbuilder"
