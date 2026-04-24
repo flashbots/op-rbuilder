@@ -179,6 +179,45 @@ impl FlashblocksState {
         }
     }
 
+    /// Advance the batch budgets for the next flashblock after sealing the
+    /// current one.
+    ///
+    /// `target_da_for_batch` and `target_da_footprint_for_batch` are the
+    /// post-build residuals carried over from this flashblock; each is
+    /// incremented by the corresponding per-batch limit. `target_gas` is
+    /// recomputed from `self.target_gas_for_batch` (pre-build) plus
+    /// `gas_per_batch`.
+    fn next_after_seal(
+        &self,
+        mut target_da_for_batch: Option<u64>,
+        mut target_da_footprint_for_batch: Option<u64>,
+    ) -> Self {
+        if let Some(da_limit) = self.da_per_batch {
+            if let Some(da) = target_da_for_batch.as_mut() {
+                *da += da_limit;
+            } else {
+                error!(
+                    "Builder end up in faulty invariant, if da_per_batch is set then total_da_per_batch must be set"
+                );
+            }
+        }
+
+        let target_gas_for_batch = self.target_gas_for_batch + self.gas_per_batch;
+
+        if let (Some(footprint), Some(da_footprint_limit)) = (
+            target_da_footprint_for_batch.as_mut(),
+            self.da_footprint_per_batch,
+        ) {
+            *footprint += da_footprint_limit;
+        }
+
+        self.next(
+            target_gas_for_batch,
+            target_da_for_batch,
+            target_da_footprint_for_batch,
+        )
+    }
+
     fn with_batch_limits(
         mut self,
         gas_per_batch: u64,
@@ -223,18 +262,6 @@ impl FlashblocksState {
 
     fn target_da_footprint_for_batch(&self) -> Option<u64> {
         self.target_da_footprint_for_batch
-    }
-
-    fn gas_per_batch(&self) -> u64 {
-        self.gas_per_batch
-    }
-
-    fn da_per_batch(&self) -> Option<u64> {
-        self.da_per_batch
-    }
-
-    fn da_footprint_per_batch(&self) -> Option<u64> {
-        self.da_footprint_per_batch
     }
 
     fn disable_state_root(&self) -> bool {
@@ -1131,32 +1158,9 @@ where
                     .flashblock_num_tx_histogram
                     .record(info.executed_transactions.len() as f64);
 
-                // Update bundle_state for next iteration
-                if let Some(da_limit) = fb_state.da_per_batch() {
-                    if let Some(da) = target_da_for_batch.as_mut() {
-                        *da += da_limit;
-                    } else {
-                        error!(
-                            "Builder end up in faulty invariant, if da_per_batch is set then total_da_per_batch must be set"
-                        );
-                    }
-                }
-
-                let target_gas_for_batch =
-                    fb_state.target_gas_for_batch() + fb_state.gas_per_batch();
-
-                if let (Some(footprint), Some(da_footprint_limit)) = (
-                    target_da_footprint_for_batch.as_mut(),
-                    fb_state.da_footprint_per_batch(),
-                ) {
-                    *footprint += da_footprint_limit;
-                }
-
-                let next_flashblock_state = fb_state.next(
-                    target_gas_for_batch,
-                    target_da_for_batch,
-                    target_da_footprint_for_batch,
-                );
+                // Advance batch budgets for the next flashblock.
+                let next_flashblock_state =
+                    fb_state.next_after_seal(target_da_for_batch, target_da_footprint_for_batch);
 
                 Ok(Some((next_flashblock_state, new_payload)))
             }
@@ -1677,4 +1681,101 @@ where
         ),
         fb_payload,
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_fb_state(
+        gas_per_batch: u64,
+        da_per_batch: Option<u64>,
+        da_footprint_per_batch: Option<u64>,
+        target_gas: u64,
+        target_da: Option<u64>,
+        target_da_footprint: Option<u64>,
+    ) -> FlashblocksState {
+        FlashblocksState::new(5, false, false).with_batch_limits(
+            gas_per_batch,
+            da_per_batch,
+            da_footprint_per_batch,
+            target_gas,
+            target_da,
+            target_da_footprint,
+        )
+    }
+
+    #[test]
+    fn test_next_after_seal_increments_index() {
+        let state = make_fb_state(100_000, None, None, 100_000, None, None);
+        assert_eq!(state.flashblock_index, 0);
+
+        let next = state.next_after_seal(None, None);
+        assert_eq!(next.flashblock_index, 1);
+
+        let next2 = next.next_after_seal(None, None);
+        assert_eq!(next2.flashblock_index, 2);
+    }
+
+    #[test]
+    fn test_next_after_seal_advances_gas() {
+        let state = make_fb_state(100_000, None, None, 100_000, None, None);
+        let next = state.next_after_seal(None, None);
+
+        assert_eq!(next.target_gas_for_batch, 200_000);
+        assert_eq!(next.gas_per_batch, 100_000, "per-batch stays constant");
+    }
+
+    #[test]
+    fn test_next_after_seal_advances_da() {
+        let state = make_fb_state(100_000, Some(1_000), None, 100_000, Some(1_000), None);
+        // Simulate no DA consumption during the flashblock: residual equals the starting budget.
+        let next = state.next_after_seal(Some(1_000), None);
+
+        assert_eq!(next.target_da_for_batch, Some(2_000));
+        assert_eq!(next.da_per_batch, Some(1_000));
+    }
+
+    #[test]
+    fn test_next_after_seal_carries_consumed_da() {
+        // 300 of 1_000 DA was consumed this flashblock; next starts with 700 + 1_000 = 1_700.
+        let state = make_fb_state(100_000, Some(1_000), None, 100_000, Some(1_000), None);
+        let next = state.next_after_seal(Some(700), None);
+
+        assert_eq!(next.target_da_for_batch, Some(1_700));
+    }
+
+    #[test]
+    fn test_next_after_seal_advances_da_footprint() {
+        let state = make_fb_state(100_000, None, Some(5_000), 100_000, None, Some(5_000));
+        let next = state.next_after_seal(None, Some(5_000));
+
+        assert_eq!(next.target_da_footprint_for_batch, Some(10_000));
+    }
+
+    #[test]
+    fn test_next_after_seal_no_da_when_none() {
+        let state = make_fb_state(100_000, None, None, 100_000, None, None);
+        let next = state.next_after_seal(None, None);
+
+        assert_eq!(next.target_da_for_batch, None);
+        assert_eq!(next.target_da_footprint_for_batch, None);
+    }
+
+    #[test]
+    fn test_next_after_seal_preserves_config() {
+        let state = FlashblocksState::new(10, true, true).with_batch_limits(
+            50_000,
+            Some(500),
+            Some(250),
+            50_000,
+            Some(500),
+            Some(250),
+        );
+
+        let next = state.next_after_seal(Some(500), Some(250));
+
+        assert_eq!(next.target_flashblock_count, 10);
+        assert!(next.disable_state_root);
+    }
 }
