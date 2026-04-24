@@ -447,19 +447,8 @@ impl OpPayloadBuilderCtx {
             let conditional = tx.conditional().cloned();
             let tx_da_size = tx.estimated_da_size();
 
-            // exclude reverting transaction if:
-            // - the transaction comes from a bundle (is_some) and the hash **is not** in the
-            //   bundle's allowed-revert list.
-            // the Option distinguishes bundle vs non-bundle txs; otherwise non-bundle txs would
-            // also be excluded on revert since they're never in the list.
-            //
-            // computed via a borrow while the pool tx is still in scope, so we don't clone the
-            // allowed-revert list per tx.
-            let is_bundle_tx = tx.allowed_revert_hashes().is_some();
-            let exclude_reverting_txs = tx
-                .allowed_revert_hashes()
-                .as_ref()
-                .is_some_and(|allowed| !allowed.contains(tx.hash()));
+            let is_bundle_tx = tx.is_bundle();
+            let exclude_reverting_txs = tx.revert_protected();
 
             let tx = tx.into_consensus();
             let tx_hash = tx.tx_hash();
@@ -589,6 +578,7 @@ impl OpPayloadBuilderCtx {
                     stage = "evm_executed"
                 );
             }
+
             if self
                 .address_gas_limiter
                 .consume_gas(tx.signer(), gas_used)
