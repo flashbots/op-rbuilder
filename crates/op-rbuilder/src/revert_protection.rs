@@ -2,11 +2,10 @@ use std::{sync::Arc, time::Instant};
 
 use crate::{
     metrics::OpRBuilderMetrics,
-    presim::TopOfBlockSimulator,
+    pool::AddBundleRequest,
     primitives::bundle::{Bundle, BundleResult},
     tx::{FBPooledTransaction, MaybeFlashblockFilter},
 };
-use alloy_consensus::Header;
 use alloy_json_rpc::RpcObject;
 use alloy_primitives::B256;
 use jsonrpsee::{
@@ -14,15 +13,13 @@ use jsonrpsee::{
     proc_macros::rpc,
 };
 use moka::future::Cache;
-use op_alloy_consensus::OpTxEnvelope;
 use reth::rpc::api::eth::{RpcReceipt, helpers::FullEthApi};
-use reth_optimism_chainspec::OpChainSpec;
-use reth_optimism_primitives::OpTransactionSigned;
 use reth_optimism_txpool::{OpPooledTransaction, conditional::MaybeConditionalTransaction};
 use reth_primitives_traits::Recovered;
-use reth_provider::{BlockReaderIdExt, ChainSpecProvider, StateProviderFactory};
+use reth_provider::BlockNumReader;
 use reth_rpc_eth_types::{EthApiError, utils::recover_raw_transaction};
-use reth_transaction_pool::{PoolTransaction, TransactionOrigin, TransactionPool};
+use reth_transaction_pool::PoolTransaction;
+use tokio::sync::{mpsc, oneshot};
 use tracing::error;
 
 // Namespace overrides for revert protection support
@@ -36,51 +33,40 @@ pub trait EthApiExt<R: RpcObject> {
     async fn transaction_receipt(&self, hash: B256) -> RpcResult<Option<R>>;
 }
 
-pub struct RevertProtectionExt<Pool, Provider, Eth> {
-    pool: Pool,
+pub struct RevertProtectionExt<Provider, Eth> {
     provider: Provider,
     eth_api: Eth,
     metrics: Arc<OpRBuilderMetrics>,
     reverted_cache: Cache<B256, ()>,
-    simulator: Option<Arc<TopOfBlockSimulator>>,
+    pool_tx: mpsc::UnboundedSender<AddBundleRequest>,
 }
 
-impl<Pool, Provider, Eth> RevertProtectionExt<Pool, Provider, Eth>
+impl<Provider, Eth> RevertProtectionExt<Provider, Eth>
 where
-    Pool: Clone,
     Provider: Clone,
     Eth: Clone,
 {
     pub(crate) fn new(
-        pool: Pool,
         provider: Provider,
         eth_api: Eth,
         reverted_cache: Cache<B256, ()>,
-        simulator: Option<Arc<TopOfBlockSimulator>>,
+        pool_tx: mpsc::UnboundedSender<AddBundleRequest>,
     ) -> Self {
         Self {
-            pool,
             provider,
             eth_api,
             metrics: Arc::new(OpRBuilderMetrics::default()),
             reverted_cache,
-            simulator,
+            pool_tx,
         }
     }
 }
 
 #[async_trait]
-impl<Pool, Provider, Eth> EthApiExtServer<RpcReceipt<Eth::NetworkTypes>>
-    for RevertProtectionExt<Pool, Provider, Eth>
+impl<Provider, Eth> EthApiExtServer<RpcReceipt<Eth::NetworkTypes>>
+    for RevertProtectionExt<Provider, Eth>
 where
-    Pool: TransactionPool<Transaction = FBPooledTransaction> + Clone + 'static,
-    Provider: StateProviderFactory
-        + BlockReaderIdExt<Header = Header>
-        + ChainSpecProvider<ChainSpec = OpChainSpec>
-        + Send
-        + Sync
-        + Clone
-        + 'static,
+    Provider: BlockNumReader + Send + Sync + Clone + 'static,
     Eth: FullEthApi + Send + Sync + Clone + 'static,
 {
     async fn send_bundle(&self, bundle: Bundle) -> RpcResult<BundleResult> {
@@ -123,16 +109,9 @@ where
     }
 }
 
-impl<Pool, Provider, Eth> RevertProtectionExt<Pool, Provider, Eth>
+impl<Provider, Eth> RevertProtectionExt<Provider, Eth>
 where
-    Pool: TransactionPool<Transaction = FBPooledTransaction> + Clone + 'static,
-    Provider: StateProviderFactory
-        + BlockReaderIdExt<Header = Header>
-        + ChainSpecProvider<ChainSpec = OpChainSpec>
-        + Send
-        + Sync
-        + Clone
-        + 'static,
+    Provider: BlockNumReader + Send + Sync + Clone + 'static,
     Eth: FullEthApi + Send + Sync + Clone + 'static,
 {
     async fn send_bundle_inner(&self, bundle: Bundle) -> RpcResult<BundleResult> {
@@ -167,55 +146,23 @@ where
 
         let pool_transaction =
             FBPooledTransaction::from(OpPooledTransaction::from_pooled(recovered.clone()))
-                .with_allowed_revert_hashes(bundle.reverting_tx_hashes.clone().unwrap_or_default())
+                .with_allowed_revert_hashes(bundle.reverting_tx_hashes.unwrap_or_default())
                 .with_min_flashblock_number(conditional.min_flashblock_number)
                 .with_max_flashblock_number(conditional.max_flashblock_number)
                 .with_conditional(conditional.transaction_conditional);
 
-        let outcome = self
-            .pool
-            .add_transaction(TransactionOrigin::Local, pool_transaction)
-            .await
-            .map_err(EthApiError::from)?;
+        let (tx, rx) = oneshot::channel();
+        let req = AddBundleRequest::new(pool_transaction, tx);
+        self.pool_tx
+            .send(req)
+            .map_err(|_| EthApiError::InternalEthError)?;
 
-        // Pre-simulate the transaction against current head state if:
-        // - pre-simulation is enabled (simulator is Some)
-        // - the tx is allowed to revert
-        if bundle
-            .reverting_tx_hashes
-            .as_ref()
-            .is_some_and(|hashes| !hashes.is_empty())
-            && let Some(simulator) = &self.simulator
-        {
-            let pool = self.pool.clone();
-            let metrics = self.metrics.clone();
-            let simulator = simulator.clone();
-            tokio::task::spawn(async move {
-                let sim_start = Instant::now();
-                let sim_tx: Recovered<OpTransactionSigned> = recovered
-                    .clone()
-                    .map(|tx| OpTransactionSigned::from(OpTxEnvelope::from(tx)));
-                let sim_tx_hash = *sim_tx.hash();
-                match simulator.clone().simulate_tx(sim_tx).await {
-                    Ok(true) => {
-                        metrics.bundle_pre_simulation_passes.increment(1);
-                    }
-                    Ok(false) => {
-                        metrics.bundle_pre_simulation_reverts.increment(1);
-                        pool.remove_transaction(sim_tx_hash);
-                    }
-                    Err(e) => {
-                        error!(error = %e, "pre-simulation task failed");
-                    }
-                }
-                metrics
-                    .bundle_pre_simulation_duration
-                    .record(sim_start.elapsed());
-            });
+        if let Some(e) = rx.await.map_err(|_| EthApiError::InternalEthError)? {
+            return Err(EthApiError::from(e).into());
         }
 
         let result = BundleResult {
-            bundle_hash: outcome.hash,
+            bundle_hash: *recovered.hash(),
         };
         Ok(result)
     }

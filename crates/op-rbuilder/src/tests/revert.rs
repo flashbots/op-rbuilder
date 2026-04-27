@@ -460,7 +460,6 @@ async fn presim_rejects_reverting_bundle(rbuilder: LocalInstance) -> eyre::Resul
     let bundle = driver
         .create_transaction()
         .random_reverting_transaction()
-        .with_reverted_hash()
         .with_bundle(BundleOpts::default())
         .send()
         .await?;

@@ -15,6 +15,7 @@ use reth_optimism_primitives::OpTransactionSigned;
 use reth_primitives_traits::{Block, NodePrimitives, Recovered, RecoveredBlock};
 use reth_provider::{BlockReaderIdExt, ChainSpecProvider, StateProvider, StateProviderFactory};
 use reth_revm::{State, database::StateProviderDatabase};
+use reth_tasks::Runtime;
 use reth_transaction_pool::{FullTransactionEvent, PoolTransaction, TransactionPool};
 use revm::{context::result::ResultAndState, context_interface::result::InvalidTransaction};
 use tracing::{debug, error, warn};
@@ -41,9 +42,11 @@ impl TopOfBlockSimulator {
 
     pub(crate) async fn simulate_tx(
         self: Arc<Self>,
+        runtime: &Runtime,
         tx: Recovered<OpTransactionSigned>,
     ) -> eyre::Result<bool> {
-        tokio::task::spawn_blocking(move || self.simulate_tx_sync(tx))
+        runtime
+            .spawn_blocking(move || self.simulate_tx_sync(tx))
             .await
             .wrap_err("simulate tx task panicked")
     }
@@ -178,6 +181,7 @@ pub(crate) async fn maintain_tip_state<N, St, Provider>(
 }
 
 pub(crate) async fn maintain_pending_simulations<Pool, St>(
+    runtime: Runtime,
     simulator: Arc<TopOfBlockSimulator>,
     pool: Pool,
     metrics: Arc<OpRBuilderMetrics>,
@@ -206,17 +210,20 @@ pub(crate) async fn maintain_pending_simulations<Pool, St>(
         let pool = pool.clone();
         let metrics = metrics.clone();
 
-        tokio::spawn(async move {
-            let consensus_tx = tx.transaction.clone_into_consensus();
-            match simulator.simulate_tx(consensus_tx).await {
-                Ok(false) => {
-                    debug!(tx_hash = %tx_hash, "evicting reverting tx from pool");
-                    pool.remove_transactions(vec![tx_hash]);
-                    metrics.presim_pending_evictions.increment(1);
-                }
-                Ok(true) => {}
-                Err(e) => {
-                    error!(tx_hash = %tx_hash, error = %e, "background simulation failed");
+        runtime.spawn_task({
+            let runtime = runtime.clone();
+            async move {
+                let consensus_tx = tx.transaction.clone_into_consensus();
+                match simulator.simulate_tx(&runtime, consensus_tx).await {
+                    Ok(false) => {
+                        debug!(tx_hash = %tx_hash, "evicting reverting tx from pool");
+                        pool.remove_transactions(vec![tx_hash]);
+                        metrics.presim_pending_evictions.increment(1);
+                    }
+                    Ok(true) => {}
+                    Err(e) => {
+                        error!(tx_hash = %tx_hash, error = %e, "background simulation failed");
+                    }
                 }
             }
         });

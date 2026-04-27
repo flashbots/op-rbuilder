@@ -3,6 +3,7 @@ use crate::{
     backrun_bundle::{BackrunBundleApiServer, BackrunBundleRpc},
     builder::{BuilderConfig, FlashblocksServiceBuilder},
     metrics::OpRBuilderMetrics,
+    pool::run_pool_insertion_task,
     presim::{TopOfBlockSimulator, maintain_pending_simulations, maintain_tip_state},
     revert_protection::{EthApiExtServer, RevertProtectionExt},
     tests::{
@@ -52,7 +53,11 @@ use std::{
     sync::{Arc, LazyLock},
     time::Instant,
 };
-use tokio::{net::TcpListener, sync::oneshot, task::JoinHandle};
+use tokio::{
+    net::TcpListener,
+    sync::{mpsc, oneshot},
+    task::JoinHandle,
+};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 use tokio_util::sync::CancellationToken;
 
@@ -126,6 +131,8 @@ impl LocalInstance {
         let simulator_for_rpc = simulator.clone();
         let simulator_for_maintenance = simulator.clone();
 
+        let (pool_tx, pool_rx) = mpsc::unbounded_channel();
+
         let addons: OpAddOns<_, OpEthApiBuilder, OpEngineValidatorBuilder> =
             OpAddOnsBuilder::default()
                 .with_sequencer(args.rollup_args.sequencer.clone())
@@ -149,14 +156,12 @@ impl LocalInstance {
                 if args.enable_revert_protection {
                     tracing::info!("Revert protection enabled");
 
-                    let pool = ctx.pool().clone();
                     let provider = ctx.provider().clone();
                     let revert_protection_ext = RevertProtectionExt::new(
-                        pool,
                         provider,
                         ctx.registry.eth_api().clone(),
                         reverted_cache,
-                        simulator_for_rpc,
+                        pool_tx,
                     );
 
                     ctx.modules
@@ -185,8 +190,20 @@ impl LocalInstance {
                     .send(ctx.pool.all_transactions_event_listener())
                     .expect("Failed to send txpool ready signal");
 
+                let metrics = Arc::new(OpRBuilderMetrics::default());
+
+                ctx.task_executor.spawn_critical_task(
+                    "bundleInsertion",
+                    run_pool_insertion_task(
+                        ctx.task_executor.clone(),
+                        ctx.pool.clone(),
+                        pool_rx,
+                        simulator_for_rpc,
+                        metrics.clone(),
+                    ),
+                );
+
                 if let Some(simulator) = simulator_for_maintenance {
-                    let metrics = Arc::new(OpRBuilderMetrics::default());
                     let chain_events = ctx.provider.canonical_state_stream();
                     let evm_config = OpEvmConfig::optimism(ctx.provider.chain_spec());
                     ctx.task_executor.spawn_task(
@@ -204,6 +221,7 @@ impl LocalInstance {
                     let pending_events = ctx.pool.all_transactions_event_listener();
                     ctx.task_executor.spawn_task(
                         maintain_pending_simulations(
+                            ctx.task_executor.clone(),
                             simulator,
                             ctx.pool.clone(),
                             metrics,
