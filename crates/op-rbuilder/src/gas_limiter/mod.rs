@@ -12,6 +12,7 @@ mod metrics;
 /// Opaque snapshot of the gas limiter's per-address token buckets.
 /// Used to save and restore state across candidate iterations in
 /// continuous flashblock building.
+#[derive(Clone)]
 pub struct GasLimiterSnapshot(Option<HashMap<Address, TokenBucket>>);
 
 #[derive(Debug, Clone)]

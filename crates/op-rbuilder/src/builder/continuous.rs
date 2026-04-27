@@ -1,19 +1,49 @@
-use super::*;
-use crate::builder::cancellation::PayloadJobCancellation;
+use crate::{
+    builder::{
+        best_txs::{FlashblockPoolTxCursor, FlashblockTxCache},
+        builder_tx::{BuilderTransactions, reserve_builder_tx_budget},
+        cancellation::PayloadJobCancellation,
+        context::OpPayloadBuilderCtx,
+        payload::{FlashblocksState, OpPayloadBuilder, build_block},
+    },
+    gas_limiter::GasLimiterSnapshot,
+    primitives::reth::ExecutionInfo,
+    traits::{ClientBounds, PoolBounds},
+};
+use alloy_primitives::{B256, U256};
+use eyre::WrapErr as _;
+use op_alloy_rpc_types_engine::OpFlashblockPayload;
+use reth_node_api::PayloadBuilderError;
+use reth_optimism_node::OpBuiltPayload;
+use reth_payload_util::BestPayloadTransactions;
+use reth_provider::{
+    HashedPostStateProvider, ProviderError, StateRootProvider, StorageRootProvider,
+};
+use reth_revm::{
+    State,
+    database::StateProviderDatabase,
+    db::{CacheState, TransitionState},
+};
+use revm::Database;
+use std::{
+    sync::{Arc, atomic::Ordering},
+    time::{Duration, Instant},
+};
 use tokio::sync::{mpsc, oneshot, watch};
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, metadata::Level, span, warn};
 
-pub(super) struct ContinuousBuildState<Cache, Transition> {
-    pub(super) ctx: OpPayloadBuilderCtx,
-    pub(super) info: ExecutionInfo,
-    pub(super) cache: Cache,
-    pub(super) transition: Transition,
-    pub(super) tx_cache: FlashblockTxCache,
-    pub(super) fb_state: FlashblocksState,
+struct ContinuousBuildState<Cache, Transition> {
+    ctx: OpPayloadBuilderCtx,
+    info: ExecutionInfo,
+    cache: Cache,
+    transition: Transition,
+    tx_cache: FlashblockTxCache,
+    fb_state: FlashblocksState,
 }
 
 /// Result of a continuous candidate loop within a single flashblock interval.
-/// Contains the best sealed candidate (if any) and loop statistics.
+/// Contains the best sealed candidate and statistics.
 struct CandidateLoopResult {
     best: Option<BestCandidate>,
     candidates_evaluated: u64,
@@ -32,12 +62,18 @@ type BuildReceiver = oneshot::Receiver<
     Result<ContinuousBuildOutput<CacheState, Option<TransitionState>>, PayloadBuilderError>,
 >;
 
+/// Slot that holds the latest sealed candidate from the build task.
+/// Task writes on each improvement; main loop takes on trigger to publish
+/// without awaiting task completion.
+type SharedBest = Arc<std::sync::Mutex<Option<BestCandidate>>>;
+
 /// Returned by `publish_and_spawn_next` to tell the caller whether to continue or exit.
 enum FlashblockAction {
     /// Published successfully: continue with updated loop state
     Continue {
         fb_span: tracing::Span,
         build_rx: BuildReceiver,
+        shared_best: SharedBest,
         build_start: Instant,
     },
     /// Cancelled or no candidate: caller should return Ok(())
@@ -46,23 +82,28 @@ enum FlashblockAction {
 
 /// Best sealed candidate found so far within a flashblock interval.
 /// Groups all the state that must be updated in lockstep when a new best is found.
+#[derive(Clone)]
 struct BestCandidate {
-    /// The sealed payload + flashblock delta + next flashblock state.
+    /// The flashblock state + sealed payload + flashblock delta for next flashblock
     result: (FlashblocksState, OpBuiltPayload, OpFlashblockPayload),
-    /// Gas used by this candidate (comparison key).
-    gas_used: u64,
-    /// EVM cache from the winning build (restored for next interval).
+    /// Total priority fees accumulated by this candidate (comparison key).
+    total_fees: U256,
+    /// EVM cache.
     cache: CacheState,
-    /// EVM transition state from the winning build.
+    /// EVM transition.
     transition: Option<TransitionState>,
-    /// ExecutionInfo from the winning build.
+    /// EVM execution info.
     info: ExecutionInfo,
-    /// FlashblocksState from the winning build (pre-next_after_seal).
+    /// Flashblock state.
     fb_state: FlashblocksState,
     /// Committed txs from the winning build.
     tx_cache: FlashblockTxCache,
+    /// Gas limiter snapshot.
+    gas_limiter_snapshot: GasLimiterSnapshot,
     /// When this candidate was sealed (for staleness metric).
     sealed_at: Instant,
+    /// Wall time spent building this single candidate.
+    build_duration: Duration,
 }
 
 impl<Pool, Client, BuilderTx> OpPayloadBuilder<Pool, Client, BuilderTx>
@@ -72,7 +113,7 @@ where
     BuilderTx: BuilderTransactions + Send + Sync + 'static,
 {
     #[expect(clippy::too_many_arguments)]
-    pub(super) async fn run_continuous_flashblocks(
+    pub(crate) async fn run_continuous_flashblocks(
         &self,
         span: &tracing::Span,
         best_payload_tx: &watch::Sender<Option<OpBuiltPayload>>,
@@ -80,8 +121,22 @@ where
         target_flashblocks: u64,
         parent_hash: B256,
         mut rx: mpsc::Receiver<CancellationToken>,
-        state: ContinuousBuildState<CacheState, Option<TransitionState>>,
+        ctx: OpPayloadBuilderCtx,
+        info: ExecutionInfo,
+        cache: CacheState,
+        transition: Option<TransitionState>,
+        tx_cache: FlashblockTxCache,
+        fb_state: FlashblocksState,
     ) -> Result<(), PayloadBuilderError> {
+        let state = ContinuousBuildState {
+            ctx,
+            info,
+            cache,
+            transition,
+            tx_cache,
+            fb_state,
+        };
+
         info!(
             target: "payload_builder",
             "Continuous build mode enabled"
@@ -104,18 +159,55 @@ where
             )
         };
 
-        let mut build_rx =
-            self.spawn_continuous_build_task(parent_hash, payload_cancel, state, fb_span.clone());
-        let mut pending_output: Option<ContinuousBuildOutput<_, _>> = None;
+        let mut shared_best: SharedBest = Arc::new(std::sync::Mutex::new(None));
+        let mut build_rx = self.spawn_continuous_build_task(
+            parent_hash,
+            payload_cancel,
+            state,
+            fb_span.clone(),
+            shared_best.clone(),
+        );
         let mut build_start = Instant::now();
 
         loop {
-            if let Some(output) = pending_output.take() {
-                // Build completed before trigger: wait for trigger only.
-                tokio::select! {
-                    biased;
-                    _ = payload_cancel.cancelled() => {
-                        Self::record_cancellation_reason(&self.metrics, payload_cancel, span);
+            tokio::select! {
+                biased;
+                _ = payload_cancel.cancelled() => {
+                    Self::record_cancellation_reason(self.metrics(), payload_cancel, span);
+                    return Ok(());
+                }
+                trigger = rx.recv() => match trigger {
+                    Some(new_fb_cancel) => {
+                        // Fast path: take latest best from shared slot without
+                        // awaiting the task. Publish happens immediately; the
+                        // old task will drop its work on cancel.
+                        let pretaken = shared_best.lock().unwrap().take();
+                        match self.publish_and_spawn_next(
+                            build_rx, pretaken, new_fb_cancel, fb_span, build_start,
+                            span, best_payload_tx, payload_cancel,
+                            target_flashblocks, parent_hash,
+                        ).await? {
+                            FlashblockAction::Continue {
+                                fb_span: new_fb_span,
+                                build_rx: new_build_rx,
+                                shared_best: new_shared_best,
+                                build_start: new_build_start,
+                            } => {
+                                fb_span = new_fb_span;
+                                build_rx = new_build_rx;
+                                shared_best = new_shared_best;
+                                build_start = new_build_start;
+                            }
+                            FlashblockAction::Exit => return Ok(()),
+                        }
+                    }
+                    None => {
+                        // Channel closed (scheduler finished or dropped). Drain
+                        // the task for metrics then exit.
+                        let output = build_rx.await
+                            .map_err(|_| PayloadBuilderError::Other("blocking task dropped".into()))?
+                            ?;
+                        Self::record_cancellation_reason(self.metrics(), payload_cancel, span);
                         self.record_flashblocks_metrics(
                             &output.state.ctx,
                             &output.state.fb_state,
@@ -125,92 +217,50 @@ where
                         );
                         return Ok(());
                     }
-                    trigger = rx.recv() => match trigger {
-                        Some(new_fb_cancel) => {
-                            match self.publish_and_spawn_next(
-                                output, new_fb_cancel, fb_span, build_start,
-                                span, best_payload_tx, payload_cancel,
-                                target_flashblocks, parent_hash,
-                            )? {
-                                FlashblockAction::Continue { fb_span: new_fb_span, build_rx: new_build_rx, build_start: new_build_start } => {
-                                    fb_span = new_fb_span;
-                                    build_rx = new_build_rx;
-                                    build_start = new_build_start;
-                                }
-                                FlashblockAction::Exit => return Ok(()),
-                            }
-                        }
-                        None => {
-                            Self::record_cancellation_reason(&self.metrics, payload_cancel, span);
-                            self.record_flashblocks_metrics(
-                                &output.state.ctx,
-                                &output.state.fb_state,
-                                &output.state.info,
-                                target_flashblocks,
-                                span,
-                            );
-                            return Ok(());
-                        }
-                    },
-                }
-            } else {
-                // Build still running: wait for trigger or early completion.
-                tokio::select! {
-                    biased;
-                    _ = payload_cancel.cancelled() => {
-                        Self::record_cancellation_reason(&self.metrics, payload_cancel, span);
-                        return Ok(());
-                    }
-                    trigger = rx.recv() => match trigger {
-                        Some(new_fb_cancel) => {
-                            let output = build_rx.await
-                                .map_err(|_| PayloadBuilderError::Other("blocking task dropped".into()))?
-                                ?;
-                            match self.publish_and_spawn_next(
-                                output, new_fb_cancel, fb_span, build_start,
-                                span, best_payload_tx, payload_cancel,
-                                target_flashblocks, parent_hash,
-                            )? {
-                                FlashblockAction::Continue { fb_span: new_fb_span, build_rx: new_build_rx, build_start: new_build_start } => {
-                                    fb_span = new_fb_span;
-                                    build_rx = new_build_rx;
-                                    build_start = new_build_start;
-                                }
-                                FlashblockAction::Exit => return Ok(()),
-                            }
-                        }
-                        None => {
-                            let output = build_rx.await
-                                .map_err(|_| PayloadBuilderError::Other("blocking task dropped".into()))?
-                                ?;
-                            Self::record_cancellation_reason(&self.metrics, payload_cancel, span);
-                            self.record_flashblocks_metrics(
-                                &output.state.ctx,
-                                &output.state.fb_state,
-                                &output.state.info,
-                                target_flashblocks,
-                                span,
-                            );
-                            return Ok(());
-                        }
-                    },
-                    result = &mut build_rx => {
-                        let output = result
-                            .map_err(|_| PayloadBuilderError::Other("blocking task dropped".into()))?
-                            ?;
-                        pending_output = Some(output);
-                    }
-                }
+                },
             }
         }
     }
 
-    /// Publish the best candidate from a completed build, then spawn the next build task.
-    /// Returns `Continue` with updated loop state, or `Exit` if cancelled/no candidate.
-    #[expect(clippy::too_many_arguments)]
-    fn publish_and_spawn_next(
+    /// Publish a candidate flashblock immediately. Does NOT need ctx, so can
+    /// run before awaiting the build task. Returns the serialized byte size.
+    fn publish_candidate(
         &self,
-        output: ContinuousBuildOutput<CacheState, Option<TransitionState>>,
+        candidate: &BestCandidate,
+        best_payload_tx: &watch::Sender<Option<OpBuiltPayload>>,
+        fb_span: &tracing::Span,
+    ) -> Result<usize, PayloadBuilderError> {
+        let _publish_span = if fb_span.is_none() {
+            tracing::Span::none()
+        } else {
+            span!(parent: fb_span, Level::INFO, "publish_flashblock",)
+        }
+        .entered();
+
+        let (_, ref new_payload, ref fb_payload_delta) = candidate.result;
+        let flashblock_byte_size = self
+            .ws_pub()
+            .publish(fb_payload_delta)
+            .map_err(PayloadBuilderError::other)?;
+        self.built_fb_payload_tx()
+            .try_send(new_payload.clone())
+            .map_err(PayloadBuilderError::other)?;
+        if let Err(e) = self.built_payload_tx().try_send(new_payload.clone()) {
+            warn!(
+                target: "payload_builder",
+                error = %e,
+                "Failed to send updated payload"
+            );
+        }
+        best_payload_tx.send_replace(Some(new_payload.clone()));
+        Ok(flashblock_byte_size)
+    }
+
+    #[expect(clippy::too_many_arguments)]
+    async fn publish_and_spawn_next(
+        &self,
+        build_rx: BuildReceiver,
+        pretaken: Option<BestCandidate>,
         new_fb_cancel: CancellationToken,
         fb_span: tracing::Span,
         build_start: Instant,
@@ -220,30 +270,79 @@ where
         target_flashblocks: u64,
         parent_hash: B256,
     ) -> Result<FlashblockAction, PayloadBuilderError> {
-        self.metrics
+        self.metrics()
             .continuous_build_duration
             .record(build_start.elapsed());
+
+        // Fast path: publish pretaken BEFORE awaiting the build task.
+        // This is the whole point of shared_best — minimize trigger→publish latency.
+        let (pretaken, pretaken_byte_size) = match pretaken {
+            Some(candidate) => {
+                if payload_cancel.is_resolved() || payload_cancel.is_new_fcu() {
+                    // Suppress publish if job was cancelled between trigger and here.
+                    if payload_cancel.is_resolved() {
+                        self.metrics()
+                            .flashblock_publish_suppressed_total
+                            .increment(1);
+                    }
+                    (Some(candidate), None)
+                } else {
+                    let bytes = self.publish_candidate(&candidate, best_payload_tx, &fb_span)?;
+                    (Some(candidate), Some(bytes))
+                }
+            }
+            None => (None, None),
+        };
+
+        // Await the build task for ctx handoff. With fast-cancel (task #4), this
+        // completes in ~1-2ms after we took pretaken.
+        let output = build_rx
+            .await
+            .map_err(|_| PayloadBuilderError::Other("blocking task dropped".into()))??;
 
         let ContinuousBuildOutput {
             mut state,
             candidate_result:
                 CandidateLoopResult {
-                    best,
+                    best: task_best,
                     candidates_evaluated,
                     candidates_improved,
                 },
         } = output;
 
+        // If we haven't published yet (no pretaken was available), fall back to
+        // task_best now.
+        let (best, byte_size) = match (pretaken, pretaken_byte_size, task_best) {
+            (Some(p), Some(b), _) => (Some(p), Some(b)),
+            (Some(p), None, _) => (Some(p), None),
+            (None, _, Some(t)) => {
+                let bytes = if payload_cancel.is_resolved() || payload_cancel.is_new_fcu() {
+                    if payload_cancel.is_resolved() {
+                        state
+                            .ctx
+                            .metrics
+                            .flashblock_publish_suppressed_total
+                            .increment(1);
+                    }
+                    None
+                } else {
+                    Some(self.publish_candidate(&t, best_payload_tx, &fb_span)?)
+                };
+                (Some(t), bytes)
+            }
+            (None, _, None) => (None, None),
+        };
+
         let staleness = best.as_ref().map(|b| b.sealed_at.elapsed());
         let staleness_ms = staleness.map(|d| d.as_millis() as u64);
-        self.metrics
+        self.metrics()
             .continuous_candidates_evaluated
             .record(candidates_evaluated as f64);
-        self.metrics
+        self.metrics()
             .continuous_candidates_improved
             .record(candidates_improved as f64);
         if let Some(d) = staleness {
-            self.metrics.candidate_staleness.record(d);
+            self.metrics().candidate_staleness.record(d);
         }
 
         fb_span.record("candidates_evaluated", candidates_evaluated);
@@ -264,14 +363,7 @@ where
         }
 
         if payload_cancel.is_resolved() || payload_cancel.is_new_fcu() {
-            if payload_cancel.is_resolved() {
-                state
-                    .ctx
-                    .metrics
-                    .flashblock_publish_suppressed_total
-                    .increment(1);
-            }
-            Self::record_cancellation_reason(&self.metrics, payload_cancel, span);
+            Self::record_cancellation_reason(self.metrics(), payload_cancel, span);
             self.record_flashblocks_metrics(
                 &state.ctx,
                 &state.fb_state,
@@ -284,82 +376,59 @@ where
 
         match best {
             Some(candidate) => {
-                let (next_fb_state, new_payload, fb_payload_delta) = candidate.result;
+                let (next_fb_state, _new_payload, _fb_payload_delta) = candidate.result;
+                // Commit fully to the published candidate. The build task may
+                // have produced a newer candidate after we took pretaken; its
+                // cache/transition/tx_cache would be present in `state` from
+                // the task's return, but the payload we published is this
+                // candidate's, so seed the next interval from this candidate
+                // only. `address_gas_limiter` lives on ctx (not a field we
+                // move) and is similarly restored so its baseline matches.
+                state.cache = candidate.cache;
+                state.transition = candidate.transition;
                 state.info = candidate.info;
                 state.fb_state = candidate.fb_state;
+                state.tx_cache = candidate.tx_cache;
+                state
+                    .ctx
+                    .address_gas_limiter
+                    .restore(&candidate.gas_limiter_snapshot);
 
-                // Defensive: re-check between candidate unwrap and publish (no .await in between).
-                if payload_cancel.is_resolved() || payload_cancel.is_new_fcu() {
-                    if payload_cancel.is_resolved() {
-                        state
-                            .ctx
-                            .metrics
-                            .flashblock_publish_suppressed_total
-                            .increment(1);
-                    }
-                    Self::record_cancellation_reason(&self.metrics, payload_cancel, span);
-                    self.record_flashblocks_metrics(
-                        &state.ctx,
-                        &state.fb_state,
-                        &state.info,
-                        target_flashblocks,
-                        span,
-                    );
-                    return Ok(FlashblockAction::Exit);
-                }
-
-                let _publish_span = if fb_span.is_none() {
-                    tracing::Span::none()
-                } else {
-                    span!(parent: &fb_span, Level::INFO, "publish_flashblock",)
-                }
-                .entered();
-
-                let flashblock_byte_size = self
-                    .ws_pub
-                    .publish(&fb_payload_delta)
-                    .map_err(PayloadBuilderError::other)?;
-                self.built_fb_payload_tx
-                    .try_send(new_payload.clone())
-                    .map_err(PayloadBuilderError::other)?;
-                if let Err(e) = self.built_payload_tx.try_send(new_payload.clone()) {
-                    warn!(
-                        target: "payload_builder",
-                        error = %e,
-                        "Failed to send updated payload"
-                    );
-                }
-                best_payload_tx.send_replace(Some(new_payload));
-
-                if self.config.enable_tx_tracking_debug_logs {
+                if self.config().enable_tx_tracking_debug_logs
+                    && let Some(size) = byte_size
+                {
                     debug!(
                         target: "tx_trace",
                         payload_id = %state.ctx.payload_id(),
                         block_number = state.ctx.block_number(),
                         flashblock_index = state.fb_state.flashblock_index(),
-                        byte_size = flashblock_byte_size,
+                        byte_size = size,
                         total_txs = state.info.executed_transactions.len(),
                         stage = "fb_published"
                     );
                 }
 
-                drop(_publish_span);
-
-                state
-                    .ctx
-                    .metrics
-                    .flashblock_byte_size_histogram
-                    .record(flashblock_byte_size as f64);
+                if let Some(size) = byte_size {
+                    state
+                        .ctx
+                        .metrics
+                        .flashblock_byte_size_histogram
+                        .record(size as f64);
+                }
                 state
                     .ctx
                     .metrics
                     .flashblock_num_tx_histogram
                     .record(state.info.executed_transactions.len() as f64);
+                // Record only the winning candidate's single-build time, so
+                // this stays comparable with the non-continuous path. The
+                // full trigger-to-trigger interval is in
+                // `continuous_build_duration`.
                 state
                     .ctx
                     .metrics
                     .flashblock_build_duration
-                    .record(build_start.elapsed());
+                    .record(candidate.build_duration);
 
                 fb_span.record("tx_count", state.info.executed_transactions.len() as u64);
                 fb_span.record("gas_used", state.info.cumulative_gas_used);
@@ -380,7 +449,7 @@ where
                 state.fb_state = next_fb_state;
             }
             None => {
-                Self::record_cancellation_reason(&self.metrics, payload_cancel, span);
+                Self::record_cancellation_reason(self.metrics(), payload_cancel, span);
                 self.record_flashblocks_metrics(
                     &state.ctx,
                     &state.fb_state,
@@ -411,12 +480,19 @@ where
 
         state.ctx = state.ctx.with_cancel(new_fb_cancel);
         let build_start = Instant::now();
-        let build_rx =
-            self.spawn_continuous_build_task(parent_hash, payload_cancel, state, fb_span.clone());
+        let new_shared_best: SharedBest = Arc::new(std::sync::Mutex::new(None));
+        let build_rx = self.spawn_continuous_build_task(
+            parent_hash,
+            payload_cancel,
+            state,
+            fb_span.clone(),
+            new_shared_best.clone(),
+        );
 
         Ok(FlashblockAction::Continue {
             fb_span,
             build_rx,
+            shared_best: new_shared_best,
             build_start,
         })
     }
@@ -427,17 +503,18 @@ where
         payload_cancel: &PayloadJobCancellation,
         state: ContinuousBuildState<CacheState, Option<TransitionState>>,
         fb_span: tracing::Span,
+        shared_best: SharedBest,
     ) -> oneshot::Receiver<
         Result<ContinuousBuildOutput<CacheState, Option<TransitionState>>, PayloadBuilderError>,
     > {
         let (build_tx, build_rx) = oneshot::channel();
-        self.executor.spawn_blocking_task(Box::pin({
+        self.executor().spawn_blocking_task(Box::pin({
             let builder = self.clone();
             let block_cancel = payload_cancel.token();
             async move {
                 let _ = build_tx.send((|| -> Result<_, PayloadBuilderError> {
                     let _enter = fb_span.enter();
-                    let state_provider = builder.client.state_by_block_hash(parent_hash)?;
+                    let state_provider = builder.client().state_by_block_hash(parent_hash)?;
                     let mut state_db = State::builder()
                         .with_database(StateProviderDatabase::new(&state_provider))
                         .with_cached_prestate(state.cache)
@@ -458,6 +535,7 @@ where
                             &state_provider,
                             &mut tx_cache,
                             &block_cancel,
+                            &shared_best,
                         )
                         .map_err(|e| PayloadBuilderError::Other(e.into()))?;
 
@@ -492,7 +570,7 @@ where
         state: &mut State<DB>,
         state_provider: impl reth::providers::StateProvider + Clone,
     ) -> eyre::Result<(FlashblocksState, OpBuiltPayload, OpFlashblockPayload)> {
-        if let Err(e) = self.builder_tx.add_builder_txs(
+        if let Err(e) = self.builder_tx().add_builder_txs(
             &state_provider,
             info,
             ctx,
@@ -514,7 +592,7 @@ where
             Some(fb_state),
             info,
             !ctx.disable_state_root || ctx.attributes().no_tx_pool,
-            self.config.enable_tx_tracking_debug_logs,
+            self.config().enable_tx_tracking_debug_logs,
         )
         .wrap_err("failed to build empty flashblock candidate")?;
 
@@ -543,12 +621,13 @@ where
         state_provider: impl reth::providers::StateProvider + Clone,
         tx_cache: &mut FlashblockTxCache,
         block_cancel: &CancellationToken,
+        shared_best: &SharedBest,
     ) -> eyre::Result<CandidateLoopResult> {
         let flashblock_index = fb_state.flashblock_index();
         let mut target_gas_for_batch = fb_state.target_gas_for_batch();
         let mut target_da_for_batch = fb_state.target_da_for_batch();
         let mut target_da_footprint_for_batch = fb_state.target_da_footprint_for_batch();
-        let enable_tx_tracking_debug_logs = self.config.enable_tx_tracking_debug_logs;
+        let enable_tx_tracking_debug_logs = self.config().enable_tx_tracking_debug_logs;
 
         info!(
             target: "payload_builder",
@@ -564,7 +643,7 @@ where
         );
 
         let builder_txs = self
-            .builder_tx
+            .builder_tx()
             .add_builder_txs(
                 &state_provider,
                 info,
@@ -601,14 +680,15 @@ where
         let mut best: Option<BestCandidate> = None;
         let mut candidates_evaluated: u64 = 0;
         let mut candidates_improved: u64 = 0;
-        let mut last_seen_pool_change_epoch = self.pool_change_epoch.load(Ordering::Relaxed);
-        let mut force_candidate = true;
+        // rebuilds when the tx pool hasn't changed since our last candidate AND we already have a best.
+        let mut last_seen_pool_change_epoch = self.pool_change_epoch().load(Ordering::Relaxed);
         let mut idle_backoff = Duration::from_millis(1);
         let max_idle_backoff = Duration::from_millis(25);
 
         ctx.address_gas_limiter.restore(&gas_limiter_snapshot);
         let mut empty_candidate_info = base_info.clone();
         let mut empty_candidate_fb_state = base_fb_state.clone();
+        let empty_build_start = Instant::now();
         let empty_candidate = self.build_empty_flashblock_candidate(
             ctx,
             &mut empty_candidate_fb_state,
@@ -616,12 +696,19 @@ where
             state,
             &state_provider,
         );
+        let empty_build_duration = empty_build_start.elapsed();
         candidates_evaluated += 1;
+
+        // Baseline fees for the fee-improvement metric: whatever the first
+        // successful candidate produced. Subsequent candidates measure their
+        // gain against this.
+        let mut first_candidate_fees: Option<U256> = None;
 
         match empty_candidate {
             Ok((next_flashblock_state, new_payload, fb_payload)) => {
-                best = Some(BestCandidate {
-                    gas_used: empty_candidate_info.cumulative_gas_used,
+                let empty_fees = empty_candidate_info.total_fees;
+                let candidate = BestCandidate {
+                    total_fees: empty_fees,
                     cache: state.cache.clone(),
                     transition: state.transition_state.clone(),
                     info: empty_candidate_info,
@@ -629,7 +716,12 @@ where
                     tx_cache: base_tx_cache.clone(),
                     sealed_at: Instant::now(),
                     result: (next_flashblock_state, new_payload, fb_payload),
-                });
+                    build_duration: empty_build_duration,
+                    gas_limiter_snapshot: ctx.address_gas_limiter.snapshot(),
+                };
+                *shared_best.lock().unwrap() = Some(candidate.clone());
+                best = Some(candidate);
+                first_candidate_fees = Some(empty_fees);
                 candidates_improved += 1;
             }
             Err(err) => {
@@ -643,27 +735,43 @@ where
         }
 
         loop {
-            let current_pool_change_epoch = self.pool_change_epoch.load(Ordering::Relaxed);
-            if !force_candidate && current_pool_change_epoch == last_seen_pool_change_epoch {
-                if ctx.cancel.is_cancelled() || block_cancel.is_cancelled() {
-                    break;
-                }
+            if ctx.cancel.is_cancelled() || block_cancel.is_cancelled() {
+                break;
+            }
+
+            // Pool-change gating: if the pool hasn't changed since our last
+            // candidate AND we already have a best, back off to avoid burning
+            // CPU cloning and re-simulating identical state. The fresh load
+            // after the sleep catches any pool activity that arrived during
+            // the backoff and lets us react on the next iteration.
+            let current_epoch = self.pool_change_epoch().load(Ordering::Relaxed);
+            if best.is_some() && current_epoch == last_seen_pool_change_epoch {
                 std::thread::sleep(idle_backoff);
                 idle_backoff = (idle_backoff * 2).min(max_idle_backoff);
                 continue;
             }
-            force_candidate = false;
+            last_seen_pool_change_epoch = current_epoch;
             idle_backoff = Duration::from_millis(1);
-            last_seen_pool_change_epoch = current_pool_change_epoch;
+
+            // Yield CPU briefly to avoid starving the tokio runtime
+            // (RPC handling, WS delivery, pool processing).
+            std::thread::sleep(Duration::from_millis(1));
 
             let candidate_span = span!(
                 Level::INFO,
                 "candidate",
                 candidate_index = candidates_evaluated,
                 gas_used = tracing::field::Empty,
+                total_fees_wei = tracing::field::Empty,
                 is_best = tracing::field::Empty,
             );
             let _candidate_guard = candidate_span.enter();
+
+            // Per-candidate build timing so a winning candidate can carry its
+            // own single-build duration. This is what gets recorded on
+            // `flashblock_build_duration` at publish time, keeping that
+            // metric comparable with the non-continuous path.
+            let candidate_build_start = Instant::now();
 
             state.cache = base_cache.clone();
             state.transition_state = base_transition.clone();
@@ -676,7 +784,7 @@ where
             let best_txs_start_time = Instant::now();
             best_txs.refresh_iterator(
                 BestPayloadTransactions::new(
-                    self.pool
+                    self.pool()
                         .best_transactions_with_attributes(ctx.best_transaction_attributes()),
                 ),
                 flashblock_index,
@@ -689,17 +797,19 @@ where
                 .transaction_pool_fetch_gauge
                 .set(transaction_pool_fetch_time);
 
-            ctx.execute_best_transactions(
-                &mut sim_info,
-                state,
-                &mut best_txs,
-                target_gas_for_batch.min(ctx.block_gas_limit()),
-                target_da_for_batch,
-                target_da_footprint_for_batch,
-                max_uncompressed_block_size,
-                sim_fb_state.flashblock_index,
-            )
-            .wrap_err("failed to execute best transactions")?;
+            let exec_cancelled = ctx
+                .execute_best_transactions(
+                    &mut sim_info,
+                    state,
+                    &mut best_txs,
+                    target_gas_for_batch.min(ctx.block_gas_limit()),
+                    target_da_for_batch,
+                    target_da_footprint_for_batch,
+                    max_uncompressed_block_size,
+                    sim_fb_state.flashblock_index(),
+                )
+                .wrap_err("failed to execute best transactions")?
+                .is_some();
 
             let new_transactions: Vec<_> = sim_fb_state
                 .slice_new_transactions(&sim_info.executed_transactions)
@@ -709,11 +819,11 @@ where
             best_txs.mark_committed(new_transactions);
             drop(best_txs);
 
-            if block_cancel.is_cancelled() {
+            if exec_cancelled || ctx.cancel.is_cancelled() || block_cancel.is_cancelled() {
                 break;
             }
 
-            if let Err(e) = self.builder_tx.add_builder_txs(
+            if let Err(e) = self.builder_tx().add_builder_txs(
                 &state_provider,
                 &mut sim_info,
                 ctx,
@@ -723,6 +833,10 @@ where
                 sim_fb_state.is_last_flashblock(),
             ) {
                 error!(target: "payload_builder", "Error adding bottom builder txs: {}", e);
+            }
+
+            if ctx.cancel.is_cancelled() || block_cancel.is_cancelled() {
+                break;
             }
 
             let total_block_built_start = Instant::now();
@@ -749,26 +863,43 @@ where
                     fb_payload.index = flashblock_index;
                     fb_payload.base = None;
 
-                    let best_gas_used = best.as_ref().map_or(0, |b| b.gas_used);
-                    let is_new_best =
-                        sim_info.cumulative_gas_used > best_gas_used || best.is_none();
+                    let best_total_fees = best.as_ref().map_or(U256::ZERO, |b| b.total_fees);
+                    let is_new_best = sim_info.total_fees > best_total_fees || best.is_none();
                     candidate_span.record("gas_used", sim_info.cumulative_gas_used);
+                    candidate_span.record("total_fees_wei", sim_info.total_fees.to_string());
                     candidate_span.record("is_best", is_new_best);
+
+                    // Record the first successfully-built candidate's fees as
+                    // the improvement baseline (in case the empty-candidate
+                    // path failed or didn't run).
+                    if first_candidate_fees.is_none() {
+                        first_candidate_fees = Some(sim_info.total_fees);
+                    }
 
                     if is_new_best {
                         let next_flashblock_state = sim_fb_state
                             .next_after_seal(target_da_for_batch, target_da_footprint_for_batch);
-                        best = Some(BestCandidate {
-                            gas_used: sim_info.cumulative_gas_used,
+                        let candidate = BestCandidate {
+                            total_fees: sim_info.total_fees,
                             cache: state.cache.clone(),
                             transition: state.transition_state.clone(),
                             info: sim_info,
                             fb_state: sim_fb_state,
                             tx_cache: sim_tx_cache,
                             sealed_at: Instant::now(),
+                            build_duration: candidate_build_start.elapsed(),
                             result: (next_flashblock_state, new_payload, fb_payload),
-                        });
+                            gas_limiter_snapshot: ctx.address_gas_limiter.snapshot(),
+                        };
+                        // Publish to shared slot so the main loop can take it
+                        // on trigger without awaiting this task.
+                        *shared_best.lock().unwrap() = Some(candidate.clone());
+                        best = Some(candidate);
                         candidates_improved += 1;
+                    } else if let Some(ref mut b) = best {
+                        // Tie or worse: just update the timestamp so staleness
+                        // stays low without expensive state clones.
+                        b.sealed_at = Instant::now();
                     }
                 }
                 Err(err) => {
@@ -787,6 +918,19 @@ where
                 break;
             }
         }
+
+        // Record priority-fee improvement over the flashblock interval: how
+        // much more fee the best candidate captured vs. the first successful
+        // candidate (empty or otherwise). 0 when no improvement or no
+        // baseline.
+        let improvement_wei = match (best.as_ref(), first_candidate_fees) {
+            (Some(b), Some(first)) => b.total_fees.saturating_sub(first),
+            _ => U256::ZERO,
+        };
+        let improvement_f64 = u128::try_from(improvement_wei).unwrap_or(u128::MAX) as f64;
+        ctx.metrics
+            .continuous_fee_improvement
+            .record(improvement_f64);
 
         if let Some(ref b) = best {
             state.cache = b.cache.clone();

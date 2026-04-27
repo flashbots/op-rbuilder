@@ -535,7 +535,7 @@ pub fn get_balance(
 
 /// Adjust batch gas/DA/uncompressed limits to reserve capacity for bottom-of-block builder txs.
 /// Returns the adjusted `max_uncompressed_block_size`.
-pub(super) fn reserve_builder_tx_budget(
+pub(crate) fn reserve_builder_tx_budget(
     builder_txs: &[BuilderTransactionCtx],
     target_gas: &mut u64,
     target_da: &mut Option<u64>,

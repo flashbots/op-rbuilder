@@ -200,6 +200,10 @@ pub struct OpRBuilderMetrics {
     pub continuous_candidates_evaluated: Histogram,
     /// Number of candidates that improved the latest best candidate
     pub continuous_candidates_improved: Histogram,
+    /// Priority fee (wei) gained per flashblock interval by the continuous
+    /// candidate loop: best-candidate fees minus first-candidate fees.
+    /// Recorded once per flashblock interval; 0 if no improvement.
+    pub continuous_fee_improvement: Histogram,
     /// Builds completed but not published due to resolved gate
     pub flashblock_publish_suppressed_total: Counter,
     /// Payload job ended because getPayload resolved

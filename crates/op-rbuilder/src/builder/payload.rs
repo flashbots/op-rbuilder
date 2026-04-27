@@ -57,19 +57,12 @@ use revm::Database;
 use std::{
     collections::BTreeMap,
     ops::Deref,
-    sync::{
-        Arc,
-        atomic::{AtomicU64, Ordering},
-    },
-    time::{Duration, Instant},
+    sync::{Arc, atomic::AtomicU64},
+    time::Instant,
 };
 use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, info_span, metadata::Level, span, warn};
-
-#[path = "continuous.rs"]
-mod continuous;
-use continuous::ContinuousBuildState;
 
 /// Converts a reth OpReceipt to an op-alloy OpReceipt
 /// TODO: remove this once reth updates to use the op-alloy defined type as well.
@@ -105,7 +98,7 @@ type NextFlashblockPoolTxCursor<'a, Pool> = FlashblockPoolTxCursor<
 >;
 
 #[derive(Debug, Default, Clone)]
-pub(super) struct FlashblocksState {
+pub(crate) struct FlashblocksState {
     /// Current flashblock index
     flashblock_index: u64,
     /// Target flashblock count per block
@@ -188,7 +181,7 @@ impl FlashblocksState {
     /// incremented by the corresponding per-batch limit. `target_gas` is
     /// recomputed from `self.target_gas_for_batch` (pre-build) plus
     /// `gas_per_batch`.
-    fn next_after_seal(
+    pub(crate) fn next_after_seal(
         &self,
         mut target_da_for_batch: Option<u64>,
         mut target_da_footprint_for_batch: Option<u64>,
@@ -237,31 +230,31 @@ impl FlashblocksState {
         self
     }
 
-    fn flashblock_index(&self) -> u64 {
+    pub(crate) fn flashblock_index(&self) -> u64 {
         self.flashblock_index
     }
 
-    fn target_flashblock_count(&self) -> u64 {
+    pub(crate) fn target_flashblock_count(&self) -> u64 {
         self.target_flashblock_count
     }
 
-    fn is_first_flashblock(&self) -> bool {
+    pub(crate) fn is_first_flashblock(&self) -> bool {
         self.flashblock_index == 0
     }
 
-    fn is_last_flashblock(&self) -> bool {
+    pub(crate) fn is_last_flashblock(&self) -> bool {
         self.flashblock_index == self.target_flashblock_count
     }
 
-    fn target_gas_for_batch(&self) -> u64 {
+    pub(crate) fn target_gas_for_batch(&self) -> u64 {
         self.target_gas_for_batch
     }
 
-    fn target_da_for_batch(&self) -> Option<u64> {
+    pub(crate) fn target_da_for_batch(&self) -> Option<u64> {
         self.target_da_for_batch
     }
 
-    fn target_da_footprint_for_batch(&self) -> Option<u64> {
+    pub(crate) fn target_da_footprint_for_batch(&self) -> Option<u64> {
         self.target_da_footprint_for_batch
     }
 
@@ -270,7 +263,7 @@ impl FlashblocksState {
     }
 
     /// Extracts new transactions since the last flashblock
-    fn slice_new_transactions<'a>(
+    pub(crate) fn slice_new_transactions<'a>(
         &self,
         all_transactions: &'a [OpTransactionSigned],
     ) -> &'a [OpTransactionSigned] {
@@ -285,12 +278,12 @@ impl FlashblocksState {
 
 /// Optimism's payload builder
 #[derive(Debug)]
-pub(super) struct OpPayloadBuilder<Pool, Client, BuilderTx> {
+pub(crate) struct OpPayloadBuilder<Pool, Client, BuilderTx> {
     inner: Arc<OpPayloadBuilderInner<Pool, Client, BuilderTx>>,
 }
 
 #[derive(Debug)]
-pub(super) struct OpPayloadBuilderInner<Pool, Client, BuilderTx> {
+pub(crate) struct OpPayloadBuilderInner<Pool, Client, BuilderTx> {
     /// The type responsible for creating the evm.
     evm_config: OpEvmConfig,
     /// The transaction pool
@@ -322,6 +315,48 @@ pub(super) struct OpPayloadBuilderInner<Pool, Client, BuilderTx> {
     executor: Runtime,
 }
 
+impl<Pool, Client, BuilderTx> OpPayloadBuilderInner<Pool, Client, BuilderTx> {
+    pub(crate) fn pool(&self) -> &Pool {
+        &self.pool
+    }
+
+    pub(crate) fn client(&self) -> &Client {
+        &self.client
+    }
+
+    pub(crate) fn built_fb_payload_tx(&self) -> &mpsc::Sender<OpBuiltPayload> {
+        &self.built_fb_payload_tx
+    }
+
+    pub(crate) fn built_payload_tx(&self) -> &mpsc::Sender<OpBuiltPayload> {
+        &self.built_payload_tx
+    }
+
+    pub(crate) fn ws_pub(&self) -> &WebSocketPublisher {
+        &self.ws_pub
+    }
+
+    pub(crate) fn config(&self) -> &BuilderConfig {
+        &self.config
+    }
+
+    pub(crate) fn metrics(&self) -> &OpRBuilderMetrics {
+        &self.metrics
+    }
+
+    pub(crate) fn builder_tx(&self) -> &BuilderTx {
+        &self.builder_tx
+    }
+
+    pub(crate) fn pool_change_epoch(&self) -> &AtomicU64 {
+        &self.pool_change_epoch
+    }
+
+    pub(crate) fn executor(&self) -> &Runtime {
+        &self.executor
+    }
+}
+
 impl<Pool, Client, BuilderTx> Deref for OpPayloadBuilder<Pool, Client, BuilderTx> {
     type Target = OpPayloadBuilderInner<Pool, Client, BuilderTx>;
 
@@ -340,7 +375,7 @@ impl<Pool, Client, BuilderTx> Clone for OpPayloadBuilder<Pool, Client, BuilderTx
 
 impl<Pool, Client, BuilderTx> OpPayloadBuilder<Pool, Client, BuilderTx> {
     #[expect(clippy::too_many_arguments)]
-    pub(super) fn new(
+    pub(crate) fn new(
         evm_config: OpEvmConfig,
         pool: Pool,
         client: Client,
@@ -688,14 +723,12 @@ where
                     target_flashblocks,
                     parent_hash,
                     rx,
-                    ContinuousBuildState {
-                        ctx,
-                        info,
-                        cache,
-                        transition,
-                        tx_cache,
-                        fb_state,
-                    },
+                    ctx,
+                    info,
+                    cache,
+                    transition,
+                    tx_cache,
+                    fb_state,
                 )
                 .await;
         }
@@ -1156,7 +1189,7 @@ where
     }
 
     /// Records cancellation reason for observability.
-    fn record_cancellation_reason(
+    pub(crate) fn record_cancellation_reason(
         metrics: &OpRBuilderMetrics,
         cancellation: &super::cancellation::PayloadJobCancellation,
         span: &tracing::Span,
@@ -1188,7 +1221,7 @@ where
     }
 
     /// Do some logging and metric recording when we stop building flashblocks
-    fn record_flashblocks_metrics(
+    pub(crate) fn record_flashblocks_metrics(
         &self,
         ctx: &OpPayloadBuilderCtx,
         fb_state: &FlashblocksState,
@@ -1295,7 +1328,7 @@ where
 }
 
 #[tracing::instrument(level = "info", name = "seal_block", skip_all)]
-pub(super) fn build_block<DB, P>(
+pub(crate) fn build_block<DB, P>(
     state: &mut State<DB>,
     ctx: &OpPayloadBuilderCtx,
     mut fb_state: Option<&mut FlashblocksState>,
