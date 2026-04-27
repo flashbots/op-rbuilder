@@ -1,10 +1,12 @@
 use std::{sync::Arc, time::Instant};
 
+use futures::StreamExt;
 use reth_tasks::Runtime;
 use reth_transaction_pool::{
     PoolTransaction, TransactionOrigin, TransactionPool, error::PoolError,
 };
 use tokio::sync::{mpsc, oneshot};
+use tokio_stream::wrappers::ReceiverStream;
 use tracing::error;
 
 use crate::{metrics::OpRBuilderMetrics, presim::TopOfBlockSimulator, tx::FBPooledTransaction};
@@ -22,7 +24,19 @@ pub(super) async fn run_pool_insertion_task(
     mut rx: mpsc::UnboundedReceiver<AddBundleRequest>,
     simulator: Option<Arc<TopOfBlockSimulator>>,
     metrics: Arc<OpRBuilderMetrics>,
+    max_concurrency: Option<usize>,
 ) {
+    let bounded_sender = max_concurrency.map(|max| {
+        let (sender, receiver) = mpsc::channel(max);
+        runtime.spawn_task(async move {
+            let _ = ReceiverStream::new(receiver)
+                .buffer_unordered(max)
+                .for_each(|_| async {})
+                .await;
+        });
+        sender
+    });
+
     while let Some(req) = rx.recv().await {
         let AddBundleRequest { tx, respond_to } = req;
 
@@ -45,7 +59,7 @@ pub(super) async fn run_pool_insertion_task(
             let pool = pool.clone();
             let metrics = metrics.clone();
             let simulator = simulator.clone();
-            runtime.spawn_task({
+            let fut = {
                 let runtime = runtime.clone();
                 async move {
                     let sim_start = Instant::now();
@@ -67,7 +81,14 @@ pub(super) async fn run_pool_insertion_task(
                         .bundle_pre_simulation_duration
                         .record(sim_start.elapsed());
                 }
-            });
+            };
+
+            match &bounded_sender {
+                Some(sender) => sender.send(fut).await.unwrap(),
+                None => {
+                    runtime.spawn_task(fut);
+                }
+            }
         }
     }
 }

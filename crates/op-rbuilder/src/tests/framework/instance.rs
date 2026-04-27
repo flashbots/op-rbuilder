@@ -200,6 +200,7 @@ impl LocalInstance {
                         pool_rx,
                         simulator_for_rpc,
                         metrics.clone(),
+                        None,
                     ),
                 );
 

@@ -189,6 +189,7 @@ impl Launcher<OpChainSpecParser, OpRbuilderArgs> for BuilderLauncher {
                         pool_rx,
                         simulator_for_rpc,
                         metrics.clone(),
+                        builder_args.presim_max_concurrency,
                     ),
                 );
 

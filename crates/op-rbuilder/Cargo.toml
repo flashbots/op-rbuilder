@@ -127,6 +127,7 @@ testcontainers = { workspace = true, optional = true }
 thiserror.workspace = true
 tokio.workspace = true
 tokio-metrics.workspace = true
+tokio-stream.workspace = true
 tokio-tungstenite.workspace = true
 tokio-util.workspace = true
 tower.workspace = true
