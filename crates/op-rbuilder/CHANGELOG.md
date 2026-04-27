@@ -1,6 +1,37 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [0.4.3] - 2026-04-27
+
+### Bug Fixes
+
+- Use cumulative prefix sets for incremental trie state root ([#445](https://github.com/flashbots/op-rbuilder/pull/445))
+- Only simulate bundles with revert protection in presim ([#472](https://github.com/flashbots/op-rbuilder/pull/472))
+- Avoid double-recording bundle_pre_simulation_duration on revert ([#474](https://github.com/flashbots/op-rbuilder/pull/474))
+- Remove Box::leak in TEE metrics recording ([#469](https://github.com/flashbots/op-rbuilder/pull/469))
+- Point to op-reth fork for payload id mismatch ([#473](https://github.com/flashbots/op-rbuilder/pull/473))
+
+### Features
+
+- Async payload builder ([#438](https://github.com/flashbots/op-rbuilder/pull/438))
+- Top-of-block pre-simulation to filter reverting tx spam ([#466](https://github.com/flashbots/op-rbuilder/pull/466))
+- Add flashblock publish timing metric ([#464](https://github.com/flashbots/op-rbuilder/pull/464))
+- Reshape log levels ([#470](https://github.com/flashbots/op-rbuilder/pull/470))
+
+### Refactor
+
+- Extract `reserve_builder_tx_budget` helper ([#476](https://github.com/flashbots/op-rbuilder/pull/476))
+- Extract `FlashblocksState::next_after_seal` ([#477](https://github.com/flashbots/op-rbuilder/pull/477))
+- Move state root flags from FlashblocksState to OpPayloadBuilderCtx ([#478](https://github.com/flashbots/op-rbuilder/pull/478))
+- Generator: drop dead config and tidy module ([#479](https://github.com/flashbots/op-rbuilder/pull/479))
+- Generator: behaviour fixes for new_payload_job and best_payload ([#480](https://github.com/flashbots/op-rbuilder/pull/480))
+
+### Chore
+
+- Remove unused `interop` feature ([#475](https://github.com/flashbots/op-rbuilder/pull/475))
+- Follow-up log reshape across builder/flashtestations ([#471](https://github.com/flashbots/op-rbuilder/pull/471))
+- Rename `reverted_hashes` to `allowed_revert_hashes` for clarity ([#468](https://github.com/flashbots/op-rbuilder/pull/468))
+
 ## [0.4.2] - 2026-04-13
 
 ### Features

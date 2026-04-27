@@ -6335,7 +6335,7 @@ dependencies = [
 
 [[package]]
 name = "macros"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -7153,7 +7153,7 @@ dependencies = [
 
 [[package]]
 name = "op-rbuilder"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "alloy-consensus",
  "alloy-contract",
@@ -7448,7 +7448,7 @@ dependencies = [
 
 [[package]]
 name = "p2p"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "derive_more",
  "eyre",
@@ -13198,7 +13198,7 @@ dependencies = [
 
 [[package]]
 name = "tdx-quote-provider"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "axum",
  "clap",
