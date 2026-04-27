@@ -1,9 +1,7 @@
 use alloy_primitives::B256;
 use futures_util::{Future, FutureExt};
 use reth::providers::{BlockReaderIdExt, StateProviderFactory};
-use reth_basic_payload_builder::{
-    BasicPayloadJobGeneratorConfig, HeaderForPayload, PayloadConfig, PrecachedState,
-};
+use reth_basic_payload_builder::{HeaderForPayload, PayloadConfig, PrecachedState};
 use reth_node_api::{NodePrimitives, PayloadKind};
 use reth_payload_builder::{
     BuildNewPayload, KeepPayloadJobAlive, PayloadBuilderError, PayloadId, PayloadJob,
@@ -15,7 +13,9 @@ use reth_provider::CanonStateNotification;
 use reth_revm::cached::CachedReads;
 use reth_tasks::Runtime;
 use std::{
+    pin::Pin,
     sync::{Arc, Mutex},
+    task::{Context, Poll},
     time::{SystemTime, UNIX_EPOCH},
 };
 use tokio::{
@@ -31,9 +31,6 @@ use super::cancellation::PayloadJobCancellation;
 /// This trait provides the `try_build` method to construct a transaction payload
 /// using `BuildArguments`. It returns a `Result` indicating success or a
 /// `PayloadBuilderError` if building fails.
-///
-/// Generic parameters `Pool` and `Client` represent the transaction pool and
-/// Ethereum client types.
 #[async_trait::async_trait]
 pub(super) trait PayloadBuilder: Send + Sync + Clone {
     /// The RPC-level payload attributes (what the engine API sends).
@@ -51,17 +48,6 @@ pub(super) trait PayloadBuilder: Send + Sync + Clone {
     ) -> Result<Self::Attributes, PayloadBuilderError>;
 
     /// Tries to build a transaction payload using provided arguments.
-    ///
-    /// Constructs a transaction payload based on the given arguments,
-    /// returning a `Result` indicating success or an error if building fails.
-    ///
-    /// # Arguments
-    ///
-    /// - `args`: Build arguments containing necessary components.
-    ///
-    /// # Returns
-    ///
-    /// A `Result` indicating the build outcome or an error.
     async fn try_build(
         &self,
         args: BuildArguments<Self::Attributes, Self::BuiltPayload>,
@@ -69,21 +55,25 @@ pub(super) trait PayloadBuilder: Send + Sync + Clone {
     ) -> Result<(), PayloadBuilderError>;
 }
 
-/// The generator type that creates new jobs that builds empty blocks.
+pub(super) struct BuildArguments<Attributes, Payload: BuiltPayload> {
+    /// Previously cached disk reads
+    pub cached_reads: CachedReads,
+    /// How to configure the payload.
+    pub config: PayloadConfig<Attributes, HeaderTy<Payload::Primitives>>,
+    /// Structured cancellation.
+    pub cancel: PayloadJobCancellation,
+}
+
+/// The generator type that creates new payload jobs.
 #[derive(Debug)]
 pub(super) struct BlockPayloadJobGenerator<Client, Builder> {
     /// The client that can interact with the chain.
     client: Client,
     /// How to spawn building tasks
     executor: Runtime,
-    /// The configuration for the job generator.
-    _config: BasicPayloadJobGeneratorConfig,
     /// The type responsible for building payloads.
-    ///
     /// See [PayloadBuilder]
     builder: Builder,
-    /// Whether to ensure only one payload is being processed at a time
-    ensure_only_one_payload: bool,
     /// The last payload's cancellation.
     /// `cancel_new_fcu()` is called when a new FCU arrives
     last_payload_cancel: Arc<Mutex<PayloadJobCancellation>>,
@@ -92,23 +82,17 @@ pub(super) struct BlockPayloadJobGenerator<Client, Builder> {
     /// Stored `cached_reads` for new payload jobs.
     pre_cached: Option<PrecachedState>,
     /// The configured block time
-    block_time: std::time::Duration,
+    block_time: Duration,
     /// Metrics for recording telemetry
     metrics: Arc<crate::metrics::OpRBuilderMetrics>,
 }
 
-// === impl EmptyBlockPayloadJobGenerator ===
-
 impl<Client, Builder> BlockPayloadJobGenerator<Client, Builder> {
-    /// Creates a new [EmptyBlockPayloadJobGenerator] with the given config and custom
-    /// [PayloadBuilder]
-    #[expect(clippy::too_many_arguments)]
+    /// Creates a new [BlockPayloadJobGenerator] with a custom [PayloadBuilder].
     pub(super) fn with_builder(
         client: Client,
         executor: Runtime,
-        config: BasicPayloadJobGeneratorConfig,
         builder: Builder,
-        ensure_only_one_payload: bool,
         extra_block_deadline: Duration,
         block_time: Duration,
         metrics: Arc<crate::metrics::OpRBuilderMetrics>,
@@ -116,9 +100,7 @@ impl<Client, Builder> BlockPayloadJobGenerator<Client, Builder> {
         Self {
             client,
             executor,
-            _config: config,
             builder,
-            ensure_only_one_payload,
             last_payload_cancel: Arc::new(Mutex::new(PayloadJobCancellation::new())),
             extra_block_deadline,
             pre_cached: None,
@@ -178,7 +160,7 @@ where
             .fcu_arrival_delay
             .record(fcu_arrival_delay_ms as f64);
 
-        let cancellation = if self.ensure_only_one_payload {
+        let cancellation = {
             // Cancel existing payload via new_fcu
             {
                 let last_cancel = self.last_payload_cancel.lock().unwrap();
@@ -192,8 +174,6 @@ where
                 *last_cancel = cancellation.clone();
             }
             cancellation
-        } else {
-            PayloadJobCancellation::new()
         };
 
         let parent_header = if parent_hash.is_zero() {
@@ -226,7 +206,9 @@ where
             payload_rx: None,
             cancel: cancellation,
             deadline,
-            cached_reads: self.maybe_pre_cached(parent_header.hash()),
+            cached_reads: self
+                .maybe_pre_cached(parent_header.hash())
+                .unwrap_or_default(),
         };
 
         job.spawn_build_job();
@@ -260,33 +242,29 @@ where
     }
 }
 
-use std::{
-    pin::Pin,
-    task::{Context, Poll},
-};
-
-/// A [PayloadJob] that builds empty blocks.
+/// A [PayloadJob] that builds blocks.
 pub(super) struct BlockPayloadJob<Builder>
 where
     Builder: PayloadBuilder,
 {
     /// The configuration for how the payload will be created.
-    pub(crate) config: PayloadConfig<Builder::Attributes, HeaderForPayload<Builder::BuiltPayload>>,
+    config: PayloadConfig<Builder::Attributes, HeaderForPayload<Builder::BuiltPayload>>,
     /// The original RPC-level attributes (returned by payload_attributes())
-    pub(crate) rpc_attributes: Builder::RpcAttributes,
+    rpc_attributes: Builder::RpcAttributes,
     /// How to spawn building tasks
-    pub(crate) executor: Runtime,
+    executor: Runtime,
     /// The type responsible for building payloads.
     ///
     /// See [PayloadBuilder]
-    pub(crate) builder: Builder,
+    builder: Builder,
     /// Receiver for the latest payload from the builder task.
-    pub(crate) payload_rx: Option<watch::Receiver<Option<Builder::BuiltPayload>>>,
+    payload_rx: Option<watch::Receiver<Option<Builder::BuiltPayload>>>,
     /// Structured cancellation for the running job
-    pub(crate) cancel: PayloadJobCancellation,
-    pub(crate) deadline: Pin<Box<Sleep>>, // Add deadline
-    /// Caches all disk reads for the state the new payloads builds on
-    pub(crate) cached_reads: Option<CachedReads>,
+    cancel: PayloadJobCancellation,
+    /// Deadline at which the job is forcibly cancelled.
+    deadline: Pin<Box<Sleep>>,
+    /// Caches all disk reads for the state the new payloads builds on.
+    cached_reads: CachedReads,
 }
 
 impl<Builder> PayloadJob for BlockPayloadJob<Builder>
@@ -322,30 +300,20 @@ where
     }
 }
 
-pub(super) struct BuildArguments<Attributes, Payload: BuiltPayload> {
-    /// Previously cached disk reads
-    pub cached_reads: CachedReads,
-    /// How to configure the payload.
-    pub config: PayloadConfig<Attributes, HeaderTy<Payload::Primitives>>,
-    /// Structured cancellation.
-    pub cancel: PayloadJobCancellation,
-}
-
-/// A [PayloadJob] is a future that's being polled by the `PayloadBuilderService`
 impl<Builder> BlockPayloadJob<Builder>
 where
     Builder: PayloadBuilder + Unpin + 'static,
     Builder::Attributes: Unpin + Clone,
     Builder::BuiltPayload: Unpin + Clone,
 {
-    pub(super) fn spawn_build_job(&mut self) {
+    fn spawn_build_job(&mut self) {
         let builder = self.builder.clone();
         let payload_config = self.config.clone();
         let cancellation = self.cancel.clone();
 
         let (watch_tx, watch_rx) = watch::channel(None);
         self.payload_rx = Some(watch_rx);
-        let cached_reads = self.cached_reads.take().unwrap_or_default();
+        let cached_reads = std::mem::take(&mut self.cached_reads);
         // try_build is not in a blocking task!
         // We have to make sure any blocking work is handled individually within payload builder
         self.executor.spawn_task(Box::pin(async move {
@@ -363,7 +331,7 @@ where
     }
 }
 
-/// A [PayloadJob] is a a future that's being polled by the `PayloadBuilderService`
+/// Polled by `PayloadBuilderService` to drive the job to completion or cancellation.
 impl<Builder> Future for BlockPayloadJob<Builder>
 where
     Builder: PayloadBuilder + Unpin + 'static,
@@ -428,7 +396,7 @@ impl<T: Clone + Send + Sync + 'static> ResolvePayload<T> {
     }
 }
 
-impl<T: Unpin> Future for ResolvePayload<T> {
+impl<T> Future for ResolvePayload<T> {
     type Output = Result<T, PayloadBuilderError>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
@@ -458,7 +426,7 @@ mod tests {
     use super::*;
     use tokio::time::{Duration, sleep, timeout};
 
-    #[derive(Clone, Debug, Default, PartialEq, Eq)]
+    #[derive(Clone, Debug, PartialEq, Eq)]
     struct MockPayload(u64);
 
     #[tokio::test]

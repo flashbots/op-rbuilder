@@ -16,7 +16,6 @@ use crate::{
     traits::{NodeBounds, PoolBounds},
 };
 use eyre::WrapErr as _;
-use reth_basic_payload_builder::BasicPayloadJobGeneratorConfig;
 use reth_node_api::NodeTypes;
 use reth_node_builder::{BuilderContext, components::PayloadServiceBuilder};
 use reth_optimism_evm::OpEvmConfig;
@@ -134,14 +133,10 @@ impl FlashblocksServiceBuilder {
             task_metrics.clone(),
             ctx.task_executor().clone(),
         );
-        let payload_job_config = BasicPayloadJobGeneratorConfig::default();
-
         let payload_generator = BlockPayloadJobGenerator::with_builder(
             ctx.provider().clone(),
             ctx.task_executor().clone(),
-            payload_job_config,
             payload_builder,
-            true,
             self.0.block_time_leeway,
             self.0.block_time,
             metrics.clone(),
