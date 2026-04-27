@@ -149,32 +149,15 @@ where
         // Expected: FCU should arrive at (payload_timestamp - block_time)
         // Positive delay = FCU arrived late, Negative = FCU arrived early
         let timestamp = rpc_attributes.timestamp();
-        let now = SystemTime::now();
-        let expected_fcu_arrival =
-            SystemTime::UNIX_EPOCH + Duration::from_secs(timestamp) - self.block_time;
-        let fcu_arrival_delay_ms = now
-            .duration_since(expected_fcu_arrival)
-            .map(|d| d.as_millis() as i64)
-            .unwrap_or_else(|e| -(e.duration().as_millis() as i64));
-        self.metrics
-            .fcu_arrival_delay
-            .record(fcu_arrival_delay_ms as f64);
-
-        let cancellation = {
-            // Cancel existing payload via new_fcu
-            {
-                let last_cancel = self.last_payload_cancel.lock().unwrap();
-                last_cancel.cancel_new_fcu();
-            }
-
-            // Create new PayloadJobCancellation and store it
-            let cancellation = PayloadJobCancellation::new();
-            {
-                let mut last_cancel = self.last_payload_cancel.lock().unwrap();
-                *last_cancel = cancellation.clone();
-            }
-            cancellation
+        let payload_time = SystemTime::UNIX_EPOCH + Duration::from_secs(timestamp);
+        let expected_fcu_arrival = payload_time
+            .checked_sub(self.block_time)
+            .unwrap_or(SystemTime::UNIX_EPOCH);
+        let fcu_arrival_delay_ms = match SystemTime::now().duration_since(expected_fcu_arrival) {
+            Ok(d) => d.as_secs_f64() * 1000.0,
+            Err(e) => -(e.duration().as_secs_f64() * 1000.0),
         };
+        self.metrics.fcu_arrival_delay.record(fcu_arrival_delay_ms);
 
         let parent_header = if parent_hash.is_zero() {
             // use latest block if parent is zero: genesis block
@@ -185,6 +168,17 @@ where
             self.client
                 .sealed_header_by_hash(parent_hash)?
                 .ok_or_else(|| PayloadBuilderError::MissingParentBlock(parent_hash))?
+        };
+
+        let cancel = {
+            // Cancel existing payload via new_fcu
+            let mut last_cancel = self.last_payload_cancel.lock().unwrap();
+            last_cancel.cancel_new_fcu();
+
+            // Create new PayloadJobCancellation and store it
+            let new = PayloadJobCancellation::new();
+            *last_cancel = new.clone();
+            new
         };
 
         info!(
@@ -204,7 +198,7 @@ where
             config,
             rpc_attributes,
             payload_rx: None,
-            cancel: cancellation,
+            cancel,
             deadline,
             cached_reads: self
                 .maybe_pre_cached(parent_header.hash())
@@ -278,7 +272,10 @@ where
     type BuiltPayload = Builder::BuiltPayload;
 
     fn best_payload(&self) -> Result<Self::BuiltPayload, PayloadBuilderError> {
-        unimplemented!()
+        self.payload_rx
+            .as_ref()
+            .and_then(|rx| rx.borrow().clone())
+            .ok_or(PayloadBuilderError::MissingPayload)
     }
 
     fn payload_attributes(&self) -> Result<Self::PayloadAttributes, PayloadBuilderError> {
@@ -287,9 +284,9 @@ where
 
     fn resolve_kind(
         &mut self,
-        kind: PayloadKind,
+        _kind: PayloadKind,
     ) -> (Self::ResolvePayloadFuture, KeepPayloadJobAlive) {
-        info!(target: "payload_builder", payload_kind = ?kind, "Resolve payload job");
+        info!(target: "payload_builder", "Resolve payload job");
 
         let rx = self.payload_rx.take();
         let cancellation = self.cancel.clone();
