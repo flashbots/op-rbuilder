@@ -274,7 +274,7 @@ pub trait BuilderTransactions {
             }
 
             // Add gas used by the transaction to cumulative gas used, before creating the receipt
-            let gas_used = result.gas_used();
+            let gas_used = result.tx_gas_used();
             info.cumulative_gas_used += gas_used;
             info.cumulative_da_bytes_used += builder_tx.da_size;
             info.cumulative_uncompressed_bytes += tx_uncompressed_size;
@@ -411,7 +411,7 @@ pub trait BuilderTransactions {
                     )
                 })?;
                 Ok(SimulationSuccessResult::<T> {
-                    gas_used: gas.spent(),
+                    gas_used: gas.total_gas_spent(),
                     output: return_output,
                     state_changes: state,
                 })
