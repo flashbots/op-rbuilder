@@ -395,7 +395,10 @@ where
                 .attributes
                 .gas_limit
                 .unwrap_or(config.parent_header.gas_limit),
-            parent_beacon_block_root: config.attributes.payload_attributes.parent_beacon_block_root,
+            parent_beacon_block_root: config
+                .attributes
+                .payload_attributes
+                .parent_beacon_block_root,
             extra_data,
         };
 
@@ -460,7 +463,10 @@ where
         // The build_payload span is created and instrumented in try_build() using
         // tracing::Instrument, which safely manages it across async .await points.
         let span = tracing::Span::current();
-        span.record("payload_id", config.attributes.payload_attributes.id.to_string());
+        span.record(
+            "payload_id",
+            config.attributes.payload_attributes.id.to_string(),
+        );
 
         let ctx = self
             .get_op_payload_builder_ctx(config.clone(), payload_cancel.token())
@@ -1548,13 +1554,15 @@ where
         payload_id: ctx.payload_id(),
         index: 0,
         base: Some(OpFlashblockPayloadBase {
-            parent_beacon_block_root: ctx.attributes().payload_attributes.parent_beacon_block_root.ok_or_else(
-                || {
+            parent_beacon_block_root: ctx
+                .attributes()
+                .payload_attributes
+                .parent_beacon_block_root
+                .ok_or_else(|| {
                     PayloadBuilderError::Other(
                         eyre::eyre!("parent beacon block root not found").into(),
                     )
-                },
-            )?,
+                })?,
             parent_hash: ctx.parent().hash(),
             fee_recipient: ctx.attributes().suggested_fee_recipient(),
             prev_randao: ctx.attributes().payload_attributes.prev_randao,

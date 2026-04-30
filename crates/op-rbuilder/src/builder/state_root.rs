@@ -160,9 +160,8 @@ mod tests {
                 .unwrap();
             }
 
-            let (_initial_root, account_trie_updates) = StateRoot::from_tx(tx.tx_ref())
-                .root_with_updates()
-                .unwrap();
+            let (_initial_root, account_trie_updates) =
+                StateRoot::from_tx(tx.tx_ref()).root_with_updates().unwrap();
             tx.write_trie_updates(account_trie_updates).unwrap();
         }
 

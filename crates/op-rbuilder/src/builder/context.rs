@@ -174,15 +174,17 @@ impl OpPayloadBuilderCtx {
         if self.is_jovian_active() {
             self.attributes()
                 .get_jovian_extra_data(
-                    self.chain_spec
-                        .base_fee_params_at_timestamp(self.attributes().payload_attributes.timestamp),
+                    self.chain_spec.base_fee_params_at_timestamp(
+                        self.attributes().payload_attributes.timestamp,
+                    ),
                 )
                 .map_err(PayloadBuilderError::other)
         } else if self.is_holocene_active() {
             self.attributes()
                 .get_holocene_extra_data(
-                    self.chain_spec
-                        .base_fee_params_at_timestamp(self.attributes().payload_attributes.timestamp),
+                    self.chain_spec.base_fee_params_at_timestamp(
+                        self.attributes().payload_attributes.timestamp,
+                    ),
                 )
                 .map_err(PayloadBuilderError::other)
         } else {

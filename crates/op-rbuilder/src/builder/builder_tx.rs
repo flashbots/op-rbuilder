@@ -380,7 +380,10 @@ pub trait BuilderTransactions {
 
         match result {
             ExecutionResult::Success {
-                output, gas_used, logs, ..
+                output,
+                gas_used,
+                logs,
+                ..
             } => {
                 let topics: HashSet<B256> = logs
                     .into_iter()

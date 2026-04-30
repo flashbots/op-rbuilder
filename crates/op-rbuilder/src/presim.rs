@@ -2,11 +2,10 @@ use std::sync::Arc;
 
 use alloy_consensus::{BlockHeader, Header};
 use alloy_evm::{Evm, InvalidTxError};
-use op_revm::OpTransaction;
-use revm::context::TxEnv;
 use alloy_primitives::{Address, B256, Bytes};
 use eyre::Context;
 use futures_util::{Stream, StreamExt};
+use op_revm::OpTransaction;
 use parking_lot::RwLock;
 use reth_chain_state::CanonStateNotification;
 use reth_evm::{EvmError, IntoTxEnv};
@@ -17,7 +16,10 @@ use reth_primitives_traits::{Block, NodePrimitives, Recovered, RecoveredBlock};
 use reth_provider::{BlockReaderIdExt, ChainSpecProvider, StateProvider, StateProviderFactory};
 use reth_revm::{State, database::StateProviderDatabase};
 use reth_transaction_pool::{FullTransactionEvent, PoolTransaction, TransactionPool};
-use revm::{context::result::ResultAndState, context_interface::result::InvalidTransaction};
+use revm::{
+    context::{TxEnv, result::ResultAndState},
+    context_interface::result::InvalidTransaction,
+};
 use tracing::{debug, error, warn};
 
 use crate::{evm::OpBlockEvmFactory, metrics::OpRBuilderMetrics, tx::FBPooledTransaction};
