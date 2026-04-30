@@ -109,7 +109,7 @@ mod tests {
         test_utils::create_test_provider_factory,
     };
     use reth_trie::{HashedStorage, StateRoot, StorageRoot};
-    use reth_trie_db::{DatabaseStateRoot, DatabaseStorageRoot, LegacyKeyAdapter};
+    use reth_trie_db::{DatabaseStateRoot, DatabaseStorageRoot};
 
     type InitialAccount = (B256, Account, Vec<(B256, U256)>);
 
@@ -147,19 +147,11 @@ mod tests {
         }
 
         if populate_trie {
-            // Populate storage trie tables.
-            // reth v2.0.0 parameterised StorageRoot over a TrieTableAdapter
-            // (LegacyKeyAdapter | PackedKeyAdapter) to support v1 and v2
-            // storage layouts. LegacyKeyAdapter matches pre-v2 chains, which
-            // is what these tests construct (no storage-settings migration).
             for (hashed_address, _, _) in initial_accounts {
                 let (_, _, storage_updates) =
-                    <StorageRoot<
-                        reth_trie_db::DatabaseTrieCursorFactory<_, LegacyKeyAdapter>,
-                        reth_trie_db::DatabaseHashedCursorFactory<_>,
-                    >>::from_tx_hashed(tx.tx_ref(), *hashed_address)
-                    .root_with_updates()
-                    .unwrap();
+                    StorageRoot::from_tx_hashed(tx.tx_ref(), *hashed_address)
+                        .root_with_updates()
+                        .unwrap();
                 let sorted_updates = storage_updates.into_sorted();
                 tx.write_storage_trie_updates_sorted(core::iter::once((
                     hashed_address,
@@ -168,14 +160,9 @@ mod tests {
                 .unwrap();
             }
 
-            // Populate account trie table — same LegacyKeyAdapter choice as
-            // the storage trie above.
-            let (_initial_root, account_trie_updates) = <StateRoot<
-                reth_trie_db::DatabaseTrieCursorFactory<_, LegacyKeyAdapter>,
-                reth_trie_db::DatabaseHashedCursorFactory<_>,
-            >>::from_tx(tx.tx_ref())
-            .root_with_updates()
-            .unwrap();
+            let (_initial_root, account_trie_updates) = StateRoot::from_tx(tx.tx_ref())
+                .root_with_updates()
+                .unwrap();
             tx.write_trie_updates(account_trie_updates).unwrap();
         }
 

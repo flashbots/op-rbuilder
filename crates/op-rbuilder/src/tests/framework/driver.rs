@@ -332,7 +332,7 @@ impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
             .update_forkchoice(
                 latest,
                 latest,
-                Some(reth_optimism_payload_builder::OpPayloadAttrs(attribs)),
+                Some(attribs),
             )
             .await?;
 

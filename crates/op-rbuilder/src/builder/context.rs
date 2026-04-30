@@ -25,6 +25,7 @@ use reth_optimism_txpool::{
     conditional::MaybeConditionalTransaction, estimated_da_size::DataAvailabilitySized,
 };
 use reth_payload_builder::PayloadId;
+use reth_payload_primitives::PayloadBuilderAttributes;
 use reth_primitives_traits::{InMemorySize, SealedHeader, SignedTransaction};
 use reth_revm::{State, context::Block};
 use reth_transaction_pool::{BestTransactionsAttributes, PoolTransaction};
@@ -109,7 +110,7 @@ impl OpPayloadBuilderCtx {
     pub fn withdrawals(&self) -> Option<&Withdrawals> {
         self.chain_spec
             .is_shanghai_active_at_timestamp(self.attributes().timestamp())
-            .then(|| &self.attributes().withdrawals)
+            .then(|| &self.attributes().payload_attributes.withdrawals)
     }
 
     /// Returns the block gas limit to target.
@@ -174,14 +175,14 @@ impl OpPayloadBuilderCtx {
             self.attributes()
                 .get_jovian_extra_data(
                     self.chain_spec
-                        .base_fee_params_at_timestamp(self.attributes().timestamp),
+                        .base_fee_params_at_timestamp(self.attributes().payload_attributes.timestamp),
                 )
                 .map_err(PayloadBuilderError::other)
         } else if self.is_holocene_active() {
             self.attributes()
                 .get_holocene_extra_data(
                     self.chain_spec
-                        .base_fee_params_at_timestamp(self.attributes().timestamp),
+                        .base_fee_params_at_timestamp(self.attributes().payload_attributes.timestamp),
                 )
                 .map_err(PayloadBuilderError::other)
         } else {
