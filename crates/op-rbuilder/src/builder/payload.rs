@@ -6,6 +6,7 @@ use crate::{
         best_txs::{FlashblockPoolTxCursor, FlashblockTxCache},
         builder_tx::{BuilderTransactions, reserve_builder_tx_budget},
         context::OpPayloadBuilderCtx,
+        continuous::{ContinuousBuildState, ContinuousJobDeps},
         generator::{BuildArguments, PayloadBuilder},
         timing::{FlashblockScheduler, compute_slot_offset_ms},
     },
@@ -715,21 +716,21 @@ where
 
         // Gate: continuous build mode
         if self.config.flashblocks_config.continuous_build {
+            let deps = ContinuousJobDeps {
+                span: &span,
+                best_payload_tx: &best_payload_tx,
+                payload_cancel: &payload_cancel,
+            };
+            let base_state = ContinuousBuildState {
+                ctx,
+                info,
+                cache,
+                transition,
+                tx_cache,
+                fb_state,
+            };
             return self
-                .run_continuous_flashblocks(
-                    &span,
-                    &best_payload_tx,
-                    &payload_cancel,
-                    target_flashblocks,
-                    parent_hash,
-                    rx,
-                    ctx,
-                    info,
-                    cache,
-                    transition,
-                    tx_cache,
-                    fb_state,
-                )
+                .run_continuous_flashblocks(deps, target_flashblocks, parent_hash, rx, base_state)
                 .await;
         }
 
@@ -1291,8 +1292,7 @@ where
                 .number
                 .is_multiple_of(self.config.sampling_ratio)
         {
-            span!(
-                Level::INFO,
+            info_span!(
                 "build_payload",
                 payload_id = tracing::field::Empty,
                 block_number = args.config.parent_header.number + 1,
