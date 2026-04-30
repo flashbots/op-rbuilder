@@ -10,7 +10,7 @@ use crate::{
         timing::{FlashblockScheduler, compute_slot_offset_ms},
     },
     evm::OpBlockEvmFactory,
-    gas_limiter::AddressGasLimiter,
+    gas_limiter::GasLimiters,
     metrics::{OpRBuilderMetrics, record_flashblock_publish_timing},
     primitives::reth::ExecutionInfo,
     runtime_ext::RuntimeExt,
@@ -300,8 +300,8 @@ pub(super) struct OpPayloadBuilderInner<Pool, Client, BuilderTx> {
     metrics: Arc<OpRBuilderMetrics>,
     /// The end of builder transaction type
     builder_tx: BuilderTx,
-    /// Rate limiting based on gas. This is an optional feature.
-    address_gas_limiter: AddressGasLimiter,
+    /// Per-source gas rate limiters. `None` when the limiter is disabled.
+    gas_limiters: Option<GasLimiters>,
     /// Tokio task metrics for monitoring spawned tasks
     task_metrics: Arc<FlashblocksTaskMetrics>,
     /// Task executor used to offload blocking work.
@@ -339,7 +339,7 @@ impl<Pool, Client, BuilderTx> OpPayloadBuilder<Pool, Client, BuilderTx> {
         task_metrics: Arc<FlashblocksTaskMetrics>,
         executor: Runtime,
     ) -> Self {
-        let address_gas_limiter = AddressGasLimiter::new(config.gas_limiter_config.clone());
+        let gas_limiters = GasLimiters::from_args(&config.gas_limiter_config);
         Self {
             inner: Arc::new(OpPayloadBuilderInner {
                 evm_config,
@@ -351,7 +351,7 @@ impl<Pool, Client, BuilderTx> OpPayloadBuilder<Pool, Client, BuilderTx> {
                 config,
                 metrics,
                 builder_tx,
-                address_gas_limiter,
+                gas_limiters,
                 task_metrics,
                 executor,
             }),
@@ -427,7 +427,7 @@ where
             metrics: self.metrics.clone(),
             max_gas_per_txn: self.config.max_gas_per_txn,
             max_uncompressed_block_size: self.config.max_uncompressed_block_size,
-            address_gas_limiter: self.address_gas_limiter.clone(),
+            gas_limiters: self.gas_limiters.clone(),
             backrun_ctx,
             exclude_reverts_between_flashblocks: self.config.exclude_reverts_between_flashblocks,
             enable_tx_tracking_debug_logs: self.config.enable_tx_tracking_debug_logs,
@@ -476,7 +476,9 @@ where
             ctx.enable_incremental_state_root,
         );
 
-        self.address_gas_limiter.refresh(ctx.block_number());
+        if let Some(limiters) = &self.gas_limiters {
+            limiters.refresh(ctx.block_number());
+        }
 
         // Phase 1: Build the fallback block.
         let fallback_span = if span.is_none() {

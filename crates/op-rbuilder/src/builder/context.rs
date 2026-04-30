@@ -38,8 +38,8 @@ use tracing::{debug, info, trace};
 use crate::{
     backrun_bundle::BackrunBundlesPayloadCtx,
     evm::OpBlockEvmFactory,
-    gas_limiter::AddressGasLimiter,
-    metrics::OpRBuilderMetrics,
+    gas_limiter::GasLimiters,
+    metrics::{OpRBuilderMetrics, record_tx_simulation_duration},
     primitives::reth::{ExecutionInfo, TxnExecutionResult},
     traits::PayloadTxsBounds,
 };
@@ -66,8 +66,9 @@ pub struct OpPayloadBuilderCtx {
     pub max_gas_per_txn: Option<u64>,
     /// Maximum cumulative uncompressed (EIP-2718 encoded) block size in bytes.
     pub max_uncompressed_block_size: Option<u64>,
-    /// Rate limiting based on gas. This is an optional feature.
-    pub address_gas_limiter: AddressGasLimiter,
+    /// Per-source gas rate limiters (one per tx source). `None` when the
+    /// limiter is disabled in config.
+    pub gas_limiters: Option<GasLimiters>,
     /// Backrun bundles context.
     pub backrun_ctx: BackrunBundlesPayloadCtx,
     /// Skip reverted txs in subsequent flashblocks
@@ -560,9 +561,11 @@ impl OpPayloadBuilderCtx {
                 }
             };
 
-            self.metrics
-                .tx_simulation_duration
-                .record(tx_simulation_start_time.elapsed());
+            record_tx_simulation_duration(
+                tx_simulation_start_time.elapsed(),
+                is_bundle_tx,
+                &result,
+            );
             self.metrics.tx_byte_size.record(tx.inner().size() as f64);
             num_txs_simulated += 1;
 
@@ -583,11 +586,11 @@ impl OpPayloadBuilderCtx {
                 );
             }
 
-            if self
-                .address_gas_limiter
-                .consume_gas(tx.signer(), gas_used)
-                .is_err()
-            {
+            let gas_limiter = self
+                .gas_limiters
+                .as_ref()
+                .map(|l| if is_bundle_tx { &l.bundle } else { &l.mempool });
+            if gas_limiter.is_some_and(|l| l.consume_gas(tx.signer(), gas_used).is_err()) {
                 log_txn(TxnExecutionResult::MaxGasUsageExceeded);
                 best_txs.mark_invalid(tx.signer(), tx.nonce());
                 continue;
@@ -834,9 +837,7 @@ impl OpPayloadBuilderCtx {
                             continue;
                         }
                     };
-                    self.metrics
-                        .tx_simulation_duration
-                        .record(br_simulation_start.elapsed());
+                    record_tx_simulation_duration(br_simulation_start.elapsed(), true, &br_result);
                     self.metrics
                         .tx_byte_size
                         .record(bundle.backrun_tx.inner().size() as f64);
@@ -844,11 +845,11 @@ impl OpPayloadBuilderCtx {
 
                     let br_gas_used = br_result.gas_used();
 
-                    if self
-                        .address_gas_limiter
-                        .consume_gas(bundle.backrun_tx.signer(), br_gas_used)
-                        .is_err()
-                    {
+                    if self.gas_limiters.as_ref().is_some_and(|l| {
+                        l.bundle
+                            .consume_gas(bundle.backrun_tx.signer(), br_gas_used)
+                            .is_err()
+                    }) {
                         log_br_txn(TxnExecutionResult::MaxGasUsageExceeded);
                         continue;
                     }
