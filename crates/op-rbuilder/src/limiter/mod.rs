@@ -5,6 +5,7 @@ use crate::limiter::{
 };
 
 pub mod args;
+mod bucket;
 pub mod error;
 mod gas;
 mod metrics;

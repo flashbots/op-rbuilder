@@ -1,9 +1,11 @@
-use std::{cmp::min, sync::Arc, time::Instant};
+use std::{sync::Arc, time::Instant};
 
 use alloy_primitives::Address;
 use dashmap::DashMap;
 
-use crate::limiter::{GasLimiterMetrics, args::GasLimiterArgs, error::GasLimitError};
+use crate::limiter::{
+    GasLimiterMetrics, args::GasLimiterArgs, bucket::TokenBucket, error::GasLimitError,
+};
 
 #[derive(Debug, Clone)]
 pub(super) struct GasLimiter {
@@ -12,12 +14,6 @@ pub(super) struct GasLimiter {
     // the reth PayloadBuilder trait needs this to be Send + Sync
     address_buckets: Arc<DashMap<Address, TokenBucket>>,
     metrics: GasLimiterMetrics,
-}
-
-#[derive(Debug, Clone)]
-struct TokenBucket {
-    capacity: u64,
-    available: u64,
 }
 
 impl GasLimiter {
@@ -48,15 +44,13 @@ impl GasLimiter {
                 TokenBucket::new(self.config.max_gas_per_address)
             });
 
-        if gas_requested > bucket.available {
+        if !bucket.try_consume(gas_requested) {
             return Err(GasLimitError::AddressLimitExceeded {
                 address,
                 requested: gas_requested,
-                available: bucket.available,
+                available: bucket.available(),
             });
         }
-
-        bucket.available -= gas_requested;
 
         Ok(created_new_bucket)
     }
@@ -78,16 +72,12 @@ impl GasLimiter {
         let active_addresses = self.address_buckets.len();
 
         self.address_buckets.iter_mut().for_each(|mut bucket| {
-            bucket.available = min(
-                bucket.capacity,
-                bucket.available + self.config.refill_rate_per_block,
-            )
+            bucket.refill(self.config.refill_rate_per_block);
         });
 
         // Only clean up stale buckets every `cleanup_interval` blocks
         if block_number.is_multiple_of(self.config.cleanup_interval) {
-            self.address_buckets
-                .retain(|_, bucket| bucket.available < bucket.capacity);
+            self.address_buckets.retain(|_, bucket| !bucket.is_full());
         }
 
         active_addresses - self.address_buckets.len()
@@ -99,15 +89,6 @@ impl GasLimiter {
 
         self.metrics
             .record_refresh(removed_addresses, start.elapsed());
-    }
-}
-
-impl TokenBucket {
-    fn new(capacity: u64) -> Self {
-        Self {
-            capacity,
-            available: capacity,
-        }
     }
 }
 
