@@ -109,8 +109,24 @@ where
         &self,
         hash: B256,
     ) -> RpcResult<Option<RpcReceipt<Eth::NetworkTypes>>> {
-        let upstream = self.eth_api.transaction_receipt(hash).await;
-        resolve_receipt_or_reverted(upstream, hash, &self.reverted_cache).await
+        let tx_receipt = self
+            .eth_api
+            .transaction_receipt(hash)
+            .await
+            .map_err(Into::into)?;
+
+        if let Some(receipt) = tx_receipt {
+            return Ok(Some(receipt));
+        }
+
+        if self.reverted_cache.get(&hash).await.is_some() {
+            return Err(EthApiError::InvalidParams(
+                "the transaction was dropped from the pool".into(),
+            )
+            .into());
+        }
+
+        Ok(None)
     }
 }
 
@@ -209,95 +225,5 @@ where
             bundle_hash: outcome.hash,
         };
         Ok(result)
-    }
-}
-
-/// Falls back to the reverted-cache when the upstream lookup has no receipt,
-/// so revert-protected txs that got dropped surface as a clear error instead
-/// of a silent `null`.
-async fn resolve_receipt_or_reverted<R, E>(
-    upstream: Result<Option<R>, E>,
-    hash: B256,
-    reverted_cache: &Cache<B256, ()>,
-) -> RpcResult<Option<R>>
-where
-    E: Into<jsonrpsee::types::ErrorObjectOwned>,
-{
-    let receipt = upstream.map_err(Into::into)?;
-    if let Some(receipt) = receipt {
-        Ok(Some(receipt))
-    } else if reverted_cache.get(&hash).await.is_some() {
-        Err(EthApiError::InvalidParams("the transaction was dropped from the pool".into()).into())
-    } else {
-        Ok(None)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use jsonrpsee::types::ErrorObjectOwned;
-
-    fn cache() -> Cache<B256, ()> {
-        Cache::builder().max_capacity(16).build()
-    }
-
-    type Upstream<R> = Result<Option<R>, ErrorObjectOwned>;
-
-    /// Receipt from the eth_api takes precedence over the cache.
-    #[tokio::test]
-    async fn returns_receipt_when_present() {
-        let hash = B256::repeat_byte(0xAB);
-        let cache = cache();
-        cache.insert(hash, ()).await;
-
-        let upstream: Upstream<&'static str> = Ok(Some("receipt"));
-        let result = resolve_receipt_or_reverted(upstream, hash, &cache).await;
-
-        assert_eq!(result.unwrap(), Some("receipt"));
-    }
-
-    /// Missing receipt + cached as reverted -> dropped error.
-    #[tokio::test]
-    async fn returns_dropped_error_when_cached_reverted() {
-        let hash = B256::repeat_byte(0xCD);
-        let cache = cache();
-        cache.insert(hash, ()).await;
-
-        let upstream: Upstream<()> = Ok(None);
-        let err = resolve_receipt_or_reverted(upstream, hash, &cache)
-            .await
-            .unwrap_err();
-
-        assert!(
-            err.message().contains("dropped from the pool"),
-            "unexpected message: {}",
-            err.message()
-        );
-    }
-
-    /// Unknown tx -> Ok(None).
-    #[tokio::test]
-    async fn returns_none_when_unknown() {
-        let hash = B256::repeat_byte(0xEF);
-        let cache = cache();
-
-        let upstream: Upstream<()> = Ok(None);
-        let result = resolve_receipt_or_reverted(upstream, hash, &cache).await;
-
-        assert_eq!(result.unwrap(), None);
-    }
-
-    /// Upstream `Err` must propagate, not panic.
-    #[tokio::test]
-    async fn propagates_eth_api_error_without_panicking() {
-        let hash = B256::repeat_byte(0x01);
-        let cache = cache();
-
-        let upstream: Upstream<()> = Err(EthApiError::InternalEthError.into());
-
-        let outcome = resolve_receipt_or_reverted(upstream, hash, &cache).await;
-
-        outcome.expect_err("eth_api error must propagate, not panic");
     }
 }
