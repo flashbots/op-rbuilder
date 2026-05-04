@@ -1,23 +1,26 @@
-use std::cmp::min;
+use std::{
+    cmp::min,
+    ops::{Add, SubAssign},
+};
 
 /// A `TokenBucket` can be used to track various resources. We currently use
 /// them to track gas usage and compute usage.
 #[derive(Debug, Clone)]
-pub(super) struct TokenBucket {
-    capacity: u64,
-    available: u64,
+pub(super) struct TokenBucket<T> {
+    capacity: T,
+    available: T,
 }
 
-impl TokenBucket {
+impl<T: Copy + Ord + PartialEq + PartialOrd + Add<Output = T> + SubAssign> TokenBucket<T> {
     /// Create a new full bucket
-    pub(super) fn new(capacity: u64) -> Self {
+    pub(super) fn new(capacity: T) -> Self {
         Self {
             capacity,
             available: capacity,
         }
     }
 
-    pub(super) fn available(&self) -> u64 {
+    pub(super) fn available(&self) -> T {
         self.available
     }
 
@@ -28,7 +31,7 @@ impl TokenBucket {
 
     /// Attempts to deduct the specified amount from the bucket. Returns `false`
     /// if the bucket doesn't have enough.
-    pub(super) fn try_consume(&mut self, requested_amount: u64) -> bool {
+    pub(super) fn try_consume(&mut self, requested_amount: T) -> bool {
         if requested_amount > self.available {
             return false;
         }
@@ -38,7 +41,7 @@ impl TokenBucket {
     }
 
     /// Refill the bucket with the provided amount, up to the capacity
-    pub(super) fn refill(&mut self, refill_amount: u64) {
+    pub(super) fn refill(&mut self, refill_amount: T) {
         self.available = min(self.capacity, self.available + refill_amount)
     }
 }
