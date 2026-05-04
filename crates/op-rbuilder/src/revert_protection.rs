@@ -109,17 +109,24 @@ where
         &self,
         hash: B256,
     ) -> RpcResult<Option<RpcReceipt<Eth::NetworkTypes>>> {
-        if let Some(receipt) = self.eth_api.transaction_receipt(hash).await.unwrap() {
-            Ok(Some(receipt))
-        } else if self.reverted_cache.get(&hash).await.is_some() {
-            // Found the transaction in the reverted cache
-            Err(
-                EthApiError::InvalidParams("the transaction was dropped from the pool".into())
-                    .into(),
-            )
-        } else {
-            Ok(None)
+        let tx_receipt = self
+            .eth_api
+            .transaction_receipt(hash)
+            .await
+            .map_err(Into::into)?;
+
+        if let Some(receipt) = tx_receipt {
+            return Ok(Some(receipt));
         }
+
+        if self.reverted_cache.get(&hash).await.is_some() {
+            return Err(EthApiError::InvalidParams(
+                "the transaction was dropped from the pool".into(),
+            )
+            .into());
+        }
+
+        Ok(None)
     }
 }
 
