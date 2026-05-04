@@ -10,7 +10,7 @@ use crate::{
     },
     evm::OpBlockEvmFactory,
     hardforks::ActiveHardforks,
-    limiter::AddressGasLimiter,
+    limiter::AddressLimiter,
     metrics::{OpRBuilderMetrics, record_flashblock_publish_timing},
     primitives::reth::ExecutionInfo,
     runtime_ext::RuntimeExt,
@@ -335,7 +335,7 @@ where
         task_metrics: Arc<FlashblocksTaskMetrics>,
         executor: Runtime,
     ) -> Self {
-        let address_gas_limiter = AddressGasLimiter::new(config.gas_limiter_config.clone());
+        let address_limiter = AddressLimiter::new(config.gas_limiter_config.clone());
         let builder_ctx = Arc::new(OpPayloadBuilderCtx {
             evm_config,
             da_config: config.da_config.clone(),
@@ -344,7 +344,7 @@ where
             metrics,
             max_gas_per_txn: config.max_gas_per_txn,
             max_uncompressed_block_size: config.max_uncompressed_block_size,
-            address_gas_limiter,
+            address_limiter,
             backrun_bundle_pool: config.backrun_bundle_pool.clone(),
             backrun_bundle_args: config.backrun_bundle_args.clone(),
             exclude_reverts_between_flashblocks: config.exclude_reverts_between_flashblocks,
@@ -485,9 +485,7 @@ where
             ctx.enable_incremental_state_root,
         );
 
-        self.builder_ctx
-            .address_gas_limiter
-            .refresh(ctx.block_number());
+        self.builder_ctx.address_limiter.refresh(ctx.block_number());
 
         // Phase 1: Build the fallback block.
         let fallback_span = if span.is_none() {

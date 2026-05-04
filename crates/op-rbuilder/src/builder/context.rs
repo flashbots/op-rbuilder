@@ -36,7 +36,7 @@ use crate::{
     builder::{builder_tx::BuilderTxEnv, receipt::build_receipt},
     evm::OpBlockEvmFactory,
     hardforks::ActiveHardforks,
-    limiter::AddressGasLimiter,
+    limiter::AddressLimiter,
     metrics::OpRBuilderMetrics,
     primitives::reth::{ExecutionInfo, TxnExecutionResult},
     traits::PayloadTxsBounds,
@@ -66,7 +66,7 @@ pub struct OpPayloadBuilderCtx {
     /// Maximum cumulative uncompressed (EIP-2718 encoded) block size in bytes.
     pub max_uncompressed_block_size: Option<u64>,
     /// Rate limiting based on gas. This is an optional feature.
-    pub address_gas_limiter: AddressGasLimiter,
+    pub address_limiter: AddressLimiter,
     /// Global pool of backrun bundles (per-block views are derived in the per-job ctx).
     pub backrun_bundle_pool: BackrunBundleGlobalPool,
     /// Backrun bundle configuration.
@@ -552,7 +552,7 @@ impl OpPayloadJobCtx {
             }
 
             if self
-                .address_gas_limiter
+                .address_limiter
                 .consume_gas(tx.signer(), gas_used)
                 .is_err()
             {
@@ -820,7 +820,7 @@ impl OpPayloadJobCtx {
                     let br_gas_used = br_result.gas_used();
 
                     if self
-                        .address_gas_limiter
+                        .address_limiter
                         .consume_gas(bundle.backrun_tx.signer(), br_gas_used)
                         .is_err()
                     {
