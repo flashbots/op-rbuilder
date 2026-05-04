@@ -2,7 +2,10 @@ use std::time::Duration;
 
 use alloy_primitives::Address;
 
-use crate::limiter::{args::ComputeLimiterArgs, bucket::AddressBuckets, error::ComputeLimitError};
+use crate::limiter::{
+    args::ComputeLimiterArgs, bucket::AddressBuckets, error::ComputeLimitError,
+    metrics::ComputeLimiterMetrics,
+};
 
 type ComputeBuckets = AddressBuckets<Duration>;
 
@@ -10,6 +13,7 @@ type ComputeBuckets = AddressBuckets<Duration>;
 pub(super) struct ComputeLimiter {
     config: ComputeLimiterArgs,
     compute_buckets: ComputeBuckets,
+    metrics: ComputeLimiterMetrics,
 }
 
 impl ComputeLimiter {
@@ -21,6 +25,7 @@ impl ComputeLimiter {
         Some(Self {
             config,
             compute_buckets: Default::default(),
+            metrics: Default::default(),
         })
     }
 
@@ -29,7 +34,8 @@ impl ComputeLimiter {
         address: Address,
         time_requested: Duration,
     ) -> Result<(), ComputeLimitError> {
-        self.compute_buckets
+        let result = self
+            .compute_buckets
             .try_consume(
                 address,
                 time_requested,
@@ -39,9 +45,11 @@ impl ComputeLimiter {
                 address,
                 requested: time_requested,
                 available,
-            })?;
+            });
 
-        Ok(())
+        self.metrics.record_compute_check(&result);
+
+        result.map(|_| ())
     }
 
     fn refresh_inner(&self, block_number: u64) -> usize {
@@ -58,6 +66,7 @@ impl ComputeLimiter {
     }
 
     pub(super) fn refresh(&self, block_number: u64) {
-        self.refresh_inner(block_number);
+        let removed_addresses = self.refresh_inner(block_number);
+        self.metrics.record_refresh(removed_addresses);
     }
 }
