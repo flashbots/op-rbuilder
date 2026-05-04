@@ -340,7 +340,7 @@ impl OpPayloadBuilderCtx {
             };
 
             // add gas used by the transaction to cumulative gas used, before creating the receipt
-            let gas_used = result.gas_used();
+            let gas_used = result.tx_gas_used();
             info.cumulative_gas_used += gas_used;
 
             if !sequencer_tx.is_deposit() {
@@ -569,7 +569,7 @@ impl OpPayloadBuilderCtx {
             // Run the per-address gas limiting before checking if the tx has
             // reverted or not, as this is a check against maliciously searchers
             // sending txs that are expensive to compute but always revert.
-            let gas_used = result.gas_used();
+            let gas_used = result.tx_gas_used();
             if self.enable_tx_tracking_debug_logs {
                 debug!(
                     target: "tx_trace",
@@ -842,7 +842,7 @@ impl OpPayloadBuilderCtx {
                         .record(bundle.backrun_tx.inner().size() as f64);
                     num_txs_simulated += 1;
 
-                    let br_gas_used = br_result.gas_used();
+                    let br_gas_used = br_result.tx_gas_used();
 
                     if self
                         .address_gas_limiter

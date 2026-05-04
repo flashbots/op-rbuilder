@@ -398,7 +398,7 @@ fn execute_transactions(
             .transact(&tx_recovered)
             .wrap_err("failed to execute transaction")?;
 
-        let tx_gas_used = result.gas_used();
+        let tx_gas_used = result.tx_gas_used();
         if let Some(max_gas_per_txn) = ctx.max_gas_per_txn()
             && tx_gas_used > max_gas_per_txn
         {
