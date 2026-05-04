@@ -3,7 +3,7 @@ use std::{cmp::min, sync::Arc, time::Instant};
 use alloy_primitives::Address;
 use dashmap::DashMap;
 
-use crate::gas_limiter::{args::GasLimiterArgs, error::GasLimitError, metrics::GasLimiterMetrics};
+use crate::limiter::{args::GasLimiterArgs, error::GasLimitError, metrics::GasLimiterMetrics};
 
 pub mod args;
 pub mod error;

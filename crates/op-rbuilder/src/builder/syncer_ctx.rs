@@ -1,8 +1,8 @@
 use crate::{
     builder::{BuilderConfig, OpPayloadJobCtx, context::OpPayloadBuilderCtx},
     evm::OpBlockEvmFactory,
-    gas_limiter::{AddressGasLimiter, args::GasLimiterArgs},
     hardforks::ActiveHardforks,
+    limiter::{AddressGasLimiter, args::GasLimiterArgs},
     metrics::OpRBuilderMetrics,
     traits::ClientBounds,
 };

@@ -5,7 +5,7 @@ use crate::{
     args::OpRbuilderArgs,
     backrun_bundle::{BackrunBundleArgs, BackrunBundleGlobalPool},
     flashtestations::args::FlashtestationsArgs,
-    gas_limiter::args::GasLimiterArgs,
+    limiter::args::GasLimiterArgs,
     tx_signer::Signer,
 };
 
