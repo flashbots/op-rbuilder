@@ -2,7 +2,7 @@ use crate::{
     backrun_bundle::{BackrunBundleArgs, BackrunBundleGlobalPool, BackrunBundlesPayloadCtx},
     builder::{BuilderConfig, OpPayloadBuilderCtx},
     evm::OpBlockEvmFactory,
-    gas_limiter::{AddressGasLimiter, args::GasLimiterArgs},
+    limiter::{AddressGasLimiter, args::GasLimiterArgs},
     metrics::OpRBuilderMetrics,
     traits::ClientBounds,
 };

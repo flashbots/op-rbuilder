@@ -6,7 +6,7 @@
 
 use crate::{
     backrun_bundle::BackrunBundleArgs, flashtestations::args::FlashtestationsArgs,
-    gas_limiter::args::GasLimiterArgs, tx_signer::Signer,
+    limiter::args::GasLimiterArgs, tx_signer::Signer,
 };
 use alloy_primitives::Address;
 use anyhow::{Result, anyhow};

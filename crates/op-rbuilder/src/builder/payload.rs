@@ -10,7 +10,7 @@ use crate::{
         timing::{FlashblockScheduler, compute_slot_offset_ms},
     },
     evm::OpBlockEvmFactory,
-    gas_limiter::AddressGasLimiter,
+    limiter::AddressGasLimiter,
     metrics::{OpRBuilderMetrics, record_flashblock_publish_timing},
     primitives::reth::ExecutionInfo,
     runtime_ext::RuntimeExt,

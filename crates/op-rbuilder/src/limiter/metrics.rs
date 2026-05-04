@@ -3,7 +3,7 @@ use std::time::Duration;
 use metrics::{Counter, Gauge, Histogram};
 use reth_metrics::Metrics;
 
-use crate::gas_limiter::error::GasLimitError;
+use crate::limiter::error::GasLimitError;
 
 #[derive(Metrics, Clone)]
 #[metrics(scope = "op_rbuilder.gas_limiter")]

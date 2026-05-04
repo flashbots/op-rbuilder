@@ -39,7 +39,7 @@ use tracing::{debug, info, trace};
 use crate::{
     backrun_bundle::BackrunBundlesPayloadCtx,
     evm::OpBlockEvmFactory,
-    gas_limiter::AddressGasLimiter,
+    limiter::AddressGasLimiter,
     metrics::OpRBuilderMetrics,
     primitives::reth::{ExecutionInfo, TxnExecutionResult},
     traits::PayloadTxsBounds,
