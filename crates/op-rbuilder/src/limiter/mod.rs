@@ -1,41 +1,81 @@
+use std::time::Duration;
+
 use alloy_primitives::Address;
 
 use crate::limiter::{
-    args::GasLimiterArgs, error::GasLimitError, gas::GasLimiter, metrics::GasLimiterMetrics,
+    args::{ComputeLimiterArgs, GasLimiterArgs},
+    compute::ComputeLimiter,
+    gas::GasLimiter,
+    metrics::LimiterMetrics,
 };
 
 pub mod args;
 mod bucket;
 mod compute;
-pub mod error;
 mod gas;
 mod metrics;
 
 #[derive(Debug, Clone)]
 pub struct AddressLimiter {
     gas_limiter: Option<GasLimiter>,
+    compute_limiter: Option<ComputeLimiter>,
+    metrics: LimiterMetrics,
 }
 
 impl AddressLimiter {
-    pub fn new(config: GasLimiterArgs) -> Self {
+    pub fn new(gas_config: GasLimiterArgs, compute_config: ComputeLimiterArgs) -> Self {
         Self {
-            gas_limiter: GasLimiter::try_new(config),
+            gas_limiter: GasLimiter::try_new(gas_config),
+            compute_limiter: ComputeLimiter::try_new(compute_config),
+            metrics: Default::default(),
         }
     }
 
-    /// Check if there's enough gas for this address and consume it. Returns
-    /// Ok(()) if there's enough otherwise returns an error.
-    pub fn consume_gas(&self, address: Address, gas_requested: u64) -> Result<(), GasLimitError> {
+    /// Returns `true` if the address is debt-free in all enabled limiters.
+    /// Checks gas first, then compute. Increments the rejection counter for the
+    /// first failing reason only.
+    pub fn is_debt_free(&self, address: &Address) -> bool {
+        if self
+            .gas_limiter
+            .as_ref()
+            .is_some_and(|l| !l.is_debt_free(address))
+        {
+            self.metrics.gas_limiter_rejections.increment(1);
+            return false;
+        }
+
+        if self
+            .compute_limiter
+            .as_ref()
+            .is_some_and(|l| !l.is_debt_free(address))
+        {
+            self.metrics.compute_limiter_rejections.increment(1);
+            return false;
+        }
+
+        true
+    }
+
+    /// Record gas consumed by an address. The bucket may go negative (into debt).
+    pub fn consume_gas(&self, address: Address, gas_used: u64) {
         if let Some(inner) = &self.gas_limiter {
-            inner.consume_gas(address, gas_requested)
-        } else {
-            Ok(())
+            inner.consume_gas(address, gas_used);
+        }
+    }
+
+    /// Record compute time consumed by an address. The bucket may go negative (into debt).
+    pub fn consume_compute(&self, address: Address, time_used: Duration) {
+        if let Some(inner) = &self.compute_limiter {
+            inner.consume_compute(address, time_used);
         }
     }
 
     /// Should be called upon each new block. Refills buckets/Garbage collection
     pub fn refresh(&self, block_number: u64) {
         if let Some(inner) = self.gas_limiter.as_ref() {
+            inner.refresh(block_number)
+        }
+        if let Some(inner) = self.compute_limiter.as_ref() {
             inner.refresh(block_number)
         }
     }
@@ -60,64 +100,68 @@ mod tests {
     }
 
     #[test]
-    fn test_basic_refill() {
+    fn test_basic_debt_and_refill() {
         let config = create_test_config(1000, 200, 10);
-        let limiter = AddressLimiter::new(config);
+        let limiter = AddressLimiter::new(config, ComputeLimiterArgs::default());
 
         // Consume all gas
-        assert!(limiter.consume_gas(test_address(), 1000).is_ok());
-        assert!(limiter.consume_gas(test_address(), 1).is_err());
+        limiter.consume_gas(test_address(), 1000);
+        assert!(
+            limiter.is_debt_free(&test_address()),
+            "no debt yet, just empty"
+        );
 
-        // Refill and check available gas increased
+        // Go into debt
+        limiter.consume_gas(test_address(), 1);
+        assert!(!limiter.is_debt_free(&test_address()), "should be in debt");
+
+        // Refill 200 — pays down 1 debt, 199 goes to available
         limiter.refresh(1);
-        assert!(limiter.consume_gas(test_address(), 200).is_ok());
-        assert!(limiter.consume_gas(test_address(), 1).is_err());
+        assert!(
+            limiter.is_debt_free(&test_address()),
+            "debt should be paid off"
+        );
     }
 
     #[test]
-    fn test_over_capacity_request() {
+    fn test_over_capacity_goes_into_debt() {
         let config = create_test_config(1000, 100, 10);
-        let limiter = AddressLimiter::new(config);
+        let limiter = AddressLimiter::new(config, ComputeLimiterArgs::default());
 
-        // Request more than capacity should fail
-        let result = limiter.consume_gas(test_address(), 1500);
-        assert!(result.is_err());
+        // Consume more than capacity — goes into debt
+        limiter.consume_gas(test_address(), 1500);
+        assert!(!limiter.is_debt_free(&test_address()));
 
-        if let Err(GasLimitError::AddressLimitExceeded { available, .. }) = result {
-            assert_eq!(available, 1000);
+        // Refill 100 per block, need 5 blocks to clear 500 debt
+        for i in 1..=4 {
+            limiter.refresh(i);
+            assert!(
+                !limiter.is_debt_free(&test_address()),
+                "still in debt at block {i}"
+            );
         }
-
-        // Bucket should still be full after failed request
-        assert!(limiter.consume_gas(test_address(), 1000).is_ok());
+        limiter.refresh(5);
+        assert!(
+            limiter.is_debt_free(&test_address()),
+            "debt cleared at block 5"
+        );
     }
 
     #[test]
-    fn test_multiple_users() {
-        // Simulate more realistic scenario
-        let config = create_test_config(10_000_000, 1_000_000, 100); // 10M max, 1M refill
-        let limiter = AddressLimiter::new(config);
+    fn test_multiple_users_independent() {
+        let config = create_test_config(10_000_000, 1_000_000, 100);
+        let limiter = AddressLimiter::new(config, ComputeLimiterArgs::default());
 
-        let searcher1 = Address::from([0x1; 20]);
-        let searcher2 = Address::from([0x2; 20]);
+        let searcher = Address::from([0x1; 20]);
         let attacker = Address::from([0x3; 20]);
 
-        // Normal searchers use reasonable amounts
-        assert!(limiter.consume_gas(searcher1, 500_000).is_ok());
-        assert!(limiter.consume_gas(searcher2, 750_000).is_ok());
+        // Attacker goes deep into debt
+        limiter.consume_gas(attacker, 15_000_000);
+        assert!(!limiter.is_debt_free(&attacker));
 
-        // Attacker tries to consume massive amounts
-        assert!(limiter.consume_gas(attacker, 15_000_000).is_err()); // Should fail - over capacity
-        assert!(limiter.consume_gas(attacker, 5_000_000).is_ok()); // Should succeed - within capacity
-
-        // Attacker tries to consume more
-        assert!(limiter.consume_gas(attacker, 6_000_000).is_err()); // Should fail - would exceed remaining
-
-        // New block - refill
-        limiter.refresh(1);
-
-        // Everyone should get some gas back
-        assert!(limiter.consume_gas(searcher1, 1_000_000).is_ok()); // Had 9.5M + 1M refill, now 9.5M
-        assert!(limiter.consume_gas(searcher2, 1_000_000).is_ok()); // Had 9.25M + 1M refill, now 9.25M
-        assert!(limiter.consume_gas(attacker, 1_000_000).is_ok()); // Had 5M + 1M refill, now 5M
+        // Searcher is unaffected
+        assert!(limiter.is_debt_free(&searcher));
+        limiter.consume_gas(searcher, 500_000);
+        assert!(limiter.is_debt_free(&searcher));
     }
 }

@@ -65,7 +65,8 @@ pub struct OpPayloadBuilderCtx {
     pub max_gas_per_txn: Option<u64>,
     /// Maximum cumulative uncompressed (EIP-2718 encoded) block size in bytes.
     pub max_uncompressed_block_size: Option<u64>,
-    /// Rate limiting based on gas. This is an optional feature.
+    /// Per-address rate limiting based on gas and/or compute time. This is an
+    /// optional feature.
     pub address_limiter: AddressLimiter,
     /// Global pool of backrun bundles (per-block views are derived in the per-job ctx).
     pub backrun_bundle_pool: BackrunBundleGlobalPool,
@@ -488,6 +489,13 @@ impl OpPayloadJobCtx {
                 continue;
             }
 
+            // Skip addresses that are in debt from previous gas/compute usage
+            if !self.address_limiter.is_debt_free(&tx.signer()) {
+                log_txn(TxnExecutionResult::SenderBudgetExhausted);
+                best_txs.mark_invalid(tx.signer(), tx.nonce());
+                continue;
+            }
+
             // check if the job was cancelled, if so we can exit early
             if self.cancel.is_cancelled() {
                 return Ok(Some(()));
@@ -551,15 +559,9 @@ impl OpPayloadJobCtx {
                 );
             }
 
-            if self
-                .address_limiter
-                .consume_gas(tx.signer(), gas_used)
-                .is_err()
-            {
-                log_txn(TxnExecutionResult::MaxGasUsageExceeded);
-                best_txs.mark_invalid(tx.signer(), tx.nonce());
-                continue;
-            }
+            self.address_limiter.consume_gas(tx.signer(), gas_used);
+            self.address_limiter
+                .consume_compute(tx.signer(), tx_simulation_start_time.elapsed());
 
             if result.is_success() {
                 log_txn(TxnExecutionResult::Success);
@@ -781,6 +783,15 @@ impl OpPayloadJobCtx {
                         continue;
                     }
 
+                    // Skip addresses that are in debt from previous gas/compute usage
+                    if !self
+                        .address_limiter
+                        .is_debt_free(&bundle.backrun_tx.signer())
+                    {
+                        log_br_txn(TxnExecutionResult::SenderBudgetExhausted);
+                        continue;
+                    }
+
                     if self.cancel.is_cancelled() {
                         return Ok(Some(()));
                     }
@@ -819,14 +830,10 @@ impl OpPayloadJobCtx {
 
                     let br_gas_used = br_result.gas_used();
 
-                    if self
-                        .address_limiter
-                        .consume_gas(bundle.backrun_tx.signer(), br_gas_used)
-                        .is_err()
-                    {
-                        log_br_txn(TxnExecutionResult::MaxGasUsageExceeded);
-                        continue;
-                    }
+                    self.address_limiter
+                        .consume_gas(bundle.backrun_tx.signer(), br_gas_used);
+                    self.address_limiter
+                        .consume_compute(bundle.backrun_tx.signer(), br_simulation_start.elapsed());
 
                     if !br_result.is_success() {
                         num_txs_simulated_fail += 1;

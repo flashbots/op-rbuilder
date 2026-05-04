@@ -335,7 +335,10 @@ where
         task_metrics: Arc<FlashblocksTaskMetrics>,
         executor: Runtime,
     ) -> Self {
-        let address_limiter = AddressLimiter::new(config.gas_limiter_config.clone());
+        let address_limiter = AddressLimiter::new(
+            config.gas_limiter_config.clone(),
+            config.compute_limiter_config.clone(),
+        );
         let builder_ctx = Arc::new(OpPayloadBuilderCtx {
             evm_config,
             da_config: config.da_config.clone(),

@@ -19,6 +19,7 @@ pub enum TxnExecutionResult {
     Success,
     Reverted,
     RevertedAndExcluded,
+    SenderBudgetExhausted,
     MaxGasUsageExceeded,
     #[display(
         "BlockUncompressedSizeExceeded: total_uncompressed={_0} tx_uncompressed_size={_1} block_limit={_2}"

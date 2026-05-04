@@ -5,7 +5,7 @@ use crate::{
     args::OpRbuilderArgs,
     backrun_bundle::{BackrunBundleArgs, BackrunBundleGlobalPool},
     flashtestations::args::FlashtestationsArgs,
-    limiter::args::GasLimiterArgs,
+    limiter::args::{ComputeLimiterArgs, GasLimiterArgs},
     tx_signer::Signer,
 };
 
@@ -91,6 +91,9 @@ pub struct BuilderConfig {
     /// Address gas limiter stuff
     pub gas_limiter_config: GasLimiterArgs,
 
+    /// Address compute limiter stuff
+    pub compute_limiter_config: ComputeLimiterArgs,
+
     /// Global pool for backrun bundles
     pub backrun_bundle_pool: BackrunBundleGlobalPool,
 
@@ -121,6 +124,7 @@ impl Default for BuilderConfig {
             max_gas_per_txn: None,
             max_uncompressed_block_size: None,
             gas_limiter_config: GasLimiterArgs::default(),
+            compute_limiter_config: ComputeLimiterArgs::default(),
             backrun_bundle_pool: BackrunBundleGlobalPool::new(false),
             backrun_bundle_args: BackrunBundleArgs::default(),
             flashblocks_config: FlashblocksConfig::default(),
@@ -148,6 +152,7 @@ impl TryFrom<OpRbuilderArgs> for BuilderConfig {
             max_gas_per_txn: args.max_gas_per_txn,
             max_uncompressed_block_size: args.max_uncompressed_block_size,
             gas_limiter_config: args.gas_limiter.clone(),
+            compute_limiter_config: args.compute_limiter.clone(),
             backrun_bundle_pool: BackrunBundleGlobalPool::new(
                 args.backrun_bundle.enforce_strict_priority_fee_ordering,
             ),
