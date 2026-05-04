@@ -2,6 +2,8 @@ base: opstack
 base_args:
   - --external-builder
   - op-rbuilder
+  - --block-time
+  - '1'
 
 setup:
   - cd .. && make op-rbuilder-profiling FEATURES=telemetry,loki
@@ -42,14 +44,25 @@ recipe:
           - 0x2a871d0798f97d79848a013d4936a73bf4cc922c825d33c1cf7073dff6d409c6
           - --bootnodes
           - '{{Service "bootnode" "rpc" "enode" "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798483ada7726a3c4655da4fbfc0e1108a8fd17b448a68554199c47d08ffb10d4b8"}}'
+          - --flashblocks.block-time
+          - '200'
+          - --flashblocks.end-buffer-ms
+          - '75'
+          - --flashblocks.send-offset-ms
+          - '-30'
+          - --flashblocks.continuous-build
+          - --txpool.max-account-slots
+          - '256'
           - --log.stdout.filter
-          - op_rbuilder=debug
+          - op_rbuilder=debug,tx_trace=debug
           - --telemetry.otlp-endpoint
           - http://localhost:4318
           - --telemetry.sampling-ratio
           - '1'
           - --telemetry.loki-url
           - http://localhost:3100
+        env:
+          ENABLE_TX_TRACKING_DEBUG_LOGS: "true"
         ports:
           authrpc: 4444
           http: 2222
@@ -76,7 +89,7 @@ recipe:
           - --l2-rpc
           - http://host.docker.internal:2222
           - --l2-block-time
-          - 2s
+          - 1s
           - --l2-monitor-builder-address
           - '0xa0Ee7A142d267C1f36714E4a8F75612F20a79720'
           - --l2-monitor-wallet

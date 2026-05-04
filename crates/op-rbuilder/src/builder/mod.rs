@@ -14,6 +14,7 @@ mod builder_tx;
 pub(crate) mod cancellation;
 mod config;
 mod context;
+mod continuous;
 mod flashblocks_builder_tx;
 mod generator;
 mod p2p;

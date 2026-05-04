@@ -60,6 +60,9 @@ pub struct FlashblocksConfig {
 
     /// Maximum number of concurrent WebSocket subscribers
     pub ws_subscriber_limit: Option<u16>,
+
+    /// Enable continuous building between scheduler triggers.
+    pub continuous_build: bool,
 }
 
 impl Default for FlashblocksConfig {
@@ -79,6 +82,7 @@ impl Default for FlashblocksConfig {
             p2p_known_peers: None,
             p2p_max_peer_count: 50,
             ws_subscriber_limit: None,
+            continuous_build: false,
         }
     }
 }
@@ -123,6 +127,7 @@ impl TryFrom<OpRbuilderArgs> for FlashblocksConfig {
             p2p_known_peers: args.flashblocks.p2p.p2p_known_peers,
             p2p_max_peer_count: args.flashblocks.p2p.p2p_max_peer_count,
             ws_subscriber_limit: args.flashblocks.ws_subscriber_limit,
+            continuous_build: args.flashblocks.flashblocks_continuous_build,
         })
     }
 }
