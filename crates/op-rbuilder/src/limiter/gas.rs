@@ -1,20 +1,14 @@
-use std::time::Instant;
-
 use alloy_primitives::Address;
 
-use crate::limiter::{
-    GasLimiterMetrics, args::GasLimiterArgs, bucket::AddressBuckets, error::GasLimitError,
-};
+use crate::limiter::{args::GasLimiterArgs, bucket::AddressBuckets, metrics::LimiterMetrics};
 
 type GasBuckets = AddressBuckets<u64>;
 
 #[derive(Debug, Clone)]
 pub(super) struct GasLimiter {
     config: GasLimiterArgs,
-    // We don't need an Arc<Mutex<_>> here, we can get away with RefCell, but
-    // the reth PayloadBuilder trait needs this to be Send + Sync
     gas_buckets: GasBuckets,
-    metrics: GasLimiterMetrics,
+    metrics: LimiterMetrics,
 }
 
 impl GasLimiter {
@@ -30,44 +24,35 @@ impl GasLimiter {
         })
     }
 
-    pub(super) fn consume_gas(
-        &self,
-        address: Address,
-        gas_requested: u64,
-    ) -> Result<(), GasLimitError> {
-        let start = Instant::now();
-        let result = self
-            .gas_buckets
-            .try_consume(address, gas_requested, self.config.max_gas_per_address)
-            .map_err(|available| GasLimitError::AddressLimitExceeded {
-                address,
-                requested: gas_requested,
-                available: available,
-            });
-
-        self.metrics.record_gas_check(&result, start.elapsed());
-
-        result.map(|_| ())
+    /// Returns `true` if the address has no debt and can submit txs.
+    pub(super) fn is_debt_free(&self, address: &Address) -> bool {
+        self.gas_buckets.is_debt_free(address)
     }
 
-    fn refresh_inner(&self, block_number: u64) -> usize {
-        let active_addresses = self.gas_buckets.len();
+    /// Record gas consumed by an address. Always succeeds — excess is
+    /// tracked as debt.
+    pub(super) fn consume_gas(&self, address: Address, gas_used: u64) {
+        let created_new =
+            self.gas_buckets
+                .consume(address, gas_used, self.config.max_gas_per_address);
+
+        if created_new {
+            self.metrics.gas_limiter_active_address_count.increment(1);
+        }
+    }
+
+    pub(super) fn refresh(&self, block_number: u64) {
+        let active_before = self.gas_buckets.len();
 
         self.gas_buckets.refill(self.config.refill_rate_per_block);
 
-        // Only clean up stale buckets every `cleanup_interval` blocks
         if block_number.is_multiple_of(self.config.cleanup_interval) {
             self.gas_buckets.discard_stale_buckets();
         }
 
-        active_addresses - self.gas_buckets.len()
-    }
-
-    pub(super) fn refresh(&self, block_number: u64) {
-        let start = Instant::now();
-        let removed_addresses = self.refresh_inner(block_number);
-
+        let removed = active_before - self.gas_buckets.len();
         self.metrics
-            .record_refresh(removed_addresses, start.elapsed());
+            .gas_limiter_active_address_count
+            .decrement(removed as f64);
     }
 }

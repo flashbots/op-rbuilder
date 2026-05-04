@@ -1,14 +1,20 @@
 use std::{
     cmp::min,
-    ops::{Add, SubAssign},
+    ops::{Add, AddAssign, Sub, SubAssign},
     sync::Arc,
 };
 
 use alloy_primitives::Address;
 use dashmap::DashMap;
 
-pub(super) trait Token: Copy + Ord + Add<Output = Self> + SubAssign {}
-impl<T: Copy + Ord + Add<Output = T> + SubAssign> Token for T {}
+pub(super) trait Token:
+    Copy + Ord + Default + Add<Output = Self> + AddAssign + Sub<Output = Self> + SubAssign
+{
+}
+impl<T: Copy + Ord + Default + Add<Output = T> + AddAssign + Sub<Output = Self> + SubAssign> Token
+    for T
+{
+}
 
 // We don't need an Arc<Mutex<_>> here, we can get away with RefCell, but
 // the reth PayloadBuilder trait needs this to be Send + Sync
@@ -18,6 +24,11 @@ pub(super) struct AddressBuckets<T>(Arc<DashMap<Address, TokenBucket<T>>>);
 impl<T: Token> AddressBuckets<T> {
     pub(super) fn len(&self) -> usize {
         self.0.len()
+    }
+
+    /// Returns `true` if the address has no debt (or has no bucket yet).
+    pub(super) fn is_debt_free(&self, address: &Address) -> bool {
+        self.0.get(address).is_none_or(|bucket| bucket.debt_free())
     }
 
     pub(super) fn refill(&self, refill_amount: T) {
@@ -30,23 +41,17 @@ impl<T: Token> AddressBuckets<T> {
         self.0.retain(|_, bucket| !bucket.is_full());
     }
 
-    pub(super) fn try_consume(
-        &self,
-        address: Address,
-        requested: T,
-        default_capacity: T,
-    ) -> Result<bool, T> {
+    /// Consume the given amount for an address. Always succeeds — excess
+    /// is tracked as debt. Returns `true` if a new bucket was created.
+    pub(super) fn consume(&self, address: Address, amount: T, default_capacity: T) -> bool {
         let mut created_new_bucket = false;
         let mut bucket = self.0.entry(address).or_insert_with(|| {
             created_new_bucket = true;
             TokenBucket::new(default_capacity)
         });
 
-        if !bucket.try_consume(requested) {
-            return Err(bucket.available()); // caller gets `available` to build its own error
-        }
-
-        Ok(created_new_bucket)
+        bucket.consume(amount);
+        created_new_bucket
     }
 }
 
@@ -58,10 +63,14 @@ impl<T> Default for AddressBuckets<T> {
 
 /// A `TokenBucket` can be used to track various resources. We currently use
 /// them to track gas usage and compute usage.
+///
+/// Buckets can go into debt — `consume` always succeeds, but the bucket
+/// tracks how much was overdrawn.
 #[derive(Debug, Clone)]
 struct TokenBucket<T> {
     capacity: T,
     available: T,
+    debt: T,
 }
 
 impl<T: Token> TokenBucket<T> {
@@ -70,32 +79,43 @@ impl<T: Token> TokenBucket<T> {
         Self {
             capacity,
             available: capacity,
+            debt: T::default(),
         }
     }
 
-    fn available(&self) -> T {
-        self.available
+    /// Returns `true` if the bucket has no debt
+    fn debt_free(&self) -> bool {
+        self.debt == T::default()
     }
 
-    /// Returns `true` if the bucket is at capacity
+    /// Returns `true` if the bucket is at capacity with no debt
     fn is_full(&self) -> bool {
-        self.available == self.capacity
+        self.debt_free() && self.available == self.capacity
     }
 
-    /// Attempts to deduct the specified amount from the bucket. Returns `false`
-    /// if the bucket doesn't have enough.
-    fn try_consume(&mut self, requested_amount: T) -> bool {
-        if requested_amount > self.available {
-            return false;
+    /// Deduct the specified amount from the bucket. If the amount exceeds
+    /// what's available, the excess is tracked as debt.
+    fn consume(&mut self, amount: T) {
+        if amount <= self.available {
+            self.available -= amount;
+        } else {
+            // amount > available, so (amount - available) overflows into debt.
+            self.debt += amount - self.available;
+            self.available = T::default();
         }
-
-        self.available -= requested_amount;
-        true
     }
 
-    /// Refill the bucket with the provided amount, up to the capacity
+    /// Refill the bucket with the provided amount. Pays down debt first,
+    /// then adds to available up to capacity.
     fn refill(&mut self, refill_amount: T) {
-        self.available = min(self.capacity, self.available + refill_amount)
+        if self.debt >= refill_amount {
+            self.debt -= refill_amount;
+        } else {
+            // refill_amount > debt, so surplus goes to available
+            let surplus = refill_amount - self.debt;
+            self.debt = T::default();
+            self.available = min(self.capacity, self.available + surplus);
+        }
     }
 }
 
@@ -114,8 +134,8 @@ mod tests {
         let buckets = AddressBuckets::<u64>::default();
 
         // Create buckets for both addresses
-        assert!(buckets.try_consume(addr1, 100, capacity).is_ok());
-        assert!(buckets.try_consume(addr2, 100, capacity).is_ok());
+        buckets.consume(addr1, 100, capacity);
+        buckets.consume(addr2, 100, capacity);
         assert_eq!(buckets.len(), 2);
 
         // Refill for several rounds - addr1 goes unused while addr2 stays active
@@ -123,7 +143,7 @@ mod tests {
             buckets.refill(refill_rate);
 
             if block > 1 {
-                assert!(buckets.try_consume(addr2, 100, capacity).is_ok());
+                buckets.consume(addr2, 100, capacity);
             }
         }
 

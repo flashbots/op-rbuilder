@@ -337,7 +337,10 @@ impl<Pool, Client, BuilderTx> OpPayloadBuilder<Pool, Client, BuilderTx> {
         task_metrics: Arc<FlashblocksTaskMetrics>,
         executor: Runtime,
     ) -> Self {
-        let address_gas_limiter = AddressLimiter::new(config.gas_limiter_config.clone());
+        let address_limiter = AddressLimiter::new(
+            config.gas_limiter_config.clone(),
+            config.compute_limiter_config.clone(),
+        );
         Self {
             inner: Arc::new(OpPayloadBuilderInner {
                 evm_config,
@@ -349,7 +352,7 @@ impl<Pool, Client, BuilderTx> OpPayloadBuilder<Pool, Client, BuilderTx> {
                 config,
                 metrics,
                 builder_tx,
-                address_limiter: address_gas_limiter,
+                address_limiter,
                 task_metrics,
                 executor,
             }),

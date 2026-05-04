@@ -36,22 +36,22 @@ pub struct ComputeLimiterArgs {
     /// Maximum compute time allowed for each address in microseconds. Defaults
     /// to 50ms (50000μs).
     #[arg(
-        long = "compute-limiter.max-gas-per-address",
+        long = "compute-limiter.max-time-us-per-address",
         env,
-        default_value = "10000000"
+        default_value = "50000"
     )]
     pub max_time_us_per_address: u64,
 
     /// Compute time refill rate in microseconds per block. Defaults to 10ms
     /// (10000μs).
     #[arg(
-        long = "compute-limiter.refill-rate-per-block",
+        long = "compute-limiter.refill-rate-us-per-block",
         env,
         default_value = "10000"
     )]
-    pub refill_rate_per_block: u64,
+    pub compute_refill_rate_per_block: u64,
 
     /// How many blocks to wait before cleaning up stale buckets for addresses.
     #[arg(long = "compute-limiter.cleanup-interval", env, default_value = "100")]
-    pub cleanup_interval: u64,
+    pub compute_cleanup_interval: u64,
 }

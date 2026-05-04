@@ -2,10 +2,7 @@ use std::time::Duration;
 
 use alloy_primitives::Address;
 
-use crate::limiter::{
-    args::ComputeLimiterArgs, bucket::AddressBuckets, error::ComputeLimitError,
-    metrics::ComputeLimiterMetrics,
-};
+use crate::limiter::{args::ComputeLimiterArgs, bucket::AddressBuckets, metrics::LimiterMetrics};
 
 type ComputeBuckets = AddressBuckets<Duration>;
 
@@ -13,7 +10,7 @@ type ComputeBuckets = AddressBuckets<Duration>;
 pub(super) struct ComputeLimiter {
     config: ComputeLimiterArgs,
     compute_buckets: ComputeBuckets,
-    metrics: ComputeLimiterMetrics,
+    metrics: LimiterMetrics,
 }
 
 impl ComputeLimiter {
@@ -29,44 +26,41 @@ impl ComputeLimiter {
         })
     }
 
-    pub(super) fn consume_compute(
-        &self,
-        address: Address,
-        time_requested: Duration,
-    ) -> Result<(), ComputeLimitError> {
-        let result = self
-            .compute_buckets
-            .try_consume(
-                address,
-                time_requested,
-                Duration::from_micros(self.config.max_time_us_per_address),
-            )
-            .map_err(|available| ComputeLimitError::AddressLimitExceeded {
-                address,
-                requested: time_requested,
-                available,
-            });
-
-        self.metrics.record_compute_check(&result);
-
-        result.map(|_| ())
+    /// Returns `true` if the address has no debt and can submit work.
+    pub(super) fn is_debt_free(&self, address: &Address) -> bool {
+        self.compute_buckets.is_debt_free(address)
     }
 
-    fn refresh_inner(&self, block_number: u64) -> usize {
-        let active_addresses = self.compute_buckets.len();
+    /// Record compute time consumed by an address. Always succeeds — excess
+    /// is tracked as debt.
+    pub(super) fn consume_compute(&self, address: Address, time_used: Duration) {
+        let created_new = self.compute_buckets.consume(
+            address,
+            time_used,
+            Duration::from_micros(self.config.max_time_us_per_address),
+        );
 
-        self.compute_buckets
-            .refill(Duration::from_micros(self.config.refill_rate_per_block));
-
-        if block_number.is_multiple_of(self.config.cleanup_interval) {
-            self.compute_buckets.discard_stale_buckets();
+        if created_new {
+            self.metrics
+                .compute_limiter_active_address_count
+                .increment(1);
         }
-
-        active_addresses - self.compute_buckets.len()
     }
 
     pub(super) fn refresh(&self, block_number: u64) {
-        let removed_addresses = self.refresh_inner(block_number);
-        self.metrics.record_refresh(removed_addresses);
+        let active_before = self.compute_buckets.len();
+
+        self.compute_buckets.refill(Duration::from_micros(
+            self.config.compute_refill_rate_per_block,
+        ));
+
+        if block_number.is_multiple_of(self.config.compute_cleanup_interval) {
+            self.compute_buckets.discard_stale_buckets();
+        }
+
+        let removed = active_before - self.compute_buckets.len();
+        self.metrics
+            .compute_limiter_active_address_count
+            .decrement(removed as f64);
     }
 }
