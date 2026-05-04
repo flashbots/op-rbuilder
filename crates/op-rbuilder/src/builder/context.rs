@@ -39,7 +39,7 @@ use tracing::{debug, info, trace};
 use crate::{
     backrun_bundle::BackrunBundlesPayloadCtx,
     evm::OpBlockEvmFactory,
-    limiter::AddressGasLimiter,
+    limiter::AddressLimiter,
     metrics::OpRBuilderMetrics,
     primitives::reth::{ExecutionInfo, TxnExecutionResult},
     traits::PayloadTxsBounds,
@@ -68,7 +68,7 @@ pub struct OpPayloadBuilderCtx {
     /// Maximum cumulative uncompressed (EIP-2718 encoded) block size in bytes.
     pub max_uncompressed_block_size: Option<u64>,
     /// Rate limiting based on gas. This is an optional feature.
-    pub address_gas_limiter: AddressGasLimiter,
+    pub address_limiter: AddressLimiter,
     /// Backrun bundles context.
     pub backrun_ctx: BackrunBundlesPayloadCtx,
     /// Skip reverted txs in subsequent flashblocks
@@ -587,7 +587,7 @@ impl OpPayloadBuilderCtx {
             }
 
             if self
-                .address_gas_limiter
+                .address_limiter
                 .consume_gas(tx.signer(), gas_used)
                 .is_err()
             {
@@ -848,7 +848,7 @@ impl OpPayloadBuilderCtx {
                     let br_gas_used = br_result.gas_used();
 
                     if self
-                        .address_gas_limiter
+                        .address_limiter
                         .consume_gas(bundle.backrun_tx.signer(), br_gas_used)
                         .is_err()
                     {
