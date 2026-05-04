@@ -6,6 +6,7 @@ use crate::limiter::{
 
 pub mod args;
 mod bucket;
+mod compute;
 pub mod error;
 mod gas;
 mod metrics;

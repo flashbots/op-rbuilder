@@ -26,3 +26,32 @@ pub struct GasLimiterArgs {
     #[arg(long = "gas-limiter.cleanup-interval", env, default_value = "100")]
     pub cleanup_interval: u64,
 }
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Args)]
+pub struct ComputeLimiterArgs {
+    /// Enable address-based rate limiting on build compute.
+    #[arg(long = "compute-limiter.enabled", env)]
+    pub compute_limiter_enabled: bool,
+
+    /// Maximum compute time allowed for each address in microseconds. Defaults
+    /// to 50ms (50000μs).
+    #[arg(
+        long = "compute-limiter.max-gas-per-address",
+        env,
+        default_value = "10000000"
+    )]
+    pub max_time_us_per_address: u64,
+
+    /// Compute time refill rate in microseconds per block. Defaults to 10ms
+    /// (10000μs).
+    #[arg(
+        long = "compute-limiter.refill-rate-per-block",
+        env,
+        default_value = "10000"
+    )]
+    pub refill_rate_per_block: u64,
+
+    /// How many blocks to wait before cleaning up stale buckets for addresses.
+    #[arg(long = "compute-limiter.cleanup-interval", env, default_value = "100")]
+    pub cleanup_interval: u64,
+}
