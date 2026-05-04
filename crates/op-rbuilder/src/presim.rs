@@ -2,10 +2,10 @@ use std::sync::Arc;
 
 use alloy_consensus::{BlockHeader, Header};
 use alloy_evm::{Evm, InvalidTxError};
-use alloy_op_evm::OpTx;
 use alloy_primitives::{Address, B256, Bytes};
 use eyre::Context;
 use futures_util::{Stream, StreamExt};
+use op_revm::OpTransaction;
 use parking_lot::RwLock;
 use reth_chain_state::CanonStateNotification;
 use reth_evm::{EvmError, IntoTxEnv};
@@ -16,7 +16,10 @@ use reth_primitives_traits::{Block, NodePrimitives, Recovered, RecoveredBlock};
 use reth_provider::{BlockReaderIdExt, ChainSpecProvider, StateProvider, StateProviderFactory};
 use reth_revm::{State, database::StateProviderDatabase};
 use reth_transaction_pool::{FullTransactionEvent, PoolTransaction, TransactionPool};
-use revm::{context::result::ResultAndState, context_interface::result::InvalidTransaction};
+use revm::{
+    context::{TxEnv, result::ResultAndState},
+    context_interface::result::InvalidTransaction,
+};
 use tracing::{debug, error, warn};
 
 use crate::{evm::OpBlockEvmFactory, metrics::OpRBuilderMetrics, tx::FBPooledTransaction};
@@ -48,7 +51,7 @@ impl TopOfBlockSimulator {
             .wrap_err("simulate tx task panicked")
     }
 
-    pub(crate) fn simulate_tx_sync(&self, tx: impl IntoTxEnv<OpTx>) -> bool {
+    pub(crate) fn simulate_tx_sync(&self, tx: impl IntoTxEnv<OpTransaction<TxEnv>>) -> bool {
         let tip_state = {
             let tip_state = self.tip_state.read();
             tip_state.clone()
@@ -115,7 +118,7 @@ impl TipState {
         })
     }
 
-    fn run_simulation(&self, tx: impl IntoTxEnv<OpTx>) -> bool {
+    fn run_simulation(&self, tx: impl IntoTxEnv<OpTransaction<TxEnv>>) -> bool {
         let db = StateProviderDatabase::new(&*self.state_provider);
         let mut state = State::builder().with_database(db).build();
         let mut evm = self.evm_factory.evm(&mut state);

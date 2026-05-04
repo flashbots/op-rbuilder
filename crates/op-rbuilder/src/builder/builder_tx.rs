@@ -362,14 +362,8 @@ pub trait BuilderTransactions {
         evm: &mut OpEvm<impl Database, NoOpInspector, PrecompilesMap>,
     ) -> Result<SimulationSuccessResult<T>, BuilderTransactionError> {
         let evm_env = alloy_evm::EvmEnv::from((evm.cfg.clone(), evm.block.clone()));
-        let base_request: alloy_rpc_types_eth::TransactionRequest = tx.into();
-        let base_tx_env: revm::context::TxEnv = base_request.try_into_tx_env(&evm_env)?;
-        let to = base_tx_env.kind.into_to().unwrap_or_default();
-        let tx_env = alloy_op_evm::OpTx(op_revm::OpTransaction {
-            base: base_tx_env,
-            enveloped_tx: Some(Bytes::new()),
-            deposit: Default::default(),
-        });
+        let tx_env = tx.try_into_tx_env(&evm_env)?;
+        let to = tx_env.base.kind.into_to().unwrap_or_default();
 
         let ResultAndState { result, state } = match evm.transact(tx_env) {
             Ok(res) => res,
@@ -386,7 +380,10 @@ pub trait BuilderTransactions {
 
         match result {
             ExecutionResult::Success {
-                output, gas, logs, ..
+                output,
+                gas_used,
+                logs,
+                ..
             } => {
                 let topics: HashSet<B256> = logs
                     .into_iter()
@@ -411,7 +408,7 @@ pub trait BuilderTransactions {
                     )
                 })?;
                 Ok(SimulationSuccessResult::<T> {
-                    gas_used: gas.spent(),
+                    gas_used,
                     output: return_output,
                     state_changes: state,
                 })

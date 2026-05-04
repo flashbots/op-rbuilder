@@ -107,10 +107,6 @@ where
         self.inner.into_consensus()
     }
 
-    fn consensus_ref(&self) -> Recovered<&Self::Consensus> {
-        self.inner.consensus_ref()
-    }
-
     fn from_pooled(tx: Recovered<Self::Pooled>) -> Self {
         Self::new(T::from_pooled(tx))
     }

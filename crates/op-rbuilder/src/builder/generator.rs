@@ -4,10 +4,9 @@ use reth::providers::{BlockReaderIdExt, StateProviderFactory};
 use reth_basic_payload_builder::{HeaderForPayload, PayloadConfig, PrecachedState};
 use reth_node_api::{NodePrimitives, PayloadKind};
 use reth_payload_builder::{
-    BuildNewPayload, KeepPayloadJobAlive, PayloadBuilderError, PayloadId, PayloadJob,
-    PayloadJobGenerator,
+    KeepPayloadJobAlive, PayloadBuilderError, PayloadJob, PayloadJobGenerator,
 };
-use reth_payload_primitives::{BuiltPayload, PayloadAttributes};
+use reth_payload_primitives::{BuiltPayload, PayloadBuilderAttributes};
 use reth_primitives_traits::HeaderTy;
 use reth_provider::CanonStateNotification;
 use reth_revm::cached::CachedReads;
@@ -33,19 +32,10 @@ use super::cancellation::PayloadJobCancellation;
 /// `PayloadBuilderError` if building fails.
 #[async_trait::async_trait]
 pub(super) trait PayloadBuilder: Send + Sync + Clone {
-    /// The RPC-level payload attributes (what the engine API sends).
-    type RpcAttributes: PayloadAttributes + Clone + Unpin;
     /// The builder-level payload attributes (used internally during building).
-    type Attributes: PayloadAttributes + Clone + Send + Sync + 'static;
+    type Attributes: PayloadBuilderAttributes + Clone + Unpin + Send + Sync + 'static;
     /// The type of the built payload.
     type BuiltPayload: BuiltPayload;
-
-    /// Convert RPC attributes to builder attributes.
-    fn from_rpc_attrs(
-        parent: B256,
-        id: PayloadId,
-        attrs: Self::RpcAttributes,
-    ) -> Result<Self::Attributes, PayloadBuilderError>;
 
     /// Tries to build a transaction payload using provided arguments.
     async fn try_build(
@@ -136,19 +126,15 @@ where
     /// `engine_forkchoiceUpdatedVX`
     fn new_payload_job(
         &self,
-        build: BuildNewPayload<<Builder as PayloadBuilder>::RpcAttributes>,
-        id: PayloadId,
+        attributes: <Self::Job as PayloadJob>::PayloadAttributes,
     ) -> Result<Self::Job, PayloadBuilderError> {
-        let rpc_attributes = build.attributes.clone();
-        let parent_hash = build.parent_hash;
-
-        // Convert RPC attributes to builder attributes
-        let builder_attributes = Builder::from_rpc_attrs(parent_hash, id, build.attributes)?;
+        let parent_hash = attributes.parent();
+        let id = attributes.payload_id();
 
         // Calculate and record FCU arrival delay metric in milliseconds
         // Expected: FCU should arrive at (payload_timestamp - block_time)
         // Positive delay = FCU arrived late, Negative = FCU arrived early
-        let timestamp = rpc_attributes.timestamp();
+        let timestamp = attributes.timestamp();
         let payload_time = SystemTime::UNIX_EPOCH + Duration::from_secs(timestamp);
         let expected_fcu_arrival = payload_time
             .checked_sub(self.block_time)
@@ -187,16 +173,15 @@ where
             "Spawn block building job",
         );
 
-        let deadline = job_deadline(rpc_attributes.timestamp()) + self.extra_block_deadline;
+        let deadline = job_deadline(timestamp) + self.extra_block_deadline;
 
         let deadline = Box::pin(tokio::time::sleep(deadline));
-        let config = PayloadConfig::new(Arc::new(parent_header.clone()), builder_attributes, id);
+        let config = PayloadConfig::new(Arc::new(parent_header.clone()), attributes);
 
         let mut job = BlockPayloadJob {
             executor: self.executor.clone(),
             builder: self.builder.clone(),
             config,
-            rpc_attributes,
             payload_rx: None,
             cancel,
             deadline,
@@ -243,8 +228,6 @@ where
 {
     /// The configuration for how the payload will be created.
     config: PayloadConfig<Builder::Attributes, HeaderForPayload<Builder::BuiltPayload>>,
-    /// The original RPC-level attributes (returned by payload_attributes())
-    rpc_attributes: Builder::RpcAttributes,
     /// How to spawn building tasks
     executor: Runtime,
     /// The type responsible for building payloads.
@@ -267,7 +250,7 @@ where
     Builder::Attributes: Unpin + Clone,
     Builder::BuiltPayload: Unpin + Clone + Send + Sync + 'static,
 {
-    type PayloadAttributes = Builder::RpcAttributes;
+    type PayloadAttributes = Builder::Attributes;
     type ResolvePayloadFuture = ResolvePayload<Self::BuiltPayload>;
     type BuiltPayload = Builder::BuiltPayload;
 
@@ -279,7 +262,7 @@ where
     }
 
     fn payload_attributes(&self) -> Result<Self::PayloadAttributes, PayloadBuilderError> {
-        Ok(self.rpc_attributes.clone())
+        Ok(self.config.attributes.clone())
     }
 
     fn resolve_kind(
@@ -320,7 +303,7 @@ where
                 cancel: cancellation,
             };
 
-            let payload_id = args.config.payload_id;
+            let payload_id = args.config.attributes.payload_id();
             if let Err(e) = builder.try_build(args, watch_tx).await {
                 tracing::error!(id = %payload_id, "build task failed: {:?}", e);
             }

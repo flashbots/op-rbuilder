@@ -40,10 +40,8 @@ async fn monitor_transaction_gc(rbuilder: LocalInstance) -> eyre::Result<()> {
         pending_txn.push(txn);
     }
 
-    // Generate 11 blocks. A bundle with max_block_number=N is GC'd after block N+1 is
-    // committed (the maintenance task drops txs with `block_number > max`), so 11 blocks are
-    // needed to GC all 10 transactions whose max range from latest+1..=latest+10.
-    for i in 0..11 {
+    // generate 10 blocks
+    for i in 0..10 {
         let generated_block = driver.build_new_block_with_current_timestamp(None).await?;
 
         // flashblocks should include three transactions (deposit + 2 builder txs)
@@ -52,14 +50,13 @@ async fn monitor_transaction_gc(rbuilder: LocalInstance) -> eyre::Result<()> {
         // Validate builder transactions using BuilderTxValidation
         generated_block.assert_builder_tx_count(2);
 
-        // Tx j has max=latest+j+1; after building block latest+i+1 the maintenance task drops
-        // it iff (latest+i+1) > (latest+j+1), i.e., j < i. So [0, i) are dropped and
-        // [i, 10) are still pending.
-        let dropped_count = i.min(10);
-        for tx in pending_txn.iter().take(dropped_count) {
+        // since we created the 10 transactions with increasing block ranges, as we generate blocks
+        // one transaction will be gc on each block.
+        // transactions from [0, i] should be dropped, transactions from [i+1, 10] should be queued
+        for tx in pending_txn.iter().take(i + 1) {
             assert!(rbuilder.pool().is_dropped(*tx.tx_hash()));
         }
-        for tx in pending_txn.iter().take(10).skip(dropped_count) {
+        for tx in pending_txn.iter().take(10).skip(i + 1) {
             assert!(rbuilder.pool().is_pending(*tx.tx_hash()));
         }
     }
@@ -143,7 +140,7 @@ async fn bundle(rbuilder: LocalInstance) -> eyre::Result<()> {
             .includes(valid_bundle.tx_hash())
     );
 
-    let bundle_opts = BundleOpts::default().with_max_block_number(3);
+    let bundle_opts = BundleOpts::default().with_max_block_number(4);
 
     let reverted_bundle = driver
         .create_transaction()
@@ -420,7 +417,7 @@ async fn check_transaction_receipt_status_message(rbuilder: LocalInstance) -> ey
     let reverting_tx = driver
         .create_transaction()
         .random_reverting_transaction()
-        .with_bundle(BundleOpts::default().with_max_block_number(2))
+        .with_bundle(BundleOpts::default().with_max_block_number(3))
         .send()
         .await?;
     let tx_hash = reverting_tx.tx_hash();

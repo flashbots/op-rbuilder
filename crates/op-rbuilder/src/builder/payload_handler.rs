@@ -20,6 +20,7 @@ use reth_optimism_forks::OpHardforks;
 use reth_optimism_node::{OpEngineTypes, OpPayloadBuilderAttributes};
 use reth_optimism_payload_builder::OpBuiltPayload;
 use reth_optimism_primitives::OpReceipt;
+use reth_payload_builder::EthPayloadBuilderAttributes;
 use reth_primitives_traits::SealedHeader;
 use reth_tasks::Runtime;
 use std::sync::Arc;
@@ -281,23 +282,24 @@ where
     let payload_config = PayloadConfig::new(
         Arc::new(SealedHeader::new(parent_header, parent_hash)),
         OpPayloadBuilderAttributes {
-            id: payload.id(),
-            parent: parent_hash,
-            suggested_fee_recipient: payload.block().sealed_header().beneficiary,
-            withdrawals: payload
-                .block()
-                .body()
-                .withdrawals
-                .clone()
-                .unwrap_or_default(),
-            parent_beacon_block_root: payload.block().sealed_header().parent_beacon_block_root,
-            timestamp,
-            prev_randao: payload.block().sealed_header().mix_hash,
+            payload_attributes: EthPayloadBuilderAttributes {
+                id: payload.id(),
+                parent: parent_hash,
+                suggested_fee_recipient: payload.block().sealed_header().beneficiary,
+                withdrawals: payload
+                    .block()
+                    .body()
+                    .withdrawals
+                    .clone()
+                    .unwrap_or_default(),
+                parent_beacon_block_root: payload.block().sealed_header().parent_beacon_block_root,
+                timestamp,
+                prev_randao: payload.block().sealed_header().mix_hash,
+            },
             eip_1559_params: eip_1559_parameters,
             min_base_fee,
             ..Default::default()
         },
-        payload.id(),
     );
 
     let evm_factory = OpBlockEvmFactory::new(ctx.evm_config().clone(), evm_env);

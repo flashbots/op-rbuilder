@@ -36,9 +36,8 @@ use reth_optimism_consensus::{calculate_receipt_root_no_memo_optimism, isthmus};
 use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
 use reth_optimism_forks::OpHardforks;
 use reth_optimism_node::{OpBuiltPayload, OpPayloadBuilderAttributes};
-use reth_optimism_payload_builder::OpPayloadAttrs;
 use reth_optimism_primitives::{OpReceipt, OpTransactionSigned};
-use reth_payload_builder::PayloadId;
+use reth_payload_primitives::PayloadBuilderAttributes;
 use reth_payload_util::BestPayloadTransactions;
 use reth_primitives_traits::RecoveredBlock;
 use reth_provider::{
@@ -74,7 +73,6 @@ fn convert_receipt(receipt: &OpReceipt) -> op_alloy_consensus::OpReceipt {
                 deposit_receipt_version: r.deposit_receipt_version,
             })
         }
-        OpReceipt::PostExec(r) => op_alloy_consensus::OpReceipt::PostExec(r.clone()),
     }
 }
 
@@ -397,7 +395,10 @@ where
                 .attributes
                 .gas_limit
                 .unwrap_or(config.parent_header.gas_limit),
-            parent_beacon_block_root: config.attributes.parent_beacon_block_root,
+            parent_beacon_block_root: config
+                .attributes
+                .payload_attributes
+                .parent_beacon_block_root,
             extra_data,
         };
 
@@ -462,7 +463,10 @@ where
         // The build_payload span is created and instrumented in try_build() using
         // tracing::Instrument, which safely manages it across async .await points.
         let span = tracing::Span::current();
-        span.record("payload_id", config.attributes.id.to_string());
+        span.record(
+            "payload_id",
+            config.attributes.payload_attributes.id.to_string(),
+        );
 
         let ctx = self
             .get_op_payload_builder_ctx(config.clone(), payload_cancel.token())
@@ -1195,18 +1199,8 @@ where
     Client: ClientBounds + 'static,
     BuilderTx: BuilderTransactions + Send + Sync + 'static,
 {
-    type RpcAttributes = OpPayloadAttrs;
     type Attributes = OpPayloadBuilderAttributes<OpTransactionSigned>;
     type BuiltPayload = OpBuiltPayload;
-
-    fn from_rpc_attrs(
-        parent: B256,
-        id: PayloadId,
-        attrs: Self::RpcAttributes,
-    ) -> Result<Self::Attributes, PayloadBuilderError> {
-        OpPayloadBuilderAttributes::from_rpc_attrs(parent, id, attrs.0)
-            .map_err(|e| PayloadBuilderError::Other(Box::new(e)))
-    }
 
     async fn try_build(
         &self,
@@ -1451,8 +1445,8 @@ where
         receipts_root,
         withdrawals_root,
         logs_bloom,
-        timestamp: ctx.attributes().timestamp,
-        mix_hash: ctx.attributes().prev_randao,
+        timestamp: ctx.attributes().payload_attributes.timestamp,
+        mix_hash: ctx.attributes().payload_attributes.prev_randao,
         nonce: BEACON_NONCE.into(),
         base_fee_per_gas: Some(ctx.base_fee()),
         number: ctx.parent().number + 1,
@@ -1460,7 +1454,7 @@ where
         difficulty: U256::ZERO,
         gas_used: info.cumulative_gas_used,
         extra_data,
-        parent_beacon_block_root: ctx.attributes().parent_beacon_block_root,
+        parent_beacon_block_root: ctx.attributes().payload_attributes.parent_beacon_block_root,
         blob_gas_used,
         excess_blob_gas,
         requests_hash,
@@ -1560,19 +1554,21 @@ where
         payload_id: ctx.payload_id(),
         index: 0,
         base: Some(OpFlashblockPayloadBase {
-            parent_beacon_block_root: ctx.attributes().parent_beacon_block_root.ok_or_else(
-                || {
+            parent_beacon_block_root: ctx
+                .attributes()
+                .payload_attributes
+                .parent_beacon_block_root
+                .ok_or_else(|| {
                     PayloadBuilderError::Other(
                         eyre::eyre!("parent beacon block root not found").into(),
                     )
-                },
-            )?,
+                })?,
             parent_hash: ctx.parent().hash(),
             fee_recipient: ctx.attributes().suggested_fee_recipient(),
-            prev_randao: ctx.attributes().prev_randao,
+            prev_randao: ctx.attributes().payload_attributes.prev_randao,
             block_number: ctx.parent().number + 1,
             gas_limit: ctx.block_gas_limit(),
-            timestamp: ctx.attributes().timestamp,
+            timestamp: ctx.attributes().payload_attributes.timestamp,
             extra_data: ctx.extra_data()?,
             base_fee_per_gas: U256::from(ctx.base_fee()),
         }),
