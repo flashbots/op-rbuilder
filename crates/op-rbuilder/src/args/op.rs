@@ -203,13 +203,15 @@ pub struct FlashblocksArgs {
     )]
     pub flashblocks_send_offset_ms: i64,
 
-    /// Time in milliseconds to build the last flashblock early before the end of the slot
-    /// This serves as a buffer time to account for the last flashblock being delayed
-    /// at the end of the slot due to processing the final block
+    /// Time in milliseconds to build the last flashblock early before the end of the slot.
+    /// This gives the final flashblock headroom to build and publish before `getPayload`;
+    /// without it the last flashblock is prone to being dropped, leaving one of the block's
+    /// flashblock slots empty. The trade-off is moving the end-of-block dead zone earlier
+    /// by the same amount.
     #[arg(
         long = "flashblocks.end-buffer-ms",
         env = "FLASHBLOCK_END_BUFFER_MS",
-        default_value = "0"
+        default_value = "100"
     )]
     pub flashblocks_end_buffer_ms: u64,
 
