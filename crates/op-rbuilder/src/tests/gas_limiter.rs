@@ -1,6 +1,6 @@
 use crate::{
     args::OpRbuilderArgs,
-    gas_limiter::args::GasLimiterArgs,
+    limiter::args::GasLimiterArgs,
     tests::{ChainDriverExt, TransactionBuilderExt},
 };
 use macros::rb_test;
