@@ -7,12 +7,14 @@ use crate::limiter::{
     GasLimiterMetrics, args::GasLimiterArgs, bucket::TokenBucket, error::GasLimitError,
 };
 
+type GasBucket = TokenBucket<u64>;
+
 #[derive(Debug, Clone)]
 pub(super) struct GasLimiter {
     config: GasLimiterArgs,
     // We don't need an Arc<Mutex<_>> here, we can get away with RefCell, but
     // the reth PayloadBuilder trait needs this to be Send + Sync
-    address_buckets: Arc<DashMap<Address, TokenBucket>>,
+    address_buckets: Arc<DashMap<Address, GasBucket>>,
     metrics: GasLimiterMetrics,
 }
 
