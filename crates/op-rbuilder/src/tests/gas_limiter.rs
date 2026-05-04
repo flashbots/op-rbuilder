@@ -16,6 +16,7 @@ use tracing::info;
         max_gas_per_address: 200000,  // 200k gas per address - low for testing
         refill_rate_per_block: 100000,  // 100k gas refill per block
         cleanup_interval: 100,
+        ..Default::default()
     },
     ..Default::default()
 })]

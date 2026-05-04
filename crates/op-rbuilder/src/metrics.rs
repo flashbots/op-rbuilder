@@ -139,8 +139,6 @@ pub struct OpRBuilderMetrics {
     pub reverted_tx_gas_used: Histogram,
     /// Gas used by reverted transactions in the latest block
     pub payload_reverted_tx_gas_used: Gauge,
-    /// Histogram of tx simulation duration
-    pub tx_simulation_duration: Histogram,
     /// Byte size of transactions
     pub tx_byte_size: Histogram,
     /// How much less flashblocks we issue to be on time with block construction
@@ -262,6 +260,29 @@ pub fn record_flashblock_publish_timing(flashblock_index: u64, offset_ms: f64) {
         "flashblock_index" => flashblock_index.to_string()
     )
     .record(offset_ms);
+}
+
+/// Record tx simulation duration with labels for tx source (`bundle` vs.
+/// `mempool`) and EVM outcome (`success` / `reverted` / `halted`). Sum
+/// across labels in PromQL to recover the prior unlabeled total.
+pub fn record_tx_simulation_duration(
+    duration: std::time::Duration,
+    is_bundle: bool,
+    result: &revm::context::result::ExecutionResult<op_revm::OpHaltReason>,
+) {
+    use revm::context::result::ExecutionResult;
+    let kind = if is_bundle { "bundle" } else { "mempool" };
+    let outcome = match result {
+        ExecutionResult::Success { .. } => "success",
+        ExecutionResult::Revert { .. } => "reverted",
+        ExecutionResult::Halt { .. } => "halted",
+    };
+    histogram!(
+        "op_rbuilder_tx_simulation_duration",
+        "kind" => kind,
+        "result" => outcome,
+    )
+    .record(duration);
 }
 
 /// Set gauge metrics for some flags so we can inspect which ones are set

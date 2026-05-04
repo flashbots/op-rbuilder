@@ -2,7 +2,6 @@ use crate::{
     backrun_bundle::{BackrunBundleArgs, BackrunBundleGlobalPool, BackrunBundlesPayloadCtx},
     builder::{BuilderConfig, OpPayloadBuilderCtx},
     evm::OpBlockEvmFactory,
-    gas_limiter::{AddressGasLimiter, args::GasLimiterArgs},
     metrics::OpRBuilderMetrics,
     traits::ClientBounds,
 };
@@ -117,7 +116,7 @@ impl OpPayloadSyncerCtx {
             metrics: self.metrics,
             max_gas_per_txn: self.max_gas_per_txn,
             max_uncompressed_block_size: self.max_uncompressed_block_size,
-            address_gas_limiter: AddressGasLimiter::new(GasLimiterArgs::default()),
+            gas_limiters: None,
             backrun_ctx,
             exclude_reverts_between_flashblocks: self.exclude_reverts_between_flashblocks,
             enable_tx_tracking_debug_logs: self.enable_tx_tracking_debug_logs,
