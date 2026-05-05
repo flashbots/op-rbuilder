@@ -592,6 +592,7 @@ where
             target: "payload_builder",
             id = %fb_payload.payload_id,
             target_flashblocks,
+            schedule = ?flashblock_scheduler,
             "Computed flashblock timing schedule"
         );
 
