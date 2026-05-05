@@ -35,7 +35,7 @@ use crate::{
     },
     evm::OpBlockEvmFactory,
     hardforks::ActiveHardforks,
-    limiter::AddressLimiter,
+    limiter::{AddressLimiter, AddressLimiterOverlay},
     metrics::OpRBuilderMetrics,
     primitives::reth::{ExecutionInfo, TxnExecutionResult},
     traits::PayloadTxsBounds,
@@ -64,8 +64,9 @@ pub struct OpPayloadBuilderCtx {
     pub max_gas_per_txn: Option<u64>,
     /// Maximum cumulative uncompressed (EIP-2718 encoded) block size in bytes.
     pub max_uncompressed_block_size: Option<u64>,
-    /// Per-address rate limiting based on gas and/or compute time. This is an
-    /// optional feature.
+    /// Canonical per-address rate limiter (gas and/or compute time). Each
+    /// payload job forks a per-build [`AddressLimiterOverlay`] off this; the
+    /// only direct mutation here is the per-block `refresh`.
     pub address_limiter: AddressLimiter,
     /// Backrun bundle configuration.
     pub backrun_bundle_args: BackrunBundleArgs,
@@ -98,6 +99,12 @@ pub struct OpPayloadJobCtx {
     cancel: FlashblockJobCancellation,
     /// Per-block view into the global backrun bundle pool.
     backrun_pool: Option<BackrunBundlePayloadPool>,
+    /// Per-build overlay onto the canonical [`AddressLimiter`] held by
+    /// `builder_ctx`. Charges accumulate privately here and auto-commit
+    /// back into the canonical when this ctx is dropped. Shadows the
+    /// `address_limiter` field reached via `Deref` to `OpPayloadBuilderCtx`,
+    /// so `self.address_limiter` inside this ctx always hits the overlay.
+    address_limiter: AddressLimiterOverlay,
 }
 
 impl OpPayloadJobCtx {
