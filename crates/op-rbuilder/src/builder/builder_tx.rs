@@ -26,7 +26,7 @@ use revm::{
 use tracing::{error, trace, warn};
 
 use crate::{
-    builder::context::OpPayloadBuilderCtx, primitives::reth::ExecutionInfo, tx_signer::Signer,
+    builder::context::OpPayloadJobCtx, primitives::reth::ExecutionInfo, tx_signer::Signer,
 };
 
 #[derive(Debug, Default)]
@@ -142,7 +142,7 @@ pub trait BuilderTransactions {
         &self,
         state_provider: impl StateProvider + Clone,
         info: &mut ExecutionInfo,
-        ctx: &OpPayloadBuilderCtx,
+        ctx: &OpPayloadJobCtx,
         db: &mut State<impl Database + DatabaseRef>,
         top_of_block: bool,
         is_first_flashblock: bool,
@@ -154,7 +154,7 @@ pub trait BuilderTransactions {
         &self,
         state_provider: impl StateProvider + Clone,
         info: &mut ExecutionInfo,
-        ctx: &OpPayloadBuilderCtx,
+        ctx: &OpPayloadJobCtx,
         db: &State<impl Database>,
         top_of_block: bool,
         is_first_flashblock: bool,
@@ -177,7 +177,7 @@ pub trait BuilderTransactions {
         &self,
         state_provider: impl StateProvider + Clone,
         info: &mut ExecutionInfo,
-        builder_ctx: &OpPayloadBuilderCtx,
+        builder_ctx: &OpPayloadJobCtx,
         db: &mut State<impl Database>,
         top_of_block: bool,
         is_first_flashblock: bool,
@@ -321,7 +321,7 @@ pub trait BuilderTransactions {
         from: Signer,
         gas_used: u64,
         calldata: Bytes,
-        ctx: &OpPayloadBuilderCtx,
+        ctx: &OpPayloadJobCtx,
         db: impl DatabaseRef,
     ) -> Result<Recovered<OpTransactionSigned>, BuilderTransactionError> {
         let nonce = get_nonce(db, from.address)?;
@@ -342,7 +342,7 @@ pub trait BuilderTransactions {
     fn commit_txs(
         &self,
         signed_txs: Vec<Recovered<OpTransactionSigned>>,
-        ctx: &OpPayloadBuilderCtx,
+        ctx: &OpPayloadJobCtx,
         db: &mut State<impl Database>,
     ) -> Result<(), BuilderTransactionError> {
         let mut evm = ctx.evm_factory.evm(&mut *db);
@@ -441,7 +441,7 @@ impl BuilderTxBase {
 
     pub(super) fn simulate_builder_tx(
         &self,
-        ctx: &OpPayloadBuilderCtx,
+        ctx: &OpPayloadJobCtx,
         db: impl DatabaseRef,
     ) -> Result<Option<BuilderTransactionCtx>, BuilderTransactionError> {
         match self.signer {
@@ -486,7 +486,7 @@ impl BuilderTxBase {
 
     fn signed_builder_tx(
         &self,
-        ctx: &OpPayloadBuilderCtx,
+        ctx: &OpPayloadJobCtx,
         db: impl DatabaseRef,
         signer: Signer,
         gas_used: u64,

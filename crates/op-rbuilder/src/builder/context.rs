@@ -13,7 +13,7 @@ use reth_evm::{
 };
 use reth_node_api::PayloadBuilderError;
 use reth_optimism_chainspec::OpChainSpec;
-use reth_optimism_evm::OpNextBlockEnvAttributes;
+use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
 use reth_optimism_forks::OpHardforks;
 use reth_optimism_node::OpPayloadBuilderAttributes;
 use reth_optimism_payload_builder::{
@@ -32,12 +32,12 @@ use reth_transaction_pool::{BestTransactionsAttributes, PoolTransaction};
 use revm::{
     Database as _, DatabaseCommit, context::result::ResultAndState, interpreter::as_u64_saturated,
 };
-use std::{sync::Arc, time::Instant};
+use std::{ops::Deref, sync::Arc, time::Instant};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, trace};
 
 use crate::{
-    backrun_bundle::BackrunBundlesPayloadCtx,
+    backrun_bundle::{BackrunBundleArgs, BackrunBundleGlobalPool, BackrunBundlePayloadPool},
     evm::OpBlockEvmFactory,
     gas_limiter::AddressGasLimiter,
     metrics::OpRBuilderMetrics,
@@ -45,22 +45,23 @@ use crate::{
     traits::PayloadTxsBounds,
 };
 
-/// Container type that holds all necessities to build a new payload.
+/// Configuration that is constant for the entire builder lifetime and shared
+/// across every payload job via [`Arc`].
+///
+/// Every field here is either set once at builder construction (CLI args /
+/// `BuilderConfig`) or is itself an `Arc`/handle whose backing data lives
+/// outside the per-job context (e.g. metrics registry, global backrun pool,
+/// per-address gas limiter buckets).
+#[derive(Debug)]
 pub struct OpPayloadBuilderCtx {
-    /// Factory for creating EVM instances (bundles evm_config + evm_env).
-    pub evm_factory: OpBlockEvmFactory,
+    /// EVM configuration used to build a per-job [`OpBlockEvmFactory`].
+    pub evm_config: OpEvmConfig,
     /// The DA config for the payload builder
     pub da_config: OpDAConfig,
-    // Gas limit configuration for the payload builder
+    /// Gas limit configuration for the payload builder
     pub gas_limit_config: OpGasLimitConfig,
     /// The chainspec
     pub chain_spec: Arc<OpChainSpec>,
-    /// How to build the payload.
-    pub config: PayloadConfig<OpPayloadBuilderAttributes<OpTransactionSigned>>,
-    /// Block env attributes for the current block.
-    pub block_env_attributes: OpNextBlockEnvAttributes,
-    /// Marker to check whether the job has been cancelled.
-    pub cancel: CancellationToken,
     /// The metrics for the builder
     pub metrics: Arc<OpRBuilderMetrics>,
     /// Max gas that can be used by a transaction.
@@ -69,8 +70,10 @@ pub struct OpPayloadBuilderCtx {
     pub max_uncompressed_block_size: Option<u64>,
     /// Rate limiting based on gas. This is an optional feature.
     pub address_gas_limiter: AddressGasLimiter,
-    /// Backrun bundles context.
-    pub backrun_ctx: BackrunBundlesPayloadCtx,
+    /// Global pool of backrun bundles (per-block views are derived in the per-job ctx).
+    pub backrun_bundle_pool: BackrunBundleGlobalPool,
+    /// Backrun bundle configuration.
+    pub backrun_bundle_args: BackrunBundleArgs,
     /// Skip reverted txs in subsequent flashblocks
     pub exclude_reverts_between_flashblocks: bool,
     /// Enable tx tracking logs
@@ -81,7 +84,32 @@ pub struct OpPayloadBuilderCtx {
     pub enable_incremental_state_root: bool,
 }
 
-impl OpPayloadBuilderCtx {
+/// Container type that holds all necessities to build a new payload.
+/// This struct is constructed once per payload job.
+pub struct OpPayloadJobCtx {
+    /// Builder-lifetime configuration shared with all other in-flight jobs.
+    pub builder_ctx: Arc<OpPayloadBuilderCtx>,
+    /// Factory for creating EVM instances (bundles evm_config + evm_env).
+    pub evm_factory: OpBlockEvmFactory,
+    /// How to build the payload.
+    pub config: PayloadConfig<OpPayloadBuilderAttributes<OpTransactionSigned>>,
+    /// Block env attributes for the current block.
+    pub block_env_attributes: OpNextBlockEnvAttributes,
+    /// Marker to check whether the job has been cancelled.
+    pub cancel: CancellationToken,
+    /// Per-block view into the global backrun bundle pool.
+    pub backrun_pool: BackrunBundlePayloadPool,
+}
+
+impl Deref for OpPayloadJobCtx {
+    type Target = OpPayloadBuilderCtx;
+
+    fn deref(&self) -> &Self::Target {
+        &self.builder_ctx
+    }
+}
+
+impl OpPayloadJobCtx {
     pub(super) fn with_cancel(self, cancel: CancellationToken) -> Self {
         Self { cancel, ..self }
     }
@@ -681,9 +709,9 @@ impl OpPayloadBuilderCtx {
                 );
             }
 
-            let can_backrun = self.backrun_ctx.args.backruns_enabled
+            let can_backrun = self.backrun_bundle_args.backruns_enabled
                 && tx_succeeded
-                && !self.backrun_ctx.args.is_limit_reached(
+                && !self.backrun_bundle_args.is_limit_reached(
                     num_backruns_considered,
                     num_backruns_successful,
                     0,
@@ -693,13 +721,12 @@ impl OpPayloadBuilderCtx {
             if can_backrun {
                 let backrun_start_time = Instant::now();
                 let gas_left = block_gas_limit.saturating_sub(info.cumulative_gas_used);
-                let backruns = self.backrun_ctx.pool.get_backruns(
+                let backruns = self.backrun_pool.get_backruns(
                     &target_hash,
                     |addr| evm.db_mut().basic(addr).ok().flatten(),
                     base_fee,
                     gas_left,
-                    self.backrun_ctx
-                        .args
+                    self.backrun_bundle_args
                         .max_considered_backruns_per_transaction,
                     miner_fee,
                 );
@@ -707,7 +734,7 @@ impl OpPayloadBuilderCtx {
                 let mut tx_backruns_landed = 0;
 
                 for (tx_backruns_considered, bundle) in backruns.into_iter().enumerate() {
-                    if self.backrun_ctx.args.is_limit_reached(
+                    if self.backrun_bundle_args.is_limit_reached(
                         num_backruns_considered,
                         num_backruns_successful,
                         tx_backruns_considered,
@@ -776,7 +803,10 @@ impl OpPayloadBuilderCtx {
                         continue;
                     };
 
-                    if self.backrun_ctx.args.enforce_strict_priority_fee_ordering {
+                    if self
+                        .backrun_bundle_args
+                        .enforce_strict_priority_fee_ordering
+                    {
                         if backrun_priority_fee != miner_fee {
                             log_br_txn(TxnExecutionResult::BackrunPriorityFeeInvalid);
                             continue;
@@ -872,7 +902,10 @@ impl OpPayloadBuilderCtx {
                         continue;
                     }
 
-                    if self.backrun_ctx.args.enforce_strict_priority_fee_ordering {
+                    if self
+                        .backrun_bundle_args
+                        .enforce_strict_priority_fee_ordering
+                    {
                         let stated = bundle.coinbase_profit.unwrap_or_default();
                         let coinbase_balance_after = br_state
                             .get(&coinbase)
