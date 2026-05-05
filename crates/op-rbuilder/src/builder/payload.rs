@@ -1,11 +1,10 @@
 use super::{state_root::StateRootCalculator, wspub::WebSocketPublisher};
 use crate::{
-    backrun_bundle::BackrunBundlesPayloadCtx,
     builder::{
         BuilderConfig,
         best_txs::{FlashblockPoolTxCursor, FlashblockTxCache},
         builder_tx::{BuilderTransactions, reserve_builder_tx_budget},
-        context::OpPayloadBuilderCtx,
+        context::{OpPayloadBuilderCtx, OpPayloadJobCtx},
         generator::{BuildArguments, PayloadBuilder},
         timing::{FlashblockScheduler, compute_slot_offset_ms},
     },
@@ -117,7 +116,7 @@ pub(super) struct FlashblocksState {
 }
 
 struct FallbackBuildOutput<Cache, Transition> {
-    ctx: OpPayloadBuilderCtx,
+    ctx: OpPayloadJobCtx,
     info: ExecutionInfo,
     payload: OpBuiltPayload,
     fb_payload: OpFlashblockPayload,
@@ -127,7 +126,7 @@ struct FallbackBuildOutput<Cache, Transition> {
 }
 
 struct FlashblockBuildOutput<Cache, Transition> {
-    ctx: OpPayloadBuilderCtx,
+    ctx: OpPayloadJobCtx,
     build_result: eyre::Result<Option<(FlashblocksState, OpBuiltPayload)>>,
     cache: Cache,
     transition: Transition,
@@ -277,8 +276,8 @@ pub(super) struct OpPayloadBuilder<Pool, Client, BuilderTx> {
 
 #[derive(Debug)]
 pub(super) struct OpPayloadBuilderInner<Pool, Client, BuilderTx> {
-    /// The type responsible for creating the evm.
-    evm_config: OpEvmConfig,
+    /// Builder context
+    builder_ctx: Arc<OpPayloadBuilderCtx>,
     /// The transaction pool
     pool: Pool,
     /// Node client
@@ -294,12 +293,8 @@ pub(super) struct OpPayloadBuilderInner<Pool, Client, BuilderTx> {
     ws_pub: WebSocketPublisher,
     /// System configuration for the builder
     config: BuilderConfig,
-    /// The metrics for the builder
-    metrics: Arc<OpRBuilderMetrics>,
     /// The end of builder transaction type
     builder_tx: BuilderTx,
-    /// Rate limiting based on gas. This is an optional feature.
-    address_gas_limiter: AddressGasLimiter,
     /// Tokio task metrics for monitoring spawned tasks
     task_metrics: Arc<FlashblocksTaskMetrics>,
     /// Task executor used to offload blocking work.
@@ -322,7 +317,10 @@ impl<Pool, Client, BuilderTx> Clone for OpPayloadBuilder<Pool, Client, BuilderTx
     }
 }
 
-impl<Pool, Client, BuilderTx> OpPayloadBuilder<Pool, Client, BuilderTx> {
+impl<Pool, Client, BuilderTx> OpPayloadBuilder<Pool, Client, BuilderTx>
+where
+    Client: ClientBounds,
+{
     #[expect(clippy::too_many_arguments)]
     pub(super) fn new(
         evm_config: OpEvmConfig,
@@ -338,18 +336,32 @@ impl<Pool, Client, BuilderTx> OpPayloadBuilder<Pool, Client, BuilderTx> {
         executor: Runtime,
     ) -> Self {
         let address_gas_limiter = AddressGasLimiter::new(config.gas_limiter_config.clone());
+        let builder_ctx = Arc::new(OpPayloadBuilderCtx {
+            evm_config,
+            da_config: config.da_config.clone(),
+            gas_limit_config: config.gas_limit_config.clone(),
+            chain_spec: client.chain_spec(),
+            metrics,
+            max_gas_per_txn: config.max_gas_per_txn,
+            max_uncompressed_block_size: config.max_uncompressed_block_size,
+            address_gas_limiter,
+            backrun_bundle_pool: config.backrun_bundle_pool.clone(),
+            backrun_bundle_args: config.backrun_bundle_args.clone(),
+            exclude_reverts_between_flashblocks: config.exclude_reverts_between_flashblocks,
+            enable_tx_tracking_debug_logs: config.enable_tx_tracking_debug_logs,
+            disable_state_root: config.flashblocks_config.disable_state_root,
+            enable_incremental_state_root: config.flashblocks_config.enable_incremental_state_root,
+        });
         Self {
             inner: Arc::new(OpPayloadBuilderInner {
-                evm_config,
+                builder_ctx,
                 pool,
                 client,
                 built_fb_payload_tx,
                 built_payload_tx,
                 ws_pub,
                 config,
-                metrics,
                 builder_tx,
-                address_gas_limiter,
                 task_metrics,
                 executor,
             }),
@@ -369,19 +381,33 @@ where
             OpPayloadBuilderAttributes<op_alloy_consensus::OpTxEnvelope>,
         >,
         cancel: CancellationToken,
-    ) -> eyre::Result<OpPayloadBuilderCtx> {
-        let chain_spec = self.client.chain_spec();
+    ) -> eyre::Result<OpPayloadJobCtx> {
+        let builder_ctx = &self.builder_ctx;
         let timestamp = config.attributes.timestamp();
 
-        let extra_data = if chain_spec.is_jovian_active_at_timestamp(timestamp) {
+        let extra_data = if builder_ctx
+            .chain_spec
+            .is_jovian_active_at_timestamp(timestamp)
+        {
             config
                 .attributes
-                .get_jovian_extra_data(chain_spec.base_fee_params_at_timestamp(timestamp))
+                .get_jovian_extra_data(
+                    builder_ctx
+                        .chain_spec
+                        .base_fee_params_at_timestamp(timestamp),
+                )
                 .wrap_err("failed to get holocene extra data for flashblocks payload builder")?
-        } else if chain_spec.is_holocene_active_at_timestamp(timestamp) {
+        } else if builder_ctx
+            .chain_spec
+            .is_holocene_active_at_timestamp(timestamp)
+        {
             config
                 .attributes
-                .get_holocene_extra_data(chain_spec.base_fee_params_at_timestamp(timestamp))
+                .get_holocene_extra_data(
+                    builder_ctx
+                        .chain_spec
+                        .base_fee_params_at_timestamp(timestamp),
+                )
                 .wrap_err("failed to get holocene extra data for flashblocks payload builder")?
         } else {
             Default::default()
@@ -403,40 +429,23 @@ where
         };
 
         let evm_factory = OpBlockEvmFactory::for_next_block(
-            self.evm_config.clone(),
+            builder_ctx.evm_config.clone(),
             &config.parent_header,
             &block_env_attributes,
         )
         .wrap_err("failed to create next evm env")?;
 
-        let backrun_ctx = BackrunBundlesPayloadCtx {
-            pool: self
-                .config
-                .backrun_bundle_pool
-                .block_pool(config.parent_header.number + 1),
-            args: self.config.backrun_bundle_args.clone(),
-        };
+        let backrun_pool = builder_ctx
+            .backrun_bundle_pool
+            .block_pool(config.parent_header.number + 1);
 
-        Ok(OpPayloadBuilderCtx {
+        Ok(OpPayloadJobCtx {
+            builder_ctx: Arc::clone(builder_ctx),
             evm_factory,
-            chain_spec,
             config,
             block_env_attributes,
             cancel,
-            da_config: self.config.da_config.clone(),
-            gas_limit_config: self.config.gas_limit_config.clone(),
-            metrics: self.metrics.clone(),
-            max_gas_per_txn: self.config.max_gas_per_txn,
-            max_uncompressed_block_size: self.config.max_uncompressed_block_size,
-            address_gas_limiter: self.address_gas_limiter.clone(),
-            backrun_ctx,
-            exclude_reverts_between_flashblocks: self.config.exclude_reverts_between_flashblocks,
-            enable_tx_tracking_debug_logs: self.config.enable_tx_tracking_debug_logs,
-            disable_state_root: self.config.flashblocks_config.disable_state_root,
-            enable_incremental_state_root: self
-                .config
-                .flashblocks_config
-                .enable_incremental_state_root,
+            backrun_pool,
         })
     }
 
@@ -480,7 +489,9 @@ where
             ctx.enable_incremental_state_root,
         );
 
-        self.address_gas_limiter.refresh(ctx.block_number());
+        self.builder_ctx
+            .address_gas_limiter
+            .refresh(ctx.block_number());
 
         // Phase 1: Build the fallback block.
         let fallback_span = if span.is_none() {
@@ -673,7 +684,7 @@ where
                 // ensures cancellation is checked before trigger.
                 biased;
                 _ = payload_cancel.cancelled() => {
-                    Self::record_cancellation_reason(&self.metrics, &payload_cancel, &span);
+                    Self::record_cancellation_reason(&self.builder_ctx.metrics, &payload_cancel, &span);
                     self.record_flashblocks_metrics(&ctx, &fb_state, &info, target_flashblocks, &span);
                     return Ok(());
                 }
@@ -681,7 +692,7 @@ where
                     Some(t) => t,
                     None => {
                         // Channel closed — scheduler exhausted or canceled
-                        Self::record_cancellation_reason(&self.metrics, &payload_cancel, &span);
+                        Self::record_cancellation_reason(&self.builder_ctx.metrics, &payload_cancel, &span);
                         self.record_flashblocks_metrics(&ctx, &fb_state, &info, target_flashblocks, &span);
                         return Ok(());
                     }
@@ -720,9 +731,9 @@ where
                 _ = payload_cancel.cancelled() => {
                     if payload_cancel.is_resolved() {
                         // Suppressed flashblock: we received getResolve during flashblock building
-                        self.metrics.flashblock_publish_suppressed_total.increment(1);
+                        self.builder_ctx.metrics.flashblock_publish_suppressed_total.increment(1);
                     }
-                    Self::record_cancellation_reason(&self.metrics, &payload_cancel, &span);
+                    Self::record_cancellation_reason(&self.builder_ctx.metrics, &payload_cancel, &span);
                     return Ok(());
                 }
                 result = self.executor.run_blocking_task({
@@ -806,7 +817,7 @@ where
                 if payload_cancel.is_resolved() {
                     ctx.metrics.flashblock_publish_suppressed_total.increment(1);
                 }
-                Self::record_cancellation_reason(&self.metrics, &payload_cancel, &span);
+                Self::record_cancellation_reason(&self.builder_ctx.metrics, &payload_cancel, &span);
                 self.record_flashblocks_metrics(&ctx, &fb_state, &info, target_flashblocks, &span);
                 return Ok(());
             }
@@ -817,7 +828,11 @@ where
                     next_flashblock_state
                 }
                 Ok(None) => {
-                    Self::record_cancellation_reason(&self.metrics, &payload_cancel, &span);
+                    Self::record_cancellation_reason(
+                        &self.builder_ctx.metrics,
+                        &payload_cancel,
+                        &span,
+                    );
                     self.record_flashblocks_metrics(
                         &ctx,
                         &fb_state,
@@ -849,7 +864,7 @@ where
     /// Execute the pre-steps and seal an early fallback block
     fn build_fallback_block(
         &self,
-        ctx: OpPayloadBuilderCtx,
+        ctx: OpPayloadJobCtx,
         mut fb_state: FlashblocksState,
         mut cached_reads: CachedReads,
     ) -> eyre::Result<FallbackBuildOutput<CacheState, Option<TransitionState>>> {
@@ -916,7 +931,7 @@ where
         P: StateRootProvider + HashedPostStateProvider + StorageRootProvider,
     >(
         &self,
-        ctx: &OpPayloadBuilderCtx,
+        ctx: &OpPayloadJobCtx,
         fb_state: &mut FlashblocksState,
         info: &mut ExecutionInfo,
         state: &mut State<DB>,
@@ -1156,7 +1171,7 @@ where
     /// Do some logging and metric recording when we stop building flashblocks
     fn record_flashblocks_metrics(
         &self,
-        ctx: &OpPayloadBuilderCtx,
+        ctx: &OpPayloadJobCtx,
         fb_state: &FlashblocksState,
         info: &ExecutionInfo,
         flashblocks_per_block: u64,
@@ -1232,7 +1247,7 @@ where
 
 fn execute_pre_steps<DB>(
     state: &mut State<DB>,
-    ctx: &OpPayloadBuilderCtx,
+    ctx: &OpPayloadJobCtx,
 ) -> Result<ExecutionInfo, PayloadBuilderError>
 where
     DB: Database<Error = ProviderError> + std::fmt::Debug,
@@ -1253,7 +1268,7 @@ where
 #[tracing::instrument(level = "info", name = "seal_block", skip_all)]
 pub(super) fn build_block<DB, P>(
     state: &mut State<DB>,
-    ctx: &OpPayloadBuilderCtx,
+    ctx: &OpPayloadJobCtx,
     mut fb_state: Option<&mut FlashblocksState>,
     info: &mut ExecutionInfo,
     calculate_state_root: bool,

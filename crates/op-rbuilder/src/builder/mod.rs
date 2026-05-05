@@ -30,7 +30,7 @@ pub use builder_tx::{
     SimulationSuccessResult, get_balance, get_nonce,
 };
 pub use config::FlashblocksConfig;
-pub use context::OpPayloadBuilderCtx;
+pub use context::OpPayloadJobCtx;
 pub use service::FlashblocksServiceBuilder;
 pub use state_root::StateRootCalculator;
 
