@@ -16,7 +16,7 @@ use tracing::{debug, info, warn};
 
 use crate::{
     builder::{
-        BuilderTransactionCtx, BuilderTransactionError, BuilderTransactions, OpPayloadJobCtx,
+        BuilderTransactionCtx, BuilderTransactionError, BuilderTransactions, BuilderTxEnv,
         SimulationSuccessResult, get_nonce,
     },
     flashtestations::{
@@ -117,7 +117,7 @@ impl FlashtestationsBuilderTx {
     fn set_registered(
         &self,
         state_provider: impl StateProvider + Clone,
-        ctx: &OpPayloadJobCtx,
+        ctx: &BuilderTxEnv<'_>,
     ) -> Result<(), BuilderTransactionError> {
         let mut simulation_state = State::builder()
             .with_database(StateProviderDatabase::new(state_provider))
@@ -143,7 +143,7 @@ impl FlashtestationsBuilderTx {
     fn get_permit_nonce(
         &self,
         contract_address: Address,
-        ctx: &OpPayloadJobCtx,
+        ctx: &BuilderTxEnv<'_>,
         evm: &mut OpEvm<impl Database + DatabaseRef, NoOpInspector, PrecompilesMap>,
     ) -> Result<U256, BuilderTransactionError> {
         let calldata = IERC20Permit::noncesCall {
@@ -157,14 +157,14 @@ impl FlashtestationsBuilderTx {
     fn registration_permit_signature(
         &self,
         permit_nonce: U256,
-        ctx: &OpPayloadJobCtx,
+        ctx: &BuilderTxEnv<'_>,
         evm: &mut OpEvm<impl Database + DatabaseRef, NoOpInspector, PrecompilesMap>,
     ) -> Result<Signature, BuilderTransactionError> {
         let struct_hash_calldata = IFlashtestationRegistry::computeStructHashCall {
             rawQuote: self.attestation.clone().into(),
             extendedRegistrationData: self.extra_registration_data.clone(),
             nonce: permit_nonce,
-            deadline: U256::from(ctx.timestamp()),
+            deadline: U256::from(ctx.hardforks.timestamp),
         };
         let SimulationSuccessResult { output, .. } = self.flashtestations_contract_read(
             self.registry_address,
@@ -186,7 +186,7 @@ impl FlashtestationsBuilderTx {
 
     fn signed_registration_permit_tx(
         &self,
-        ctx: &OpPayloadJobCtx,
+        ctx: &BuilderTxEnv<'_>,
         evm: &mut OpEvm<&mut State<impl Database + DatabaseRef>, NoOpInspector, PrecompilesMap>,
     ) -> Result<BuilderTransactionCtx, BuilderTransactionError> {
         let permit_nonce = self.get_permit_nonce(self.registry_address, ctx, evm)?;
@@ -195,7 +195,7 @@ impl FlashtestationsBuilderTx {
             rawQuote: self.attestation.clone().into(),
             extendedRegistrationData: self.extra_registration_data.clone(),
             nonce: permit_nonce,
-            deadline: U256::from(ctx.timestamp()),
+            deadline: U256::from(ctx.hardforks.timestamp),
             signature: signature.as_bytes().into(),
         };
         let SimulationSuccessResult {
@@ -233,7 +233,7 @@ impl FlashtestationsBuilderTx {
         &self,
         permit_nonce: U256,
         block_content_hash: B256,
-        ctx: &OpPayloadJobCtx,
+        ctx: &BuilderTxEnv<'_>,
         evm: &mut OpEvm<impl Database + DatabaseRef, NoOpInspector, PrecompilesMap>,
     ) -> Result<Signature, BuilderTransactionError> {
         let struct_hash_calldata = IBlockBuilderPolicy::computeStructHashCall {
@@ -262,15 +262,15 @@ impl FlashtestationsBuilderTx {
     fn signed_block_proof_permit_tx(
         &self,
         transactions: &[OpTransactionSigned],
-        ctx: &OpPayloadJobCtx,
+        ctx: &BuilderTxEnv<'_>,
         evm: &mut OpEvm<impl Database + DatabaseRef, NoOpInspector, PrecompilesMap>,
     ) -> Result<BuilderTransactionCtx, BuilderTransactionError> {
         let permit_nonce = self.get_permit_nonce(self.builder_policy_address, ctx, evm)?;
         let block_content_hash = Self::compute_block_content_hash(
             transactions,
-            ctx.parent_hash(),
-            ctx.block_number(),
-            ctx.timestamp(),
+            ctx.parent_hash,
+            ctx.block_number,
+            ctx.hardforks.timestamp,
         );
         let signature =
             self.block_proof_permit_signature(permit_nonce, block_content_hash, ctx, evm)?;
@@ -309,7 +309,7 @@ impl FlashtestationsBuilderTx {
         &self,
         contract_address: Address,
         calldata: T,
-        ctx: &OpPayloadJobCtx,
+        ctx: &BuilderTxEnv<'_>,
         evm: &mut OpEvm<impl Database + DatabaseRef, NoOpInspector, PrecompilesMap>,
     ) -> Result<SimulationSuccessResult<T>, BuilderTransactionError> {
         self.flashtestations_call(contract_address, calldata, vec![], ctx, evm)
@@ -320,12 +320,12 @@ impl FlashtestationsBuilderTx {
         contract_address: Address,
         calldata: T,
         expected_topics: Vec<B256>,
-        ctx: &OpPayloadJobCtx,
+        ctx: &BuilderTxEnv<'_>,
         evm: &mut OpEvm<impl Database + DatabaseRef, NoOpInspector, PrecompilesMap>,
     ) -> Result<SimulationSuccessResult<T>, BuilderTransactionError> {
         let tx_req = OpTransactionRequest::default()
-            .gas_limit(ctx.block_gas_limit())
-            .max_fee_per_gas(ctx.base_fee().into())
+            .gas_limit(ctx.block_gas_limit)
+            .max_fee_per_gas(ctx.base_fee.into())
             .to(contract_address)
             .from(self.builder_signer.address)
             .nonce(get_nonce(evm.db(), self.builder_signer.address)?)
@@ -355,7 +355,7 @@ impl BuilderTransactions for FlashtestationsBuilderTx {
         &self,
         state_provider: impl StateProvider + Clone,
         info: &mut ExecutionInfo,
-        ctx: &OpPayloadJobCtx,
+        ctx: &BuilderTxEnv<'_>,
         db: &mut State<impl Database + DatabaseRef>,
         _top_of_block: bool,
         _is_first_flashblock: bool,

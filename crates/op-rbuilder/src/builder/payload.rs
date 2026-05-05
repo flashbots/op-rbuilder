@@ -10,6 +10,7 @@ use crate::{
     },
     evm::OpBlockEvmFactory,
     gas_limiter::AddressGasLimiter,
+    hardforks::ActiveHardforks,
     metrics::{OpRBuilderMetrics, record_flashblock_publish_timing},
     primitives::reth::ExecutionInfo,
     runtime_ext::RuntimeExt,
@@ -375,7 +376,7 @@ where
     Client: ClientBounds + 'static,
     BuilderTx: BuilderTransactions + Send + Sync + 'static,
 {
-    fn get_op_payload_builder_ctx(
+    fn get_op_payload_job_ctx(
         &self,
         config: reth_basic_payload_builder::PayloadConfig<
             OpPayloadBuilderAttributes<op_alloy_consensus::OpTxEnvelope>,
@@ -439,11 +440,14 @@ where
             .backrun_bundle_pool
             .block_pool(config.parent_header.number + 1);
 
+        let hardforks = ActiveHardforks::new(Arc::clone(&builder_ctx.chain_spec), timestamp);
+
         Ok(OpPayloadJobCtx {
             builder_ctx: Arc::clone(builder_ctx),
             evm_factory,
             config,
             block_env_attributes,
+            hardforks,
             cancel,
             backrun_pool,
         })
@@ -478,7 +482,7 @@ where
         );
 
         let ctx = self
-            .get_op_payload_builder_ctx(config.clone(), payload_cancel.token())
+            .get_op_payload_job_ctx(config.clone(), payload_cancel.token())
             .map_err(|e| PayloadBuilderError::Other(e.into()))?;
 
         // Initialize flashblocks state for this block
@@ -657,7 +661,7 @@ where
 
         let fb_cancel = payload_cancel.child_token();
         let mut ctx = self
-            .get_op_payload_builder_ctx(config, fb_cancel.clone())
+            .get_op_payload_job_ctx(config, fb_cancel.clone())
             .map_err(|e| PayloadBuilderError::Other(e.into()))?;
 
         let (tx, mut rx) = mpsc::channel((expected_flashblocks + 1) as usize);
@@ -888,7 +892,7 @@ where
             && let Err(e) = self.builder_tx.add_builder_txs(
                 &state_provider,
                 &mut info,
-                &ctx,
+                &ctx.builder_tx_env(),
                 &mut state,
                 false,
                 fb_state.is_first_flashblock(),
@@ -964,7 +968,7 @@ where
             .add_builder_txs(
                 &state_provider,
                 info,
-                ctx,
+                &ctx.builder_tx_env(),
                 state,
                 true,
                 fb_state.is_first_flashblock(),
@@ -1045,7 +1049,7 @@ where
         if let Err(e) = self.builder_tx.add_builder_txs(
             &state_provider,
             info,
-            ctx,
+            &ctx.builder_tx_env(),
             state,
             false,
             fb_state.is_first_flashblock(),

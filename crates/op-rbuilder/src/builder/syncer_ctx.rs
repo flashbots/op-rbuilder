@@ -2,6 +2,7 @@ use crate::{
     builder::{BuilderConfig, OpPayloadJobCtx, context::OpPayloadBuilderCtx},
     evm::OpBlockEvmFactory,
     gas_limiter::{AddressGasLimiter, args::GasLimiterArgs},
+    hardforks::ActiveHardforks,
     metrics::OpRBuilderMetrics,
     traits::ClientBounds,
 };
@@ -89,11 +90,17 @@ impl OpPayloadSyncerCtx {
             .builder_ctx
             .backrun_bundle_pool
             .block_pool(payload_config.parent_header.number + 1);
+        let hardforks = ActiveHardforks::new(
+            Arc::clone(&self.builder_ctx.chain_spec),
+            block_env_attributes.timestamp,
+        );
+
         OpPayloadJobCtx {
             builder_ctx: self.builder_ctx,
             evm_factory,
             config: payload_config,
             block_env_attributes,
+            hardforks,
             cancel,
             backrun_pool,
         }

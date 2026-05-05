@@ -7,7 +7,7 @@ use alloy_rpc_types_eth::Withdrawals;
 use op_alloy_consensus::{OpDepositReceipt, OpTxType};
 use op_revm::L1BlockInfo;
 use reth_basic_payload_builder::PayloadConfig;
-use reth_chainspec::{EthChainSpec, EthereumHardforks};
+use reth_chainspec::EthChainSpec;
 use reth_evm::{
     ConfigureEvm, Evm, EvmError, InvalidTxError, eth::receipt_builder::ReceiptBuilderCtx,
 };
@@ -38,8 +38,10 @@ use tracing::{debug, info, trace};
 
 use crate::{
     backrun_bundle::{BackrunBundleArgs, BackrunBundleGlobalPool, BackrunBundlePayloadPool},
+    builder::builder_tx::BuilderTxEnv,
     evm::OpBlockEvmFactory,
     gas_limiter::AddressGasLimiter,
+    hardforks::ActiveHardforks,
     metrics::OpRBuilderMetrics,
     primitives::reth::{ExecutionInfo, TxnExecutionResult},
     traits::PayloadTxsBounds,
@@ -95,6 +97,8 @@ pub struct OpPayloadJobCtx {
     pub config: PayloadConfig<OpPayloadBuilderAttributes<OpTransactionSigned>>,
     /// Block env attributes for the current block.
     pub block_env_attributes: OpNextBlockEnvAttributes,
+    /// Hardfork activation state for this block's timestamp.
+    pub hardforks: ActiveHardforks,
     /// Marker to check whether the job has been cancelled.
     pub cancel: CancellationToken,
     /// Per-block view into the global backrun bundle pool.
@@ -112,6 +116,18 @@ impl Deref for OpPayloadJobCtx {
 impl OpPayloadJobCtx {
     pub(super) fn with_cancel(self, cancel: CancellationToken) -> Self {
         Self { cancel, ..self }
+    }
+
+    pub fn builder_tx_env(&self) -> BuilderTxEnv<'_> {
+        BuilderTxEnv {
+            evm_factory: &self.evm_factory,
+            hardforks: &self.hardforks,
+            base_fee: self.base_fee(),
+            block_number: self.block_number(),
+            block_gas_limit: self.block_gas_limit(),
+            parent_hash: self.parent_hash(),
+            max_uncompressed_block_size: self.max_uncompressed_block_size,
+        }
     }
 
     /// Returns the parent block the payload will be build on.
@@ -136,8 +152,8 @@ impl OpPayloadJobCtx {
 
     /// Returns the withdrawals if shanghai is active.
     pub fn withdrawals(&self) -> Option<&Withdrawals> {
-        self.chain_spec
-            .is_shanghai_active_at_timestamp(self.attributes().timestamp())
+        self.hardforks
+            .is_shanghai_active()
             .then(|| &self.attributes().payload_attributes.withdrawals)
     }
 
@@ -182,13 +198,13 @@ impl OpPayloadJobCtx {
             return blob_fields;
         }
         // Compute from execution info
-        if self.is_jovian_active() {
+        if self.hardforks.is_jovian_active() {
             let scalar = info
                 .da_footprint_scalar
                 .expect("Scalar must be defined for Jovian blocks");
             let result = info.cumulative_da_bytes_used * scalar as u64;
             (Some(0), Some(result))
-        } else if self.is_ecotone_active() {
+        } else if self.hardforks.is_ecotone_active() {
             (Some(0), Some(0))
         } else {
             (None, None)
@@ -199,7 +215,7 @@ impl OpPayloadJobCtx {
     ///
     /// After holocene this extracts the extradata from the payload
     pub fn extra_data(&self) -> Result<Bytes, PayloadBuilderError> {
-        if self.is_jovian_active() {
+        if self.hardforks.is_jovian_active() {
             self.attributes()
                 .get_jovian_extra_data(
                     self.chain_spec.base_fee_params_at_timestamp(
@@ -207,7 +223,7 @@ impl OpPayloadJobCtx {
                     ),
                 )
                 .map_err(PayloadBuilderError::other)
-        } else if self.is_holocene_active() {
+        } else if self.hardforks.is_holocene_active() {
             self.attributes()
                 .get_holocene_extra_data(
                     self.chain_spec.base_fee_params_at_timestamp(
@@ -228,47 +244,6 @@ impl OpPayloadJobCtx {
     /// Returns the unique id for this payload job.
     pub fn payload_id(&self) -> PayloadId {
         self.attributes().payload_id()
-    }
-
-    /// Returns true if regolith is active for the payload.
-    pub fn is_regolith_active(&self) -> bool {
-        self.chain_spec
-            .is_regolith_active_at_timestamp(self.attributes().timestamp())
-    }
-
-    /// Returns true if ecotone is active for the payload.
-    pub fn is_ecotone_active(&self) -> bool {
-        self.chain_spec
-            .is_ecotone_active_at_timestamp(self.attributes().timestamp())
-    }
-
-    /// Returns true if canyon is active for the payload.
-    pub fn is_canyon_active(&self) -> bool {
-        self.chain_spec
-            .is_canyon_active_at_timestamp(self.attributes().timestamp())
-    }
-
-    /// Returns true if holocene is active for the payload.
-    pub fn is_holocene_active(&self) -> bool {
-        self.chain_spec
-            .is_holocene_active_at_timestamp(self.attributes().timestamp())
-    }
-
-    /// Returns true if isthmus is active for the payload.
-    pub fn is_isthmus_active(&self) -> bool {
-        self.chain_spec
-            .is_isthmus_active_at_timestamp(self.attributes().timestamp())
-    }
-
-    /// Returns true if isthmus is active for the payload.
-    pub fn is_jovian_active(&self) -> bool {
-        self.chain_spec
-            .is_jovian_active_at_timestamp(self.attributes().timestamp())
-    }
-
-    /// Returns the chain id
-    pub fn chain_id(&self) -> u64 {
-        self.chain_spec.chain_id()
     }
 
     /// Constructs a receipt for the given transaction.
@@ -301,7 +276,7 @@ impl OpPayloadJobCtx {
                     // when set. The state transition process ensures
                     // this is only set for post-Canyon deposit
                     // transactions.
-                    deposit_receipt_version: self.is_canyon_active().then_some(1),
+                    deposit_receipt_version: self.hardforks.is_canyon_active().then_some(1),
                 })
             }
         }
@@ -340,18 +315,19 @@ impl OpPayloadJobCtx {
             // Note that this *only* needs to be done post-regolith hardfork, as deposit nonces
             // were not introduced in Bedrock. In addition, regular transactions don't have deposit
             // nonces, so we don't need to touch the DB for those.
-            let depositor_nonce = (self.is_regolith_active() && sequencer_tx.is_deposit())
-                .then(|| {
-                    evm.db_mut()
-                        .load_cache_account(sequencer_tx.signer())
-                        .map(|acc| acc.account_info().unwrap_or_default().nonce)
-                })
-                .transpose()
-                .map_err(|_| {
-                    PayloadBuilderError::other(OpPayloadBuilderError::AccountLoadFailed(
-                        sequencer_tx.signer(),
-                    ))
-                })?;
+            let depositor_nonce = (self.hardforks.is_regolith_active()
+                && sequencer_tx.is_deposit())
+            .then(|| {
+                evm.db_mut()
+                    .load_cache_account(sequencer_tx.signer())
+                    .map(|acc| acc.account_info().unwrap_or_default().nonce)
+            })
+            .transpose()
+            .map_err(|_| {
+                PayloadBuilderError::other(OpPayloadBuilderError::AccountLoadFailed(
+                    sequencer_tx.signer(),
+                ))
+            })?;
 
             let ResultAndState { result, state } = match evm.transact(&sequencer_tx) {
                 Ok(res) => res,

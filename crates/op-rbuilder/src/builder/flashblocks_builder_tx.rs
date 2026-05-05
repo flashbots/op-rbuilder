@@ -15,7 +15,9 @@ use tracing::warn;
 use crate::{
     builder::{
         BuilderTransactionCtx, BuilderTransactionError, BuilderTransactions,
-        SimulationSuccessResult, builder_tx::BuilderTxBase, context::OpPayloadJobCtx, get_nonce,
+        SimulationSuccessResult,
+        builder_tx::{BuilderTxBase, BuilderTxEnv},
+        get_nonce,
     },
     flashtestations::builder_tx::FlashtestationsBuilderTx,
     primitives::reth::ExecutionInfo,
@@ -75,7 +77,7 @@ impl BuilderTransactions for FlashblocksBuilderTx {
         &self,
         state_provider: impl StateProvider + Clone,
         info: &mut ExecutionInfo,
-        ctx: &OpPayloadJobCtx,
+        ctx: &BuilderTxEnv<'_>,
         db: &mut State<impl Database + DatabaseRef>,
         top_of_block: bool,
         is_first_flashblock: bool,
@@ -153,7 +155,7 @@ impl FlashblocksNumberBuilderTx {
 
     fn signed_increment_flashblocks_tx(
         &self,
-        ctx: &OpPayloadJobCtx,
+        ctx: &BuilderTxEnv<'_>,
         evm: &mut OpEvm<impl Database + DatabaseRef, NoOpInspector, PrecompilesMap>,
     ) -> Result<BuilderTransactionCtx, BuilderTransactionError> {
         let calldata = IFlashblockNumber::incrementFlashblockNumberCall {};
@@ -164,7 +166,7 @@ impl FlashblocksNumberBuilderTx {
         &self,
         flashtestations_signer: &Signer,
         current_flashblock_number: U256,
-        ctx: &OpPayloadJobCtx,
+        ctx: &BuilderTxEnv<'_>,
         evm: &mut OpEvm<impl Database + DatabaseRef, NoOpInspector, PrecompilesMap>,
     ) -> Result<Signature, BuilderTransactionError> {
         let struct_hash_calldata = IFlashblockNumber::computeStructHashCall {
@@ -183,7 +185,7 @@ impl FlashblocksNumberBuilderTx {
     fn signed_increment_flashblocks_permit_tx(
         &self,
         flashtestations_signer: &Signer,
-        ctx: &OpPayloadJobCtx,
+        ctx: &BuilderTxEnv<'_>,
         evm: &mut OpEvm<impl Database + DatabaseRef, NoOpInspector, PrecompilesMap>,
     ) -> Result<BuilderTransactionCtx, BuilderTransactionError> {
         let current_flashblock_calldata = IFlashblockNumber::flashblockNumberCall {};
@@ -201,7 +203,7 @@ impl FlashblocksNumberBuilderTx {
     fn increment_flashblocks_tx<T: SolCall + Clone>(
         &self,
         calldata: T,
-        ctx: &OpPayloadJobCtx,
+        ctx: &BuilderTxEnv<'_>,
         evm: &mut OpEvm<impl Database + DatabaseRef, NoOpInspector, PrecompilesMap>,
     ) -> Result<BuilderTransactionCtx, BuilderTransactionError> {
         let SimulationSuccessResult { gas_used, .. } = self.simulate_flashblocks_call(
@@ -231,7 +233,7 @@ impl FlashblocksNumberBuilderTx {
     fn simulate_flashblocks_readonly_call<T: SolCall>(
         &self,
         calldata: T,
-        ctx: &OpPayloadJobCtx,
+        ctx: &BuilderTxEnv<'_>,
         evm: &mut OpEvm<impl Database + DatabaseRef, NoOpInspector, PrecompilesMap>,
     ) -> Result<SimulationSuccessResult<T>, BuilderTransactionError> {
         self.simulate_flashblocks_call(calldata, vec![], ctx, evm)
@@ -241,12 +243,12 @@ impl FlashblocksNumberBuilderTx {
         &self,
         calldata: T,
         expected_logs: Vec<B256>,
-        ctx: &OpPayloadJobCtx,
+        ctx: &BuilderTxEnv<'_>,
         evm: &mut OpEvm<impl Database + DatabaseRef, NoOpInspector, PrecompilesMap>,
     ) -> Result<SimulationSuccessResult<T>, BuilderTransactionError> {
         let tx_req = OpTransactionRequest::default()
-            .gas_limit(ctx.block_gas_limit())
-            .max_fee_per_gas(ctx.base_fee().into())
+            .gas_limit(ctx.block_gas_limit)
+            .max_fee_per_gas(ctx.base_fee.into())
             .to(self.flashblock_number_address)
             .from(self.signer.address) // use tee key as signer for simulations
             .nonce(get_nonce(evm.db(), self.signer.address)?)
@@ -264,7 +266,7 @@ impl BuilderTransactions for FlashblocksNumberBuilderTx {
         &self,
         state_provider: impl StateProvider + Clone,
         info: &mut ExecutionInfo,
-        ctx: &OpPayloadJobCtx,
+        ctx: &BuilderTxEnv<'_>,
         db: &mut State<impl Database + DatabaseRef>,
         top_of_block: bool,
         is_first_flashblock: bool,
