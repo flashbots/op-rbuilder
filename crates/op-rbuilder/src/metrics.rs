@@ -139,8 +139,6 @@ pub struct OpRBuilderMetrics {
     pub reverted_tx_gas_used: Histogram,
     /// Gas used by reverted transactions in the latest block
     pub payload_reverted_tx_gas_used: Gauge,
-    /// Histogram of tx simulation duration
-    pub tx_simulation_duration: Histogram,
     /// Byte size of transactions
     pub tx_byte_size: Histogram,
     /// How much less flashblocks we issue to be on time with block construction
@@ -252,6 +250,22 @@ impl OpRBuilderMetrics {
         self.backrun_transaction_processing_gauge
             .set(backrun_transaction_processing_time);
     }
+}
+
+/// Record tx simulation duration with source/result/revert_protected labels.
+pub fn record_tx_simulation_duration(
+    duration: std::time::Duration,
+    is_bundle: bool,
+    reverted: bool,
+    revert_protected: bool,
+) {
+    histogram!(
+        "op_rbuilder_tx_simulation_duration",
+        "source" => if is_bundle { "bundle" } else { "mempool" },
+        "result" => if reverted { "revert" } else { "success" },
+        "revert_protected" => if revert_protected { "true" } else { "false" },
+    )
+    .record(duration.as_secs_f64());
 }
 
 /// Record the slot-relative time at which a flashblock was published.

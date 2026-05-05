@@ -37,7 +37,7 @@ use crate::{
     evm::OpBlockEvmFactory,
     gas_limiter::AddressGasLimiter,
     hardforks::ActiveHardforks,
-    metrics::OpRBuilderMetrics,
+    metrics::{OpRBuilderMetrics, record_tx_simulation_duration},
     primitives::reth::{ExecutionInfo, TxnExecutionResult},
     traits::PayloadTxsBounds,
 };
@@ -420,7 +420,7 @@ impl OpPayloadJobCtx {
             let tx_da_size = tx.estimated_da_size();
 
             let is_bundle_tx = tx.is_bundle();
-            let exclude_reverting_txs = tx.revert_protected();
+            let revert_protected = tx.revert_protected();
 
             let tx = tx.into_consensus();
             let tx_hash = tx.tx_hash();
@@ -443,7 +443,7 @@ impl OpPayloadJobCtx {
                         id = %self.payload_id(),
                         tx_hash = %tx_hash,
                         tx_da_size,
-                        exclude_reverting_txs,
+                        revert_protected,
                         result = %result,
                         "Considering transaction",
                     );
@@ -528,9 +528,13 @@ impl OpPayloadJobCtx {
                 }
             };
 
-            self.metrics
-                .tx_simulation_duration
-                .record(tx_simulation_start_time.elapsed());
+            let tx_simulation_elapsed = tx_simulation_start_time.elapsed();
+            record_tx_simulation_duration(
+                tx_simulation_elapsed,
+                is_bundle_tx,
+                !result.is_success(),
+                revert_protected,
+            );
             self.metrics.tx_byte_size.record(tx.inner().size() as f64);
             num_txs_simulated += 1;
 
@@ -546,7 +550,7 @@ impl OpPayloadJobCtx {
                     flashblock_index,
                     gas_used,
                     success = result.is_success(),
-                    evm_duration_us = tx_simulation_start_time.elapsed().as_micros() as u64,
+                    evm_duration_us = tx_simulation_elapsed.as_micros() as u64,
                     stage = "evm_executed"
                 );
             }
@@ -572,7 +576,7 @@ impl OpPayloadJobCtx {
                 if is_bundle_tx {
                     num_bundles_reverted += 1;
                 }
-                if exclude_reverting_txs {
+                if revert_protected {
                     log_txn(TxnExecutionResult::RevertedAndExcluded);
                     trace!(
                         target: "payload_builder",
@@ -809,9 +813,12 @@ impl OpPayloadJobCtx {
                             continue;
                         }
                     };
-                    self.metrics
-                        .tx_simulation_duration
-                        .record(br_simulation_start.elapsed());
+                    record_tx_simulation_duration(
+                        br_simulation_start.elapsed(),
+                        true,
+                        !br_result.is_success(),
+                        true,
+                    );
                     self.metrics
                         .tx_byte_size
                         .record(bundle.backrun_tx.inner().size() as f64);
