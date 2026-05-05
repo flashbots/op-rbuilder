@@ -1,13 +1,15 @@
 use crate::{
-    builder::{p2p::Message, payload::build_block, syncer_ctx::OpPayloadSyncerCtx},
+    builder::{
+        p2p::Message, payload::build_block, receipt::build_receipt, syncer_ctx::OpPayloadSyncerCtx,
+    },
     evm::OpBlockEvmFactory,
+    hardforks::ActiveHardforks,
     primitives::reth::ExecutionInfo,
     traits::ClientBounds,
 };
 use alloy_evm::eth::receipt_builder::ReceiptBuilderCtx;
 use alloy_primitives::B64;
 use eyre::{WrapErr as _, bail};
-use op_alloy_consensus::OpTxType;
 use op_alloy_rpc_types_engine::OpFlashblockPayload;
 use op_revm::L1BlockInfo;
 use reth::revm::{State, database::StateProviderDatabase};
@@ -19,7 +21,6 @@ use reth_optimism_evm::OpNextBlockEnvAttributes;
 use reth_optimism_forks::OpHardforks;
 use reth_optimism_node::{OpEngineTypes, OpPayloadBuilderAttributes};
 use reth_optimism_payload_builder::OpBuiltPayload;
-use reth_optimism_primitives::OpReceipt;
 use reth_payload_builder::EthPayloadBuilderAttributes;
 use reth_primitives_traits::SealedHeader;
 use reth_tasks::Runtime;
@@ -318,7 +319,7 @@ where
 
     let enable_tx_tracking_debug_logs = ctx.enable_tx_tracking_debug_logs();
     let builder_ctx =
-        ctx.into_op_payload_builder_ctx(payload_config, evm_factory, block_env_attributes, cancel);
+        ctx.into_op_payload_job_ctx(payload_config, evm_factory, block_env_attributes, cancel);
 
     let (built_payload, fb_payload) = build_block(
         &mut state,
@@ -442,12 +443,12 @@ fn execute_transactions(
             cumulative_gas_used: info.cumulative_gas_used,
         };
 
+        let hardforks = ActiveHardforks::new(chain_spec.clone(), timestamp);
         info.receipts.push(build_receipt(
-            ctx,
             evm_factory,
+            &hardforks,
             receipt_ctx,
             depositor_nonce,
-            timestamp,
         ));
 
         evm.db_mut().commit(state);
@@ -467,47 +468,6 @@ fn execute_transactions(
     info.da_footprint_scalar = da_footprint_gas_scalar;
 
     Ok(())
-}
-
-fn build_receipt<E: alloy_evm::Evm>(
-    ctx: &OpPayloadSyncerCtx,
-    evm_factory: &OpBlockEvmFactory,
-    receipt_ctx: ReceiptBuilderCtx<'_, OpTxType, E>,
-    deposit_nonce: Option<u64>,
-    timestamp: u64,
-) -> OpReceipt {
-    use alloy_consensus::Eip658Value;
-    use alloy_op_evm::block::receipt_builder::OpReceiptBuilder as _;
-    use op_alloy_consensus::OpDepositReceipt;
-    use reth_evm::ConfigureEvm as _;
-
-    let receipt_builder = evm_factory
-        .evm_config()
-        .block_executor_factory()
-        .receipt_builder();
-    match receipt_builder.build_receipt(receipt_ctx) {
-        Ok(receipt) => receipt,
-        Err(receipt_ctx) => {
-            let receipt = alloy_consensus::Receipt {
-                // Success flag was added in `EIP-658: Embedding transaction status code
-                // in receipts`.
-                status: Eip658Value::Eip658(receipt_ctx.result.is_success()),
-                cumulative_gas_used: receipt_ctx.cumulative_gas_used,
-                logs: receipt_ctx.result.into_logs(),
-            };
-
-            receipt_builder.build_deposit_receipt(OpDepositReceipt {
-                inner: receipt,
-                deposit_nonce,
-                // The deposit receipt version was introduced in Canyon to indicate an
-                // update to how receipt hashes should be computed
-                // when set. The state transition process ensures
-                // this is only set for post-Canyon deposit
-                // transactions.
-                deposit_receipt_version: ctx.is_canyon_active(timestamp).then_some(1),
-            })
-        }
-    }
 }
 
 /// Validates the payload header and its relationship with the parent before execution.

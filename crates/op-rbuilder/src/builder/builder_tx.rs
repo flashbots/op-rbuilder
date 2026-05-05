@@ -1,19 +1,19 @@
-use alloy_consensus::{Eip658Value, TxEip1559};
+use alloy_consensus::TxEip1559;
 use alloy_eips::{Encodable2718, eip7623::TOTAL_COST_FLOOR_PER_TOKEN};
 use alloy_evm::{Database, rpc::TryIntoTxEnv};
-use alloy_op_evm::{OpEvm, block::receipt_builder::OpReceiptBuilder};
+use alloy_op_evm::OpEvm;
 use alloy_primitives::{Address, B256, BlockHash, Bytes, TxKind, U256, map::HashSet};
 use alloy_sol_types::{ContractError, Revert, SolCall, SolError, SolInterface};
 use core::fmt::Debug;
-use op_alloy_consensus::{OpDepositReceipt, OpTxType, OpTypedTransaction};
+use op_alloy_consensus::OpTypedTransaction;
 use op_alloy_rpc_types::OpTransactionRequest;
 use op_revm::{OpHaltReason, OpTransactionError};
 use reth_evm::{
-    ConfigureEvm, Evm, EvmError, InvalidTxError, eth::receipt_builder::ReceiptBuilderCtx,
+    Evm, EvmError, InvalidTxError, eth::receipt_builder::ReceiptBuilderCtx,
     precompiles::PrecompilesMap,
 };
 use reth_node_api::PayloadBuilderError;
-use reth_optimism_primitives::{OpReceipt, OpTransactionSigned};
+use reth_optimism_primitives::OpTransactionSigned;
 use reth_primitives_traits::Recovered;
 use reth_provider::{ProviderError, StateProvider};
 use reth_revm::{State, database::StateProviderDatabase};
@@ -26,8 +26,8 @@ use revm::{
 use tracing::{error, trace, warn};
 
 use crate::{
-    evm::OpBlockEvmFactory, hardforks::ActiveHardforks, primitives::reth::ExecutionInfo,
-    tx_signer::Signer,
+    builder::receipt::build_receipt, evm::OpBlockEvmFactory, hardforks::ActiveHardforks,
+    primitives::reth::ExecutionInfo, tx_signer::Signer,
 };
 
 #[derive(Debug, Default)]
@@ -150,33 +150,6 @@ pub struct BuilderTxEnv<'a> {
 impl BuilderTxEnv<'_> {
     pub fn chain_id(&self) -> u64 {
         self.hardforks.chain_id()
-    }
-
-    pub fn build_receipt<E: Evm>(
-        &self,
-        ctx: ReceiptBuilderCtx<'_, OpTxType, E>,
-        deposit_nonce: Option<u64>,
-    ) -> OpReceipt {
-        let receipt_builder = self
-            .evm_factory
-            .evm_config()
-            .block_executor_factory()
-            .receipt_builder();
-        match receipt_builder.build_receipt(ctx) {
-            Ok(receipt) => receipt,
-            Err(ctx) => {
-                let receipt = alloy_consensus::Receipt {
-                    status: Eip658Value::Eip658(ctx.result.is_success()),
-                    cumulative_gas_used: ctx.cumulative_gas_used,
-                    logs: ctx.result.into_logs(),
-                };
-                receipt_builder.build_deposit_receipt(OpDepositReceipt {
-                    inner: receipt,
-                    deposit_nonce,
-                    deposit_receipt_version: self.hardforks.is_canyon_active().then_some(1),
-                })
-            }
-        }
     }
 }
 
@@ -325,15 +298,19 @@ pub trait BuilderTransactions {
             info.cumulative_da_bytes_used += builder_tx.da_size;
             info.cumulative_uncompressed_bytes += tx_uncompressed_size;
 
-            let receipt_builder_ctx = ReceiptBuilderCtx {
+            let receipt_ctx = ReceiptBuilderCtx {
                 tx_type: builder_tx.signed_tx.inner().tx_type(),
                 evm: &evm,
                 result,
                 state: &state,
                 cumulative_gas_used: info.cumulative_gas_used,
             };
-            info.receipts
-                .push(ctx.build_receipt(receipt_builder_ctx, None));
+            info.receipts.push(build_receipt(
+                ctx.evm_factory,
+                ctx.hardforks,
+                receipt_ctx,
+                None,
+            ));
 
             // Commit changes
             evm.db_mut().commit(state);

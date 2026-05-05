@@ -72,14 +72,7 @@ impl OpPayloadSyncerCtx {
             .is_regolith_active_at_timestamp(timestamp)
     }
 
-    /// Returns true if canyon is active for the payload.
-    pub(super) fn is_canyon_active(&self, timestamp: u64) -> bool {
-        self.builder_ctx
-            .chain_spec
-            .is_canyon_active_at_timestamp(timestamp)
-    }
-
-    pub(super) fn into_op_payload_builder_ctx(
+    pub(super) fn into_op_payload_job_ctx(
         self,
         payload_config: PayloadConfig<OpPayloadBuilderAttributes<OpTransactionSigned>>,
         evm_factory: OpBlockEvmFactory,

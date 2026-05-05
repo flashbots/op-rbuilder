@@ -19,6 +19,7 @@ mod generator;
 mod p2p;
 mod payload;
 mod payload_handler;
+mod receipt;
 mod service;
 mod state_root;
 mod syncer_ctx;

@@ -1,16 +1,12 @@
-use alloy_consensus::{Eip658Value, Transaction, conditional::BlockConditionalAttributes};
+use alloy_consensus::{Transaction, conditional::BlockConditionalAttributes};
 use alloy_eips::{Encodable2718, Typed2718};
 use alloy_evm::Database;
-use alloy_op_evm::block::receipt_builder::OpReceiptBuilder;
 use alloy_primitives::{B256, BlockHash, Bytes, U256};
 use alloy_rpc_types_eth::Withdrawals;
-use op_alloy_consensus::{OpDepositReceipt, OpTxType};
 use op_revm::L1BlockInfo;
 use reth_basic_payload_builder::PayloadConfig;
 use reth_chainspec::EthChainSpec;
-use reth_evm::{
-    ConfigureEvm, Evm, EvmError, InvalidTxError, eth::receipt_builder::ReceiptBuilderCtx,
-};
+use reth_evm::{Evm, EvmError, InvalidTxError, eth::receipt_builder::ReceiptBuilderCtx};
 use reth_node_api::PayloadBuilderError;
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
@@ -20,7 +16,7 @@ use reth_optimism_payload_builder::{
     config::{OpDAConfig, OpGasLimitConfig},
     error::OpPayloadBuilderError,
 };
-use reth_optimism_primitives::{OpReceipt, OpTransactionSigned};
+use reth_optimism_primitives::OpTransactionSigned;
 use reth_optimism_txpool::{
     conditional::MaybeConditionalTransaction, estimated_da_size::DataAvailabilitySized,
 };
@@ -38,7 +34,7 @@ use tracing::{debug, info, trace};
 
 use crate::{
     backrun_bundle::{BackrunBundleArgs, BackrunBundleGlobalPool, BackrunBundlePayloadPool},
-    builder::builder_tx::BuilderTxEnv,
+    builder::{builder_tx::BuilderTxEnv, receipt::build_receipt},
     evm::OpBlockEvmFactory,
     gas_limiter::AddressGasLimiter,
     hardforks::ActiveHardforks,
@@ -246,42 +242,6 @@ impl OpPayloadJobCtx {
         self.attributes().payload_id()
     }
 
-    /// Constructs a receipt for the given transaction.
-    pub fn build_receipt<E: Evm>(
-        &self,
-        ctx: ReceiptBuilderCtx<'_, OpTxType, E>,
-        deposit_nonce: Option<u64>,
-    ) -> OpReceipt {
-        let receipt_builder = self
-            .evm_factory
-            .evm_config()
-            .block_executor_factory()
-            .receipt_builder();
-        match receipt_builder.build_receipt(ctx) {
-            Ok(receipt) => receipt,
-            Err(ctx) => {
-                let receipt = alloy_consensus::Receipt {
-                    // Success flag was added in `EIP-658: Embedding transaction status code
-                    // in receipts`.
-                    status: Eip658Value::Eip658(ctx.result.is_success()),
-                    cumulative_gas_used: ctx.cumulative_gas_used,
-                    logs: ctx.result.into_logs(),
-                };
-
-                receipt_builder.build_deposit_receipt(OpDepositReceipt {
-                    inner: receipt,
-                    deposit_nonce,
-                    // The deposit receipt version was introduced in Canyon to indicate an
-                    // update to how receipt hashes should be computed
-                    // when set. The state transition process ensures
-                    // this is only set for post-Canyon deposit
-                    // transactions.
-                    deposit_receipt_version: self.hardforks.is_canyon_active().then_some(1),
-                })
-            }
-        }
-    }
-
     /// Executes all sequencer transactions that are included in the payload attributes.
     pub(super) fn execute_sequencer_transactions(
         &self,
@@ -357,7 +317,7 @@ impl OpPayloadJobCtx {
             }
             info.cumulative_uncompressed_bytes += sequencer_tx.encode_2718_len() as u64;
 
-            let ctx = ReceiptBuilderCtx {
+            let receipt_ctx = ReceiptBuilderCtx {
                 tx_type: sequencer_tx.tx_type(),
                 evm: &evm,
                 result,
@@ -365,7 +325,12 @@ impl OpPayloadJobCtx {
                 cumulative_gas_used: info.cumulative_gas_used,
             };
 
-            info.receipts.push(self.build_receipt(ctx, depositor_nonce));
+            info.receipts.push(build_receipt(
+                &self.evm_factory,
+                &self.hardforks,
+                receipt_ctx,
+                depositor_nonce,
+            ));
 
             // commit changes
             evm.db_mut().commit(state);
@@ -650,14 +615,19 @@ impl OpPayloadJobCtx {
             let tx_succeeded = result.is_success();
 
             // Push transaction changeset and calculate header bloom filter for receipt.
-            let ctx = ReceiptBuilderCtx {
+            let receipt_ctx = ReceiptBuilderCtx {
                 tx_type: tx.tx_type(),
                 evm: &evm,
                 result,
                 state: &state,
                 cumulative_gas_used: info.cumulative_gas_used,
             };
-            info.receipts.push(self.build_receipt(ctx, None));
+            info.receipts.push(build_receipt(
+                &self.evm_factory,
+                &self.hardforks,
+                receipt_ctx,
+                None,
+            ));
 
             // commit changes
             evm.db_mut().commit(state);
@@ -904,14 +874,19 @@ impl OpPayloadJobCtx {
                     info.cumulative_da_bytes_used += br_tx_da_size;
                     info.cumulative_uncompressed_bytes += br_tx_uncompressed_size;
 
-                    let br_ctx = ReceiptBuilderCtx {
+                    let receipt_ctx = ReceiptBuilderCtx {
                         tx_type: bundle.backrun_tx.tx_type(),
                         evm: &evm,
                         result: br_result,
                         state: &br_state,
                         cumulative_gas_used: info.cumulative_gas_used,
                     };
-                    info.receipts.push(self.build_receipt(br_ctx, None));
+                    info.receipts.push(build_receipt(
+                        &self.evm_factory,
+                        &self.hardforks,
+                        receipt_ctx,
+                        None,
+                    ));
                     evm.db_mut().commit(br_state);
 
                     info.total_fees += U256::from(backrun_priority_fee) * U256::from(br_gas_used);
