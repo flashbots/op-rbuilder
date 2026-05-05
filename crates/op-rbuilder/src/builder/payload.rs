@@ -3,7 +3,7 @@ use crate::{
     backrun_bundle::BackrunBundlesPayloadCtx,
     builder::{
         BuilderConfig,
-        best_txs::{FlashblockPoolTxCursor, FlashblockTxCache},
+        best_txs::{FlashblockPoolTxCursor, FlashblockTxTracker},
         builder_tx::{BuilderTransactions, reserve_builder_tx_budget},
         context::OpPayloadBuilderCtx,
         generator::{BuildArguments, PayloadBuilder},
@@ -131,7 +131,7 @@ struct FlashblockBuildOutput<Cache, Transition> {
     build_result: eyre::Result<Option<(FlashblocksState, OpBuiltPayload)>>,
     cache: Cache,
     transition: Transition,
-    tx_cache: FlashblockTxCache,
+    tx_tracker: FlashblockTxTracker,
     info: ExecutionInfo,
     fb_state: FlashblocksState,
 }
@@ -663,7 +663,7 @@ where
         // State data was extracted in Phase 1 block scope above.
         // We carry (CacheState, Option<TransitionState>) between iterations
         // and reconstruct State<DB> inside each sync scope.
-        let mut tx_cache = FlashblockTxCache::default();
+        let mut tx_tracker = FlashblockTxTracker::default();
         let parent_hash = ctx.parent_hash();
 
         // State machine: explicit select! at every phase for deterministic cancellation.
@@ -732,7 +732,7 @@ where
                     let info = info;
                     let cache = cache;
                     let transition = transition;
-                    let mut tx_cache = tx_cache;
+                    let mut tx_tracker = tx_tracker;
                     let fb_state = fb_state;
                     let fb_span = fb_span.clone();
                     move || {
@@ -748,7 +748,7 @@ where
                             .build();
                         state.transition_state = transition;
 
-                        let mut best_txs = FlashblockPoolTxCursor::new(&mut tx_cache);
+                        let mut best_txs = FlashblockPoolTxCursor::new(&mut tx_tracker);
 
                         let mut info = info;
                         let mut fb_state = fb_state;
@@ -770,7 +770,7 @@ where
                             build_result: result,
                             cache,
                             transition: transition_state,
-                            tx_cache,
+                            tx_tracker,
                             info,
                             fb_state,
                         })
@@ -783,7 +783,7 @@ where
                 build_result,
                 cache: new_cache,
                 transition: new_transition,
-                tx_cache: new_tx_cache,
+                tx_tracker: new_tx_tracker,
                 info: new_info,
                 fb_state: returned_fb_state,
             } = build_output;
@@ -793,7 +793,7 @@ where
             info = new_info;
             cache = new_cache;
             transition = new_transition;
-            tx_cache = new_tx_cache;
+            tx_tracker = new_tx_tracker;
 
             // Record span attributes now that we have results
             fb_span.record("tx_count", info.executed_transactions.len() as u64);

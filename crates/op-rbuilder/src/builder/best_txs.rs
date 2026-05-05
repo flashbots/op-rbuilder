@@ -6,7 +6,7 @@ use tracing::debug;
 
 use crate::tx::MaybeFlashblockFilter;
 
-/// Per-block cache of transactions that should be skipped in subsequent flashblocks.
+/// Per-block tracker of transactions that should be skipped in subsequent flashblocks.
 ///
 /// This is threaded across flashblocks within the same block so that:
 /// - Committed txs aren't re-fetched from the pool (would cause `NonceTooLow`).
@@ -14,14 +14,14 @@ use crate::tx::MaybeFlashblockFilter;
 ///
 /// A fresh instance is created per block, so exclusions do not leak between blocks.
 #[derive(Debug, Default)]
-pub(super) struct FlashblockTxCache {
+pub(super) struct FlashblockTxTracker {
     /// Transactions already committed to state.
     committed: HashSet<TxHash>,
     /// Transactions that reverted and were excluded from inclusion.
     excluded: HashSet<TxHash>,
 }
 
-impl FlashblockTxCache {
+impl FlashblockTxTracker {
     pub(super) fn is_committed(&self, tx_hash: &TxHash) -> bool {
         self.committed.contains(tx_hash)
     }
@@ -46,7 +46,7 @@ where
 {
     inner: Option<BestPayloadTransactions<T, I>>,
     current_flashblock_number: u64,
-    tx_cache: &'a mut FlashblockTxCache,
+    tx_tracker: &'a mut FlashblockTxTracker,
 }
 
 impl<'a, T, I> FlashblockPoolTxCursor<'a, T, I>
@@ -54,11 +54,11 @@ where
     T: PoolTransaction,
     I: Iterator<Item = Arc<ValidPoolTransaction<T>>>,
 {
-    pub(super) fn new(tx_cache: &'a mut FlashblockTxCache) -> Self {
+    pub(super) fn new(tx_tracker: &'a mut FlashblockTxTracker) -> Self {
         Self {
             inner: None,
             current_flashblock_number: 0,
-            tx_cache,
+            tx_tracker,
         }
     }
 
@@ -75,12 +75,12 @@ where
 
     /// Remove transaction from next iteration and it already in the state
     pub(super) fn mark_committed(&mut self, txs: Vec<TxHash>) {
-        self.tx_cache.mark_committed(txs);
+        self.tx_tracker.mark_committed(txs);
     }
 
     /// Exclude a transaction hash so it is skipped in subsequent flashblocks.
     pub(super) fn mark_excluded(&mut self, tx_hash: TxHash) {
-        self.tx_cache.mark_excluded(tx_hash);
+        self.tx_tracker.mark_excluded(tx_hash);
     }
 }
 
@@ -96,12 +96,12 @@ where
         loop {
             let tx = inner.next(ctx)?;
             // Skip transaction we already included
-            if self.tx_cache.is_committed(tx.hash()) {
+            if self.tx_tracker.is_committed(tx.hash()) {
                 continue;
             }
 
             // Skip transactions that reverted in a previous flashblock
-            if self.tx_cache.is_excluded(tx.hash()) {
+            if self.tx_tracker.is_excluded(tx.hash()) {
                 continue;
             }
 
@@ -157,7 +157,7 @@ where
 #[cfg(test)]
 mod tests {
     use crate::{
-        builder::best_txs::{FlashblockPoolTxCursor, FlashblockTxCache},
+        builder::best_txs::{FlashblockPoolTxCursor, FlashblockTxTracker},
         mock_tx::{MockFbTransaction, MockFbTransactionFactory},
     };
     use alloy_consensus::Transaction;
@@ -178,7 +178,7 @@ mod tests {
         pool.add_transaction(Arc::new(tx_2), 0);
         pool.add_transaction(Arc::new(tx_3), 0);
 
-        let mut committed = FlashblockTxCache::default();
+        let mut committed = FlashblockTxTracker::default();
         // ### First flashblock
         {
             let mut cursor = FlashblockPoolTxCursor::new(&mut committed);
@@ -238,7 +238,7 @@ mod tests {
         pool.add_transaction(Arc::new(tx_3), 0);
         pool.add_transaction(Arc::new(tx_4), 0);
 
-        let mut committed = FlashblockTxCache::default();
+        let mut committed = FlashblockTxTracker::default();
         // ### First flashblock
         // should contain txs 1 and 2
         {
@@ -329,11 +329,11 @@ mod tests {
         pool.add_transaction(Arc::new(tx_3), 0);
 
         // === Block 1 ===
-        // Fresh cache per block — exclusions are tracked here so they persist across
+        // Fresh tracker per block — exclusions are tracked here so they persist across
         // flashblocks but not across blocks.
         {
-            let mut tx_cache = FlashblockTxCache::default();
-            let mut cursor = FlashblockPoolTxCursor::new(&mut tx_cache);
+            let mut tx_tracker = FlashblockTxTracker::default();
+            let mut cursor = FlashblockPoolTxCursor::new(&mut tx_tracker);
             cursor.refresh_iterator(BestPayloadTransactions::new(pool.best()), 0);
 
             // Flashblock 0: all 3 returned, tx_2 reverts so we exclude it
@@ -359,10 +359,10 @@ mod tests {
             assert!(cursor.next(()).is_none(), "tx_2 should still be excluded");
         }
 
-        // === Block 2: fresh cache, exclusions cleared ===
+        // === Block 2: fresh tracker, exclusions cleared ===
         {
-            let mut tx_cache = FlashblockTxCache::default();
-            let mut cursor = FlashblockPoolTxCursor::new(&mut tx_cache);
+            let mut tx_tracker = FlashblockTxTracker::default();
+            let mut cursor = FlashblockPoolTxCursor::new(&mut tx_tracker);
             cursor.refresh_iterator(BestPayloadTransactions::new(pool.best()), 0);
 
             let mut count = 0;
@@ -392,7 +392,7 @@ mod tests {
         pool.add_transaction(Arc::new(tx_2), 0);
         pool.add_transaction(Arc::new(tx_3), 0);
 
-        let mut committed = FlashblockTxCache::default();
+        let mut committed = FlashblockTxTracker::default();
         let mut cursor = FlashblockPoolTxCursor::new(&mut committed);
 
         // Flashblock 0: exclude tx_1 only
@@ -432,7 +432,7 @@ mod tests {
         pool.add_transaction(Arc::new(tx_2), 0);
         pool.add_transaction(Arc::new(tx_3), 0);
 
-        let mut committed = FlashblockTxCache::default();
+        let mut committed = FlashblockTxTracker::default();
         let mut cursor = FlashblockPoolTxCursor::new(&mut committed);
 
         // Flashblock 0: exclude tx_1 and tx_3
