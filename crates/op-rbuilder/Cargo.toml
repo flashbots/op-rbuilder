@@ -96,6 +96,7 @@ clap.workspace = true
 clap_builder = { workspace = true }
 ctor = { workspace = true, optional = true }
 dashmap.workspace = true
+delegate.workspace = true
 derive_more.workspace = true
 dirs-next.workspace = true
 either.workspace = true

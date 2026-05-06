@@ -13,9 +13,9 @@ use crate::{
     builder::{BuilderConfig, FlashblocksServiceBuilder},
     metrics::{OpRBuilderMetrics, VERSION, record_flag_gauge_metrics},
     monitor_tx_pool::monitor_tx_pool,
+    pool::FlashpoolBuilder,
     presim::{TopOfBlockSimulator, maintain_pending_simulations, maintain_tip_state},
     revert_protection::{EthApiExtServer, RevertProtectionExt},
-    tx::FBPooledTransaction,
 };
 use moka::future::Cache;
 use reth::builder::{NodeBuilder, WithLaunchContext};
@@ -26,7 +26,7 @@ use reth_optimism_cli::chainspec::OpChainSpecParser;
 use reth_optimism_evm::OpEvmConfig;
 use reth_optimism_node::{
     OpNode,
-    node::{OpAddOns, OpAddOnsBuilder, OpEngineValidatorBuilder, OpPoolBuilder},
+    node::{OpAddOns, OpAddOnsBuilder, OpEngineValidatorBuilder},
 };
 use reth_provider::{CanonStateSubscriptions, ChainSpecProvider};
 use reth_transaction_pool::TransactionPool;
@@ -95,7 +95,7 @@ impl Launcher<OpChainSpecParser, OpRbuilderArgs> for BuilderLauncher {
 
         let da_config = builder_config.da_config.clone();
         let gas_limit_config = builder_config.gas_limit_config.clone();
-        let rollup_args = builder_args.rollup_args;
+        let rollup_args = &builder_args.rollup_args;
         let op_node = OpNode::new(rollup_args.clone());
         let reverted_cache = Cache::builder().max_capacity(100).build();
         let reverted_cache_copy = reverted_cache.clone();
@@ -125,19 +125,7 @@ impl Launcher<OpChainSpecParser, OpRbuilderArgs> for BuilderLauncher {
             .with_components(
                 op_node
                     .components()
-                    .pool(
-                        OpPoolBuilder::<FBPooledTransaction>::default()
-                            .with_enable_tx_conditional(
-                                // Revert protection uses the same internal pool logic as conditional transactions
-                                // to garbage collect transactions out of the bundle range.
-                                rollup_args.enable_tx_conditional
-                                    || builder_args.enable_revert_protection,
-                            )
-                            .with_supervisor(
-                                rollup_args.supervisor_http.clone(),
-                                rollup_args.supervisor_safety_level,
-                            ),
-                    )
+                    .pool(FlashpoolBuilder::new(&builder_args))
                     .payload(FlashblocksServiceBuilder::new(builder_config)),
             )
             .with_add_ons(addons)

@@ -141,6 +141,7 @@ clap = { version = "4.4.3", features = ["derive", "env", "string"] }
 clap_builder = { version = "4.5.19" }
 ctor = "0.4.2"
 dashmap = "6.1"
+delegate = "0.13.5"
 derive_more = { version = "2" }
 dirs-next = "2.0.0"
 dotenvy = "0.15.4"
