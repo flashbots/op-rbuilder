@@ -1,16 +1,12 @@
-use alloy_consensus::{Eip658Value, Transaction, conditional::BlockConditionalAttributes};
+use alloy_consensus::{Transaction, conditional::BlockConditionalAttributes};
 use alloy_eips::{Encodable2718, Typed2718};
 use alloy_evm::Database;
-use alloy_op_evm::block::receipt_builder::OpReceiptBuilder;
 use alloy_primitives::{B256, BlockHash, Bytes, U256};
 use alloy_rpc_types_eth::Withdrawals;
-use op_alloy_consensus::{OpDepositReceipt, OpTxType};
 use op_revm::L1BlockInfo;
 use reth_basic_payload_builder::PayloadConfig;
-use reth_chainspec::{EthChainSpec, EthereumHardforks};
-use reth_evm::{
-    ConfigureEvm, Evm, EvmError, InvalidTxError, eth::receipt_builder::ReceiptBuilderCtx,
-};
+use reth_chainspec::EthChainSpec;
+use reth_evm::{Evm, EvmError, InvalidTxError, eth::receipt_builder::ReceiptBuilderCtx};
 use reth_node_api::PayloadBuilderError;
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
@@ -20,7 +16,7 @@ use reth_optimism_payload_builder::{
     config::{OpDAConfig, OpGasLimitConfig},
     error::OpPayloadBuilderError,
 };
-use reth_optimism_primitives::{OpReceipt, OpTransactionSigned};
+use reth_optimism_primitives::OpTransactionSigned;
 use reth_optimism_txpool::{
     conditional::MaybeConditionalTransaction, estimated_da_size::DataAvailabilitySized,
 };
@@ -38,8 +34,10 @@ use tracing::{debug, info, trace};
 
 use crate::{
     backrun_bundle::{BackrunBundleArgs, BackrunBundleGlobalPool, BackrunBundlePayloadPool},
+    builder::{builder_tx::BuilderTxEnv, receipt::build_receipt},
     evm::OpBlockEvmFactory,
     gas_limiter::AddressGasLimiter,
+    hardforks::ActiveHardforks,
     metrics::OpRBuilderMetrics,
     primitives::reth::{ExecutionInfo, TxnExecutionResult},
     traits::PayloadTxsBounds,
@@ -95,6 +93,8 @@ pub struct OpPayloadJobCtx {
     pub config: PayloadConfig<OpPayloadBuilderAttributes<OpTransactionSigned>>,
     /// Block env attributes for the current block.
     pub block_env_attributes: OpNextBlockEnvAttributes,
+    /// Hardfork activation state for this block's timestamp.
+    pub hardforks: ActiveHardforks,
     /// Marker to check whether the job has been cancelled.
     pub cancel: CancellationToken,
     /// Per-block view into the global backrun bundle pool.
@@ -112,6 +112,18 @@ impl Deref for OpPayloadJobCtx {
 impl OpPayloadJobCtx {
     pub(super) fn with_cancel(self, cancel: CancellationToken) -> Self {
         Self { cancel, ..self }
+    }
+
+    pub fn builder_tx_env(&self) -> BuilderTxEnv<'_> {
+        BuilderTxEnv {
+            evm_factory: &self.evm_factory,
+            hardforks: &self.hardforks,
+            base_fee: self.base_fee(),
+            block_number: self.block_number(),
+            block_gas_limit: self.block_gas_limit(),
+            parent_hash: self.parent_hash(),
+            max_uncompressed_block_size: self.max_uncompressed_block_size,
+        }
     }
 
     /// Returns the parent block the payload will be build on.
@@ -136,8 +148,8 @@ impl OpPayloadJobCtx {
 
     /// Returns the withdrawals if shanghai is active.
     pub fn withdrawals(&self) -> Option<&Withdrawals> {
-        self.chain_spec
-            .is_shanghai_active_at_timestamp(self.attributes().timestamp())
+        self.hardforks
+            .is_shanghai_active()
             .then(|| &self.attributes().payload_attributes.withdrawals)
     }
 
@@ -182,13 +194,13 @@ impl OpPayloadJobCtx {
             return blob_fields;
         }
         // Compute from execution info
-        if self.is_jovian_active() {
+        if self.hardforks.is_jovian_active() {
             let scalar = info
                 .da_footprint_scalar
                 .expect("Scalar must be defined for Jovian blocks");
             let result = info.cumulative_da_bytes_used * scalar as u64;
             (Some(0), Some(result))
-        } else if self.is_ecotone_active() {
+        } else if self.hardforks.is_ecotone_active() {
             (Some(0), Some(0))
         } else {
             (None, None)
@@ -199,7 +211,7 @@ impl OpPayloadJobCtx {
     ///
     /// After holocene this extracts the extradata from the payload
     pub fn extra_data(&self) -> Result<Bytes, PayloadBuilderError> {
-        if self.is_jovian_active() {
+        if self.hardforks.is_jovian_active() {
             self.attributes()
                 .get_jovian_extra_data(
                     self.chain_spec.base_fee_params_at_timestamp(
@@ -207,7 +219,7 @@ impl OpPayloadJobCtx {
                     ),
                 )
                 .map_err(PayloadBuilderError::other)
-        } else if self.is_holocene_active() {
+        } else if self.hardforks.is_holocene_active() {
             self.attributes()
                 .get_holocene_extra_data(
                     self.chain_spec.base_fee_params_at_timestamp(
@@ -228,83 +240,6 @@ impl OpPayloadJobCtx {
     /// Returns the unique id for this payload job.
     pub fn payload_id(&self) -> PayloadId {
         self.attributes().payload_id()
-    }
-
-    /// Returns true if regolith is active for the payload.
-    pub fn is_regolith_active(&self) -> bool {
-        self.chain_spec
-            .is_regolith_active_at_timestamp(self.attributes().timestamp())
-    }
-
-    /// Returns true if ecotone is active for the payload.
-    pub fn is_ecotone_active(&self) -> bool {
-        self.chain_spec
-            .is_ecotone_active_at_timestamp(self.attributes().timestamp())
-    }
-
-    /// Returns true if canyon is active for the payload.
-    pub fn is_canyon_active(&self) -> bool {
-        self.chain_spec
-            .is_canyon_active_at_timestamp(self.attributes().timestamp())
-    }
-
-    /// Returns true if holocene is active for the payload.
-    pub fn is_holocene_active(&self) -> bool {
-        self.chain_spec
-            .is_holocene_active_at_timestamp(self.attributes().timestamp())
-    }
-
-    /// Returns true if isthmus is active for the payload.
-    pub fn is_isthmus_active(&self) -> bool {
-        self.chain_spec
-            .is_isthmus_active_at_timestamp(self.attributes().timestamp())
-    }
-
-    /// Returns true if isthmus is active for the payload.
-    pub fn is_jovian_active(&self) -> bool {
-        self.chain_spec
-            .is_jovian_active_at_timestamp(self.attributes().timestamp())
-    }
-
-    /// Returns the chain id
-    pub fn chain_id(&self) -> u64 {
-        self.chain_spec.chain_id()
-    }
-
-    /// Constructs a receipt for the given transaction.
-    pub fn build_receipt<E: Evm>(
-        &self,
-        ctx: ReceiptBuilderCtx<'_, OpTxType, E>,
-        deposit_nonce: Option<u64>,
-    ) -> OpReceipt {
-        let receipt_builder = self
-            .evm_factory
-            .evm_config()
-            .block_executor_factory()
-            .receipt_builder();
-        match receipt_builder.build_receipt(ctx) {
-            Ok(receipt) => receipt,
-            Err(ctx) => {
-                let receipt = alloy_consensus::Receipt {
-                    // Success flag was added in `EIP-658: Embedding transaction status code
-                    // in receipts`.
-                    status: Eip658Value::Eip658(ctx.result.is_success()),
-                    cumulative_gas_used: ctx.cumulative_gas_used,
-                    logs: ctx.result.into_logs(),
-                };
-
-                receipt_builder.build_deposit_receipt(OpDepositReceipt {
-                    inner: receipt,
-                    deposit_nonce,
-                    // The deposit receipt version was introduced in Canyon to indicate an
-                    // update to how receipt hashes should be computed
-                    // when set. The state transition process ensures
-                    // this is only set for post-Canyon deposit
-                    // transactions.
-                    deposit_receipt_version: self.is_canyon_active().then_some(1),
-                })
-            }
-        }
     }
 
     /// Executes all sequencer transactions that are included in the payload attributes.
@@ -340,18 +275,19 @@ impl OpPayloadJobCtx {
             // Note that this *only* needs to be done post-regolith hardfork, as deposit nonces
             // were not introduced in Bedrock. In addition, regular transactions don't have deposit
             // nonces, so we don't need to touch the DB for those.
-            let depositor_nonce = (self.is_regolith_active() && sequencer_tx.is_deposit())
-                .then(|| {
-                    evm.db_mut()
-                        .load_cache_account(sequencer_tx.signer())
-                        .map(|acc| acc.account_info().unwrap_or_default().nonce)
-                })
-                .transpose()
-                .map_err(|_| {
-                    PayloadBuilderError::other(OpPayloadBuilderError::AccountLoadFailed(
-                        sequencer_tx.signer(),
-                    ))
-                })?;
+            let depositor_nonce = (self.hardforks.is_regolith_active()
+                && sequencer_tx.is_deposit())
+            .then(|| {
+                evm.db_mut()
+                    .load_cache_account(sequencer_tx.signer())
+                    .map(|acc| acc.account_info().unwrap_or_default().nonce)
+            })
+            .transpose()
+            .map_err(|_| {
+                PayloadBuilderError::other(OpPayloadBuilderError::AccountLoadFailed(
+                    sequencer_tx.signer(),
+                ))
+            })?;
 
             let ResultAndState { result, state } = match evm.transact(&sequencer_tx) {
                 Ok(res) => res,
@@ -381,7 +317,7 @@ impl OpPayloadJobCtx {
             }
             info.cumulative_uncompressed_bytes += sequencer_tx.encode_2718_len() as u64;
 
-            let ctx = ReceiptBuilderCtx {
+            let receipt_ctx = ReceiptBuilderCtx {
                 tx_type: sequencer_tx.tx_type(),
                 evm: &evm,
                 result,
@@ -389,7 +325,12 @@ impl OpPayloadJobCtx {
                 cumulative_gas_used: info.cumulative_gas_used,
             };
 
-            info.receipts.push(self.build_receipt(ctx, depositor_nonce));
+            info.receipts.push(build_receipt(
+                &self.evm_factory,
+                &self.hardforks,
+                receipt_ctx,
+                depositor_nonce,
+            ));
 
             // commit changes
             evm.db_mut().commit(state);
@@ -674,14 +615,19 @@ impl OpPayloadJobCtx {
             let tx_succeeded = result.is_success();
 
             // Push transaction changeset and calculate header bloom filter for receipt.
-            let ctx = ReceiptBuilderCtx {
+            let receipt_ctx = ReceiptBuilderCtx {
                 tx_type: tx.tx_type(),
                 evm: &evm,
                 result,
                 state: &state,
                 cumulative_gas_used: info.cumulative_gas_used,
             };
-            info.receipts.push(self.build_receipt(ctx, None));
+            info.receipts.push(build_receipt(
+                &self.evm_factory,
+                &self.hardforks,
+                receipt_ctx,
+                None,
+            ));
 
             // commit changes
             evm.db_mut().commit(state);
@@ -928,14 +874,19 @@ impl OpPayloadJobCtx {
                     info.cumulative_da_bytes_used += br_tx_da_size;
                     info.cumulative_uncompressed_bytes += br_tx_uncompressed_size;
 
-                    let br_ctx = ReceiptBuilderCtx {
+                    let receipt_ctx = ReceiptBuilderCtx {
                         tx_type: bundle.backrun_tx.tx_type(),
                         evm: &evm,
                         result: br_result,
                         state: &br_state,
                         cumulative_gas_used: info.cumulative_gas_used,
                     };
-                    info.receipts.push(self.build_receipt(br_ctx, None));
+                    info.receipts.push(build_receipt(
+                        &self.evm_factory,
+                        &self.hardforks,
+                        receipt_ctx,
+                        None,
+                    ));
                     evm.db_mut().commit(br_state);
 
                     info.total_fees += U256::from(backrun_priority_fee) * U256::from(br_gas_used);

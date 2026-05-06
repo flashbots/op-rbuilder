@@ -4,6 +4,7 @@ pub mod builder;
 pub mod evm;
 pub mod flashtestations;
 pub mod gas_limiter;
+pub mod hardforks;
 pub mod launcher;
 pub mod metrics;
 mod monitor_tx_pool;

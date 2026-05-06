@@ -2,7 +2,7 @@ use alloy_consensus::TxEip1559;
 use alloy_eips::{Encodable2718, eip7623::TOTAL_COST_FLOOR_PER_TOKEN};
 use alloy_evm::{Database, rpc::TryIntoTxEnv};
 use alloy_op_evm::OpEvm;
-use alloy_primitives::{Address, B256, Bytes, TxKind, U256, map::HashSet};
+use alloy_primitives::{Address, B256, BlockHash, Bytes, TxKind, U256, map::HashSet};
 use alloy_sol_types::{ContractError, Revert, SolCall, SolError, SolInterface};
 use core::fmt::Debug;
 use op_alloy_consensus::OpTypedTransaction;
@@ -26,7 +26,8 @@ use revm::{
 use tracing::{error, trace, warn};
 
 use crate::{
-    builder::context::OpPayloadJobCtx, primitives::reth::ExecutionInfo, tx_signer::Signer,
+    builder::receipt::build_receipt, evm::OpBlockEvmFactory, hardforks::ActiveHardforks,
+    primitives::reth::ExecutionInfo, tx_signer::Signer,
 };
 
 #[derive(Debug, Default)]
@@ -134,6 +135,24 @@ impl BuilderTransactionError {
     }
 }
 
+/// Minimal environment needed by [`BuilderTransactions`] so that
+/// builder-transaction code does not depend on the full payload-job context.
+pub struct BuilderTxEnv<'a> {
+    pub evm_factory: &'a OpBlockEvmFactory,
+    pub hardforks: &'a ActiveHardforks,
+    pub base_fee: u64,
+    pub block_number: u64,
+    pub block_gas_limit: u64,
+    pub parent_hash: BlockHash,
+    pub max_uncompressed_block_size: Option<u64>,
+}
+
+impl BuilderTxEnv<'_> {
+    pub fn chain_id(&self) -> u64 {
+        self.hardforks.chain_id()
+    }
+}
+
 pub trait BuilderTransactions {
     // Simulates and returns the signed builder transactions. The simulation modifies and commit
     // changes to the db so call new_simulation_state to simulate on a new copy of the state
@@ -142,7 +161,7 @@ pub trait BuilderTransactions {
         &self,
         state_provider: impl StateProvider + Clone,
         info: &mut ExecutionInfo,
-        ctx: &OpPayloadJobCtx,
+        ctx: &BuilderTxEnv<'_>,
         db: &mut State<impl Database + DatabaseRef>,
         top_of_block: bool,
         is_first_flashblock: bool,
@@ -154,7 +173,7 @@ pub trait BuilderTransactions {
         &self,
         state_provider: impl StateProvider + Clone,
         info: &mut ExecutionInfo,
-        ctx: &OpPayloadJobCtx,
+        ctx: &BuilderTxEnv<'_>,
         db: &State<impl Database>,
         top_of_block: bool,
         is_first_flashblock: bool,
@@ -177,7 +196,7 @@ pub trait BuilderTransactions {
         &self,
         state_provider: impl StateProvider + Clone,
         info: &mut ExecutionInfo,
-        builder_ctx: &OpPayloadJobCtx,
+        ctx: &BuilderTxEnv<'_>,
         db: &mut State<impl Database>,
         top_of_block: bool,
         is_first_flashblock: bool,
@@ -186,14 +205,14 @@ pub trait BuilderTransactions {
         let builder_txs = self.simulate_builder_txs_with_state_copy(
             state_provider,
             info,
-            builder_ctx,
+            ctx,
             db,
             top_of_block,
             is_first_flashblock,
             is_last_flashblock,
         )?;
 
-        let mut evm = builder_ctx.evm_factory.evm(&mut *db);
+        let mut evm = ctx.evm_factory.evm(&mut *db);
 
         let mut invalid = HashSet::new();
 
@@ -259,7 +278,7 @@ pub trait BuilderTransactions {
             // Skip the builder tx if including it would push the cumulative
             // uncompressed block size over the configured limit. The state
             // changes from the simulation are dropped (we never call commit).
-            if let Some(limit) = builder_ctx.max_uncompressed_block_size
+            if let Some(limit) = ctx.max_uncompressed_block_size
                 && info.cumulative_uncompressed_bytes + tx_uncompressed_size > limit
             {
                 warn!(
@@ -279,14 +298,19 @@ pub trait BuilderTransactions {
             info.cumulative_da_bytes_used += builder_tx.da_size;
             info.cumulative_uncompressed_bytes += tx_uncompressed_size;
 
-            let ctx = ReceiptBuilderCtx {
+            let receipt_ctx = ReceiptBuilderCtx {
                 tx_type: builder_tx.signed_tx.inner().tx_type(),
                 evm: &evm,
                 result,
                 state: &state,
                 cumulative_gas_used: info.cumulative_gas_used,
             };
-            info.receipts.push(builder_ctx.build_receipt(ctx, None));
+            info.receipts.push(build_receipt(
+                ctx.evm_factory,
+                ctx.hardforks,
+                receipt_ctx,
+                None,
+            ));
 
             // Commit changes
             evm.db_mut().commit(state);
@@ -321,7 +345,7 @@ pub trait BuilderTransactions {
         from: Signer,
         gas_used: u64,
         calldata: Bytes,
-        ctx: &OpPayloadJobCtx,
+        ctx: &BuilderTxEnv<'_>,
         db: impl DatabaseRef,
     ) -> Result<Recovered<OpTransactionSigned>, BuilderTransactionError> {
         let nonce = get_nonce(db, from.address)?;
@@ -331,7 +355,7 @@ pub trait BuilderTransactions {
             nonce,
             // Due to EIP-150, 63/64 of available gas is forwarded to external calls so need to add a buffer
             gas_limit: gas_used * 64 / 63,
-            max_fee_per_gas: ctx.base_fee().into(),
+            max_fee_per_gas: ctx.base_fee.into(),
             to: TxKind::Call(to),
             input: calldata,
             ..Default::default()
@@ -342,7 +366,7 @@ pub trait BuilderTransactions {
     fn commit_txs(
         &self,
         signed_txs: Vec<Recovered<OpTransactionSigned>>,
-        ctx: &OpPayloadJobCtx,
+        ctx: &BuilderTxEnv<'_>,
         db: &mut State<impl Database>,
     ) -> Result<(), BuilderTransactionError> {
         let mut evm = ctx.evm_factory.evm(&mut *db);
@@ -441,12 +465,12 @@ impl BuilderTxBase {
 
     pub(super) fn simulate_builder_tx(
         &self,
-        ctx: &OpPayloadJobCtx,
+        ctx: &BuilderTxEnv<'_>,
         db: impl DatabaseRef,
     ) -> Result<Option<BuilderTransactionCtx>, BuilderTransactionError> {
         match self.signer {
             Some(signer) => {
-                let message: Vec<u8> = format!("Block Number: {}", ctx.block_number()).into_bytes();
+                let message: Vec<u8> = format!("Block Number: {}", ctx.block_number).into_bytes();
                 let gas_used = self.estimate_builder_tx_gas(&message);
                 let signed_tx = self.signed_builder_tx(ctx, db, signer, gas_used, message)?;
                 let da_size = op_alloy_flz::tx_estimated_size_fjord_bytes(
@@ -486,7 +510,7 @@ impl BuilderTxBase {
 
     fn signed_builder_tx(
         &self,
-        ctx: &OpPayloadJobCtx,
+        ctx: &BuilderTxEnv<'_>,
         db: impl DatabaseRef,
         signer: Signer,
         gas_used: u64,
@@ -499,7 +523,7 @@ impl BuilderTxBase {
             chain_id: ctx.chain_id(),
             nonce,
             gas_limit: gas_used,
-            max_fee_per_gas: ctx.base_fee().into(),
+            max_fee_per_gas: ctx.base_fee.into(),
             max_priority_fee_per_gas: 0,
             to: TxKind::Call(Address::ZERO),
             // Include the message as part of the transaction data

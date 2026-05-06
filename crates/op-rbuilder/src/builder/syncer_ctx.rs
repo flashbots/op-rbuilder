@@ -2,6 +2,7 @@ use crate::{
     builder::{BuilderConfig, OpPayloadJobCtx, context::OpPayloadBuilderCtx},
     evm::OpBlockEvmFactory,
     gas_limiter::{AddressGasLimiter, args::GasLimiterArgs},
+    hardforks::ActiveHardforks,
     metrics::OpRBuilderMetrics,
     traits::ClientBounds,
 };
@@ -71,14 +72,7 @@ impl OpPayloadSyncerCtx {
             .is_regolith_active_at_timestamp(timestamp)
     }
 
-    /// Returns true if canyon is active for the payload.
-    pub(super) fn is_canyon_active(&self, timestamp: u64) -> bool {
-        self.builder_ctx
-            .chain_spec
-            .is_canyon_active_at_timestamp(timestamp)
-    }
-
-    pub(super) fn into_op_payload_builder_ctx(
+    pub(super) fn into_op_payload_job_ctx(
         self,
         payload_config: PayloadConfig<OpPayloadBuilderAttributes<OpTransactionSigned>>,
         evm_factory: OpBlockEvmFactory,
@@ -89,11 +83,17 @@ impl OpPayloadSyncerCtx {
             .builder_ctx
             .backrun_bundle_pool
             .block_pool(payload_config.parent_header.number + 1);
+        let hardforks = ActiveHardforks::new(
+            Arc::clone(&self.builder_ctx.chain_spec),
+            block_env_attributes.timestamp,
+        );
+
         OpPayloadJobCtx {
             builder_ctx: self.builder_ctx,
             evm_factory,
             config: payload_config,
             block_env_attributes,
+            hardforks,
             cancel,
             backrun_pool,
         }

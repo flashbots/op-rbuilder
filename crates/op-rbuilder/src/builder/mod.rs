@@ -19,6 +19,7 @@ mod generator;
 mod p2p;
 mod payload;
 mod payload_handler;
+mod receipt;
 mod service;
 mod state_root;
 mod syncer_ctx;
@@ -26,8 +27,8 @@ mod timing;
 mod wspub;
 
 pub use builder_tx::{
-    BuilderTransactionCtx, BuilderTransactionError, BuilderTransactions, InvalidContractDataError,
-    SimulationSuccessResult, get_balance, get_nonce,
+    BuilderTransactionCtx, BuilderTransactionError, BuilderTransactions, BuilderTxEnv,
+    InvalidContractDataError, SimulationSuccessResult, get_balance, get_nonce,
 };
 pub use config::FlashblocksConfig;
 pub use context::OpPayloadJobCtx;
