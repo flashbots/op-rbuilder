@@ -1,6 +1,7 @@
 use crate::{
     builder::{
-        p2p::Message, payload::build_block, receipt::build_receipt, syncer_ctx::OpPayloadSyncerCtx,
+        OpPayloadJobCtx, p2p::Message, payload::build_block, receipt::build_receipt,
+        syncer_ctx::OpPayloadSyncerCtx,
     },
     evm::OpBlockEvmFactory,
     hardforks::ActiveHardforks,
@@ -18,7 +19,6 @@ use reth_node_builder::Events;
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_consensus::OpBeaconConsensus;
 use reth_optimism_evm::OpNextBlockEnvAttributes;
-use reth_optimism_forks::OpHardforks;
 use reth_optimism_node::{OpEngineTypes, OpPayloadBuilderAttributes};
 use reth_optimism_payload_builder::OpBuiltPayload;
 use reth_payload_builder::EthPayloadBuilderAttributes;
@@ -221,8 +221,10 @@ where
         .evm_config()
         .next_evm_env(&parent_header, &block_env_attributes)
         .wrap_err("failed to create next evm env")?;
+    let evm_factory = OpBlockEvmFactory::new(ctx.evm_config().clone(), evm_env);
 
-    ctx.evm_config()
+    evm_factory
+        .evm_config()
         .builder_for_next_block(
             &mut state,
             &Arc::new(SealedHeader::new(parent_header.clone(), parent_hash)),
@@ -238,9 +240,11 @@ where
         payload.block().sealed_header().blob_gas_used,
     ));
 
+    let hardforks = ActiveHardforks::new(chain_spec, block_env_attributes.timestamp);
+
     let extra_data = payload.block().sealed_header().extra_data.clone();
     let (eip_1559_parameters, min_base_fee): (Option<B64>, Option<u64>) =
-        if chain_spec.is_jovian_active_at_timestamp(timestamp) {
+        if hardforks.is_jovian_active() {
             if extra_data.len() != 17 {
                 trace!(
                     target: "payload_builder",
@@ -256,7 +260,7 @@ where
                 .wrap_err("failed to extract min base fee from jovian extra data")?;
             let min_base_fee = u64::from_be_bytes(min_base_fee_bytes);
             (eip_1559_params, Some(min_base_fee))
-        } else if chain_spec.is_holocene_active_at_timestamp(timestamp) {
+        } else if hardforks.is_holocene_active() {
             if extra_data.len() != 9 {
                 trace!(
                     target: "payload_builder",
@@ -303,35 +307,27 @@ where
         },
     );
 
-    let evm_factory = OpBlockEvmFactory::new(ctx.evm_config().clone(), evm_env);
+    let job_ctx = ctx.into_op_payload_job_ctx(
+        payload_config,
+        evm_factory,
+        block_env_attributes,
+        hardforks,
+        cancel,
+    );
 
     execute_transactions(
-        &ctx,
+        &job_ctx,
         &mut info,
         &mut state,
         payload.block().body().transactions.clone(),
         payload.block().header().gas_used,
-        timestamp,
-        &evm_factory,
-        chain_spec,
     )
     .wrap_err("failed to execute best transactions")?;
 
-    let enable_tx_tracking_debug_logs = ctx.enable_tx_tracking_debug_logs();
-    let builder_ctx =
-        ctx.into_op_payload_job_ctx(payload_config, evm_factory, block_env_attributes, cancel);
+    let (built_payload, fb_payload) = build_block(&mut state, &job_ctx, None, &mut info, true)
+        .wrap_err("failed to build flashblock")?;
 
-    let (built_payload, fb_payload) = build_block(
-        &mut state,
-        &builder_ctx,
-        None,
-        &mut info,
-        true,
-        enable_tx_tracking_debug_logs,
-    )
-    .wrap_err("failed to build flashblock")?;
-
-    builder_ctx
+    job_ctx
         .metrics
         .flashblock_sync_duration
         .record(start.elapsed());
@@ -343,11 +339,11 @@ where
             got = %built_payload.block().hash(),
             "flashblock hash mismatch after execution"
         );
-        builder_ctx.metrics.invalid_synced_blocks_count.increment(1);
+        job_ctx.metrics.invalid_synced_blocks_count.increment(1);
         bail!("flashblock hash mismatch after execution");
     }
 
-    builder_ctx.metrics.block_synced_success.increment(1);
+    job_ctx.metrics.block_synced_success.increment(1);
 
     info!(
         target: "payload_builder",
@@ -360,21 +356,18 @@ where
 
 #[allow(clippy::too_many_arguments)]
 fn execute_transactions(
-    ctx: &OpPayloadSyncerCtx,
+    ctx: &OpPayloadJobCtx,
     info: &mut ExecutionInfo,
     state: &mut State<impl alloy_evm::Database>,
     txs: Vec<op_alloy_consensus::OpTxEnvelope>,
     gas_limit: u64,
-    timestamp: u64,
-    evm_factory: &OpBlockEvmFactory,
-    chain_spec: Arc<OpChainSpec>,
 ) -> eyre::Result<()> {
     use alloy_eips::Encodable2718;
     use alloy_evm::Evm as _;
     use reth_primitives_traits::SignedTransaction;
     use revm::{DatabaseCommit as _, context::result::ResultAndState};
 
-    let mut evm = evm_factory.evm(&mut *state);
+    let mut evm = ctx.evm_factory.evm(&mut *state);
 
     for tx in txs {
         // Convert to recovered transaction
@@ -388,7 +381,7 @@ fn execute_transactions(
         // Note that this *only* needs to be done post-regolith hardfork, as deposit nonces
         // were not introduced in Bedrock. In addition, regular transactions don't have deposit
         // nonces, so we don't need to touch the DB for those.
-        let depositor_nonce = (ctx.is_regolith_active(timestamp) && tx_recovered.is_deposit())
+        let depositor_nonce = (ctx.hardforks.is_regolith_active() && tx_recovered.is_deposit())
             .then(|| {
                 evm.db_mut()
                     .load_cache_account(sender)
@@ -402,7 +395,7 @@ fn execute_transactions(
             .wrap_err("failed to execute transaction")?;
 
         let tx_gas_used = result.gas_used();
-        if let Some(max_gas_per_txn) = ctx.max_gas_per_txn()
+        if let Some(max_gas_per_txn) = ctx.builder_ctx.max_gas_per_txn
             && tx_gas_used > max_gas_per_txn
         {
             return Err(eyre::eyre!(
@@ -429,7 +422,7 @@ fn execute_transactions(
                     "total uncompressed bytes overflowed when executing flashblock transactions"
                 )
             })?;
-        if let Some(limit) = ctx.max_uncompressed_block_size()
+        if let Some(limit) = ctx.builder_ctx.max_uncompressed_block_size
             && info.cumulative_uncompressed_bytes > limit
         {
             bail!("flashblock exceeded max uncompressed block size when executing transactions");
@@ -443,10 +436,9 @@ fn execute_transactions(
             cumulative_gas_used: info.cumulative_gas_used,
         };
 
-        let hardforks = ActiveHardforks::new(chain_spec.clone(), timestamp);
         info.receipts.push(build_receipt(
-            evm_factory,
-            &hardforks,
+            &ctx.evm_factory,
+            &ctx.hardforks,
             receipt_ctx,
             depositor_nonce,
         ));
@@ -459,12 +451,10 @@ fn execute_transactions(
     }
 
     // Fetch DA footprint gas scalar for Jovian blocks
-    let da_footprint_gas_scalar = chain_spec
-        .is_jovian_active_at_timestamp(timestamp)
-        .then(|| {
-            L1BlockInfo::fetch_da_footprint_gas_scalar(evm.db_mut())
-                .expect("DA footprint should always be available from the database post jovian")
-        });
+    let da_footprint_gas_scalar = ctx.hardforks.is_jovian_active().then(|| {
+        L1BlockInfo::fetch_da_footprint_gas_scalar(evm.db_mut())
+            .expect("DA footprint should always be available from the database post jovian")
+    });
     info.da_footprint_scalar = da_footprint_gas_scalar;
 
     Ok(())

@@ -34,7 +34,6 @@ use reth_execution_types::BlockExecutionOutput;
 use reth_node_api::{Block, BuiltPayloadExecutedBlock, PayloadBuilderError};
 use reth_optimism_consensus::{calculate_receipt_root_no_memo_optimism, isthmus};
 use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
-use reth_optimism_forks::OpHardforks;
 use reth_optimism_node::{OpBuiltPayload, OpPayloadBuilderAttributes};
 use reth_optimism_primitives::{OpReceipt, OpTransactionSigned};
 use reth_payload_primitives::PayloadBuilderAttributes;
@@ -385,11 +384,9 @@ where
     ) -> eyre::Result<OpPayloadJobCtx> {
         let builder_ctx = &self.builder_ctx;
         let timestamp = config.attributes.timestamp();
+        let hardforks = ActiveHardforks::new(Arc::clone(&builder_ctx.chain_spec), timestamp);
 
-        let extra_data = if builder_ctx
-            .chain_spec
-            .is_jovian_active_at_timestamp(timestamp)
-        {
+        let extra_data = if hardforks.is_jovian_active() {
             config
                 .attributes
                 .get_jovian_extra_data(
@@ -398,10 +395,7 @@ where
                         .base_fee_params_at_timestamp(timestamp),
                 )
                 .wrap_err("failed to get holocene extra data for flashblocks payload builder")?
-        } else if builder_ctx
-            .chain_spec
-            .is_holocene_active_at_timestamp(timestamp)
-        {
+        } else if hardforks.is_holocene_active() {
             config
                 .attributes
                 .get_holocene_extra_data(
@@ -439,8 +433,6 @@ where
         let backrun_pool = builder_ctx
             .backrun_bundle_pool
             .block_pool(config.parent_header.number + 1);
-
-        let hardforks = ActiveHardforks::new(Arc::clone(&builder_ctx.chain_spec), timestamp);
 
         Ok(OpPayloadJobCtx {
             builder_ctx: Arc::clone(builder_ctx),
@@ -912,7 +904,6 @@ where
             Some(&mut fb_state),
             &mut info,
             !ctx.disable_state_root || ctx.attributes().no_tx_pool, // need to calculate state root for CL sync
-            self.config.enable_tx_tracking_debug_logs,
         )?;
 
         // we can safely take from state as we drop it at the end of the scope
@@ -1065,7 +1056,6 @@ where
             Some(fb_state),
             info,
             !ctx.disable_state_root || ctx.attributes().no_tx_pool,
-            self.config.enable_tx_tracking_debug_logs,
         );
         let total_block_built_duration = total_block_built_duration.elapsed();
         ctx.metrics
@@ -1277,7 +1267,6 @@ pub(super) fn build_block<DB, P>(
     mut fb_state: Option<&mut FlashblocksState>,
     info: &mut ExecutionInfo,
     calculate_state_root: bool,
-    enable_tx_tracking_debug_logs: bool,
 ) -> Result<(OpBuiltPayload, OpFlashblockPayload), PayloadBuilderError>
 where
     DB: Database<Error = ProviderError> + AsRef<P>,
@@ -1295,7 +1284,7 @@ where
         .state_transition_merge_gauge
         .set(state_transition_merge_time);
 
-    if enable_tx_tracking_debug_logs {
+    if ctx.builder_ctx.enable_tx_tracking_debug_logs {
         debug!(
             target: "tx_trace",
             block_number = ctx.block_number(),
@@ -1394,7 +1383,7 @@ where
             "State root calculation completed"
         );
 
-        if enable_tx_tracking_debug_logs {
+        if ctx.builder_ctx.enable_tx_tracking_debug_logs {
             debug!(
                 target: "tx_trace",
                 block_number = ctx.block_number(),
@@ -1409,10 +1398,7 @@ where
     }
 
     let mut requests_hash = None;
-    let withdrawals_root = if ctx
-        .chain_spec
-        .is_isthmus_active_at_timestamp(ctx.attributes().timestamp())
-    {
+    let withdrawals_root = if ctx.hardforks.is_isthmus_active() {
         // always empty requests hash post isthmus
         requests_hash = Some(EMPTY_REQUESTS_HASH);
 
@@ -1422,10 +1408,7 @@ where
             isthmus::withdrawals_root(&state.bundle_state, state.database.as_ref())
                 .map_err(PayloadBuilderError::other)?,
         )
-    } else if ctx
-        .chain_spec
-        .is_canyon_active_at_timestamp(ctx.attributes().timestamp())
-    {
+    } else if ctx.hardforks.is_canyon_active() {
         Some(EMPTY_WITHDRAWALS)
     } else {
         None
@@ -1523,7 +1506,7 @@ where
         "Block sealed"
     );
 
-    if enable_tx_tracking_debug_logs {
+    if ctx.builder_ctx.enable_tx_tracking_debug_logs {
         debug!(
             target: "tx_trace",
             block_number = ctx.block_number(),

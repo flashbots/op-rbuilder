@@ -8,7 +8,6 @@ use crate::{
 };
 use reth_basic_payload_builder::PayloadConfig;
 use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
-use reth_optimism_forks::OpHardforks;
 use reth_optimism_payload_builder::{OpPayloadBuilderAttributes, config::OpGasLimitConfig};
 use reth_optimism_primitives::OpTransactionSigned;
 use std::sync::Arc;
@@ -53,40 +52,18 @@ impl OpPayloadSyncerCtx {
         &self.builder_ctx.evm_config
     }
 
-    pub(super) fn max_gas_per_txn(&self) -> Option<u64> {
-        self.builder_ctx.max_gas_per_txn
-    }
-
-    pub(super) fn max_uncompressed_block_size(&self) -> Option<u64> {
-        self.builder_ctx.max_uncompressed_block_size
-    }
-
-    pub(super) fn enable_tx_tracking_debug_logs(&self) -> bool {
-        self.builder_ctx.enable_tx_tracking_debug_logs
-    }
-
-    /// Returns true if regolith is active for the payload.
-    pub(super) fn is_regolith_active(&self, timestamp: u64) -> bool {
-        self.builder_ctx
-            .chain_spec
-            .is_regolith_active_at_timestamp(timestamp)
-    }
-
     pub(super) fn into_op_payload_job_ctx(
         self,
         payload_config: PayloadConfig<OpPayloadBuilderAttributes<OpTransactionSigned>>,
         evm_factory: OpBlockEvmFactory,
         block_env_attributes: OpNextBlockEnvAttributes,
+        hardforks: ActiveHardforks,
         cancel: CancellationToken,
     ) -> OpPayloadJobCtx {
         let backrun_pool = self
             .builder_ctx
             .backrun_bundle_pool
             .block_pool(payload_config.parent_header.number + 1);
-        let hardforks = ActiveHardforks::new(
-            Arc::clone(&self.builder_ctx.chain_spec),
-            block_env_attributes.timestamp,
-        );
 
         OpPayloadJobCtx {
             builder_ctx: self.builder_ctx,
