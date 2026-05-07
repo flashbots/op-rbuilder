@@ -159,6 +159,17 @@ pub struct AddressLimiterGuard {
     metrics: LimiterMetrics,
 }
 
+/// Opaque snapshot of an [`AddressLimiterGuard`]'s pending deltas. Cheap to
+/// clone (just clones the underlying maps). Continuous candidate evaluation
+/// uses this to rewind/replay the per-build guard across candidate iterations
+/// so each candidate sees the same starting deltas and only the winner's
+/// deltas survive into the canonical commit.
+#[derive(Debug, Clone, Default)]
+pub struct AddressLimiterDeltas {
+    gas: Option<PendingDeltas<u64>>,
+    compute: Option<PendingDeltas<Duration>>,
+}
+
 impl AddressLimiterGuard {
     /// Returns `true` if the address is debt-free in all enabled limiters.
     /// Increments the rejection counter for the first failing reason only.
@@ -206,6 +217,38 @@ impl AddressLimiterGuard {
         let compute_deltas = self.compute.take().map(|l| l.into_pending());
         self.canonical
             .commit_deltas(self.epoch, gas_deltas, compute_deltas)
+    }
+
+    /// Snapshot the current pending deltas without consuming the guard.
+    /// Continuous candidate evaluation uses this to checkpoint pending state
+    /// before each candidate so it can be rewound for the next iteration and
+    /// the winning candidate's deltas re-loaded before the guard's eventual
+    /// commit.
+    pub fn snapshot_pending(&self) -> AddressLimiterDeltas {
+        AddressLimiterDeltas {
+            gas: self.gas.as_ref().map(|g| g.snapshot_pending()),
+            compute: self.compute.as_ref().map(|c| c.snapshot_pending()),
+        }
+    }
+
+    /// Restore the pending deltas from a previous [`Self::snapshot_pending`].
+    /// Each per-limiter delta map only overwrites pending if the corresponding
+    /// limiter is enabled on this guard; snapshot/restore is therefore a no-op
+    /// on disabled limiters.
+    pub fn restore_pending(&self, snapshot: &AddressLimiterDeltas) {
+        if let (Some(g), Some(snap)) = (self.gas.as_ref(), snapshot.gas.as_ref()) {
+            g.restore_pending(snap.clone());
+        }
+        if let (Some(c), Some(snap)) = (self.compute.as_ref(), snapshot.compute.as_ref()) {
+            c.restore_pending(snap.clone());
+        }
+    }
+
+    /// Disarm the guard so its Drop becomes a no-op (no auto-commit). Used
+    /// when the caller knows the canonical has already advanced past this
+    /// guard's epoch, or when the deltas have been deliberately discarded.
+    pub fn disarm(&mut self) {
+        self.armed = false;
     }
 }
 

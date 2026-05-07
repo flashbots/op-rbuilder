@@ -72,6 +72,11 @@ impl PayloadJobCancellation {
         self.token.cancelled()
     }
 
+    /// Returns true if the underlying token has been cancelled (for any reason).
+    pub(crate) fn is_cancelled(&self) -> bool {
+        self.token.is_cancelled()
+    }
+
     /// Returns the underlying token.
     /// Passed to blocking tasks and the scheduler.
     pub(crate) fn token(&self) -> CancellationToken {

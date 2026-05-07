@@ -48,7 +48,7 @@ use crate::{
 /// `BuilderConfig`) or is itself an `Arc`/handle whose backing data lives
 /// outside the per-job context (e.g. metrics registry, global backrun pool,
 /// per-address gas limiter buckets).
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct OpPayloadBuilderCtx {
     /// EVM configuration used to build a per-job [`OpBlockEvmFactory`].
     pub evm_config: OpEvmConfig,
@@ -82,7 +82,7 @@ pub struct OpPayloadBuilderCtx {
 
 /// Container type that holds all necessities to build a new payload.
 /// This struct is constructed once per payload job.
-#[derive(derive_more::Constructor, derive_more::Deref)]
+#[derive(Clone, derive_more::Constructor, derive_more::Deref)]
 #[allow(clippy::too_many_arguments)]
 pub struct OpPayloadJobCtx {
     /// Builder-lifetime configuration shared with all other in-flight jobs.
@@ -102,10 +102,14 @@ pub struct OpPayloadJobCtx {
     backrun_pool: Option<BackrunBundlePayloadPool>,
     /// Per-build guard onto the canonical [`AddressLimiter`] held by
     /// `builder_ctx`. Charges accumulate privately here and auto-commit back
-    /// into the canonical when this ctx is dropped. Shadows the
+    /// into the canonical when the last [`Arc`] is dropped. Shadows the
     /// `address_limiter` field reached via `Deref` to `OpPayloadBuilderCtx`,
     /// so `self.address_limiter` inside this ctx always hits the guard.
-    address_limiter: AddressLimiterGuard,
+    ///
+    /// Wrapped in [`Arc`] so the continuous build path can clone this ctx
+    /// across flashblock intervals while every clone still drives a single
+    /// shared guard. The guard auto-commits when the last clone is dropped.
+    address_limiter: Arc<AddressLimiterGuard>,
 }
 
 impl OpPayloadJobCtx {
@@ -136,8 +140,20 @@ impl OpPayloadJobCtx {
     }
 
     /// Returns the builder attributes.
-    pub(super) const fn attributes(&self) -> &OpPayloadBuilderAttributes<OpTransactionSigned> {
+    pub(crate) const fn attributes(&self) -> &OpPayloadBuilderAttributes<OpTransactionSigned> {
         &self.config.attributes
+    }
+
+    /// Returns this job's cancellation handle.
+    pub(crate) fn cancel(&self) -> &FlashblockJobCancellation {
+        &self.cancel
+    }
+
+    /// Returns this job's per-build [`AddressLimiterGuard`]. All clones of this
+    /// ctx share the same guard via [`Arc`]; the canonical commit fires when
+    /// the last clone drops.
+    pub(crate) fn address_limiter(&self) -> &AddressLimiterGuard {
+        &self.address_limiter
     }
 
     /// Returns the block gas limit to target.

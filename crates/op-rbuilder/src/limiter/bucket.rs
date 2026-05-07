@@ -18,7 +18,7 @@ impl<T: Copy + Ord + Default + Add<Output = T> + AddAssign + Sub<Output = Self> 
 }
 
 /// Batch of pending per-address bucket updates produced by a [`BucketLimiterGuard`]. Hands the deltas back to [`BucketLimiter::commit`].
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(super) struct PendingDeltas<T>(HashMap<Address, TokenBucket<T>>);
 
 impl<T> PendingDeltas<T> {
@@ -154,6 +154,22 @@ impl<T: Token> AddressBucketsGuard<T> {
     fn into_pending(self) -> HashMap<Address, TokenBucket<T>> {
         self.pending.into_inner().unwrap_or_else(|p| p.into_inner())
     }
+
+    /// Clone the current pending map without consuming the guard. Used by the
+    /// continuous candidate loop to checkpoint pending state across candidate
+    /// iterations.
+    fn clone_pending(&self) -> HashMap<Address, TokenBucket<T>> {
+        self.pending
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone()
+    }
+
+    /// Replace the pending map. Used by the continuous candidate loop to
+    /// rewind to a saved checkpoint before evaluating the next candidate.
+    fn set_pending(&self, pending: HashMap<Address, TokenBucket<T>>) {
+        *self.pending.lock().unwrap_or_else(|p| p.into_inner()) = pending;
+    }
 }
 
 /// Configuration for a [`BucketLimiter`].
@@ -228,6 +244,20 @@ impl<T: Token> BucketLimiterGuard<T> {
 
     pub(super) fn into_pending(self) -> PendingDeltas<T> {
         PendingDeltas(self.buckets.into_pending())
+    }
+
+    /// Snapshot the current pending deltas without consuming the guard.
+    /// Continuous candidate evaluation uses this to checkpoint between
+    /// candidate iterations.
+    pub(super) fn snapshot_pending(&self) -> PendingDeltas<T> {
+        PendingDeltas(self.buckets.clone_pending())
+    }
+
+    /// Replace pending deltas with a previous snapshot. Continuous candidate
+    /// evaluation uses this to rewind to a checkpoint before trying the next
+    /// candidate.
+    pub(super) fn restore_pending(&self, snapshot: PendingDeltas<T>) {
+        self.buckets.set_pending(snapshot.0);
     }
 }
 

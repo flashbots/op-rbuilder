@@ -8,7 +8,9 @@ use alloy_rpc_types_eth::Block;
 use op_alloy_consensus::{OpTypedTransaction, TxDeposit};
 use op_alloy_network::Optimism;
 use op_alloy_rpc_types::Transaction;
+use op_alloy_rpc_types_engine::OpExecutionPayloadV4;
 use reth_optimism_node::OpPayloadAttributes;
+use reth_payload_builder::PayloadId;
 
 use super::{EngineApi, Ipc, LocalInstance, TransactionBuilder};
 use crate::{
@@ -30,6 +32,13 @@ pub struct ChainDriver<RpcProtocol: Protocol = Ipc> {
     gas_limit: Option<u64>,
     args: OpRbuilderArgs,
     validation_nodes: Vec<ExternalNode>,
+}
+
+#[derive(Debug, Clone)]
+pub struct StartedPayload {
+    pub payload_id: PayloadId,
+    pub parent_hash: B256,
+    wait_after_fcu: Duration,
 }
 
 // instantiation and configuration
@@ -123,6 +132,37 @@ impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
         timestamp_jitter: Option<Duration>,
         min_base_fee: Option<u64>,
     ) -> eyre::Result<Block<Transaction>> {
+        let started = self
+            .start_payload_with_txs_timestamp(
+                txs,
+                no_tx_pool,
+                block_timestamp,
+                timestamp_jitter,
+                min_base_fee,
+            )
+            .await?;
+
+        tokio::time::sleep(started.wait_after_fcu).await;
+        self.finish_started_payload(&started).await
+    }
+
+    pub async fn start_payload_with_current_timestamp(
+        &self,
+        timestamp_jitter: Option<Duration>,
+    ) -> eyre::Result<StartedPayload> {
+        self.start_payload_with_txs_timestamp(vec![], None, None, timestamp_jitter, Some(0))
+            .await
+    }
+
+    pub async fn start_payload_with_txs_timestamp(
+        &self,
+        txs: Vec<Bytes>,
+        no_tx_pool: Option<bool>,
+        block_timestamp: Option<Duration>,
+        // Amount of time to lag before sending FCU. This tests late FCU scenarios
+        timestamp_jitter: Option<Duration>,
+        min_base_fee: Option<u64>,
+    ) -> eyre::Result<StartedPayload> {
         let latest = self.latest().await?;
 
         // Add L1 block info as the first transaction in every L2 block
@@ -203,25 +243,44 @@ impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
             .payload_id
             .ok_or_else(|| eyre::eyre!("Forkchoice update did not return a payload ID"))?;
 
-        // wait for the block to be built for the specified chain block time
-        if let Some(timestamp_jitter) = timestamp_jitter {
-            tokio::time::sleep(
-                Duration::from_millis(self.args.chain_block_time)
-                    .max(Self::MIN_BLOCK_TIME)
-                    .saturating_sub(timestamp_jitter),
-            )
-            .await;
+        let wait_after_fcu = if let Some(timestamp_jitter) = timestamp_jitter {
+            Duration::from_millis(self.args.chain_block_time)
+                .max(Self::MIN_BLOCK_TIME)
+                .saturating_sub(timestamp_jitter)
         } else {
-            tokio::time::sleep(
-                Duration::from_millis(self.args.chain_block_time).max(Self::MIN_BLOCK_TIME),
-            )
-            .await;
-        }
+            Duration::from_millis(self.args.chain_block_time).max(Self::MIN_BLOCK_TIME)
+        };
 
+        Ok(StartedPayload {
+            payload_id,
+            parent_hash: latest.header.hash,
+            wait_after_fcu,
+        })
+    }
+
+    pub async fn resolve_started_payload(
+        &self,
+        started: &StartedPayload,
+    ) -> eyre::Result<OpExecutionPayloadV4> {
         let payload: op_alloy_rpc_types_engine::OpExecutionPayloadEnvelopeV4 =
-            self.engine_api.get_payload(payload_id).await?;
-        let payload = payload.execution_payload;
+            self.engine_api.get_payload(started.payload_id).await?;
 
+        Ok(payload.execution_payload)
+    }
+
+    pub async fn finish_started_payload(
+        &self,
+        started: &StartedPayload,
+    ) -> eyre::Result<Block<Transaction>> {
+        let payload = self.resolve_started_payload(started).await?;
+        self.submit_started_payload(started, payload).await
+    }
+
+    pub async fn submit_started_payload(
+        &self,
+        started: &StartedPayload,
+        payload: OpExecutionPayloadV4,
+    ) -> eyre::Result<Block<Transaction>> {
         if self
             .engine_api
             .new_payload(payload.clone(), vec![], B256::ZERO, Requests::default())
@@ -235,7 +294,7 @@ impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
         let new_block_hash = payload.payload_inner.payload_inner.payload_inner.block_hash;
 
         self.engine_api
-            .update_forkchoice(latest.header.hash, new_block_hash, None)
+            .update_forkchoice(started.parent_hash, new_block_hash, None)
             .await?;
 
         let block = self
