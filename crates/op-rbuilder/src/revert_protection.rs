@@ -3,7 +3,6 @@ use std::{sync::Arc, time::Instant};
 use crate::{
     metrics::OpRBuilderMetrics,
     pool::FlashpoolExt,
-    presim::TopOfBlockSimulator,
     primitives::bundle::{Bundle, BundleResult},
     tx::{FBPooledTransaction, MaybeFlashblockFilter},
 };
@@ -14,10 +13,8 @@ use jsonrpsee::{
     core::{RpcResult, async_trait},
     proc_macros::rpc,
 };
-use op_alloy_consensus::OpTxEnvelope;
 use reth::rpc::api::eth::{RpcReceipt, helpers::FullEthApi};
 use reth_optimism_chainspec::OpChainSpec;
-use reth_optimism_primitives::OpTransactionSigned;
 use reth_optimism_txpool::{OpPooledTransaction, conditional::MaybeConditionalTransaction};
 use reth_primitives_traits::Recovered;
 use reth_provider::{BlockReaderIdExt, ChainSpecProvider, StateProviderFactory};
@@ -41,7 +38,6 @@ pub struct RevertProtectionExt<Pool, Provider, Eth> {
     provider: Provider,
     eth_api: Eth,
     metrics: Arc<OpRBuilderMetrics>,
-    simulator: Option<Arc<TopOfBlockSimulator>>,
 }
 
 impl<Pool, Provider, Eth> RevertProtectionExt<Pool, Provider, Eth>
@@ -50,18 +46,12 @@ where
     Provider: Clone,
     Eth: Clone,
 {
-    pub(crate) fn new(
-        pool: Pool,
-        provider: Provider,
-        eth_api: Eth,
-        simulator: Option<Arc<TopOfBlockSimulator>>,
-    ) -> Self {
+    pub(crate) fn new(pool: Pool, provider: Provider, eth_api: Eth) -> Self {
         Self {
             pool,
             provider,
             eth_api,
             metrics: Arc::new(OpRBuilderMetrics::default()),
-            simulator,
         }
     }
 }
@@ -182,45 +172,8 @@ where
             .await
             .map_err(EthApiError::from)?;
 
-        // Pre-simulate the transaction against current head state if:
-        // - pre-simulation is enabled (simulator is Some)
-        // - the tx is allowed to revert
-        if bundle
-            .reverting_tx_hashes
-            .as_ref()
-            .is_some_and(|hashes| !hashes.is_empty())
-            && let Some(simulator) = &self.simulator
-        {
-            let pool = self.pool.clone();
-            let metrics = self.metrics.clone();
-            let simulator = simulator.clone();
-            tokio::task::spawn(async move {
-                let sim_start = Instant::now();
-                let sim_tx: Recovered<OpTransactionSigned> = recovered
-                    .clone()
-                    .map(|tx| OpTransactionSigned::from(OpTxEnvelope::from(tx)));
-                let sim_tx_hash = *sim_tx.hash();
-                match simulator.clone().simulate_tx(sim_tx).await {
-                    Ok(true) => {
-                        metrics.bundle_pre_simulation_passes.increment(1);
-                    }
-                    Ok(false) => {
-                        metrics.bundle_pre_simulation_reverts.increment(1);
-                        pool.remove_transaction(sim_tx_hash);
-                    }
-                    Err(e) => {
-                        error!(error = %e, "pre-simulation task failed");
-                    }
-                }
-                metrics
-                    .bundle_pre_simulation_duration
-                    .record(sim_start.elapsed());
-            });
-        }
-
-        let result = BundleResult {
+        Ok(BundleResult {
             bundle_hash: outcome.hash,
-        };
-        Ok(result)
+        })
     }
 }

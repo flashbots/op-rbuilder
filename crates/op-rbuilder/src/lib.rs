@@ -9,7 +9,6 @@ pub mod launcher;
 pub mod metrics;
 mod monitor_tx_pool;
 pub mod pool;
-pub mod presim;
 pub mod primitives;
 pub mod revert_protection;
 pub(crate) mod runtime_ext;

@@ -13,14 +13,26 @@ use reth_transaction_pool::{
     BestTransactionsAttributes, BlockInfo, GetPooledTransactionLimit, NewBlobSidecar,
     NewTransactionEvent, PoolResult, PoolSize, PoolTransaction, PropagatedTransactions,
     TransactionEvents, TransactionListenerKind, TransactionOrigin, TransactionPool,
-    ValidPoolTransaction, blobstore::BlobStoreError,
+    TransactionValidator, ValidPoolTransaction, blobstore::BlobStoreError,
 };
 use tokio::sync::mpsc::Receiver;
 
 use crate::{pool::Flashpool, tx::FBPooledTransaction};
 
-impl<P: TransactionPool<Transaction = FBPooledTransaction>> TransactionPool for Flashpool<P> {
+impl<
+    P: TransactionPool<Transaction = FBPooledTransaction> + 'static,
+    V: TransactionValidator<Transaction = FBPooledTransaction> + Clone,
+> TransactionPool for Flashpool<P, V>
+{
     type Transaction = FBPooledTransaction;
+
+    fn add_transaction(
+        &self,
+        origin: TransactionOrigin,
+        transaction: Self::Transaction,
+    ) -> impl Future<Output = PoolResult<AddedTransactionOutcome>> + Send {
+        self.add_transaction_override(origin, transaction)
+    }
 
     delegate! {
         to self.inner {
@@ -31,11 +43,7 @@ impl<P: TransactionPool<Transaction = FBPooledTransaction>> TransactionPool for 
                 origin: TransactionOrigin,
                 transaction: Self::Transaction,
             ) -> impl Future<Output = PoolResult<TransactionEvents>> + Send;
-            fn add_transaction(
-                &self,
-                origin: TransactionOrigin,
-                transaction: Self::Transaction,
-            ) -> impl Future<Output = PoolResult<AddedTransactionOutcome>> + Send;
+
             fn add_transactions_with_origins(
                 &self,
                 transactions: impl IntoIterator<Item = (TransactionOrigin, Self::Transaction)> + Send,

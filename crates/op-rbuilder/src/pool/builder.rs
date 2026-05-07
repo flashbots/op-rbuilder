@@ -1,24 +1,41 @@
+use std::sync::Arc;
+
 use alloy_primitives::TxHash;
-use futures::StreamExt;
+use futures::{FutureExt, StreamExt};
 use moka::sync::Cache;
+use reth_chain_state::CanonStateSubscriptions;
 use reth_evm::ConfigureEvm;
 use reth_node_api::{FullNodeTypes, NodeTypes, PrimitivesTy, TxTy};
 use reth_node_builder::{BuilderContext, components::PoolBuilder};
+use reth_optimism_chainspec::OpChainSpec;
+use reth_optimism_evm::OpEvmConfig;
 use reth_optimism_forks::OpHardforks;
 use reth_optimism_node::OpPoolBuilder;
-use reth_optimism_txpool::{OpPooledTx, OpTransactionPool};
+use reth_optimism_txpool::{OpPooledTx, OpTransactionPool, OpTransactionValidator};
+use reth_primitives_traits::{Block, NodePrimitives};
+use reth_provider::{BlockReaderIdExt, ChainSpecProvider, NodePrimitivesProvider};
 use reth_tasks::TaskExecutor;
 use reth_transaction_pool::{
     AllTransactionsEvents, EthPoolTransaction, FullTransactionEvent, TransactionPool,
-    blobstore::DiskFileBlobStore,
+    TransactionValidationTaskExecutor, blobstore::DiskFileBlobStore,
 };
 
-use crate::{args::OpRbuilderArgs, pool::Flashpool, tx::FBPooledTransaction};
+use crate::{
+    args::OpRbuilderArgs,
+    pool::{
+        Flashpool,
+        metrics::PoolMetrics,
+        presim::{TopOfBlockSimulator, maintain_pending_simulations, maintain_tip_state},
+    },
+    tx::FBPooledTransaction,
+};
 
 pub struct FlashpoolBuilder {
     op_pool_builder: OpPoolBuilder<FBPooledTransaction>,
 
     enable_revert_protection: bool,
+    pre_simulate_bundles: bool,
+    block_time_secs: u64,
 }
 
 impl FlashpoolBuilder {
@@ -34,6 +51,9 @@ impl FlashpoolBuilder {
         Self {
             op_pool_builder,
             enable_revert_protection: builder_args.enable_revert_protection,
+
+            pre_simulate_bundles: builder_args.pre_simulate_bundles,
+            block_time_secs: builder_args.chain_block_time / 1000,
         }
     }
 }
@@ -41,11 +61,19 @@ impl FlashpoolBuilder {
 impl<Node, Evm> PoolBuilder<Node, Evm> for FlashpoolBuilder
 where
     Node: FullNodeTypes<Types: NodeTypes<ChainSpec: OpHardforks>>,
+    Node::Provider: ChainSpecProvider<ChainSpec = OpChainSpec>
+        + BlockReaderIdExt<Header = alloy_consensus::Header>,
+    <Node::Provider as NodePrimitivesProvider>::Primitives:
+        NodePrimitives<Block: Block<Header = alloy_consensus::Header>>,
     FBPooledTransaction: EthPoolTransaction<Consensus = TxTy<Node::Types>> + OpPooledTx,
     Evm: ConfigureEvm<Primitives = PrimitivesTy<Node::Types>> + Clone + 'static,
 {
-    type Pool =
-        Flashpool<OpTransactionPool<Node::Provider, DiskFileBlobStore, Evm, FBPooledTransaction>>;
+    type Pool = Flashpool<
+        OpTransactionPool<Node::Provider, DiskFileBlobStore, Evm, FBPooledTransaction>,
+        TransactionValidationTaskExecutor<
+            OpTransactionValidator<Node::Provider, FBPooledTransaction, Evm>,
+        >,
+    >;
 
     async fn build_pool(
         self,
@@ -55,6 +83,8 @@ where
         let Self {
             op_pool_builder,
             enable_revert_protection,
+            pre_simulate_bundles,
+            block_time_secs,
         } = self;
 
         let inner_pool = op_pool_builder.build_pool(ctx, evm_config).await?;
@@ -64,9 +94,49 @@ where
             inner_pool.all_transactions_event_listener(),
         ));
 
+        let validator = inner_pool.validator().clone();
+        let metrics = Arc::new(PoolMetrics::default());
+
+        let simulator = if pre_simulate_bundles {
+            let simulator = Arc::new(TopOfBlockSimulator::new());
+
+            let chain_events = ctx.provider().canonical_state_stream();
+            let op_evm_config = OpEvmConfig::optimism(ctx.provider().chain_spec());
+            ctx.task_executor().spawn_task(
+                maintain_tip_state(
+                    simulator.clone(),
+                    ctx.provider().clone(),
+                    op_evm_config,
+                    block_time_secs,
+                    metrics.clone(),
+                    chain_events,
+                )
+                .boxed(),
+            );
+
+            let pending_events = inner_pool.all_transactions_event_listener();
+            ctx.task_executor().spawn_task(
+                maintain_pending_simulations(
+                    simulator.clone(),
+                    inner_pool.clone(),
+                    metrics.clone(),
+                    pending_events,
+                )
+                .boxed(),
+            );
+
+            Some(simulator)
+        } else {
+            None
+        };
+
         Ok(Flashpool {
             inner: inner_pool,
+            validator,
+            simulator,
+            task_executor: ctx.task_executor().clone(),
             reverted_cache,
+            metrics,
         })
     }
 }
