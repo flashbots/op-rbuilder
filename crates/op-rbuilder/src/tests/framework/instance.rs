@@ -3,6 +3,7 @@ use crate::{
     backrun_bundle::{BackrunBundleApiServer, BackrunBundleRpc},
     builder::{BuilderConfig, FlashblocksServiceBuilder},
     metrics::OpRBuilderMetrics,
+    pool::FlashpoolBuilder,
     presim::{TopOfBlockSimulator, maintain_pending_simulations, maintain_tip_state},
     revert_protection::{EthApiExtServer, RevertProtectionExt},
     tests::{
@@ -42,7 +43,7 @@ use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_evm::OpEvmConfig;
 use reth_optimism_node::{
     OpNode,
-    node::{OpAddOns, OpAddOnsBuilder, OpEngineValidatorBuilder, OpPoolBuilder},
+    node::{OpAddOns, OpAddOnsBuilder, OpEngineValidatorBuilder},
 };
 use reth_optimism_rpc::OpEthApiBuilder;
 use reth_provider::{CanonStateSubscriptions, ChainSpecProvider};
@@ -141,7 +142,7 @@ impl LocalInstance {
             .with_components(
                 op_node
                     .components()
-                    .pool(pool_component(&args))
+                    .pool(FlashpoolBuilder::new(&args))
                     .payload(FlashblocksServiceBuilder::new(builder_config)),
             )
             .with_add_ons(addons)
@@ -389,20 +390,6 @@ fn chain_spec() -> Arc<OpChainSpec> {
 
 fn task_runtime() -> TaskRuntime {
     TaskRuntime::test()
-}
-
-fn pool_component(args: &OpRbuilderArgs) -> OpPoolBuilder<FBPooledTransaction> {
-    let rollup_args = &args.rollup_args;
-    OpPoolBuilder::<FBPooledTransaction>::default()
-        .with_enable_tx_conditional(
-            // Revert protection uses the same internal pool logic as conditional transactions
-            // to garbage collect transactions out of the bundle range.
-            rollup_args.enable_tx_conditional || args.enable_revert_protection,
-        )
-        .with_supervisor(
-            rollup_args.supervisor_http.clone(),
-            rollup_args.supervisor_safety_level,
-        )
 }
 
 async fn spawn_attestation_provider() -> eyre::Result<AttestationServer> {
