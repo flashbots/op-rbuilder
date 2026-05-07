@@ -10,7 +10,6 @@ use reth_evm::{Evm, EvmError, InvalidTxError, eth::receipt_builder::ReceiptBuild
 use reth_node_api::PayloadBuilderError;
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
-use reth_optimism_forks::OpHardforks;
 use reth_optimism_node::OpPayloadBuilderAttributes;
 use reth_optimism_payload_builder::{
     config::{OpDAConfig, OpGasLimitConfig},
@@ -340,13 +339,10 @@ impl OpPayloadJobCtx {
             info.executed_transactions.push(sequencer_tx.into_inner());
         }
 
-        let da_footprint_gas_scalar = self
-            .chain_spec
-            .is_jovian_active_at_timestamp(self.attributes().timestamp())
-            .then(|| {
-                L1BlockInfo::fetch_da_footprint_gas_scalar(evm.db_mut())
-                    .expect("DA footprint should always be available from the database post jovian")
-            });
+        let da_footprint_gas_scalar = self.hardforks.is_jovian_active().then(|| {
+            L1BlockInfo::fetch_da_footprint_gas_scalar(evm.db_mut())
+                .expect("DA footprint should always be available from the database post jovian")
+        });
 
         info.da_footprint_scalar = da_footprint_gas_scalar;
 
