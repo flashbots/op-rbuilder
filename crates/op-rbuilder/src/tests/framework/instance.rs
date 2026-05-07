@@ -28,7 +28,6 @@ use http::{Request, Response, StatusCode};
 use http_body_util::Full;
 use hyper::{body::Bytes as HyperBytes, server::conn::http1, service::service_fn};
 use hyper_util::rt::TokioIo;
-use moka::future::Cache;
 use nanoid::nanoid;
 use op_alloy_network::Optimism;
 use op_alloy_rpc_types_engine::OpFlashblockPayload;
@@ -92,8 +91,6 @@ impl LocalInstance {
         let mut args = args;
         let task_runtime = task_runtime();
         let op_node = OpNode::new(args.rollup_args.clone());
-        let reverted_cache = Cache::builder().max_capacity(100).build();
-        let reverted_cache_clone = reverted_cache.clone();
 
         let (rpc_ready_tx, rpc_ready_rx) = oneshot::channel::<()>();
         let (txpool_ready_tx, txpool_ready_rx) =
@@ -156,7 +153,6 @@ impl LocalInstance {
                         pool,
                         provider,
                         ctx.registry.eth_api().clone(),
-                        reverted_cache,
                         simulator_for_rpc,
                     );
 
@@ -235,7 +231,7 @@ impl LocalInstance {
             exit_future,
             _node_handle: node_handle,
             task_runtime: Some(task_runtime),
-            pool_observer: TransactionPoolObserver::new(pool_monitor, reverted_cache_clone),
+            pool_observer: TransactionPoolObserver::new(pool_monitor),
             attestation_server,
         })
     }

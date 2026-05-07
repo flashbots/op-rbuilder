@@ -12,7 +12,6 @@ use alloy_provider::{PendingTransactionBuilder, Provider, RootProvider};
 use core::cmp::max;
 use dashmap::DashMap;
 use futures::StreamExt;
-use moka::future::Cache;
 use op_alloy_consensus::{OpTxEnvelope, OpTypedTransaction};
 use op_alloy_network::Optimism;
 use reth_primitives_traits::Recovered;
@@ -295,10 +294,7 @@ impl Drop for TransactionPoolObserver {
 }
 
 impl TransactionPoolObserver {
-    pub fn new(
-        stream: AllTransactionsEvents<FBPooledTransaction>,
-        reverts: Cache<B256, ()>,
-    ) -> Self {
+    pub fn new(stream: AllTransactionsEvents<FBPooledTransaction>) -> Self {
         let mut stream = stream;
         let observations = Arc::new(ObservationsMap::new());
         let observations_clone = Arc::clone(&observations);
@@ -344,7 +340,6 @@ impl TransactionPoolObserver {
                             Some(FullTransactionEvent::Discarded(hash)) => {
                                 debug!(hash = %hash, "Transaction discarded");
                                 observations.entry(hash).or_default().push_back(TransactionEvent::Discarded);
-                                reverts.insert(hash, ()).await;
                             },
                             Some(FullTransactionEvent::Invalid(hash)) => {
                                 debug!(hash = %hash, "Transaction invalid");

@@ -17,7 +17,6 @@ use crate::{
     presim::{TopOfBlockSimulator, maintain_pending_simulations, maintain_tip_state},
     revert_protection::{EthApiExtServer, RevertProtectionExt},
 };
-use moka::future::Cache;
 use reth::builder::{NodeBuilder, WithLaunchContext};
 use reth_cli_commands::launcher::Launcher;
 use reth_db::mdbx::DatabaseEnv;
@@ -97,8 +96,6 @@ impl Launcher<OpChainSpecParser, OpRbuilderArgs> for BuilderLauncher {
         let gas_limit_config = builder_config.gas_limit_config.clone();
         let rollup_args = &builder_args.rollup_args;
         let op_node = OpNode::new(rollup_args.clone());
-        let reverted_cache = Cache::builder().max_capacity(100).build();
-        let reverted_cache_copy = reverted_cache.clone();
         let backrun_bundle_enabled = builder_args.backrun_bundle.backruns_enabled;
         let block_time_secs = builder_config.block_time.as_millis() as u64 / 1000;
         let backrun_bundle_pool = builder_config.backrun_bundle_pool.clone();
@@ -139,7 +136,6 @@ impl Launcher<OpChainSpecParser, OpRbuilderArgs> for BuilderLauncher {
                         pool,
                         provider,
                         ctx.registry.eth_api().clone(),
-                        reverted_cache,
                         simulator_for_rpc,
                     );
 
@@ -166,11 +162,8 @@ impl Launcher<OpChainSpecParser, OpRbuilderArgs> for BuilderLauncher {
                 if builder_args.log_pool_transactions {
                     info!("Logging pool transactions");
                     let listener = ctx.pool.all_transactions_event_listener();
-                    let task = monitor_tx_pool(
-                        listener,
-                        reverted_cache_copy,
-                        builder_args.enable_tx_tracking_debug_logs,
-                    );
+                    let task =
+                        monitor_tx_pool(listener, builder_args.enable_tx_tracking_debug_logs);
                     ctx.task_executor.spawn_critical_task("txlogging", task);
                 }
 

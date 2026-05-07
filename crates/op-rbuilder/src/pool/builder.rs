@@ -1,15 +1,24 @@
+use alloy_primitives::TxHash;
+use futures::StreamExt;
+use moka::sync::Cache;
 use reth_evm::ConfigureEvm;
 use reth_node_api::{FullNodeTypes, NodeTypes, PrimitivesTy, TxTy};
 use reth_node_builder::{BuilderContext, components::PoolBuilder};
 use reth_optimism_forks::OpHardforks;
 use reth_optimism_node::OpPoolBuilder;
 use reth_optimism_txpool::{OpPooledTx, OpTransactionPool};
-use reth_transaction_pool::{EthPoolTransaction, blobstore::DiskFileBlobStore};
+use reth_tasks::TaskExecutor;
+use reth_transaction_pool::{
+    AllTransactionsEvents, EthPoolTransaction, FullTransactionEvent, TransactionPool,
+    blobstore::DiskFileBlobStore,
+};
 
 use crate::{args::OpRbuilderArgs, pool::Flashpool, tx::FBPooledTransaction};
 
 pub struct FlashpoolBuilder {
     op_pool_builder: OpPoolBuilder<FBPooledTransaction>,
+
+    enable_revert_protection: bool,
 }
 
 impl FlashpoolBuilder {
@@ -22,7 +31,10 @@ impl FlashpoolBuilder {
                 rollup_args.enable_tx_conditional || builder_args.enable_revert_protection,
             );
 
-        Self { op_pool_builder }
+        Self {
+            op_pool_builder,
+            enable_revert_protection: builder_args.enable_revert_protection,
+        }
     }
 }
 
@@ -40,8 +52,46 @@ where
         ctx: &BuilderContext<Node>,
         evm_config: Evm,
     ) -> eyre::Result<Self::Pool> {
+        let Self {
+            op_pool_builder,
+            enable_revert_protection,
+        } = self;
+
+        let inner_pool = op_pool_builder.build_pool(ctx, evm_config).await?;
+
+        let reverted_cache = enable_revert_protection.then_some(setup_revert_protection(
+            ctx.task_executor(),
+            inner_pool.all_transactions_event_listener(),
+        ));
+
         Ok(Flashpool {
-            inner: self.op_pool_builder.build_pool(ctx, evm_config).await?,
+            inner: inner_pool,
+            reverted_cache,
         })
     }
+}
+
+fn setup_revert_protection(
+    task_executor: &TaskExecutor,
+    mut events: AllTransactionsEvents<FBPooledTransaction>,
+) -> Cache<TxHash, ()> {
+    let reverted_cache: Cache<_, ()> = Cache::builder().max_capacity(100).build();
+    // Reverted transactions are removed from the pool by the conditional-tx GC
+    // maintenance task. This is spawned during `OpPoolBuilder::build_pool` and
+    // accesses the inner `OpTransactionPool` directly, calling
+    // `remove_transactions`. Unfortunately, this bypasses our Flashpool
+    // wrapper. So to ensure the reverted_cache is populated, we need to
+    // subscribe to pool events and insert on Discarded events.
+    task_executor.spawn_task({
+        let reverted_cache = reverted_cache.clone();
+        async move {
+            while let Some(event) = events.next().await {
+                if let FullTransactionEvent::Discarded(hash) = event {
+                    reverted_cache.insert(hash, ());
+                }
+            }
+        }
+    });
+
+    reverted_cache
 }

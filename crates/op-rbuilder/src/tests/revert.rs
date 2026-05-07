@@ -432,9 +432,15 @@ async fn check_transaction_receipt_status_message(rbuilder: LocalInstance) -> ey
 
     // Dropped
     let _ = driver.build_new_block().await?;
-    let receipt = provider.get_transaction_receipt(*tx_hash).await;
+    let err = provider
+        .get_transaction_receipt(*tx_hash)
+        .await
+        .expect_err("expected an error for a dropped reverting tx");
 
-    assert!(receipt.is_err());
+    assert!(
+        err.to_string()
+            .contains("the transaction was dropped from the pool")
+    );
 
     Ok(())
 }
