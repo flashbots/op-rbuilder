@@ -10,7 +10,7 @@ use crate::{
     args::{FlashblocksArgs, OpRbuilderArgs},
     tests::{
         BlockTransactionsExt, BundleOpts, ChainDriver, FLASHBLOCKS_NUMBER_ADDRESS,
-        TransactionBuilderExt, flashblocks_number_contract::FlashblocksNumber,
+        FlashblocksListener, TransactionBuilderExt, flashblocks_number_contract::FlashblocksNumber,
     },
 };
 
@@ -163,6 +163,254 @@ async fn test_flashblock_min_max_filtering(rbuilder: LocalInstance) -> eyre::Res
 
     let flashblocks = flashblocks_listener.get_flashblocks();
     assert_eq!(6, flashblocks.len(), "Flashblocks length should be 6");
+
+    flashblocks_listener.stop().await
+}
+
+#[rb_test(args = OpRbuilderArgs {
+    chain_block_time: 1000,
+    enable_revert_protection: true,
+    flashblocks: FlashblocksArgs {
+        flashblocks_port: 1240,
+        flashblocks_addr: "127.0.0.1".into(),
+        flashblocks_block_time: 200,
+        flashblocks_continuous_build: true,
+        ..Default::default()
+    },
+    ..Default::default()
+})]
+async fn smoke_continuous_flashblocks_publish_and_advance_state(
+    rbuilder: LocalInstance,
+) -> eyre::Result<()> {
+    let driver = rbuilder.driver().await?;
+    let flashblocks_listener = rbuilder.spawn_flashblocks_listener();
+
+    let tx1 = driver
+        .create_transaction()
+        .random_valid_transfer()
+        .with_bundle(BundleOpts::default().with_min_flashblock_number(1))
+        .with_max_priority_fee_per_gas(1)
+        .send()
+        .await?;
+
+    let tx3 = driver
+        .create_transaction()
+        .random_valid_transfer()
+        .with_bundle(BundleOpts::default().with_min_flashblock_number(3))
+        .with_max_priority_fee_per_gas(10)
+        .send()
+        .await?;
+
+    let tx5 = driver
+        .create_transaction()
+        .random_valid_transfer()
+        .with_bundle(BundleOpts::default().with_min_flashblock_number(5))
+        .with_max_priority_fee_per_gas(20)
+        .send()
+        .await?;
+
+    let block = driver.build_new_block_with_current_timestamp(None).await?;
+    let tx_hashes = vec![*tx1.tx_hash(), *tx3.tx_hash(), *tx5.tx_hash()];
+
+    assert!(
+        block.includes(&tx_hashes),
+        "continuous flashblocks block should include all gated transactions"
+    );
+
+    for (tx_hash, expected_flashblock) in [
+        (tx_hashes[0], 1_u64),
+        (tx_hashes[1], 3_u64),
+        (tx_hashes[2], 5_u64),
+    ] {
+        assert_eq!(
+            Some(expected_flashblock),
+            flashblocks_listener.find_transaction_flashblock(&tx_hash),
+            "transaction {tx_hash:?} should land in flashblock {expected_flashblock}"
+        );
+    }
+
+    let flashblocks = flashblocks_listener.get_flashblocks();
+    assert_eq!(
+        6,
+        flashblocks.len(),
+        "continuous mode should produce one base flashblock plus five scheduled flashblocks"
+    );
+
+    for (expected_index, flashblock) in flashblocks.iter().enumerate() {
+        assert_eq!(
+            expected_index as u64, flashblock.index,
+            "continuous flashblocks should arrive in index order"
+        );
+    }
+
+    flashblocks_listener.stop().await
+}
+
+#[rb_test(args = OpRbuilderArgs {
+    chain_block_time: 1000,
+    enable_revert_protection: true,
+    flashblocks: FlashblocksArgs {
+        flashblocks_port: 1241,
+        flashblocks_addr: "127.0.0.1".into(),
+        flashblocks_block_time: 200,
+        flashblocks_continuous_build: true,
+        ..Default::default()
+    },
+    ..Default::default()
+})]
+async fn smoke_continuous_resolve_before_publish_suppresses_future_flashblocks(
+    rbuilder: LocalInstance,
+) -> eyre::Result<()> {
+    let driver = rbuilder.driver().await?;
+    let flashblocks_listener = rbuilder.spawn_flashblocks_listener();
+
+    let future_tx = driver
+        .create_transaction()
+        .random_valid_transfer()
+        .with_bundle(BundleOpts::default().with_min_flashblock_number(1))
+        .send()
+        .await?;
+
+    let started = driver.start_payload_with_current_timestamp(None).await?;
+    let payload = driver.resolve_started_payload(&started).await?;
+
+    wait_for_flashblock_count(&flashblocks_listener, 1, Duration::from_secs(2)).await;
+    tokio::time::sleep(Duration::from_millis(450)).await;
+
+    let flashblocks = flashblocks_listener.get_flashblocks();
+    assert_eq!(
+        1,
+        flashblocks.len(),
+        "resolving before the first scheduled continuous flashblock should suppress later publishes"
+    );
+    assert!(
+        flashblocks_listener
+            .find_transaction_flashblock(future_tx.tx_hash())
+            .is_none(),
+        "future flashblock-gated transaction should not be published after resolve"
+    );
+
+    let block = driver.submit_started_payload(&started, payload).await?;
+    assert!(
+        !block.includes(future_tx.tx_hash()),
+        "resolved payload should not advance to an unpublished continuous candidate"
+    );
+
+    flashblocks_listener.stop().await
+}
+
+#[rb_test(args = OpRbuilderArgs {
+    chain_block_time: 1000,
+    enable_revert_protection: true,
+    flashblocks: FlashblocksArgs {
+        flashblocks_port: 1242,
+        flashblocks_addr: "127.0.0.1".into(),
+        flashblocks_block_time: 200,
+        flashblocks_continuous_build: true,
+        ..Default::default()
+    },
+    ..Default::default()
+})]
+async fn smoke_continuous_resolve_after_publish_preserves_published_state(
+    rbuilder: LocalInstance,
+) -> eyre::Result<()> {
+    let driver = rbuilder.driver().await?;
+    let flashblocks_listener = rbuilder.spawn_flashblocks_listener();
+
+    let published_tx = driver
+        .create_transaction()
+        .random_valid_transfer()
+        .with_bundle(BundleOpts::default().with_min_flashblock_number(1))
+        .with_max_priority_fee_per_gas(5)
+        .send()
+        .await?;
+
+    let future_tx = driver
+        .create_transaction()
+        .random_valid_transfer()
+        .with_bundle(BundleOpts::default().with_min_flashblock_number(5))
+        .with_max_priority_fee_per_gas(10)
+        .send()
+        .await?;
+
+    let started = driver.start_payload_with_current_timestamp(None).await?;
+    let published_tx_flashblock = wait_for_transaction_flashblock(
+        &flashblocks_listener,
+        published_tx.tx_hash(),
+        Duration::from_secs(3),
+    )
+    .await;
+    assert_eq!(
+        Some(1),
+        published_tx_flashblock,
+        "first continuous flashblock should publish the min=1 transaction"
+    );
+
+    let payload = driver.resolve_started_payload(&started).await?;
+    tokio::time::sleep(Duration::from_millis(550)).await;
+
+    let flashblocks = flashblocks_listener.get_flashblocks();
+    assert!(
+        flashblocks.len() < 6,
+        "resolving after a published flashblock should stop before the full schedule"
+    );
+    assert!(
+        flashblocks_listener
+            .find_transaction_flashblock(future_tx.tx_hash())
+            .is_none(),
+        "future flashblock-gated transaction should not be published after resolve"
+    );
+
+    let block = driver.submit_started_payload(&started, payload).await?;
+    assert!(
+        block.includes(published_tx.tx_hash()),
+        "resolved payload should keep already-published continuous state"
+    );
+    assert!(
+        !block.includes(future_tx.tx_hash()),
+        "resolved payload should not include future unpublished continuous state"
+    );
+
+    flashblocks_listener.stop().await
+}
+
+#[rb_test(args = OpRbuilderArgs {
+    chain_block_time: 1000,
+    enable_revert_protection: true,
+    flashblocks: FlashblocksArgs {
+        flashblocks_port: 1243,
+        flashblocks_addr: "127.0.0.1".into(),
+        flashblocks_block_time: 200,
+        flashblocks_continuous_build: true,
+        ..Default::default()
+    },
+    ..Default::default()
+})]
+async fn smoke_continuous_trigger_miss_fallback_publishes_candidate(
+    rbuilder: LocalInstance,
+) -> eyre::Result<()> {
+    let _force_miss = crate::builder::continuous_test_hooks::force_next_take_misses(1);
+    let driver = rbuilder.driver().await?;
+    let flashblocks_listener = rbuilder.spawn_flashblocks_listener();
+
+    let tx = driver
+        .create_transaction()
+        .random_valid_transfer()
+        .with_bundle(BundleOpts::default().with_min_flashblock_number(1))
+        .with_max_priority_fee_per_gas(10)
+        .send()
+        .await?;
+
+    let block = driver.build_new_block_with_current_timestamp(None).await?;
+    assert!(
+        block.includes(tx.tx_hash()),
+        "fallback publish path should still advance to the best candidate"
+    );
+    assert_eq!(
+        Some(1),
+        flashblocks_listener.find_transaction_flashblock(tx.tx_hash()),
+        "forced trigger miss should still publish the min=1 transaction through fallback"
+    );
 
     flashblocks_listener.stop().await
 }
@@ -386,6 +634,45 @@ async fn create_flashblock_transactions(
         txs.push(*tx.tx_hash());
     }
     Ok(txs)
+}
+
+async fn wait_for_flashblock_count(
+    flashblocks_listener: &FlashblocksListener,
+    min_count: usize,
+    timeout_after: Duration,
+) {
+    tokio::time::timeout(timeout_after, async {
+        loop {
+            if flashblocks_listener.get_flashblocks().len() >= min_count {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap_or_else(|_| {
+        panic!(
+            "timed out waiting for at least {min_count} flashblocks, got {}",
+            flashblocks_listener.get_flashblocks().len()
+        )
+    });
+}
+
+async fn wait_for_transaction_flashblock(
+    flashblocks_listener: &FlashblocksListener,
+    tx_hash: &TxHash,
+    timeout_after: Duration,
+) -> Option<u64> {
+    tokio::time::timeout(timeout_after, async {
+        loop {
+            if let Some(flashblock) = flashblocks_listener.find_transaction_flashblock(tx_hash) {
+                return Some(flashblock);
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap_or(None)
 }
 
 // Helper to verify builder transactions

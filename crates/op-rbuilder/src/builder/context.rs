@@ -49,7 +49,7 @@ use crate::{
 /// `BuilderConfig`) or is itself an `Arc`/handle whose backing data lives
 /// outside the per-job context (e.g. metrics registry, global backrun pool,
 /// per-address gas limiter buckets).
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct OpPayloadBuilderCtx {
     /// EVM configuration used to build a per-job [`OpBlockEvmFactory`].
     pub evm_config: OpEvmConfig,
@@ -83,6 +83,7 @@ pub struct OpPayloadBuilderCtx {
 
 /// Container type that holds all necessities to build a new payload.
 /// This struct is constructed once per payload job.
+#[derive(Clone)]
 pub struct OpPayloadJobCtx {
     /// Builder-lifetime configuration shared with all other in-flight jobs.
     pub builder_ctx: Arc<OpPayloadBuilderCtx>,

@@ -1,4 +1,4 @@
-use std::{cmp::min, sync::Arc, time::Instant};
+use std::{cmp::min, collections::HashMap, sync::Arc, time::Instant};
 
 use alloy_primitives::Address;
 use dashmap::DashMap;
@@ -8,6 +8,12 @@ use crate::gas_limiter::{args::GasLimiterArgs, error::GasLimitError, metrics::Ga
 pub mod args;
 pub mod error;
 mod metrics;
+
+/// Opaque snapshot of the gas limiter's per-address token buckets.
+/// Used to save and restore state across candidate iterations in
+/// continuous flashblock building.
+#[derive(Clone)]
+pub struct GasLimiterSnapshot(Option<HashMap<Address, TokenBucket>>);
 
 #[derive(Debug, Clone)]
 pub struct AddressGasLimiter {
@@ -50,6 +56,32 @@ impl AddressGasLimiter {
     pub fn refresh(&self, block_number: u64) {
         if let Some(inner) = self.inner.as_ref() {
             inner.refresh(block_number)
+        }
+    }
+
+    /// Capture the current per-address gas budgets so they can be restored later.
+    pub fn snapshot(&self) -> GasLimiterSnapshot {
+        GasLimiterSnapshot(self.inner.as_ref().map(|inner| inner.snapshot_buckets()))
+    }
+
+    /// Restore per-address gas budgets from a previous snapshot.
+    pub fn restore(&self, snapshot: &GasLimiterSnapshot) {
+        if let (Some(inner), Some(buckets)) = (&self.inner, &snapshot.0) {
+            inner.restore_buckets(buckets);
+        }
+    }
+
+    /// Clone configuration and metrics, but give the clone its own bucket map.
+    ///
+    /// Continuous candidate builders use this for speculative execution so a
+    /// cancelled-but-still-draining task cannot mutate the live block gas
+    /// limiter while the next interval is already building.
+    pub fn detached_clone(&self) -> Self {
+        Self {
+            inner: self
+                .inner
+                .as_ref()
+                .map(AddressGasLimiterInner::detached_clone),
         }
     }
 }
@@ -129,6 +161,28 @@ impl AddressGasLimiterInner {
 
         self.metrics
             .record_refresh(removed_addresses, start.elapsed());
+    }
+
+    fn snapshot_buckets(&self) -> HashMap<Address, TokenBucket> {
+        self.address_buckets
+            .iter()
+            .map(|entry| (*entry.key(), entry.value().clone()))
+            .collect()
+    }
+
+    fn detached_clone(&self) -> Self {
+        Self {
+            config: self.config.clone(),
+            address_buckets: Arc::new(self.snapshot_buckets().into_iter().collect()),
+            metrics: self.metrics.clone(),
+        }
+    }
+
+    fn restore_buckets(&self, snapshot: &HashMap<Address, TokenBucket>) {
+        self.address_buckets.clear();
+        for (addr, bucket) in snapshot {
+            self.address_buckets.insert(*addr, bucket.clone());
+        }
     }
 }
 
@@ -258,5 +312,132 @@ mod tests {
         );
         assert!(inner.address_buckets.contains_key(&addr2));
         assert!(!inner.address_buckets.contains_key(&addr1));
+    }
+
+    #[test]
+    fn test_snapshot_restore() {
+        let config = create_test_config(1000, 100, 10);
+        let limiter = AddressGasLimiter::new(config);
+        let addr = test_address();
+
+        // Consume some gas
+        assert!(limiter.consume_gas(addr, 400).is_ok());
+
+        // Snapshot (600 remaining)
+        let snapshot = limiter.snapshot();
+
+        // Consume more gas after snapshot
+        assert!(limiter.consume_gas(addr, 500).is_ok());
+        // Only 100 left now
+        assert!(limiter.consume_gas(addr, 200).is_err());
+
+        // Restore -> should be back to 600
+        limiter.restore(&snapshot);
+        assert!(limiter.consume_gas(addr, 500).is_ok());
+        // 100 left
+        assert!(limiter.consume_gas(addr, 200).is_err());
+        assert!(limiter.consume_gas(addr, 100).is_ok());
+    }
+
+    #[test]
+    fn test_snapshot_restore_disabled_limiter() {
+        let config = GasLimiterArgs {
+            gas_limiter_enabled: false,
+            max_gas_per_address: 0,
+            refill_rate_per_block: 0,
+            cleanup_interval: 10,
+        };
+        let limiter = AddressGasLimiter::new(config);
+
+        // snapshot/restore on disabled limiter is a no-op
+        let snapshot = limiter.snapshot();
+        assert!(limiter.consume_gas(test_address(), 999_999).is_ok());
+        limiter.restore(&snapshot);
+        assert!(limiter.consume_gas(test_address(), 999_999).is_ok());
+    }
+
+    #[test]
+    fn test_detached_clone_does_not_share_buckets() {
+        let config = create_test_config(1000, 100, 10);
+        let limiter = AddressGasLimiter::new(config);
+        let addr = test_address();
+
+        assert!(limiter.consume_gas(addr, 400).is_ok());
+
+        let detached = limiter.detached_clone();
+        assert!(detached.consume_gas(addr, 600).is_ok());
+        assert!(detached.consume_gas(addr, 1).is_err());
+
+        assert!(limiter.consume_gas(addr, 600).is_ok());
+        assert!(limiter.consume_gas(addr, 1).is_err());
+    }
+
+    #[test]
+    fn test_restore_published_snapshot_updates_live_limiter() {
+        let config = create_test_config(1000, 100, 10);
+        let limiter = AddressGasLimiter::new(config);
+        let addr = test_address();
+
+        assert!(limiter.consume_gas(addr, 400).is_ok());
+
+        let detached = limiter.detached_clone();
+        assert!(detached.consume_gas(addr, 500).is_ok());
+        let published_snapshot = detached.snapshot();
+
+        assert!(limiter.consume_gas(addr, 600).is_ok());
+        assert!(limiter.consume_gas(addr, 1).is_err());
+
+        limiter.restore(&published_snapshot);
+        assert!(limiter.consume_gas(addr, 100).is_ok());
+        assert!(limiter.consume_gas(addr, 1).is_err());
+    }
+
+    #[test]
+    fn test_stale_detached_clone_consumption_does_not_affect_live_limiter() {
+        let config = create_test_config(1000, 100, 10);
+        let limiter = AddressGasLimiter::new(config);
+        let addr = test_address();
+
+        assert!(limiter.consume_gas(addr, 100).is_ok());
+        let stale_detached = limiter.detached_clone();
+
+        assert!(limiter.consume_gas(addr, 800).is_ok());
+        assert!(stale_detached.consume_gas(addr, 900).is_ok());
+        assert!(stale_detached.consume_gas(addr, 1).is_err());
+
+        assert!(limiter.consume_gas(addr, 100).is_ok());
+        assert!(limiter.consume_gas(addr, 1).is_err());
+    }
+
+    #[test]
+    fn test_snapshot_restore_multiple_addresses() {
+        let config = create_test_config(1000, 100, 10);
+        let limiter = AddressGasLimiter::new(config);
+
+        let addr1 = Address::from([0x1; 20]);
+        let addr2 = Address::from([0x2; 20]);
+        let addr3 = Address::from([0x3; 20]);
+
+        // Setup: consume different amounts
+        assert!(limiter.consume_gas(addr1, 300).is_ok()); // 700 left
+        assert!(limiter.consume_gas(addr2, 600).is_ok()); // 400 left
+
+        let snapshot = limiter.snapshot();
+
+        // Consume from all three after snapshot
+        assert!(limiter.consume_gas(addr1, 700).is_ok()); // 0 left
+        assert!(limiter.consume_gas(addr2, 400).is_ok()); // 0 left
+        assert!(limiter.consume_gas(addr3, 500).is_ok()); // 500 left
+
+        // All depleted
+        assert!(limiter.consume_gas(addr1, 1).is_err());
+        assert!(limiter.consume_gas(addr2, 1).is_err());
+
+        // Restore -> addr1=700, addr2=400, addr3 bucket removed
+        limiter.restore(&snapshot);
+        assert!(limiter.consume_gas(addr1, 700).is_ok());
+        assert!(limiter.consume_gas(addr2, 400).is_ok());
+        // addr3 was not in snapshot, so its bucket was cleared
+        assert!(limiter.consume_gas(addr3, 1000).is_ok()); // fresh bucket
     }
 }
