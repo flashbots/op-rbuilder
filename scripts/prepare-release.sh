@@ -6,22 +6,26 @@
 #   This script automates the process of preparing a new stable release by:
 #   1. Creating a release branch (release/v{VERSION})
 #   2. Bumping the version in Cargo.toml
-#   3. Generating a changelog from conventional commits using release-plz
+#   3. Generating a changelog from conventional commits using git-cliff
 #   4. Committing the changes
 #   5. Pushing the branch to remote
 #   6. Opening a GitHub pull request with the "release" label
 #
 # USAGE:
-#   ./scripts/prepare-release.sh <version>
+#   ./scripts/prepare-release.sh [--dry-run] <version>
 #
 #   Example:
 #     ./scripts/prepare-release.sh 0.3.4
+#     ./scripts/prepare-release.sh --dry-run 0.3.4
+#
+# OPTIONS:
+#   --dry-run   Preview the changelog and actions without making any changes
 #
 # PREREQUISITES:
 #   - Must be run from the repository root directory
 #   - Must be on the 'main' branch with a clean working directory
 #   - GitHub CLI (gh) must be installed and authenticated
-#   - release-plz will be installed automatically if not present
+#   - git-cliff will be installed automatically if not present
 #
 # WORKFLOW:
 #   After this script completes:
@@ -46,6 +50,7 @@ set -euo pipefail
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
+CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
 # Helper functions
@@ -62,35 +67,63 @@ info() {
     echo -e "${YELLOW}ℹ️  $1${NC}"
 }
 
+dry_run_info() {
+    echo -e "${CYAN}[dry-run] $1${NC}"
+}
+
+# Parse arguments
+DRY_RUN=false
+VERSION=""
+
+for arg in "$@"; do
+    case "$arg" in
+        --dry-run)
+            DRY_RUN=true
+            ;;
+        -*)
+            echo "Unknown option: $arg"
+            echo "Usage: $0 [--dry-run] <version>"
+            exit 1
+            ;;
+        *)
+            if [[ -n "$VERSION" ]]; then
+                echo "Usage: $0 [--dry-run] <version>"
+                exit 1
+            fi
+            VERSION="$arg"
+            ;;
+    esac
+done
+
+if [[ -z "$VERSION" ]]; then
+    echo "Usage: $0 [--dry-run] <version>"
+    echo "Example: $0 0.3.4"
+    exit 1
+fi
+
 # Check if we're in the right directory
 if [[ ! -f "Cargo.toml" ]] || [[ ! -d ".git" ]]; then
     error "Must be run from the repository root"
 fi
 
-# Check if gh CLI is installed
-if ! command -v gh &> /dev/null; then
+# Check if gh CLI is installed (not needed for dry-run)
+if [[ "$DRY_RUN" == "false" ]] && ! command -v gh &> /dev/null; then
     error "GitHub CLI (gh) is not installed. Install it from https://cli.github.com/"
 fi
 
-# Check if on main branch
-CURRENT_BRANCH=$(git branch --show-current)
-if [[ "$CURRENT_BRANCH" != "main" ]]; then
-    error "Must be on main branch (currently on: $CURRENT_BRANCH)"
-fi
+# These checks only matter when actually making changes
+if [[ "$DRY_RUN" == "false" ]]; then
+    # Check if on main branch
+    CURRENT_BRANCH=$(git branch --show-current)
+    if [[ "$CURRENT_BRANCH" != "main" ]]; then
+        error "Must be on main branch (currently on: $CURRENT_BRANCH)"
+    fi
 
-# Check for uncommitted changes
-if [[ -n $(git status --porcelain) ]]; then
-    error "Working directory has uncommitted changes. Please commit or stash them first."
+    # Check for uncommitted changes
+    if [[ -n $(git status --porcelain) ]]; then
+        error "Working directory has uncommitted changes. Please commit or stash them first."
+    fi
 fi
-
-# Get version argument
-if [[ $# -ne 1 ]]; then
-    echo "Usage: $0 <version>"
-    echo "Example: $0 0.3.4"
-    exit 1
-fi
-
-VERSION="$1"
 
 # Validate version format
 if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
@@ -106,6 +139,38 @@ fi
 CURRENT_VERSION=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
 info "Current version: ${CURRENT_VERSION}"
 info "New version: ${VERSION}"
+
+# Find the previous stable release tag (excludes RC tags)
+PREV_TAG=$(git tag -l | grep -E '^op-rbuilder/v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)
+if [[ -z "$PREV_TAG" ]]; then
+    error "Could not find a previous stable release tag"
+fi
+info "Previous stable release: ${PREV_TAG}"
+
+# Check if git-cliff is installed
+if ! command -v git-cliff &> /dev/null; then
+    if [[ "$DRY_RUN" == "true" ]]; then
+        error "git-cliff is not installed. Run: cargo install git-cliff --locked"
+    fi
+    info "Installing git-cliff..."
+    cargo install git-cliff --locked
+fi
+
+if [[ "$DRY_RUN" == "true" ]]; then
+    echo ""
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo -e "${CYAN}Dry-run mode — no changes will be made${NC}"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    dry_run_info "Would create branch: release/v${VERSION}"
+    dry_run_info "Would bump Cargo.toml: ${CURRENT_VERSION} → ${VERSION}"
+    dry_run_info "Would generate changelog from ${PREV_TAG}..HEAD"
+    dry_run_info "Would push branch and open PR: Release v${VERSION}"
+    echo ""
+    echo "Changelog preview:"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    git cliff "${PREV_TAG}..HEAD" --tag "op-rbuilder/v${VERSION}"
+    exit 0
+fi
 
 # Confirm with user
 echo ""
@@ -149,20 +214,16 @@ git add Cargo.toml
 git commit -m "chore: bump version to ${VERSION}"
 success "Version bump committed"
 
-# Check if release-plz is installed
-if ! command -v release-plz &> /dev/null; then
-    info "Installing release-plz..."
-    cargo install release-plz --locked
-fi
-
 # Generate changelog
-info "Generating changelog with release-plz..."
-if release-plz update; then
+info "Generating changelog from ${PREV_TAG}..."
+if git cliff "${PREV_TAG}..HEAD" \
+    --tag "op-rbuilder/v${VERSION}" \
+    --prepend crates/op-rbuilder/CHANGELOG.md; then
     success "Changelog generated"
 
-    # Commit changelog if changed
+    # Commit changelog
     if [[ -n $(git status --porcelain) ]]; then
-        git add -A
+        git add crates/op-rbuilder/CHANGELOG.md
         git commit -m "chore: update CHANGELOG for v${VERSION}"
         success "Changelog committed"
     else
