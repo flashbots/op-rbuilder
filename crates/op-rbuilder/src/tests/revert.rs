@@ -445,9 +445,7 @@ async fn check_transaction_receipt_status_message(rbuilder: LocalInstance) -> ey
     Ok(())
 }
 
-/// Pre-simulation evicts reverting bundles from the pool asynchronously after
-/// they are accepted. The handler accepts the bundle immediately; a background
-/// task runs the simulation and removes the transaction when it reverts.
+/// Presim rejects reverting bundles before they are added to the pool.
 #[rb_test(args = OpRbuilderArgs {
     enable_revert_protection: true,
     pre_simulate_bundles: true,
@@ -460,28 +458,45 @@ async fn presim_rejects_reverting_bundle(rbuilder: LocalInstance) -> eyre::Resul
     driver.build_new_block().await?;
 
     // The handler accepts the bundle immediately; presim runs in the background
-    let bundle = driver
+    let reverting_bundle = driver
         .create_transaction()
         .random_reverting_transaction()
-        .with_reverted_hash()
         .with_bundle(BundleOpts::default())
         .send()
         .await?;
 
-    let tx_hash = *bundle.tx_hash();
+    // Submit a valid bundle as a sentinel: once it is pending in the pool we
+    // know presim has started for both submissions (tasks are spawned in
+    // order).
+    let valid_bundle = driver
+        .create_transaction()
+        .random_valid_transfer()
+        .with_bundle(BundleOpts::default())
+        .send()
+        .await?;
 
-    // Wait for the background pre-simulation task to evict the reverting tx
+    let reverting_hash = *reverting_bundle.tx_hash();
+    let valid_hash = *valid_bundle.tx_hash();
+
+    // Wait for the sentinel bundle to be accepted into the pool, and then
+    // assume the presim task for the other bundle is complete.
     let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
     loop {
-        if rbuilder.pool().is_dropped(tx_hash) {
+        if rbuilder.pool().is_pending(valid_hash) {
             break;
         }
         assert!(
             tokio::time::Instant::now() < deadline,
-            "reverting bundle was not evicted by pre-simulation within timeout"
+            "valid bundle was not added to pool within timeout"
         );
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
+
+    // The reverting bundle should never have been added to the pool.
+    assert!(
+        rbuilder.pool().tx_status(reverting_hash).is_none(),
+        "reverting bundle should have been rejected by pre-simulation before being added to the pool"
+    );
 
     Ok(())
 }

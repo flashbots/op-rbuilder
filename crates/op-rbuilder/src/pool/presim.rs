@@ -22,12 +22,19 @@ use revm::{
 };
 use tracing::{debug, error, warn};
 
-use crate::{evm::OpBlockEvmFactory, metrics::OpRBuilderMetrics, tx::FBPooledTransaction};
+use crate::{evm::OpBlockEvmFactory, pool::metrics::PoolMetrics, tx::FBPooledTransaction};
 
 /// Pre-simulates transactions against the current head state to filter out
 /// reverting transactions before they enter the pool.
 pub(crate) struct TopOfBlockSimulator {
     tip_state: RwLock<Arc<Option<TipState>>>,
+}
+
+impl std::fmt::Debug for TopOfBlockSimulator {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TopOfBlockSimulator")
+            .finish_non_exhaustive()
+    }
 }
 
 pub(crate) struct TipState {
@@ -150,7 +157,7 @@ pub(crate) async fn maintain_tip_state<N, St, Provider>(
     provider: Provider,
     evm_config: OpEvmConfig,
     block_time_secs: u64,
-    metrics: Arc<OpRBuilderMetrics>,
+    metrics: Arc<PoolMetrics>,
     mut events: St,
 ) where
     N: NodePrimitives<Block: Block<Header = Header>>,
@@ -183,7 +190,7 @@ pub(crate) async fn maintain_tip_state<N, St, Provider>(
 pub(crate) async fn maintain_pending_simulations<Pool, St>(
     simulator: Arc<TopOfBlockSimulator>,
     pool: Pool,
-    metrics: Arc<OpRBuilderMetrics>,
+    metrics: Arc<PoolMetrics>,
     mut events: St,
 ) where
     Pool: TransactionPool<Transaction = FBPooledTransaction> + 'static,
