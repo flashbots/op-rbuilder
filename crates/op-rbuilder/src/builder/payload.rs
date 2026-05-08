@@ -998,7 +998,6 @@ where
             .transaction_pool_fetch_gauge
             .set(transaction_pool_fetch_time);
 
-        let tx_execution_start_time = Instant::now();
         ctx.execute_best_transactions(
             info,
             state,
@@ -1028,14 +1027,6 @@ where
         if block_cancel.is_cancelled() {
             return Ok(None);
         }
-
-        let payload_transaction_simulation_time = tx_execution_start_time.elapsed();
-        ctx.metrics
-            .payload_transaction_simulation_duration
-            .record(payload_transaction_simulation_time);
-        ctx.metrics
-            .payload_transaction_simulation_gauge
-            .set(payload_transaction_simulation_time);
 
         if let Err(e) = self.builder_tx.add_builder_txs(
             &state_provider,

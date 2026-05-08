@@ -4,6 +4,7 @@ use reth_metrics::{
     Metrics,
     metrics::{Counter, Gauge, Histogram, gauge, histogram},
 };
+use revm::context::result::ExecutionResult;
 
 use crate::{
     args::OpRbuilderArgs,
@@ -121,26 +122,8 @@ pub struct OpRBuilderMetrics {
     pub payload_num_tx: Histogram,
     /// Latest number of transactions in the payload
     pub payload_num_tx_gauge: Gauge,
-    /// Histogram of transactions in the payload that were successfully simulated
-    pub payload_num_tx_simulated: Histogram,
-    /// Latest number of transactions in the payload that were successfully simulated
-    pub payload_num_tx_simulated_gauge: Gauge,
-    /// Histogram of transactions in the payload that were successfully simulated
-    pub payload_num_tx_simulated_success: Histogram,
-    /// Latest number of transactions in the payload that were successfully simulated
-    pub payload_num_tx_simulated_success_gauge: Gauge,
-    /// Histogram of transactions in the payload that failed simulation
-    pub payload_num_tx_simulated_fail: Histogram,
-    /// Latest number of transactions in the payload that failed simulation
-    pub payload_num_tx_simulated_fail_gauge: Gauge,
-    /// Histogram of gas used by successful transactions
-    pub successful_tx_gas_used: Histogram,
-    /// Histogram of gas used by reverted transactions
-    pub reverted_tx_gas_used: Histogram,
     /// Gas used by reverted transactions in the latest block
     pub payload_reverted_tx_gas_used: Gauge,
-    /// Histogram of tx simulation duration
-    pub tx_simulation_duration: Histogram,
     /// Byte size of transactions
     pub tx_byte_size: Histogram,
     /// How much less flashblocks we issue to be on time with block construction
@@ -155,8 +138,6 @@ pub struct OpRBuilderMetrics {
     pub valid_bundles: Counter,
     /// Number of bundles that failed to execute
     pub failed_bundles: Counter,
-    /// Number of reverted bundles
-    pub bundles_reverted: Histogram,
     /// Histogram of eth_sendBundle request duration
     pub bundle_receive_duration: Histogram,
     /// Number of bundles dropped by pre-simulation (reverted)
@@ -211,10 +192,15 @@ impl OpRBuilderMetrics {
         &self,
         payload_transaction_simulation_time: impl IntoF64 + Copy,
         num_txs_considered: impl IntoF64 + Copy,
-        num_txs_simulated: impl IntoF64 + Copy,
-        num_txs_simulated_success: impl IntoF64 + Copy,
-        num_txs_simulated_fail: impl IntoF64 + Copy,
-        num_bundles_reverted: impl IntoF64,
+        num_mempool_txs_simulated_success: impl IntoF64 + Copy,
+        num_mempool_txs_simulated_revert: impl IntoF64 + Copy,
+        num_mempool_txs_simulated_halt: impl IntoF64 + Copy,
+        num_bundle_txs_simulated_success: impl IntoF64 + Copy,
+        num_bundle_txs_simulated_revert: impl IntoF64 + Copy,
+        num_bundle_txs_simulated_halt: impl IntoF64 + Copy,
+        num_backrun_txs_simulated_success: impl IntoF64 + Copy,
+        num_backrun_txs_simulated_revert: impl IntoF64 + Copy,
+        num_backrun_txs_simulated_halt: impl IntoF64 + Copy,
         reverted_gas_used: u64,
         num_backruns_considered: impl IntoF64 + Copy,
         num_backruns_successful: impl IntoF64 + Copy,
@@ -226,17 +212,96 @@ impl OpRBuilderMetrics {
             .set(payload_transaction_simulation_time);
         self.payload_num_tx_considered.record(num_txs_considered);
         self.payload_num_tx_considered_gauge.set(num_txs_considered);
-        self.payload_num_tx_simulated.record(num_txs_simulated);
-        self.payload_num_tx_simulated_gauge.set(num_txs_simulated);
-        self.payload_num_tx_simulated_success
-            .record(num_txs_simulated_success);
-        self.payload_num_tx_simulated_success_gauge
-            .set(num_txs_simulated_success);
-        self.payload_num_tx_simulated_fail
-            .record(num_txs_simulated_fail);
-        self.payload_num_tx_simulated_fail_gauge
-            .set(num_txs_simulated_fail);
-        self.bundles_reverted.record(num_bundles_reverted);
+        record_payload_num_tx_simulated(
+            num_mempool_txs_simulated_success,
+            TxSource::Mempool,
+            TxResult::Success,
+        );
+        set_payload_num_tx_simulated_gauge(
+            num_mempool_txs_simulated_success,
+            TxSource::Mempool,
+            TxResult::Success,
+        );
+        record_payload_num_tx_simulated(
+            num_mempool_txs_simulated_revert,
+            TxSource::Mempool,
+            TxResult::Revert,
+        );
+        set_payload_num_tx_simulated_gauge(
+            num_mempool_txs_simulated_revert,
+            TxSource::Mempool,
+            TxResult::Revert,
+        );
+        record_payload_num_tx_simulated(
+            num_mempool_txs_simulated_halt,
+            TxSource::Mempool,
+            TxResult::Halt,
+        );
+        set_payload_num_tx_simulated_gauge(
+            num_mempool_txs_simulated_halt,
+            TxSource::Mempool,
+            TxResult::Halt,
+        );
+        record_payload_num_tx_simulated(
+            num_bundle_txs_simulated_success,
+            TxSource::Bundle,
+            TxResult::Success,
+        );
+        set_payload_num_tx_simulated_gauge(
+            num_bundle_txs_simulated_success,
+            TxSource::Bundle,
+            TxResult::Success,
+        );
+        record_payload_num_tx_simulated(
+            num_bundle_txs_simulated_revert,
+            TxSource::Bundle,
+            TxResult::Revert,
+        );
+        set_payload_num_tx_simulated_gauge(
+            num_bundle_txs_simulated_revert,
+            TxSource::Bundle,
+            TxResult::Revert,
+        );
+        record_payload_num_tx_simulated(
+            num_bundle_txs_simulated_halt,
+            TxSource::Bundle,
+            TxResult::Halt,
+        );
+        set_payload_num_tx_simulated_gauge(
+            num_bundle_txs_simulated_halt,
+            TxSource::Bundle,
+            TxResult::Halt,
+        );
+        record_payload_num_tx_simulated(
+            num_backrun_txs_simulated_success,
+            TxSource::Backrun,
+            TxResult::Success,
+        );
+        set_payload_num_tx_simulated_gauge(
+            num_backrun_txs_simulated_success,
+            TxSource::Backrun,
+            TxResult::Success,
+        );
+        record_payload_num_tx_simulated(
+            num_backrun_txs_simulated_revert,
+            TxSource::Backrun,
+            TxResult::Revert,
+        );
+        set_payload_num_tx_simulated_gauge(
+            num_backrun_txs_simulated_revert,
+            TxSource::Backrun,
+            TxResult::Revert,
+        );
+        record_payload_num_tx_simulated(
+            num_backrun_txs_simulated_halt,
+            TxSource::Backrun,
+            TxResult::Halt,
+        );
+        set_payload_num_tx_simulated_gauge(
+            num_backrun_txs_simulated_halt,
+            TxSource::Backrun,
+            TxResult::Halt,
+        );
         self.payload_reverted_tx_gas_used
             .set(reverted_gas_used as f64);
         self.payload_num_backruns_considered
@@ -252,6 +317,108 @@ impl OpRBuilderMetrics {
         self.backrun_transaction_processing_gauge
             .set(backrun_transaction_processing_time);
     }
+}
+
+/// Origin of a transaction processed by the builder, used as the `source`
+/// label on per-tx metrics.
+#[derive(Copy, Clone, Debug)]
+pub enum TxSource {
+    /// Public mempool transaction.
+    Mempool,
+    /// Transaction from an `eth_sendBundle` bundle.
+    Bundle,
+    /// Backrun transaction from the backrun bundle pool.
+    Backrun,
+}
+
+impl TxSource {
+    fn as_label(self) -> &'static str {
+        match self {
+            Self::Mempool => "mempool",
+            Self::Bundle => "bundle",
+            Self::Backrun => "backrun",
+        }
+    }
+}
+
+/// Outcome of EVM execution for a transaction
+#[derive(Copy, Clone, Debug)]
+pub enum TxResult {
+    Success,
+    Revert,
+    Halt,
+}
+
+impl TxResult {
+    fn as_label(self) -> &'static str {
+        match self {
+            Self::Success => "success",
+            Self::Revert => "revert",
+            Self::Halt => "halt",
+        }
+    }
+
+    pub fn from_execution_result<HaltReasonTy>(result: &ExecutionResult<HaltReasonTy>) -> Self {
+        match result {
+            ExecutionResult::Success { .. } => Self::Success,
+            ExecutionResult::Halt { .. } => Self::Halt,
+            ExecutionResult::Revert { .. } => Self::Revert,
+        }
+    }
+}
+
+fn revert_protected_label(revert_protected: bool) -> &'static str {
+    if revert_protected { "true" } else { "false" }
+}
+
+/// Record tx simulation duration with source/result/revert_protected labels.
+pub fn record_tx_simulation_duration(
+    duration: std::time::Duration,
+    source: TxSource,
+    result: TxResult,
+    revert_protected: bool,
+) {
+    histogram!(
+        "op_rbuilder_tx_simulation_duration",
+        "source" => source.as_label(),
+        "result" => result.as_label(),
+        "revert_protected" => revert_protected_label(revert_protected),
+    )
+    .record(duration.as_secs_f64());
+}
+
+/// Record gas used by a transaction with source/result/revert_protected labels.
+pub fn record_tx_gas_used(
+    gas_used: u64,
+    source: TxSource,
+    result: TxResult,
+    revert_protected: bool,
+) {
+    histogram!(
+        "op_rbuilder_tx_gas_used",
+        "source" => source.as_label(),
+        "result" => result.as_label(),
+        "revert_protected" => revert_protected_label(revert_protected),
+    )
+    .record(gas_used as f64);
+}
+
+pub fn record_payload_num_tx_simulated(count: impl IntoF64, source: TxSource, result: TxResult) {
+    histogram!(
+        "op_rbuilder_payload_num_tx_simulated",
+        "source" => source.as_label(),
+        "result" => result.as_label(),
+    )
+    .record(count);
+}
+
+pub fn set_payload_num_tx_simulated_gauge(count: impl IntoF64, source: TxSource, result: TxResult) {
+    gauge!(
+        "op_rbuilder_payload_num_tx_simulated_gauge",
+        "source" => source.as_label(),
+        "result" => result.as_label(),
+    )
+    .set(count);
 }
 
 /// Record the slot-relative time at which a flashblock was published.

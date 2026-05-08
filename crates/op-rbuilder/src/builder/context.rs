@@ -37,7 +37,9 @@ use crate::{
     evm::OpBlockEvmFactory,
     gas_limiter::AddressGasLimiter,
     hardforks::ActiveHardforks,
-    metrics::OpRBuilderMetrics,
+    metrics::{
+        OpRBuilderMetrics, TxResult, TxSource, record_tx_gas_used, record_tx_simulation_duration,
+    },
     primitives::reth::{ExecutionInfo, TxnExecutionResult},
     traits::PayloadTxsBounds,
 };
@@ -387,10 +389,17 @@ impl OpPayloadJobCtx {
     ) -> Result<Option<()>, PayloadBuilderError> {
         let execute_txs_start_time = Instant::now();
         let mut num_txs_considered = 0;
-        let mut num_txs_simulated = 0;
         let mut num_txs_simulated_success = 0;
         let mut num_txs_simulated_fail = 0;
-        let mut num_bundles_reverted = 0;
+        let mut num_mempool_txs_simulated_success = 0;
+        let mut num_mempool_txs_simulated_revert = 0;
+        let mut num_mempool_txs_simulated_halt = 0;
+        let mut num_bundle_txs_simulated_success = 0;
+        let mut num_bundle_txs_simulated_revert = 0;
+        let mut num_bundle_txs_simulated_halt = 0;
+        let mut num_backrun_txs_simulated_success = 0;
+        let mut num_backrun_txs_simulated_revert = 0;
+        let mut num_backrun_txs_simulated_halt = 0;
         let mut reverted_gas_used: u64 = 0;
         let mut num_backruns_considered = 0usize;
         let mut num_backruns_successful = 0usize;
@@ -420,7 +429,12 @@ impl OpPayloadJobCtx {
             let tx_da_size = tx.estimated_da_size();
 
             let is_bundle_tx = tx.is_bundle();
-            let exclude_reverting_txs = tx.revert_protected();
+            let revert_protected = tx.revert_protected();
+            let tx_source = if is_bundle_tx {
+                TxSource::Bundle
+            } else {
+                TxSource::Mempool
+            };
 
             let tx = tx.into_consensus();
             let tx_hash = tx.tx_hash();
@@ -443,7 +457,7 @@ impl OpPayloadJobCtx {
                         id = %self.payload_id(),
                         tx_hash = %tx_hash,
                         tx_da_size,
-                        exclude_reverting_txs,
+                        revert_protected,
                         result = %result,
                         "Considering transaction",
                     );
@@ -528,11 +542,15 @@ impl OpPayloadJobCtx {
                 }
             };
 
-            self.metrics
-                .tx_simulation_duration
-                .record(tx_simulation_start_time.elapsed());
+            let tx_simulation_elapsed = tx_simulation_start_time.elapsed();
+            let tx_result = TxResult::from_execution_result(&result);
+            record_tx_simulation_duration(
+                tx_simulation_elapsed,
+                tx_source,
+                tx_result,
+                revert_protected,
+            );
             self.metrics.tx_byte_size.record(tx.inner().size() as f64);
-            num_txs_simulated += 1;
 
             // Run the per-address gas limiting before checking if the tx has
             // reverted or not, as this is a check against maliciously searchers
@@ -546,7 +564,7 @@ impl OpPayloadJobCtx {
                     flashblock_index,
                     gas_used,
                     success = result.is_success(),
-                    evm_duration_us = tx_simulation_start_time.elapsed().as_micros() as u64,
+                    evm_duration_us = tx_simulation_elapsed.as_micros() as u64,
                     stage = "evm_executed"
                 );
             }
@@ -561,18 +579,36 @@ impl OpPayloadJobCtx {
                 continue;
             }
 
+            record_tx_gas_used(gas_used, tx_source, tx_result, revert_protected);
             if result.is_success() {
                 log_txn(TxnExecutionResult::Success);
                 num_txs_simulated_success += 1;
-                self.metrics.successful_tx_gas_used.record(gas_used as f64);
+                match tx_source {
+                    TxSource::Mempool => num_mempool_txs_simulated_success += 1,
+                    TxSource::Bundle => num_bundle_txs_simulated_success += 1,
+                    TxSource::Backrun => unreachable!("backruns are handled in the backrun loop"),
+                }
             } else {
                 num_txs_simulated_fail += 1;
                 reverted_gas_used += gas_used;
-                self.metrics.reverted_tx_gas_used.record(gas_used as f64);
-                if is_bundle_tx {
-                    num_bundles_reverted += 1;
+                match tx_source {
+                    TxSource::Mempool => match tx_result {
+                        TxResult::Revert => num_mempool_txs_simulated_revert += 1,
+                        TxResult::Halt => num_mempool_txs_simulated_halt += 1,
+                        TxResult::Success => {
+                            unreachable!("successes are handled in the success branch")
+                        }
+                    },
+                    TxSource::Bundle => match tx_result {
+                        TxResult::Revert => num_bundle_txs_simulated_revert += 1,
+                        TxResult::Halt => num_bundle_txs_simulated_halt += 1,
+                        TxResult::Success => {
+                            unreachable!("successes are handled in the success branch")
+                        }
+                    },
+                    TxSource::Backrun => unreachable!("backruns are handled in the backrun loop"),
                 }
-                if exclude_reverting_txs {
+                if revert_protected {
                     log_txn(TxnExecutionResult::RevertedAndExcluded);
                     trace!(
                         target: "payload_builder",
@@ -699,8 +735,8 @@ impl OpPayloadJobCtx {
                     // - [x] log when tx execution fails
                     // - [x] inc num_txs_simulated_success or num_txs_simulated_fail
                     // - [x] inc reverted_gas_used
-                    // - [x] metrics use successful_tx_gas_used and reverted_tx_gas_used
-                    // - [x] inc num_bundles_reverted
+                    // - [x] meter tx_gas_used
+                    // - [x] meter payload simulated counts by source/result
                     // - [x] enforce self.max_gas_per_txn
                     // - [x] increase info.{cumulative_gas_used, cumulative_da_bytes_used}
                     // - [x] push receipt to info.receipts
@@ -809,13 +845,16 @@ impl OpPayloadJobCtx {
                             continue;
                         }
                     };
-                    self.metrics
-                        .tx_simulation_duration
-                        .record(br_simulation_start.elapsed());
+                    let br_tx_result = TxResult::from_execution_result(&br_result);
+                    record_tx_simulation_duration(
+                        br_simulation_start.elapsed(),
+                        TxSource::Backrun,
+                        br_tx_result,
+                        true,
+                    );
                     self.metrics
                         .tx_byte_size
                         .record(bundle.backrun_tx.inner().size() as f64);
-                    num_txs_simulated += 1;
 
                     let br_gas_used = br_result.gas_used();
 
@@ -828,11 +867,17 @@ impl OpPayloadJobCtx {
                         continue;
                     }
 
+                    record_tx_gas_used(br_gas_used, TxSource::Backrun, br_tx_result, true);
                     if !br_result.is_success() {
                         num_txs_simulated_fail += 1;
-                        num_bundles_reverted += 1;
                         reverted_gas_used += br_gas_used;
-                        self.metrics.reverted_tx_gas_used.record(br_gas_used as f64);
+                        match br_tx_result {
+                            TxResult::Revert => num_backrun_txs_simulated_revert += 1,
+                            TxResult::Halt => num_backrun_txs_simulated_halt += 1,
+                            TxResult::Success => {
+                                unreachable!("successes are handled in the success branch")
+                            }
+                        }
                         log_br_txn(TxnExecutionResult::RevertedAndExcluded);
                         continue;
                     }
@@ -861,10 +906,8 @@ impl OpPayloadJobCtx {
                     }
 
                     num_txs_simulated_success += 1;
+                    num_backrun_txs_simulated_success += 1;
                     num_backruns_successful += 1;
-                    self.metrics
-                        .successful_tx_gas_used
-                        .record(br_gas_used as f64);
                     log_br_txn(TxnExecutionResult::Success);
                     info.cumulative_gas_used += br_gas_used;
                     info.cumulative_da_bytes_used += br_tx_da_size;
@@ -901,10 +944,15 @@ impl OpPayloadJobCtx {
         self.metrics.set_payload_builder_metrics(
             payload_transaction_simulation_time,
             num_txs_considered,
-            num_txs_simulated,
-            num_txs_simulated_success,
-            num_txs_simulated_fail,
-            num_bundles_reverted,
+            num_mempool_txs_simulated_success,
+            num_mempool_txs_simulated_revert,
+            num_mempool_txs_simulated_halt,
+            num_bundle_txs_simulated_success,
+            num_bundle_txs_simulated_revert,
+            num_bundle_txs_simulated_halt,
+            num_backrun_txs_simulated_success,
+            num_backrun_txs_simulated_revert,
+            num_backrun_txs_simulated_halt,
             reverted_gas_used,
             num_backruns_considered as f64,
             num_backruns_successful as f64,
@@ -917,7 +965,10 @@ impl OpPayloadJobCtx {
             txs_executed = num_txs_considered,
             txs_applied = num_txs_simulated_success,
             txs_rejected = num_txs_simulated_fail,
-            bundles_reverted = num_bundles_reverted,
+            bundle_txs_reverted = num_bundle_txs_simulated_revert,
+            bundle_txs_halted = num_bundle_txs_simulated_halt,
+            backrun_txs_reverted = num_backrun_txs_simulated_revert,
+            backrun_txs_halted = num_backrun_txs_simulated_halt,
             backruns_considered = num_backruns_considered,
             backruns_successful = num_backruns_successful,
             "Completed executing best transactions",

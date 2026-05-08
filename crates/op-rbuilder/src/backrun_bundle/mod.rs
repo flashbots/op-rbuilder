@@ -41,8 +41,9 @@
 //!   processing backruns.
 //!
 //! Backrun transactions also increment the shared builder counters
-//! (`num_txs_considered`, `num_txs_simulated_success`, `num_bundles_reverted`,
-//! etc.) so they are reflected in overall payload build statistics.
+//! (`num_txs_considered`, `num_txs_simulated_success`, `num_txs_simulated_fail`,
+//! etc.) and the source/result-labeled payload simulation metrics, so they are
+//! reflected in overall payload build statistics.
 
 mod args;
 mod global_pool;
