@@ -224,6 +224,16 @@ pub struct FlashblocksArgs {
         default_value = "256"
     )]
     pub ws_subscriber_limit: Option<u16>,
+
+    /// Enable continuous building between scheduler triggers.
+    /// When enabled, the builder runs continuously on a blocking thread and
+    /// scheduler triggers interrupt the build to seal and publish.
+    #[arg(
+        long = "flashblocks.continuous-build",
+        env = "FLASHBLOCKS_CONTINUOUS_BUILD",
+        default_value = "false"
+    )]
+    pub flashblocks_continuous_build: bool,
 }
 
 impl Default for FlashblocksArgs {
