@@ -20,5 +20,5 @@ pub mod tx_signer;
 
 #[cfg(test)]
 pub mod mock_tx;
-#[cfg(any(test, feature = "testing"))]
+#[cfg(test)]
 pub mod tests;
