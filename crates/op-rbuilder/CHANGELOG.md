@@ -3,140 +3,33 @@
 All notable changes to this project will be documented in this file.
 ## [0.4.5] - 2026-05-08
 
-### Bug Fixes
-
-- Don't miss blocks on batcher updates ([#529](https://github.com/flashbots/op-rbuilder/pull/529))
-- Don't build flashblocks with more gas than block gas limit ([#567](https://github.com/flashbots/op-rbuilder/pull/567))
-- Set an address for authrpc to the op-rbuilder readme ([#581](https://github.com/flashbots/op-rbuilder/pull/581))
-- Add default-run to the op-rbuilder's manifest ([#162](https://github.com/flashbots/op-rbuilder/pull/162))
-- Record missing flashblocks ([#225](https://github.com/flashbots/op-rbuilder/pull/225))
-- Record num txs built with flashblocks enabled ([#227](https://github.com/flashbots/op-rbuilder/pull/227))
-- Override clap long version envs ([#235](https://github.com/flashbots/op-rbuilder/pull/235))
-- Gracefull cancellation on payload build failure ([#239](https://github.com/flashbots/op-rbuilder/pull/239))
-- Flashblock contraints in bundle api ([#259](https://github.com/flashbots/op-rbuilder/pull/259))
-- Check per-address gas limit before checking if the tx reverted ([#266](https://github.com/flashbots/op-rbuilder/pull/266))
-- Jovian hardfork tests & fixes ([#320](https://github.com/flashbots/op-rbuilder/pull/320))
-- **wspub:** Add flashblocks payload subscriber count limit ([#373](https://github.com/flashbots/op-rbuilder/pull/373))
-- Separate flashblocks payloads handling and full built payloads in handler ([#354](https://github.com/flashbots/op-rbuilder/pull/354))
-- Attempt to send one flashblock if payload deadline is in the past ([#386](https://github.com/flashbots/op-rbuilder/pull/386))
-- Update testcontainers to v0.27.0 to remediate CVE-2025-62518 ([#396](https://github.com/flashbots/op-rbuilder/pull/396))
-- Cleanup address gas limiter buckets properly ([#425](https://github.com/flashbots/op-rbuilder/pull/425))
-- Gate incremental trie behind flag  ([#446](https://github.com/flashbots/op-rbuilder/pull/446))
-- Cache env var lookup ([#449](https://github.com/flashbots/op-rbuilder/pull/449))
-- Accumulate reverted gas as u64 for payload metrics ([#451](https://github.com/flashbots/op-rbuilder/pull/451))
-- Remove Box::leak in TEE metrics recording ([#469](https://github.com/flashbots/op-rbuilder/pull/469))
-- Avoid double-recording bundle_pre_simulation_duration on revert ([#474](https://github.com/flashbots/op-rbuilder/pull/474))
-- **presim:** Only simulate bundles with revert protection ([#472](https://github.com/flashbots/op-rbuilder/pull/472))
-- Use cumulative prefix sets for incremental trie state root ([#445](https://github.com/flashbots/op-rbuilder/pull/445))
-- Propagate eth_api errors instead of panicking ([#486](https://github.com/flashbots/op-rbuilder/pull/486))
-- Add back schedule times to log ([#491](https://github.com/flashbots/op-rbuilder/pull/491))
-
-### Bundles
-
-- Ensure that the min block number is inside the MAX_BLOCK_RANGE_BLOCKS ([#128](https://github.com/flashbots/op-rbuilder/pull/128))
-
-### Documentation
-
-- Eth_sendBundle ([#243](https://github.com/flashbots/op-rbuilder/pull/243))
-
-### Feat
-
-- Replace BlockCell with watch channel ([#397](https://github.com/flashbots/op-rbuilder/pull/397))
-
-### Features
-
-- Add a feature to activate otlp telemetry ([#31](https://github.com/flashbots/op-rbuilder/pull/31))
-- Add transaction gas limit ([#214](https://github.com/flashbots/op-rbuilder/pull/214))
-- Address gas limiter ([#253](https://github.com/flashbots/op-rbuilder/pull/253))
-- Add commit message and author in version metrics ([#236](https://github.com/flashbots/op-rbuilder/pull/236))
-- Overwrite reth default cache directory ([#238](https://github.com/flashbots/op-rbuilder/pull/238))
-- Implement p2p layer and broadcast flashblocks ([#275](https://github.com/flashbots/op-rbuilder/pull/275))
-- Implement flashblock sync over p2p ([#288](https://github.com/flashbots/op-rbuilder/pull/288))
-- Publish synced flashblocks to ws ([#310](https://github.com/flashbots/op-rbuilder/pull/310))
-- Integrate downstream changes (Jovian hardfork + miner_setGasLimit + reth 1.9.1) ([#316](https://github.com/flashbots/op-rbuilder/pull/316))
-- **tests:** Add BuilderTxValidation utility for validating builder transactions ([#347](https://github.com/flashbots/op-rbuilder/pull/347))
-- **o11y:** Add tokio metrics ([#367](https://github.com/flashbots/op-rbuilder/pull/367))
-- **logs:** Flashblock target and events with payload_id ([#365](https://github.com/flashbots/op-rbuilder/pull/365))
-- Ignore unrecognized cli flags ([#409](https://github.com/flashbots/op-rbuilder/pull/409))
-- Async PayloadBuilder::try_build ([#394](https://github.com/flashbots/op-rbuilder/pull/394))
-- Add strict priority fee ordering mode for backrun bundles ([#410](https://github.com/flashbots/op-rbuilder/pull/410))
-- Add explicit backrun bundle cancellation via 0-tx submissions ([#423](https://github.com/flashbots/op-rbuilder/pull/423))
-- Local env ([#430](https://github.com/flashbots/op-rbuilder/pull/430))
-- Builder-playground dev ([#440](https://github.com/flashbots/op-rbuilder/pull/440))
-- Skip re-simulation of reverted txs between flashblocks ([#462](https://github.com/flashbots/op-rbuilder/pull/462))
-- Async payload builder ([#438](https://github.com/flashbots/op-rbuilder/pull/438))
-- Add flashblock publish timing metric ([#464](https://github.com/flashbots/op-rbuilder/pull/464))
-- Top-of-block pre-simulation to filter reverting tx spam ([#466](https://github.com/flashbots/op-rbuilder/pull/466))
-- Reshape log levels ([#470](https://github.com/flashbots/op-rbuilder/pull/470))
-
 ### Miscellaneous
 
-- Workspace wide package settings ([#390](https://github.com/flashbots/op-rbuilder/pull/390))
-- Fix op-rbuilder devnet docs ([#562](https://github.com/flashbots/op-rbuilder/pull/562))
-- Add unused_async lint, deny unreachable_pub ([#299](https://github.com/flashbots/op-rbuilder/pull/299))
-- **deps/reth:** Bump reth to 1.9.2 ([#318](https://github.com/flashbots/op-rbuilder/pull/318))
-- **deps:** Bump reth ([#321](https://github.com/flashbots/op-rbuilder/pull/321))
-- Set builder name in reth_builder_info ([#352](https://github.com/flashbots/op-rbuilder/pull/352))
-- **op-rbuilder:** Release v0.2.14 ([#359](https://github.com/flashbots/op-rbuilder/pull/359))
-- **log:** Add log targets for better explicit logs filtering ([#371](https://github.com/flashbots/op-rbuilder/pull/371))
-- Rename bundle fields for consistency (no api change) ([#402](https://github.com/flashbots/op-rbuilder/pull/402))
-- Clean up FBPoolTransaction trait ([#411](https://github.com/flashbots/op-rbuilder/pull/411))
-- Remove the standard builder [breaking-change] ([#424](https://github.com/flashbots/op-rbuilder/pull/424))
-- Lints all targets ([#426](https://github.com/flashbots/op-rbuilder/pull/426))
-- Use counters instead of histograms for a couple metrics ([#428](https://github.com/flashbots/op-rbuilder/pull/428))
-- Deprecate flashblocks.enabled flag ([#436](https://github.com/flashbots/op-rbuilder/pull/436))
-- Add limit to uncompressed block size  ([#437](https://github.com/flashbots/op-rbuilder/pull/437))
-- Testcontainers/reth-test behind testing feature ([#442](https://github.com/flashbots/op-rbuilder/pull/442))
-- Bump reth to v1.11.2 ([#444](https://github.com/flashbots/op-rbuilder/pull/444))
-- Remove unused file ([#455](https://github.com/flashbots/op-rbuilder/pull/455))
-- Use derive_more::Deref for WithFlashbotsMetadata ([#453](https://github.com/flashbots/op-rbuilder/pull/453))
-- Standardize logging ([#456](https://github.com/flashbots/op-rbuilder/pull/456))
-- Enable redundant_clone clippy lint ([#460](https://github.com/flashbots/op-rbuilder/pull/460))
-- Follow-up log reshape across builder/flashtestations ([#471](https://github.com/flashbots/op-rbuilder/pull/471))
-- Remove unused `interop` feature ([#475](https://github.com/flashbots/op-rbuilder/pull/475))
-- Release v0.4.3 ([#482](https://github.com/flashbots/op-rbuilder/pull/482))
-- Downgrade reth to v1.11.3 ([#484](https://github.com/flashbots/op-rbuilder/pull/484))
 - Use `ActiveHardforks` a bit more widely ([#496](https://github.com/flashbots/op-rbuilder/pull/496))
-
-### Performance
-
-- Remove unnecessary clones in payload building ([#392](https://github.com/flashbots/op-rbuilder/pull/392))
+- Remove ci step to install foundry toolchain ([#493](https://github.com/flashbots/op-rbuilder/pull/493))
 
 ### Refactor
 
-- Add `unreachable_pub` warning and autofix warnings ([#263](https://github.com/flashbots/op-rbuilder/pull/263))
-- Clean up and improve flashblocks `build_payload` ([#260](https://github.com/flashbots/op-rbuilder/pull/260))
-- Clean up flashblocks context in payload builder ([#297](https://github.com/flashbots/op-rbuilder/pull/297))
-- Use task executor in payload handler ([#377](https://github.com/flashbots/op-rbuilder/pull/377))
-- Extract flashblock timing code and test it ([#380](https://github.com/flashbots/op-rbuilder/pull/380))
-- Remove ExtraCtx generic param ([#404](https://github.com/flashbots/op-rbuilder/pull/404))
-- Create BlockEvmFactory abstraction ([#457](https://github.com/flashbots/op-rbuilder/pull/457))
-- Extract `FlashblocksState::next_after_seal` ([#477](https://github.com/flashbots/op-rbuilder/pull/477))
-- Extract `reserve_builder_tx_budget` helper ([#476](https://github.com/flashbots/op-rbuilder/pull/476))
-- Move state root flags from FlashblocksState to OpPayloadBuilderCtx ([#478](https://github.com/flashbots/op-rbuilder/pull/478))
-- **generator:** Drop dead config and tidy module ([#479](https://github.com/flashbots/op-rbuilder/pull/479))
-- **generator:** Behaviour fixes for new_payload_job and best_payload ([#480](https://github.com/flashbots/op-rbuilder/pull/480))
-- Rename FlashblockTxCache to FlashblockTxTracker ([#490](https://github.com/flashbots/op-rbuilder/pull/490))
-- **builder:** Split payload builder context into static and per-job ([#489](https://github.com/flashbots/op-rbuilder/pull/489))
+- Create reth pool wrapper ([#497](https://github.com/flashbots/op-rbuilder/pull/497))
 - Extract receipt and hardforks code ([#493](https://github.com/flashbots/op-rbuilder/pull/493))
 
-### Deps
 
-- Reth v1.3.4 ([#507](https://github.com/flashbots/op-rbuilder/pull/507))
-- Reth v1.3.8 ([#553](https://github.com/flashbots/op-rbuilder/pull/553))
-- Use op-alloy types instead of rollup-boost ([#344](https://github.com/flashbots/op-rbuilder/pull/344))
 
-### Metrics
+## [0.4.4] - 2026-05-05
 
-- Record fcu delay ([#443](https://github.com/flashbots/op-rbuilder/pull/443))
+### Bug Fixes
 
-### Op-rbuilder
+- Propagate eth_api errors instead of panicking ([#486](https://github.com/flashbots/op-rbuilder/pull/486))
+- Add back schedule times to log ([#491](https://github.com/flashbots/op-rbuilder/pull/491))
 
-- Update Documentation / CI Script ([#575](https://github.com/flashbots/op-rbuilder/pull/575))
+### Miscellaneous
 
-### Revert
+- Downgrade reth to v1.11.3 ([#484](https://github.com/flashbots/op-rbuilder/pull/484))
 
-- Async payload builder ([#434](https://github.com/flashbots/op-rbuilder/pull/434))
+### Refactor
+
+- Rename FlashblockTxCache to FlashblockTxTracker ([#490](https://github.com/flashbots/op-rbuilder/pull/490))
+- **builder:** Split payload builder context into static and per-job ([#489](https://github.com/flashbots/op-rbuilder/pull/489))
 
 
 
@@ -327,5 +220,3 @@ Standard building mode is now deprecated, flashblocks building mode will always 
 ### Op-rbuilder
 
 - Update Documentation / CI Script ([#575](https://github.com/flashbots/op-rbuilder/pull/575))
-
-
