@@ -1,6 +1,26 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [0.4.5] - 2026-05-08
+
+### Bug Fixes
+
+- [`a977594`](https://github.com/flashbots/op-rbuilder/commit/a977594b7324f749cd886e852242b1ba85e6029b) Use git-cliff instead of release-plz for changelog ([#502](https://github.com/flashbots/op-rbuilder/pull/502))
+- [`4ff9429`](https://github.com/flashbots/op-rbuilder/commit/4ff94298d4074a1e1f3e86449e0266a5cdd16128) Fix checking reverted hashes ([#498](https://github.com/flashbots/op-rbuilder/pull/498))
+
+### Miscellaneous
+
+- [`ca6b585`](https://github.com/flashbots/op-rbuilder/commit/ca6b585470fd33095ca811ab8c6a5adc1d6704f5) Remove ci step to install foundry toolchain ([#497](https://github.com/flashbots/op-rbuilder/pull/497))
+- [`bd1eca7`](https://github.com/flashbots/op-rbuilder/commit/bd1eca70cdc8ed11c646c731eb7d814d29fa37e6) Use `ActiveHardforks` a bit more widely ([#496](https://github.com/flashbots/op-rbuilder/pull/496))
+- [`da1dabb`](https://github.com/flashbots/op-rbuilder/commit/da1dabbf477af75429845cae9b1c0cec5a26b24b) Create reth pool wrapper ([#495](https://github.com/flashbots/op-rbuilder/pull/495))
+- [`d6c90fa`](https://github.com/flashbots/op-rbuilder/commit/d6c90fad8f059be558505ed307eedc4c8870a3ed) Remove unused testing code ([#500](https://github.com/flashbots/op-rbuilder/pull/500))
+- [`20991bf`](https://github.com/flashbots/op-rbuilder/commit/20991bf7542ed98447e50b343388f08bf1b768ba) Bump version to 0.4.5
+
+### Refactor
+
+- [`7b33ac1`](https://github.com/flashbots/op-rbuilder/commit/7b33ac1ccf962548d6fa768d09aabc46cfc0abbc) Extract receipt and hardforks code ([#493](https://github.com/flashbots/op-rbuilder/pull/493))
+- [`d89d5e7`](https://github.com/flashbots/op-rbuilder/commit/d89d5e787ba88cf2be339c6868fb5e4054089e93) Wire presim through flashpool ([#499](https://github.com/flashbots/op-rbuilder/pull/499))
+
 ## [0.4.4] - 2026-05-06
 
 ### Bug Fixes
