@@ -2,6 +2,7 @@ use std::{sync::Arc, time::Instant};
 
 use crate::{
     metrics::OpRBuilderMetrics,
+    pool::FlashpoolExt,
     presim::TopOfBlockSimulator,
     primitives::bundle::{Bundle, BundleResult},
     tx::{FBPooledTransaction, MaybeFlashblockFilter},
@@ -13,7 +14,6 @@ use jsonrpsee::{
     core::{RpcResult, async_trait},
     proc_macros::rpc,
 };
-use moka::future::Cache;
 use op_alloy_consensus::OpTxEnvelope;
 use reth::rpc::api::eth::{RpcReceipt, helpers::FullEthApi};
 use reth_optimism_chainspec::OpChainSpec;
@@ -41,7 +41,6 @@ pub struct RevertProtectionExt<Pool, Provider, Eth> {
     provider: Provider,
     eth_api: Eth,
     metrics: Arc<OpRBuilderMetrics>,
-    reverted_cache: Cache<B256, ()>,
     simulator: Option<Arc<TopOfBlockSimulator>>,
 }
 
@@ -55,7 +54,6 @@ where
         pool: Pool,
         provider: Provider,
         eth_api: Eth,
-        reverted_cache: Cache<B256, ()>,
         simulator: Option<Arc<TopOfBlockSimulator>>,
     ) -> Self {
         Self {
@@ -63,7 +61,6 @@ where
             provider,
             eth_api,
             metrics: Arc::new(OpRBuilderMetrics::default()),
-            reverted_cache,
             simulator,
         }
     }
@@ -73,7 +70,7 @@ where
 impl<Pool, Provider, Eth> EthApiExtServer<RpcReceipt<Eth::NetworkTypes>>
     for RevertProtectionExt<Pool, Provider, Eth>
 where
-    Pool: TransactionPool<Transaction = FBPooledTransaction> + Clone + 'static,
+    Pool: TransactionPool<Transaction = FBPooledTransaction> + FlashpoolExt + Clone + 'static,
     Provider: StateProviderFactory
         + BlockReaderIdExt<Header = Header>
         + ChainSpecProvider<ChainSpec = OpChainSpec>
@@ -119,7 +116,7 @@ where
             return Ok(Some(receipt));
         }
 
-        if self.reverted_cache.get(&hash).await.is_some() {
+        if self.pool.is_tx_reverted(hash) {
             return Err(EthApiError::InvalidParams(
                 "the transaction was dropped from the pool".into(),
             )

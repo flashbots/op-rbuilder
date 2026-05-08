@@ -1,23 +1,19 @@
 use crate::tx::FBPooledTransaction;
-use alloy_primitives::B256;
 use futures_util::StreamExt;
-use moka::future::Cache;
 use reth_transaction_pool::{AllTransactionsEvents, FullTransactionEvent};
 use tracing::debug;
 
 pub(crate) async fn monitor_tx_pool(
     mut new_transactions: AllTransactionsEvents<FBPooledTransaction>,
-    reverted_cache: Cache<B256, ()>,
     enable_tx_tracking_debug_logs: bool,
 ) {
     while let Some(event) = new_transactions.next().await {
-        transaction_event_log(event, &reverted_cache, enable_tx_tracking_debug_logs).await;
+        transaction_event_log(event, enable_tx_tracking_debug_logs);
     }
 }
 
-async fn transaction_event_log(
+fn transaction_event_log(
     event: FullTransactionEvent<FBPooledTransaction>,
-    reverted_cache: &Cache<B256, ()>,
     enable_tx_tracking_debug_logs: bool,
 ) {
     if !enable_tx_tracking_debug_logs {
@@ -62,10 +58,6 @@ async fn transaction_event_log(
             "Transaction event received"
         ),
         FullTransactionEvent::Discarded(hash) => {
-            // add the transaction hash to the reverted cache to notify the
-            // eth get transaction receipt method
-            reverted_cache.insert(hash, ()).await;
-
             debug!(
                 target: "tx_trace",
                 tx_hash = %hash,
