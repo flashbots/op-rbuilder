@@ -123,15 +123,12 @@ where
 
                             // execute the flashblock on a thread where blocking is acceptable,
                             // as it's potentially a heavy operation
-                            task_executor.spawn_blocking_task(Box::pin(async move {
-                                let res = execute_flashblock(
-                                    payload,
-                                    ctx,
-                                    client,
-                                    cancel,
-                                );
-                                match res {
-                                    Ok((payload, _)) => {
+                            let handle = task_executor.spawn_blocking(move || {
+                                execute_flashblock(payload, ctx, client, cancel)
+                            });
+                            task_executor.spawn_task(async move {
+                                match handle.await {
+                                    Ok(Ok((payload, _))) => {
                                         info!(
                                             target: "payload_builder",
                                             block_hash = %payload.block().hash(),
@@ -146,15 +143,22 @@ where
                                             );
                                         }
                                     }
-                                    Err(e) => {
+                                    Ok(Err(e)) => {
                                         error!(
                                             target: "payload_builder",
                                             error = %e,
                                             "failed to execute external received flashblock"
                                         );
                                     }
+                                    Err(e) => {
+                                        error!(
+                                            target: "payload_builder",
+                                            error = %e,
+                                            "execute_flashblock task join error"
+                                        );
+                                    }
                                 }
-                            }));
+                            });
                         }
                     }
                 }
