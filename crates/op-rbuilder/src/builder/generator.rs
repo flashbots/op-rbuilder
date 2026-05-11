@@ -296,7 +296,7 @@ where
         let cached_reads = std::mem::take(&mut self.cached_reads);
         // try_build is not in a blocking task!
         // We have to make sure any blocking work is handled individually within payload builder
-        self.executor.spawn_task(Box::pin(async move {
+        self.executor.spawn_task(async move {
             let args = BuildArguments {
                 cached_reads,
                 config: payload_config,
@@ -307,7 +307,7 @@ where
             if let Err(e) = builder.try_build(args, watch_tx).await {
                 tracing::error!(id = %payload_id, "build task failed: {:?}", e);
             }
-        }));
+        });
     }
 }
 

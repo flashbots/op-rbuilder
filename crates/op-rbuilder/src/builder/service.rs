@@ -167,19 +167,15 @@ impl FlashblocksServiceBuilder {
 
         ctx.task_executor().spawn_critical_task(
             "custom payload builder service",
-            Box::pin(
-                task_metrics
-                    .payload_builder_service
-                    .instrument(payload_service),
-            ),
+            task_metrics
+                .payload_builder_service
+                .instrument(payload_service),
         );
         ctx.task_executor().spawn_critical_task(
             "flashblocks payload handler",
-            Box::pin(
-                task_metrics
-                    .payload_handler
-                    .instrument(payload_handler.run()),
-            ),
+            task_metrics
+                .payload_handler
+                .instrument(payload_handler.run()),
         );
 
         // Spawn the tokio metrics collector (records metrics every second)
