@@ -8,10 +8,7 @@ use core::fmt::Debug;
 use op_alloy_consensus::OpTypedTransaction;
 use op_alloy_rpc_types::OpTransactionRequest;
 use op_revm::{OpHaltReason, OpTransactionError};
-use reth_evm::{
-    Evm, EvmError, InvalidTxError, eth::receipt_builder::ReceiptBuilderCtx,
-    precompiles::PrecompilesMap,
-};
+use reth_evm::{Evm, EvmError, InvalidTxError, precompiles::PrecompilesMap};
 use reth_node_api::PayloadBuilderError;
 use reth_optimism_primitives::OpTransactionSigned;
 use reth_primitives_traits::Recovered;
@@ -26,8 +23,8 @@ use revm::{
 use tracing::{error, trace, warn};
 
 use crate::{
-    builder::receipt::build_receipt, evm::OpBlockEvmFactory, hardforks::ActiveHardforks,
-    primitives::reth::ExecutionInfo, tx_signer::Signer,
+    evm::OpBlockEvmFactory, hardforks::ActiveHardforks, primitives::reth::ExecutionInfo,
+    tx_signer::Signer,
 };
 
 #[derive(Debug, Default)]
@@ -292,33 +289,17 @@ pub trait BuilderTransactions {
                 continue;
             }
 
-            // Add gas used by the transaction to cumulative gas used, before creating the receipt
-            let gas_used = result.gas_used();
-            info.cumulative_gas_used += gas_used;
-            info.cumulative_da_bytes_used += builder_tx.da_size;
-            info.cumulative_uncompressed_bytes += tx_uncompressed_size;
-
-            let receipt_ctx = ReceiptBuilderCtx {
-                tx_type: builder_tx.signed_tx.inner().tx_type(),
-                evm: &evm,
+            info.commit_tx(
+                &builder_tx.signed_tx,
                 result,
-                state: &state,
-                cumulative_gas_used: info.cumulative_gas_used,
-            };
-            info.receipts.push(build_receipt(
+                state,
+                builder_tx.da_size,
+                None,
+                None,
                 ctx.evm_factory,
                 ctx.hardforks,
-                receipt_ctx,
-                None,
-            ));
-
-            // Commit changes
-            evm.db_mut().commit(state);
-
-            // Append sender and transaction to the respective lists
-            info.executed_senders.push(builder_tx.signed_tx.signer());
-            info.executed_transactions
-                .push(builder_tx.signed_tx.clone().into_inner());
+                &mut evm,
+            );
         }
 
         Ok(builder_txs)
