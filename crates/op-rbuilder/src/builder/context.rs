@@ -24,12 +24,11 @@ use reth_revm::{State, context::Block};
 use reth_transaction_pool::{BestTransactionsAttributes, PoolTransaction};
 use revm::{Database as _, context::result::ResultAndState, interpreter::as_u64_saturated};
 use std::{ops::Deref, sync::Arc, time::Instant};
-use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, trace};
 
 use crate::{
     backrun_bundle::{BackrunBundleArgs, BackrunBundlePayloadPool},
-    builder::builder_tx::BuilderTxEnv,
+    builder::{builder_tx::BuilderTxEnv, cancellation::FlashblockJobCancellation},
     evm::OpBlockEvmFactory,
     hardforks::ActiveHardforks,
     limiter::AddressLimiter,
@@ -90,7 +89,7 @@ pub struct OpPayloadJobCtx {
     /// Hardfork activation state for this block's timestamp.
     pub hardforks: ActiveHardforks,
     /// Marker to check whether the job has been cancelled.
-    pub cancel: CancellationToken,
+    pub cancel: FlashblockJobCancellation,
     /// Per-block view into the global backrun bundle pool.
     pub backrun_pool: Option<BackrunBundlePayloadPool>,
 }
@@ -104,7 +103,7 @@ impl Deref for OpPayloadJobCtx {
 }
 
 impl OpPayloadJobCtx {
-    pub(super) fn with_cancel(self, cancel: CancellationToken) -> Self {
+    pub(super) fn with_cancel(self, cancel: FlashblockJobCancellation) -> Self {
         Self { cancel, ..self }
     }
 
