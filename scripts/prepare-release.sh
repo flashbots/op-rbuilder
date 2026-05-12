@@ -162,7 +162,7 @@ if [[ "$DRY_RUN" == "true" ]]; then
     echo -e "${CYAN}Dry-run mode — no changes will be made${NC}"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     dry_run_info "Would create branch: release/v${VERSION}"
-    dry_run_info "Would bump Cargo.toml: ${CURRENT_VERSION} → ${VERSION}"
+    dry_run_info "Would bump Cargo.toml + Cargo.lock: ${CURRENT_VERSION} → ${VERSION}"
     dry_run_info "Would generate changelog from ${PREV_TAG}..HEAD"
     dry_run_info "Would push branch and open PR: Release v${VERSION}"
     echo ""
@@ -192,15 +192,13 @@ info "Creating branch: ${BRANCH}"
 git checkout -b "${BRANCH}"
 success "Branch created"
 
-# Update version in Cargo.toml
-info "Updating version in Cargo.toml..."
-if [[ "$OSTYPE" == "darwin"* ]]; then
-    # macOS
-    sed -i '' "s/^version = \".*\"/version = \"${VERSION}\"/" Cargo.toml
-else
-    # Linux
-    sed -i "s/^version = \".*\"/version = \"${VERSION}\"/" Cargo.toml
+# Update Cargo version
+info "Updating version to ${VERSION}..."
+if ! command -v cargo-set-version &> /dev/null; then
+    info "Installing cargo-edit..."
+    cargo install cargo-edit --locked
 fi
+cargo set-version "${VERSION}"
 
 # Verify change
 NEW_VERSION=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
@@ -210,9 +208,9 @@ fi
 success "Version updated to ${VERSION}"
 
 # Commit version bump
-git add Cargo.toml
-git commit -m "chore: bump version to ${VERSION}"
-success "Version bump committed"
+git add Cargo.toml Cargo.lock
+git commit -m "chore: bump Cargo version to ${VERSION}"
+success "Cargo version bump committed"
 
 # Generate changelog
 info "Generating changelog from ${PREV_TAG}..."
