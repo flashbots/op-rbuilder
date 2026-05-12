@@ -1,6 +1,33 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [0.4.5] - 2026-05-12
+
+### Bug Fixes
+
+- [`a977594`](https://github.com/flashbots/op-rbuilder/commit/a977594b7324f749cd886e852242b1ba85e6029b) Use git-cliff instead of release-plz for changelog ([#502](https://github.com/flashbots/op-rbuilder/pull/502))
+- [`4ff9429`](https://github.com/flashbots/op-rbuilder/commit/4ff94298d4074a1e1f3e86449e0266a5cdd16128) Fix checking reverted hashes ([#498](https://github.com/flashbots/op-rbuilder/pull/498))
+- [`1dd1313`](https://github.com/flashbots/op-rbuilder/commit/1dd131349ce845f8ce07119353a3cbdd2028a581) Execute_flashblock directly on blocking thread ([#504](https://github.com/flashbots/op-rbuilder/pull/504))
+
+### Features
+
+- [`8366c3e`](https://github.com/flashbots/op-rbuilder/commit/8366c3ec7228d4ff3f4f182999dbd0643030202f) Per-sender simulation time limiting ([#487](https://github.com/flashbots/op-rbuilder/pull/487))
+
+### Miscellaneous
+
+- [`ca6b585`](https://github.com/flashbots/op-rbuilder/commit/ca6b585470fd33095ca811ab8c6a5adc1d6704f5) Remove ci step to install foundry toolchain ([#497](https://github.com/flashbots/op-rbuilder/pull/497))
+- [`bd1eca7`](https://github.com/flashbots/op-rbuilder/commit/bd1eca70cdc8ed11c646c731eb7d814d29fa37e6) Use `ActiveHardforks` a bit more widely ([#496](https://github.com/flashbots/op-rbuilder/pull/496))
+- [`da1dabb`](https://github.com/flashbots/op-rbuilder/commit/da1dabbf477af75429845cae9b1c0cec5a26b24b) Create reth pool wrapper ([#495](https://github.com/flashbots/op-rbuilder/pull/495))
+- [`d6c90fa`](https://github.com/flashbots/op-rbuilder/commit/d6c90fad8f059be558505ed307eedc4c8870a3ed) Remove unused testing code ([#500](https://github.com/flashbots/op-rbuilder/pull/500))
+- [`32f630b`](https://github.com/flashbots/op-rbuilder/commit/32f630bbf914b42c58bfca92f14f429c08811f69) Drop redundant Box::pin on payload builder spawns ([#505](https://github.com/flashbots/op-rbuilder/pull/505))
+- [`0fa2bad`](https://github.com/flashbots/op-rbuilder/commit/0fa2badf34e03f2a5bf43ee8fbbf3c1be759e959) Bump version to 0.4.5
+
+### Refactor
+
+- [`7b33ac1`](https://github.com/flashbots/op-rbuilder/commit/7b33ac1ccf962548d6fa768d09aabc46cfc0abbc) Extract receipt and hardforks code ([#493](https://github.com/flashbots/op-rbuilder/pull/493))
+- [`d89d5e7`](https://github.com/flashbots/op-rbuilder/commit/d89d5e787ba88cf2be339c6868fb5e4054089e93) Wire presim through flashpool ([#499](https://github.com/flashbots/op-rbuilder/pull/499))
+- [`a377b4d`](https://github.com/flashbots/op-rbuilder/commit/a377b4d60a5a7551201da41ffed7db60d063e419) Use oncelock for payload cancel reason ([#507](https://github.com/flashbots/op-rbuilder/pull/507))
+
 ## [0.4.4] - 2026-05-06
 
 ### Bug Fixes
