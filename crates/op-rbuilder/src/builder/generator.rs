@@ -21,6 +21,7 @@ use tokio::{
     sync::watch,
     time::{Duration, Sleep},
 };
+use tokio_util::sync::WaitForCancellationFutureOwned;
 use tracing::info;
 
 use super::cancellation::PayloadJobCancellation;
@@ -178,12 +179,15 @@ where
         let deadline = Box::pin(tokio::time::sleep(deadline));
         let config = PayloadConfig::new(Arc::new(parent_header.clone()), attributes);
 
+        let cancelled_fut = Box::pin(cancel.token().cancelled_owned());
+
         let mut job = BlockPayloadJob {
             executor: self.executor.clone(),
             builder: self.builder.clone(),
             config,
             payload_rx: None,
             cancel,
+            cancelled_fut,
             deadline,
             cached_reads: self
                 .maybe_pre_cached(parent_header.hash())
@@ -238,6 +242,8 @@ where
     payload_rx: Option<watch::Receiver<Option<Builder::BuiltPayload>>>,
     /// Structured cancellation for the running job
     cancel: PayloadJobCancellation,
+    /// Future that resolves when `cancel` fires.
+    cancelled_fut: Pin<Box<WaitForCancellationFutureOwned>>,
     /// Deadline at which the job is forcibly cancelled.
     deadline: Pin<Box<Sleep>>,
     /// Caches all disk reads for the state the new payloads builds on.
@@ -331,8 +337,8 @@ where
             return Poll::Ready(Ok(()));
         }
 
-        // If canceled via any source
-        if this.cancel.is_cancelled() {
+        // Poll the cancellation future so this task is woken when `PayloadJobCancellation` fires
+        if this.cancelled_fut.as_mut().poll(cx).is_ready() {
             tracing::debug!("Job cancelled");
             return Poll::Ready(Ok(()));
         }
@@ -458,7 +464,7 @@ mod tests {
             .expect("resolve should return payload");
         assert_eq!(payload, MockPayload(7));
         assert!(cancel.is_resolved());
-        assert!(cancel.is_cancelled());
+        assert!(cancel.token().is_cancelled());
     }
 
     #[tokio::test]
@@ -474,7 +480,7 @@ mod tests {
 
         assert_eq!(payload, MockPayload(2));
         assert!(cancel.is_resolved());
-        assert!(cancel.is_cancelled());
+        assert!(cancel.token().is_cancelled());
     }
 
     #[tokio::test]
@@ -501,7 +507,7 @@ mod tests {
         let handle = tokio::spawn(ResolvePayload::new(Some(rx), cancel.clone()));
 
         sleep(Duration::from_millis(20)).await;
-        assert!(!cancel.is_cancelled());
+        assert!(!cancel.token().is_cancelled());
 
         tx.send_replace(Some(MockPayload(9)));
         let payload = timeout(Duration::from_secs(1), handle)
@@ -512,6 +518,6 @@ mod tests {
 
         assert_eq!(payload, MockPayload(9));
         assert!(cancel.is_resolved());
-        assert!(cancel.is_cancelled());
+        assert!(cancel.token().is_cancelled());
     }
 }
