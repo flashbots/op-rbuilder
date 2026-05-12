@@ -1,29 +1,12 @@
-use std::sync::{
-    Arc,
-    atomic::{AtomicU8, Ordering},
-};
+use std::sync::{Arc, OnceLock};
 use tokio_util::sync::CancellationToken;
-
-const REASON_NONE: u8 = 0;
 
 /// Why a payload job was cancelled.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
 pub(crate) enum CancellationReason {
-    Resolved = 1,
-    NewFcu = 2,
-    Deadline = 3,
-}
-
-impl CancellationReason {
-    fn from_u8(v: u8) -> Option<Self> {
-        match v {
-            1 => Some(Self::Resolved),
-            2 => Some(Self::NewFcu),
-            3 => Some(Self::Deadline),
-            _ => None,
-        }
-    }
+    Resolved,
+    NewFcu,
+    Deadline,
 }
 
 /// Structured cancellation for a single payload building job.
@@ -37,7 +20,7 @@ impl CancellationReason {
 #[derive(Clone)]
 pub(crate) struct PayloadJobCancellation {
     token: CancellationToken,
-    reason: Arc<AtomicU8>,
+    reason: Arc<OnceLock<CancellationReason>>,
 }
 
 impl PayloadJobCancellation {
@@ -45,18 +28,14 @@ impl PayloadJobCancellation {
     pub(crate) fn new() -> Self {
         Self {
             token: CancellationToken::new(),
-            reason: Arc::new(AtomicU8::new(REASON_NONE)),
+            reason: Arc::new(OnceLock::new()),
         }
     }
 
     fn cancel_with(&self, reason: CancellationReason) {
-        // First writer wins. If already set, the original reason is preserved.
-        let _ = self.reason.compare_exchange(
-            REASON_NONE,
-            reason as u8,
-            Ordering::AcqRel,
-            Ordering::Acquire,
-        );
+        // OnceLock ensures that the first writer wins. If already set, the
+        // original reason is preserved.
+        let _ = self.reason.set(reason);
         self.token.cancel();
     }
 
@@ -109,7 +88,7 @@ impl PayloadJobCancellation {
 
     /// Returns the reason this job was cancelled, or `None` if not cancelled.
     pub(crate) fn reason(&self) -> Option<CancellationReason> {
-        CancellationReason::from_u8(self.reason.load(Ordering::Acquire))
+        self.reason.get().copied()
     }
 }
 
