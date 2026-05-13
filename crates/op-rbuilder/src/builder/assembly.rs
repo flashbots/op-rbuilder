@@ -29,13 +29,12 @@ use reth_revm::{
     State,
     db::{BundleState, states::bundle_state::BundleRetention},
 };
-use reth_trie::{HashedPostState, updates::TrieUpdates};
 use revm::{Database, interpreter::as_u64_saturated};
 use std::{collections::BTreeMap, time::Instant};
 use tracing::{debug, info, warn};
 
 use crate::{
-    builder::{StateRootCalculator, payload::FlashblocksState},
+    builder::{StateRootCalculator, payload::FlashblocksState, state_root::StateRootOutput},
     evm::OpBlockEvmFactory,
     hardforks::ActiveHardforks,
     metrics::OpRBuilderMetrics,
@@ -297,10 +296,10 @@ impl BlockAssemblyInput {
     pub(super) fn assemble<DB, P>(
         self,
         state: &mut State<DB>,
-        mut fb_state: Option<&mut FlashblocksState>,
+        fb_state: Option<&mut FlashblocksState>,
         info: &mut ExecutionInfo,
+        state_root_calc: &mut StateRootCalculator,
         metrics: Arc<OpRBuilderMetrics>,
-        calculate_state_root: bool,
         enable_tx_tracking_debug_logs: bool,
     ) -> Result<(OpBuiltPayload, OpFlashblockPayload), PayloadBuilderError>
     where
@@ -317,53 +316,29 @@ impl BlockAssemblyInput {
 
         self.check_block_number()?;
 
-        // TODO: maybe recreate state with bundle in here
-        let state_root_start_time = Instant::now();
-        let mut state_root = B256::ZERO;
-        let mut hashed_state = HashedPostState::default();
-        let mut trie_updates_to_cache: Option<Arc<TrieUpdates>> = None;
-
         let flashblock_index_for_trace = fb_state
             .as_deref()
             .map(|s| s.flashblock_index())
             .unwrap_or(0);
 
-        if calculate_state_root {
-            let state_provider = state.database.as_ref();
-            let flashblock_index = fb_state
-                .as_deref()
-                .map(|s| s.flashblock_index())
-                .unwrap_or(0);
-
-            hashed_state = state_provider.hashed_post_state(&state.bundle_state);
-
-            let mut default_calc = StateRootCalculator::default();
-            let calc = match fb_state.as_deref_mut() {
-                Some(s) => &mut s.state_root_calculator_mut(),
-                None => &mut default_calc,
-            };
-
-            debug!(
-                target: "payload_builder",
-                flashblock_index,
-                incremental = calc.has_cached_trie(),
-                "Computing state root"
-            );
-
-            let output = calc
-                .compute(state_provider, hashed_state.clone())
-                .inspect_err(|err| {
-                    warn!(
-                        target: "payload_builder",
-                        parent_header = %self.parent_header.hash(),
-                        %err,
-                        "failed to calculate state root for payload"
-                    );
-                })
-                .map_err(PayloadBuilderError::other)?;
-            state_root = output.state_root;
-            trie_updates_to_cache = Some(output.trie_updates);
-
+        // Calculate the state root (returns defaults when disabled)
+        let state_root_start_time = Instant::now();
+        let StateRootOutput {
+            state_root,
+            hashed_state,
+            trie_updates,
+        } = state_root_calc
+            .compute(state.database.as_ref(), &state.bundle_state)
+            .inspect_err(|err| {
+                warn!(
+                    target: "payload_builder",
+                    parent_header = %self.parent_header.hash(),
+                    %err,
+                    "failed to calculate state root for payload"
+                );
+            })
+            .map_err(PayloadBuilderError::other)?;
+        if state_root_calc.is_enabled() {
             let state_root_calculation_time = state_root_start_time.elapsed();
             metrics
                 .state_root_calculation_duration
@@ -374,7 +349,7 @@ impl BlockAssemblyInput {
 
             debug!(
                 target: "payload_builder",
-                flashblock_index,
+                flashblock_index = flashblock_index_for_trace,
                 state_root = %state_root,
                 duration_ms = state_root_calculation_time.as_millis(),
                 "State root calculation completed"
@@ -386,7 +361,7 @@ impl BlockAssemblyInput {
                     block_number = self.block_number,
                     flashblock_index = flashblock_index_for_trace,
                     duration_ms = state_root_calculation_time.as_millis() as u64,
-                    incremental = calc.has_cached_trie(),
+                    incremental = state_root_calc.has_cached_trie(),
                     cumulative_gas = info.cumulative_gas_used,
                     num_txs = info.executed_transactions.len(),
                     stage = "state_root_computed"
@@ -465,9 +440,7 @@ impl BlockAssemblyInput {
         let executed = BuiltPayloadExecutedBlock {
             recovered_block: Arc::new(recovered_block),
             execution_output: Arc::new(execution_output),
-            trie_updates: either::Either::Left(
-                trie_updates_to_cache.unwrap_or_else(|| Arc::new(TrieUpdates::default())),
-            ),
+            trie_updates: either::Either::Left(trie_updates),
             hashed_state: either::Either::Left(Arc::new(hashed_state)),
         };
         debug!(

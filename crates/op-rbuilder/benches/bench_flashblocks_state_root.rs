@@ -194,8 +194,8 @@ fn bench_without_cache(
         let fb_start = Instant::now();
         let provider = provider_factory.database_provider_ro().unwrap();
         let latest = LatestStateProvider::new(provider);
-        let output = StateRootCalculator::new(false)
-            .compute(&latest, hashed_state.clone())
+        let output = StateRootCalculator::new(true, false)
+            .compute_from_hashed(&latest, hashed_state.clone())
             .unwrap();
         individual_times.push(fb_start.elapsed().as_micros());
         black_box(output.state_root);
@@ -212,7 +212,7 @@ fn bench_with_cache(
     flashblock_changes: &[HashedPostState],
 ) -> (u128, Vec<u128>) {
     let mut individual_times = Vec::new();
-    let mut calc = StateRootCalculator::new(true);
+    let mut calc = StateRootCalculator::new(true, true);
     let total_start = Instant::now();
 
     for hashed_state in flashblock_changes {
@@ -220,7 +220,9 @@ fn bench_with_cache(
         let provider = provider_factory.database_provider_ro().unwrap();
         let latest = LatestStateProvider::new(provider);
 
-        let output = calc.compute(&latest, hashed_state.clone()).unwrap();
+        let output = calc
+            .compute_from_hashed(&latest, hashed_state.clone())
+            .unwrap();
 
         individual_times.push(fb_start.elapsed().as_micros());
         black_box(output.state_root);

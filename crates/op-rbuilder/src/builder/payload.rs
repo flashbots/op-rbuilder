@@ -80,9 +80,6 @@ pub(super) struct FlashblocksState {
     /// Index into ExecutionInfo tracking the last consumed flashblock
     /// Used for slicing transactions/receipts per flashblock
     last_flashblock_tx_index: usize,
-    /// State root calculator. Manages cached trie updates and cumulative prefix
-    /// sets across flashblocks when incremental mode is enabled.
-    state_root_calculator: StateRootCalculator,
 }
 
 struct FallbackBuildOutput<Cache, Transition> {
@@ -93,6 +90,7 @@ struct FallbackBuildOutput<Cache, Transition> {
     cache: Cache,
     transition: Transition,
     fb_state: FlashblocksState,
+    state_root_calc: StateRootCalculator,
 }
 
 struct FlashblockBuildOutput<Cache, Transition> {
@@ -103,13 +101,13 @@ struct FlashblockBuildOutput<Cache, Transition> {
     tx_tracker: FlashblockTxTracker,
     info: ExecutionInfo,
     fb_state: FlashblocksState,
+    state_root_calc: StateRootCalculator,
 }
 
 impl FlashblocksState {
-    fn new(target_flashblock_count: u64, enable_incremental_state_root: bool) -> Self {
+    fn new(target_flashblock_count: u64) -> Self {
         Self {
             target_flashblock_count,
-            state_root_calculator: StateRootCalculator::new(enable_incremental_state_root),
             ..Default::default()
         }
     }
@@ -131,7 +129,6 @@ impl FlashblocksState {
             da_per_batch: self.da_per_batch,
             da_footprint_per_batch: self.da_footprint_per_batch,
             last_flashblock_tx_index: self.last_flashblock_tx_index,
-            state_root_calculator: self.state_root_calculator.clone(),
         }
     }
 
@@ -222,10 +219,6 @@ impl FlashblocksState {
 
     pub(super) fn set_last_flashblock_tx_index(&mut self, index: usize) {
         self.last_flashblock_tx_index = index;
-    }
-
-    pub(super) fn state_root_calculator_mut(&mut self) -> &mut StateRootCalculator {
-        &mut self.state_root_calculator
     }
 
     /// Extracts new transactions since the last flashblock
@@ -459,7 +452,10 @@ where
             self.config
                 .flashblocks_config
                 .flashblocks_per_block(self.config.block_time),
-            ctx.enable_incremental_state_root,
+        );
+        let mut state_root_calc = StateRootCalculator::new(
+            !ctx.builder_ctx.disable_state_root || ctx.attributes().no_tx_pool,
+            ctx.builder_ctx.enable_incremental_state_root,
         );
 
         self.builder_ctx.address_limiter.refresh(ctx.block_number());
@@ -478,12 +474,13 @@ where
             mut cache,
             mut transition,
             fb_state: returned_fb_state,
+            state_root_calc: returned_state_root_calc,
         } = tracing::Instrument::instrument(
             self.executor.run_blocking_task({
                 let builder = self.clone();
                 move || {
                     builder
-                        .build_fallback_block(ctx, fb_state, cached_reads)
+                        .build_fallback_block(ctx, fb_state, cached_reads, state_root_calc)
                         .map_err(|e| PayloadBuilderError::Other(e.into()))
                 }
             }),
@@ -491,6 +488,7 @@ where
         )
         .await?;
         fb_state = returned_fb_state;
+        state_root_calc = returned_state_root_calc;
 
         self.built_fb_payload_tx
             .try_send(payload.clone())
@@ -717,6 +715,7 @@ where
                     let transition = transition;
                     let mut tx_tracker = tx_tracker;
                     let fb_state = fb_state;
+                    let mut state_root_calc = state_root_calc;
                     let fb_span = fb_span.clone();
                     move || {
                         // Enter the flashblock span so child spans are properly parented
@@ -743,6 +742,7 @@ where
                             &state_provider,
                             &mut best_txs,
                             &block_cancel,
+                            &mut state_root_calc,
                         );
 
                         let cache = std::mem::take(&mut state.cache);
@@ -756,6 +756,7 @@ where
                             tx_tracker,
                             info,
                             fb_state,
+                            state_root_calc,
                         })
                     }
                 }) => result?,
@@ -769,10 +770,12 @@ where
                 tx_tracker: new_tx_tracker,
                 info: new_info,
                 fb_state: returned_fb_state,
+                state_root_calc: returned_state_root_calc,
             } = build_output;
 
             ctx = returned_ctx;
             fb_state = returned_fb_state;
+            state_root_calc = returned_state_root_calc;
             info = new_info;
             cache = new_cache;
             transition = new_transition;
@@ -839,6 +842,7 @@ where
         ctx: OpPayloadJobCtx,
         mut fb_state: FlashblocksState,
         mut cached_reads: CachedReads,
+        mut state_root_calc: StateRootCalculator,
     ) -> eyre::Result<FallbackBuildOutput<CacheState, Option<TransitionState>>> {
         let state_provider = self.client.state_by_block_hash(ctx.parent().hash())?;
         let db = StateProviderDatabase::new(&state_provider);
@@ -882,8 +886,8 @@ where
             &mut state,
             Some(&mut fb_state),
             &mut info,
+            &mut state_root_calc,
             ctx.metrics.clone(),
-            !ctx.disable_state_root || ctx.attributes().no_tx_pool, // need to calculate state root for CL sync
             ctx.enable_tx_tracking_debug_logs,
         )?;
 
@@ -898,6 +902,7 @@ where
             cache,
             transition,
             fb_state,
+            state_root_calc,
         })
     }
 
@@ -915,6 +920,7 @@ where
         state_provider: impl reth::providers::StateProvider + Clone,
         best_txs: &mut NextFlashblockPoolTxCursor<'a, Pool>,
         block_cancel: &CancellationToken,
+        state_root_calc: &mut StateRootCalculator,
     ) -> eyre::Result<Option<(FlashblocksState, OpBuiltPayload)>> {
         let flashblock_index = fb_state.flashblock_index();
         let mut target_gas_for_batch = fb_state.target_gas_for_batch();
@@ -1040,8 +1046,8 @@ where
             state,
             Some(fb_state),
             info,
+            state_root_calc,
             ctx.metrics.clone(),
-            !ctx.disable_state_root || ctx.attributes().no_tx_pool,
             ctx.enable_tx_tracking_debug_logs,
         );
         let total_block_built_duration = total_block_built_duration.elapsed();
@@ -1259,7 +1265,7 @@ mod tests {
         target_da: Option<u64>,
         target_da_footprint: Option<u64>,
     ) -> FlashblocksState {
-        FlashblocksState::new(5, false).with_batch_limits(
+        FlashblocksState::new(5).with_batch_limits(
             gas_per_batch,
             da_per_batch,
             da_footprint_per_batch,
@@ -1328,7 +1334,7 @@ mod tests {
 
     #[test]
     fn test_next_after_seal_preserves_config() {
-        let state = FlashblocksState::new(10, true).with_batch_limits(
+        let state = FlashblocksState::new(10).with_batch_limits(
             50_000,
             Some(500),
             Some(250),
