@@ -54,11 +54,6 @@ impl PayloadJobCancellation {
         self.cancel_with(CancellationReason::Deadline);
     }
 
-    /// Returns true if any cancellation source has fired.
-    pub(crate) fn is_cancelled(&self) -> bool {
-        self.token.is_cancelled()
-    }
-
     /// Returns true if cancelled with `Resolved` reason.
     pub(crate) fn is_resolved(&self) -> bool {
         self.reason() == Some(CancellationReason::Resolved)
@@ -115,10 +110,10 @@ mod tests {
     #[tokio::test]
     async fn test_cancel_new_fcu() {
         let cancel = PayloadJobCancellation::new();
-        assert!(!cancel.is_cancelled());
+        assert!(!cancel.token().is_cancelled());
 
         cancel.cancel_new_fcu();
-        assert!(cancel.is_cancelled());
+        assert!(cancel.token().is_cancelled());
         assert!(cancel.is_new_fcu());
         assert!(!cancel.is_resolved());
         assert_eq!(cancel.reason(), Some(CancellationReason::NewFcu));
@@ -128,7 +123,7 @@ mod tests {
     async fn test_cancel_resolved() {
         let cancel = PayloadJobCancellation::new();
         cancel.cancel_resolved();
-        assert!(cancel.is_cancelled());
+        assert!(cancel.token().is_cancelled());
         assert!(cancel.is_resolved());
         assert!(!cancel.is_new_fcu());
         assert_eq!(cancel.reason(), Some(CancellationReason::Resolved));
@@ -138,7 +133,7 @@ mod tests {
     async fn test_cancel_deadline() {
         let cancel = PayloadJobCancellation::new();
         cancel.cancel_deadline();
-        assert!(cancel.is_cancelled());
+        assert!(cancel.token().is_cancelled());
         assert!(!cancel.is_new_fcu());
         assert!(!cancel.is_resolved());
         assert_eq!(cancel.reason(), Some(CancellationReason::Deadline));
