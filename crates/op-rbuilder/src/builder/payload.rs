@@ -2,7 +2,6 @@ use super::{state_root::StateRootCalculator, wspub::WebSocketPublisher};
 use crate::{
     builder::{
         BuilderConfig,
-        assembly::BlockAssemblyInput,
         best_txs::{FlashblockPoolTxCursor, FlashblockTxTracker},
         builder_tx::{BuilderTransactions, reserve_builder_tx_budget},
         cancellation::FlashblockJobCancellation,
@@ -22,7 +21,6 @@ use crate::{
 use eyre::WrapErr as _;
 use op_alloy_rpc_types_engine::OpFlashblockPayload;
 use reth_chainspec::EthChainSpec;
-use reth_evm::{ConfigureEvm, execute::BlockBuilder};
 use reth_node_api::PayloadBuilderError;
 use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
 use reth_optimism_node::{OpBuiltPayload, OpPayloadBuilderAttributes};
@@ -405,15 +403,15 @@ where
             .backrun_bundle_pool()
             .map(|pool| pool.block_pool(config.parent_header.number + 1));
 
-        Ok(OpPayloadJobCtx {
-            builder_ctx: Arc::clone(builder_ctx),
+        Ok(OpPayloadJobCtx::new(
+            Arc::clone(builder_ctx),
             evm_factory,
             config,
             block_env_attributes,
             hardforks,
             cancel,
             backrun_pool,
-        })
+        ))
     }
 
     /// Constructs an Optimism payload from the transactions sent via the
@@ -455,11 +453,11 @@ where
                 .flashblocks_per_block(self.config.block_time),
         );
         let mut state_root_calc = StateRootCalculator::new(
-            !ctx.builder_ctx.disable_state_root || ctx.attributes().no_tx_pool,
-            ctx.builder_ctx.enable_incremental_state_root,
+            !ctx.disable_state_root || ctx.attributes().no_tx_pool,
+            ctx.enable_incremental_state_root,
         );
 
-        self.builder_ctx.address_limiter.refresh(ctx.block_number());
+        ctx.address_limiter.refresh(ctx.block_number());
 
         // Phase 1: Build the fallback block.
         let fallback_span = if span.is_none() {
@@ -854,7 +852,7 @@ where
             .with_bundle_update()
             .build();
 
-        let mut info = execute_pre_steps(&mut state, &ctx)?;
+        let mut info = ctx.execute_pre_steps(&mut state)?;
         let sequencer_tx_time = sequencer_tx_start_time.elapsed();
         ctx.metrics.sequencer_tx_duration.record(sequencer_tx_time);
         ctx.metrics.sequencer_tx_gauge.set(sequencer_tx_time);
@@ -878,12 +876,7 @@ where
             );
         };
 
-        let (payload, fb_payload) = BlockAssemblyInput::try_new(
-            ctx.config.clone(),
-            &ctx.evm_factory,
-            ctx.hardforks.clone(),
-        )?
-        .assemble(
+        let (payload, fb_payload) = ctx.block_assembly_input()?.assemble(
             &mut state,
             Some(&mut fb_state),
             &mut info,
@@ -1038,12 +1031,7 @@ where
         }
 
         let total_block_built_duration = Instant::now();
-        let build_result = BlockAssemblyInput::try_new(
-            ctx.config.clone(),
-            &ctx.evm_factory,
-            ctx.hardforks.clone(),
-        )?
-        .assemble(
+        let build_result = ctx.block_assembly_input()?.assemble(
             state,
             Some(fb_state),
             info,
@@ -1232,26 +1220,6 @@ where
         };
         tracing::Instrument::instrument(self.build_payload(args, best_payload_tx), span).await
     }
-}
-
-fn execute_pre_steps<DB>(
-    state: &mut State<DB>,
-    ctx: &OpPayloadJobCtx,
-) -> Result<ExecutionInfo, PayloadBuilderError>
-where
-    DB: Database<Error = ProviderError> + std::fmt::Debug,
-{
-    // 1. apply pre-execution changes
-    ctx.evm_factory
-        .evm_config()
-        .builder_for_next_block(state, ctx.parent(), ctx.block_env_attributes.clone())
-        .map_err(PayloadBuilderError::other)?
-        .apply_pre_execution_changes()?;
-
-    // 2. execute sequencer transactions
-    let info = ctx.execute_sequencer_transactions(state)?;
-
-    Ok(info)
 }
 
 #[cfg(test)]

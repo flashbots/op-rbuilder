@@ -4,7 +4,7 @@ use alloy_evm::Database;
 use alloy_primitives::{B256, BlockHash, U256};
 use op_revm::L1BlockInfo;
 use reth_basic_payload_builder::PayloadConfig;
-use reth_evm::{Evm, EvmError, InvalidTxError};
+use reth_evm::{ConfigureEvm, Evm, EvmError, InvalidTxError, execute::BlockBuilder};
 use reth_node_api::PayloadBuilderError;
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
@@ -20,15 +20,19 @@ use reth_optimism_txpool::{
 use reth_payload_builder::PayloadId;
 use reth_payload_primitives::PayloadBuilderAttributes;
 use reth_primitives_traits::{InMemorySize, SealedHeader, SignedTransaction};
+use reth_provider::ProviderError;
 use reth_revm::{State, context::Block};
 use reth_transaction_pool::{BestTransactionsAttributes, PoolTransaction};
 use revm::{Database as _, context::result::ResultAndState, interpreter::as_u64_saturated};
-use std::{ops::Deref, sync::Arc, time::Instant};
+use std::{sync::Arc, time::Instant};
 use tracing::{debug, info, trace};
 
 use crate::{
     backrun_bundle::{BackrunBundleArgs, BackrunBundlePayloadPool},
-    builder::{builder_tx::BuilderTxEnv, cancellation::FlashblockJobCancellation},
+    builder::{
+        assembly::BlockAssemblyInput, builder_tx::BuilderTxEnv,
+        cancellation::FlashblockJobCancellation,
+    },
     evm::OpBlockEvmFactory,
     hardforks::ActiveHardforks,
     limiter::AddressLimiter,
@@ -77,29 +81,23 @@ pub struct OpPayloadBuilderCtx {
 
 /// Container type that holds all necessities to build a new payload.
 /// This struct is constructed once per payload job.
+#[derive(derive_more::Constructor, derive_more::Deref)]
 pub struct OpPayloadJobCtx {
     /// Builder-lifetime configuration shared with all other in-flight jobs.
-    pub builder_ctx: Arc<OpPayloadBuilderCtx>,
+    #[deref]
+    builder_ctx: Arc<OpPayloadBuilderCtx>,
     /// Factory for creating EVM instances (bundles evm_config + evm_env).
-    pub evm_factory: OpBlockEvmFactory,
+    evm_factory: OpBlockEvmFactory,
     /// How to build the payload.
-    pub config: PayloadConfig<OpPayloadBuilderAttributes<OpTransactionSigned>>,
+    config: PayloadConfig<OpPayloadBuilderAttributes<OpTransactionSigned>>,
     /// Block env attributes for the current block.
-    pub block_env_attributes: OpNextBlockEnvAttributes,
+    block_env_attributes: OpNextBlockEnvAttributes,
     /// Hardfork activation state for this block's timestamp.
-    pub hardforks: ActiveHardforks,
+    hardforks: ActiveHardforks,
     /// Marker to check whether the job has been cancelled.
-    pub cancel: FlashblockJobCancellation,
+    cancel: FlashblockJobCancellation,
     /// Per-block view into the global backrun bundle pool.
-    pub backrun_pool: Option<BackrunBundlePayloadPool>,
-}
-
-impl Deref for OpPayloadJobCtx {
-    type Target = OpPayloadBuilderCtx;
-
-    fn deref(&self) -> &Self::Target {
-        &self.builder_ctx
-    }
+    backrun_pool: Option<BackrunBundlePayloadPool>,
 }
 
 impl OpPayloadJobCtx {
@@ -174,8 +172,28 @@ impl OpPayloadJobCtx {
         self.attributes().payload_id()
     }
 
+    pub(super) fn execute_pre_steps<DB>(
+        &self,
+        state: &mut State<DB>,
+    ) -> Result<ExecutionInfo, PayloadBuilderError>
+    where
+        DB: Database<Error = ProviderError> + std::fmt::Debug,
+    {
+        // 1. apply pre-execution changes
+        self.evm_factory
+            .evm_config()
+            .builder_for_next_block(state, self.parent(), self.block_env_attributes.clone())
+            .map_err(PayloadBuilderError::other)?
+            .apply_pre_execution_changes()?;
+
+        // 2. execute sequencer transactions
+        let info = self.execute_sequencer_transactions(state)?;
+
+        Ok(info)
+    }
+
     /// Executes all sequencer transactions that are included in the payload attributes.
-    pub(super) fn execute_sequencer_transactions(
+    fn execute_sequencer_transactions(
         &self,
         db: &mut State<impl Database>,
     ) -> Result<ExecutionInfo, PayloadBuilderError> {
@@ -285,6 +303,14 @@ impl OpPayloadJobCtx {
             }
             _ => {}
         }
+    }
+
+    pub(super) fn block_assembly_input(&self) -> Result<BlockAssemblyInput, PayloadBuilderError> {
+        BlockAssemblyInput::try_new(
+            self.config.clone(),
+            &self.evm_factory,
+            self.hardforks.clone(),
+        )
     }
 
     /// Executes the given best transactions and updates the execution info.
