@@ -2,6 +2,7 @@ use super::{state_root::StateRootCalculator, wspub::WebSocketPublisher};
 use crate::{
     builder::{
         BuilderConfig,
+        assembly::BlockAssemblyInput,
         best_txs::{FlashblockPoolTxCursor, FlashblockTxTracker},
         builder_tx::{BuilderTransactions, reserve_builder_tx_budget},
         context::{OpPayloadBuilderCtx, OpPayloadJobCtx},
@@ -17,28 +18,16 @@ use crate::{
     tokio_metrics::FlashblocksTaskMetrics,
     traits::{ClientBounds, PoolBounds},
 };
-use alloy_consensus::{
-    BlockBody, EMPTY_OMMER_ROOT_HASH, Header, TxReceipt, constants::EMPTY_WITHDRAWALS, proofs,
-};
-use alloy_eips::{Encodable2718, eip7685::EMPTY_REQUESTS_HASH, merge::BEACON_NONCE};
-use alloy_evm::block::BlockExecutionResult;
-use alloy_primitives::{Address, B256, Bytes, U256};
 use eyre::WrapErr as _;
-use op_alloy_rpc_types_engine::{
-    OpFlashblockPayload, OpFlashblockPayloadBase, OpFlashblockPayloadDelta,
-    OpFlashblockPayloadMetadata,
-};
+use op_alloy_rpc_types_engine::OpFlashblockPayload;
 use reth_chainspec::EthChainSpec;
 use reth_evm::{ConfigureEvm, execute::BlockBuilder};
-use reth_execution_types::BlockExecutionOutput;
-use reth_node_api::{Block, BuiltPayloadExecutedBlock, PayloadBuilderError};
-use reth_optimism_consensus::{calculate_receipt_root_no_memo_optimism, isthmus};
+use reth_node_api::PayloadBuilderError;
 use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
 use reth_optimism_node::{OpBuiltPayload, OpPayloadBuilderAttributes};
 use reth_optimism_primitives::{OpReceipt, OpTransactionSigned};
 use reth_payload_primitives::PayloadBuilderAttributes;
 use reth_payload_util::BestPayloadTransactions;
-use reth_primitives_traits::RecoveredBlock;
 use reth_provider::{
     HashedPostStateProvider, ProviderError, StateRootProvider, StorageRootProvider,
 };
@@ -46,34 +35,15 @@ use reth_revm::{
     State,
     cached::CachedReads,
     database::StateProviderDatabase,
-    db::{CacheState, TransitionState, states::bundle_state::BundleRetention},
+    db::{CacheState, TransitionState},
 };
 use reth_tasks::Runtime;
 use reth_transaction_pool::TransactionPool;
-use reth_trie::{HashedPostState, updates::TrieUpdates};
 use revm::Database;
-use std::{collections::BTreeMap, ops::Deref, sync::Arc, time::Instant};
+use std::{ops::Deref, sync::Arc, time::Instant};
 use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, info_span, metadata::Level, span, warn};
-
-/// Converts a reth OpReceipt to an op-alloy OpReceipt
-/// TODO: remove this once reth updates to use the op-alloy defined type as well.
-fn convert_receipt(receipt: &OpReceipt) -> op_alloy_consensus::OpReceipt {
-    match receipt {
-        OpReceipt::Legacy(r) => op_alloy_consensus::OpReceipt::Legacy(r.clone()),
-        OpReceipt::Eip2930(r) => op_alloy_consensus::OpReceipt::Eip2930(r.clone()),
-        OpReceipt::Eip1559(r) => op_alloy_consensus::OpReceipt::Eip1559(r.clone()),
-        OpReceipt::Eip7702(r) => op_alloy_consensus::OpReceipt::Eip7702(r.clone()),
-        OpReceipt::Deposit(r) => {
-            op_alloy_consensus::OpReceipt::Deposit(op_alloy_consensus::OpDepositReceipt {
-                inner: r.inner.clone(),
-                deposit_nonce: r.deposit_nonce,
-                deposit_receipt_version: r.deposit_receipt_version,
-            })
-        }
-    }
-}
 
 type NextFlashblockPoolTxCursor<'a, Pool> = FlashblockPoolTxCursor<
     'a,
@@ -222,11 +192,11 @@ impl FlashblocksState {
         self
     }
 
-    fn flashblock_index(&self) -> u64 {
+    pub(super) fn flashblock_index(&self) -> u64 {
         self.flashblock_index
     }
 
-    fn target_flashblock_count(&self) -> u64 {
+    pub(super) fn target_flashblock_count(&self) -> u64 {
         self.target_flashblock_count
     }
 
@@ -250,12 +220,16 @@ impl FlashblocksState {
         self.target_da_footprint_for_batch
     }
 
-    fn set_last_flashblock_tx_index(&mut self, index: usize) {
+    pub(super) fn set_last_flashblock_tx_index(&mut self, index: usize) {
         self.last_flashblock_tx_index = index;
     }
 
+    pub(super) fn state_root_calculator_mut(&mut self) -> &mut StateRootCalculator {
+        &mut self.state_root_calculator
+    }
+
     /// Extracts new transactions since the last flashblock
-    fn slice_new_transactions<'a>(
+    pub(super) fn slice_new_transactions<'a>(
         &self,
         all_transactions: &'a [OpTransactionSigned],
     ) -> &'a [OpTransactionSigned] {
@@ -263,7 +237,7 @@ impl FlashblocksState {
     }
 
     /// Extracts new receipts since the last flashblock
-    fn slice_new_receipts<'a>(&self, all_receipts: &'a [OpReceipt]) -> &'a [OpReceipt] {
+    pub(super) fn slice_new_receipts<'a>(&self, all_receipts: &'a [OpReceipt]) -> &'a [OpReceipt] {
         &all_receipts[self.last_flashblock_tx_index..]
     }
 }
@@ -899,12 +873,18 @@ where
             );
         };
 
-        let (payload, fb_payload) = build_block(
+        let (payload, fb_payload) = BlockAssemblyInput::try_new(
+            ctx.config.clone(),
+            &ctx.evm_factory,
+            ctx.hardforks.clone(),
+        )?
+        .assemble(
             &mut state,
-            &ctx,
             Some(&mut fb_state),
             &mut info,
+            ctx.metrics.clone(),
             !ctx.disable_state_root || ctx.attributes().no_tx_pool, // need to calculate state root for CL sync
+            ctx.enable_tx_tracking_debug_logs,
         )?;
 
         // we can safely take from state as we drop it at the end of the scope
@@ -1051,12 +1031,18 @@ where
         }
 
         let total_block_built_duration = Instant::now();
-        let build_result = build_block(
+        let build_result = BlockAssemblyInput::try_new(
+            ctx.config.clone(),
+            &ctx.evm_factory,
+            ctx.hardforks.clone(),
+        )?
+        .assemble(
             state,
-            ctx,
             Some(fb_state),
             info,
+            ctx.metrics.clone(),
             !ctx.disable_state_root || ctx.attributes().no_tx_pool,
+            ctx.enable_tx_tracking_debug_logs,
         );
         let total_block_built_duration = total_block_built_duration.elapsed();
         ctx.metrics
@@ -1259,348 +1245,6 @@ where
     let info = ctx.execute_sequencer_transactions(state)?;
 
     Ok(info)
-}
-
-#[tracing::instrument(level = "info", name = "seal_block", skip_all)]
-pub(super) fn build_block<DB, P>(
-    state: &mut State<DB>,
-    ctx: &OpPayloadJobCtx,
-    mut fb_state: Option<&mut FlashblocksState>,
-    info: &mut ExecutionInfo,
-    calculate_state_root: bool,
-) -> Result<(OpBuiltPayload, OpFlashblockPayload), PayloadBuilderError>
-where
-    DB: Database<Error = ProviderError> + AsRef<P>,
-    P: StateRootProvider + HashedPostStateProvider + StorageRootProvider,
-{
-    // We use it to preserve state, so we run merge_transitions on transition state at most once
-    let untouched_transition_state = state.transition_state.clone();
-    let state_merge_start_time = Instant::now();
-    state.merge_transitions(BundleRetention::Reverts);
-    let state_transition_merge_time = state_merge_start_time.elapsed();
-    ctx.metrics
-        .state_transition_merge_duration
-        .record(state_transition_merge_time);
-    ctx.metrics
-        .state_transition_merge_gauge
-        .set(state_transition_merge_time);
-
-    if ctx.builder_ctx.enable_tx_tracking_debug_logs {
-        debug!(
-            target: "tx_trace",
-            block_number = ctx.block_number(),
-            duration_us = state_transition_merge_time.as_micros() as u64,
-            stage = "state_merge"
-        );
-    }
-
-    let block_number = ctx.block_number();
-    let expected = ctx.parent().number + 1;
-    if block_number != expected {
-        return Err(PayloadBuilderError::Other(
-            eyre::eyre!(
-                "build context block number mismatch: expected {}, got {}",
-                expected,
-                block_number
-            )
-            .into(),
-        ));
-    }
-
-    let receipts_root = calculate_receipt_root_no_memo_optimism(
-        &info.receipts,
-        &ctx.chain_spec,
-        ctx.attributes().timestamp(),
-    );
-    let logs_bloom = alloy_primitives::logs_bloom(info.receipts.iter().flat_map(|r| r.logs()));
-
-    // TODO: maybe recreate state with bundle in here
-    // calculate the state root
-    let state_root_start_time = Instant::now();
-    let mut state_root = B256::ZERO;
-    let mut hashed_state = HashedPostState::default();
-    let mut trie_updates_to_cache: Option<Arc<TrieUpdates>> = None;
-
-    let flashblock_index_for_trace = fb_state
-        .as_deref()
-        .map(|s| s.flashblock_index())
-        .unwrap_or(0);
-    let target_flashblock_count_for_trace = fb_state
-        .as_deref()
-        .map(|s| s.target_flashblock_count())
-        .unwrap_or(0);
-
-    if calculate_state_root {
-        let _state_root_span = span!(Level::INFO, "state_root").entered();
-        let state_provider = state.database.as_ref();
-
-        let flashblock_index = fb_state
-            .as_deref()
-            .map(|s| s.flashblock_index())
-            .unwrap_or(0);
-
-        hashed_state = state_provider.hashed_post_state(&state.bundle_state);
-
-        let mut default_calc = StateRootCalculator::default();
-        let calc = match fb_state.as_deref_mut() {
-            Some(s) => &mut s.state_root_calculator,
-            None => &mut default_calc,
-        };
-
-        debug!(
-            target: "payload_builder",
-            flashblock_index,
-            incremental = calc.has_cached_trie(),
-            "Computing state root"
-        );
-
-        let output = calc
-            .compute(state_provider, hashed_state.clone())
-            .inspect_err(|err| {
-                warn!(
-                    target: "payload_builder",
-                    parent_header=%ctx.parent().hash(),
-                    %err,
-                    "failed to calculate state root for payload"
-                );
-            })
-            .map_err(PayloadBuilderError::other)?;
-        state_root = output.state_root;
-        trie_updates_to_cache = Some(output.trie_updates);
-
-        let state_root_calculation_time = state_root_start_time.elapsed();
-        ctx.metrics
-            .state_root_calculation_duration
-            .record(state_root_calculation_time);
-        ctx.metrics
-            .state_root_calculation_gauge
-            .set(state_root_calculation_time);
-
-        debug!(
-            target: "payload_builder",
-            flashblock_index,
-            state_root = %state_root,
-            duration_ms = state_root_calculation_time.as_millis(),
-            "State root calculation completed"
-        );
-
-        if ctx.builder_ctx.enable_tx_tracking_debug_logs {
-            debug!(
-                target: "tx_trace",
-                block_number = ctx.block_number(),
-                flashblock_index = flashblock_index_for_trace,
-                duration_ms = state_root_calculation_time.as_millis() as u64,
-                incremental = fb_state.as_deref().is_some_and(|s| s.state_root_calculator.has_cached_trie()),
-                cumulative_gas = info.cumulative_gas_used,
-                num_txs = info.executed_transactions.len(),
-                stage = "state_root_computed"
-            );
-        }
-    }
-
-    let mut requests_hash = None;
-    let withdrawals_root = if ctx.hardforks.is_isthmus_active() {
-        // always empty requests hash post isthmus
-        requests_hash = Some(EMPTY_REQUESTS_HASH);
-
-        // withdrawals root field in block header is used for storage root of L2 predeploy
-        // `l2tol1-message-passer`
-        Some(
-            isthmus::withdrawals_root(&state.bundle_state, state.database.as_ref())
-                .map_err(PayloadBuilderError::other)?,
-        )
-    } else if ctx.hardforks.is_canyon_active() {
-        Some(EMPTY_WITHDRAWALS)
-    } else {
-        None
-    };
-
-    // create the block header
-    let transactions_root = proofs::calculate_transaction_root(&info.executed_transactions);
-
-    let (excess_blob_gas, blob_gas_used) = ctx.blob_fields(info);
-    let extra_data = ctx.extra_data()?;
-
-    // need to read balances before take_bundle() below
-    let new_account_balances = state
-        .bundle_state
-        .state
-        .iter()
-        .filter_map(|(address, account)| account.info.as_ref().map(|info| (*address, info.balance)))
-        .collect::<BTreeMap<Address, U256>>();
-
-    let bundle_state = state.take_bundle();
-    let execution_output = BlockExecutionOutput {
-        state: bundle_state,
-        result: BlockExecutionResult {
-            receipts: info.receipts.clone(),
-            requests: Default::default(),
-            gas_used: info.cumulative_gas_used,
-            blob_gas_used: blob_gas_used.unwrap_or_default(),
-        },
-    };
-
-    let header = Header {
-        parent_hash: ctx.parent().hash(),
-        ommers_hash: EMPTY_OMMER_ROOT_HASH,
-        beneficiary: ctx.evm_factory.evm_env().block_env.beneficiary,
-        state_root,
-        transactions_root,
-        receipts_root,
-        withdrawals_root,
-        logs_bloom,
-        timestamp: ctx.attributes().payload_attributes.timestamp,
-        mix_hash: ctx.attributes().payload_attributes.prev_randao,
-        nonce: BEACON_NONCE.into(),
-        base_fee_per_gas: Some(ctx.base_fee()),
-        number: ctx.parent().number + 1,
-        gas_limit: ctx.block_gas_limit(),
-        difficulty: U256::ZERO,
-        gas_used: info.cumulative_gas_used,
-        extra_data,
-        parent_beacon_block_root: ctx.attributes().payload_attributes.parent_beacon_block_root,
-        blob_gas_used,
-        excess_blob_gas,
-        requests_hash,
-    };
-
-    // seal the block
-    let block = alloy_consensus::Block::<OpTransactionSigned>::new(
-        header,
-        BlockBody {
-            transactions: info.executed_transactions.clone(),
-            ommers: vec![],
-            withdrawals: ctx.withdrawals().cloned(),
-        },
-    );
-
-    let recovered_block =
-        RecoveredBlock::new_unhashed(block.clone(), info.executed_senders.clone());
-    // create the executed block data
-
-    let executed = BuiltPayloadExecutedBlock {
-        recovered_block: Arc::new(recovered_block),
-        execution_output: Arc::new(execution_output),
-        trie_updates: either::Either::Left(
-            trie_updates_to_cache.unwrap_or_else(|| Arc::new(TrieUpdates::default())),
-        ),
-        hashed_state: either::Either::Left(Arc::new(hashed_state)),
-    };
-
-    let seal_start = Instant::now();
-    let sealed_block = Arc::new(block.seal_slow());
-    let seal_duration = seal_start.elapsed();
-    let block_hash = sealed_block.hash();
-
-    info!(
-        target: "payload_builder",
-        id = %ctx.payload_id(),
-        block_number = ctx.block_number(),
-        block_hash = %block_hash,
-        flashblock_index = flashblock_index_for_trace,
-        target_flashblocks = target_flashblock_count_for_trace,
-        tx_count = info.executed_transactions.len(),
-        gas_used = info.cumulative_gas_used,
-        da_used = info.cumulative_da_bytes_used,
-        state_root = %state_root,
-        seal_duration_us = seal_duration.as_micros() as u64,
-        "Block sealed"
-    );
-
-    if ctx.builder_ctx.enable_tx_tracking_debug_logs {
-        debug!(
-            target: "tx_trace",
-            block_number = ctx.block_number(),
-            flashblock_index = flashblock_index_for_trace,
-            block_hash = ?block_hash,
-            seal_duration_us = seal_duration.as_micros() as u64,
-            build_block_total_time_since_state_root_start_us = state_root_start_time.elapsed().as_micros() as u64,
-            cumulative_gas = info.cumulative_gas_used,
-            num_txs = info.executed_transactions.len(),
-            stage = "block_sealed"
-        );
-    }
-
-    // pick the new transactions from the info field and update the last flashblock index
-    let (new_transactions, new_receipts) = if let Some(fb_state) = fb_state {
-        let new_txs = fb_state.slice_new_transactions(&info.executed_transactions);
-        let new_receipts = fb_state.slice_new_receipts(&info.receipts);
-        fb_state.set_last_flashblock_tx_index(info.executed_transactions.len());
-        (new_txs, new_receipts)
-    } else {
-        (
-            info.executed_transactions.as_slice(),
-            info.receipts.as_slice(),
-        )
-    };
-
-    let new_transactions_encoded: Vec<Bytes> = new_transactions
-        .iter()
-        .map(|tx| tx.encoded_2718().into())
-        .collect();
-
-    let receipts_with_hash: BTreeMap<B256, op_alloy_consensus::OpReceipt> = new_transactions
-        .iter()
-        .zip(new_receipts.iter())
-        .map(|(tx, receipt)| (tx.tx_hash(), convert_receipt(receipt)))
-        .collect();
-
-    let metadata = OpFlashblockPayloadMetadata {
-        receipts: receipts_with_hash,
-        new_account_balances,
-        block_number: ctx.parent().number + 1,
-    };
-
-    let (_, blob_gas_used) = ctx.blob_fields(info);
-
-    // Prepare the flashblocks message
-    let fb_payload = OpFlashblockPayload {
-        payload_id: ctx.payload_id(),
-        index: 0,
-        base: Some(OpFlashblockPayloadBase {
-            parent_beacon_block_root: ctx
-                .attributes()
-                .payload_attributes
-                .parent_beacon_block_root
-                .ok_or_else(|| {
-                    PayloadBuilderError::Other(
-                        eyre::eyre!("parent beacon block root not found").into(),
-                    )
-                })?,
-            parent_hash: ctx.parent().hash(),
-            fee_recipient: ctx.attributes().suggested_fee_recipient(),
-            prev_randao: ctx.attributes().payload_attributes.prev_randao,
-            block_number: ctx.parent().number + 1,
-            gas_limit: ctx.block_gas_limit(),
-            timestamp: ctx.attributes().payload_attributes.timestamp,
-            extra_data: ctx.extra_data()?,
-            base_fee_per_gas: U256::from(ctx.base_fee()),
-        }),
-        diff: OpFlashblockPayloadDelta {
-            state_root,
-            receipts_root,
-            logs_bloom,
-            gas_used: info.cumulative_gas_used,
-            block_hash,
-            transactions: new_transactions_encoded,
-            withdrawals: ctx.withdrawals().cloned().unwrap_or_default().to_vec(),
-            withdrawals_root: withdrawals_root.unwrap_or_default(),
-            blob_gas_used,
-        },
-        metadata,
-    };
-    // Need to ensure `state.bundle = None`, was done previously with  `state.take_bundle()`
-    state.transition_state = untouched_transition_state;
-
-    Ok((
-        OpBuiltPayload::new(
-            ctx.payload_id(),
-            sealed_block,
-            info.total_fees,
-            Some(executed),
-        ),
-        fb_payload,
-    ))
 }
 
 #[cfg(test)]

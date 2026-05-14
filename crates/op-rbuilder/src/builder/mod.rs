@@ -9,6 +9,7 @@ use crate::{
     tx_signer::Signer,
 };
 
+mod assembly;
 mod best_txs;
 mod builder_tx;
 pub(crate) mod cancellation;
@@ -22,7 +23,7 @@ mod payload_handler;
 mod receipt;
 mod service;
 mod state_root;
-mod syncer_ctx;
+mod syncer_config;
 mod timing;
 mod wspub;
 

@@ -1,20 +1,27 @@
 use crate::{
     builder::{
-        OpPayloadJobCtx, p2p::Message, payload::build_block, receipt::build_receipt,
-        syncer_ctx::OpPayloadSyncerCtx,
+        assembly::BlockAssemblyInput, p2p::Message, receipt::build_receipt,
+        syncer_config::OpPayloadSyncerConfig,
     },
     evm::OpBlockEvmFactory,
     hardforks::ActiveHardforks,
+    metrics::OpRBuilderMetrics,
     primitives::reth::ExecutionInfo,
     traits::ClientBounds,
 };
-use alloy_evm::eth::receipt_builder::ReceiptBuilderCtx;
+use alloy_consensus::BlockHeader;
+use alloy_eips::Encodable2718;
+use alloy_evm::{Evm, eth::receipt_builder::ReceiptBuilderCtx};
 use alloy_primitives::B64;
 use eyre::{WrapErr as _, bail};
 use op_alloy_rpc_types_engine::OpFlashblockPayload;
 use op_revm::L1BlockInfo;
-use reth::revm::{State, database::StateProviderDatabase};
+use reth::{
+    consensus::HeaderValidator,
+    revm::{State, database::StateProviderDatabase},
+};
 use reth_basic_payload_builder::PayloadConfig;
+use reth_evm::{ConfigureEvm, execute::BlockBuilder};
 use reth_node_builder::Events;
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_consensus::OpBeaconConsensus;
@@ -22,8 +29,9 @@ use reth_optimism_evm::OpNextBlockEnvAttributes;
 use reth_optimism_node::{OpEngineTypes, OpPayloadBuilderAttributes};
 use reth_optimism_payload_builder::OpBuiltPayload;
 use reth_payload_builder::EthPayloadBuilderAttributes;
-use reth_primitives_traits::SealedHeader;
+use reth_primitives_traits::{SealedHeader, SignedTransaction};
 use reth_tasks::Runtime;
+use revm::{DatabaseCommit, context::result::ResultAndState};
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{error, info, trace, warn};
@@ -44,12 +52,13 @@ pub(crate) struct PayloadHandler<Client> {
     // sends a `Events::BuiltPayload` to the reth payload builder when a new payload is received.
     payload_events_handle: tokio::sync::broadcast::Sender<Events<OpEngineTypes>>,
     // context required for execution of blocks during syncing
-    ctx: OpPayloadSyncerCtx,
+    syncer_config: OpPayloadSyncerConfig,
     // chain client
     client: Client,
     // task executor
     task_executor: Runtime,
-    cancel: tokio_util::sync::CancellationToken,
+    // metrics
+    metrics: Arc<OpRBuilderMetrics>,
 }
 
 impl<Client> PayloadHandler<Client>
@@ -63,10 +72,10 @@ where
         p2p_rx: mpsc::Receiver<Message>,
         p2p_tx: mpsc::Sender<Message>,
         payload_events_handle: tokio::sync::broadcast::Sender<Events<OpEngineTypes>>,
-        ctx: OpPayloadSyncerCtx,
+        syncer_config: OpPayloadSyncerConfig,
         client: Client,
         task_executor: Runtime,
-        cancel: tokio_util::sync::CancellationToken,
+        metrics: Arc<OpRBuilderMetrics>,
     ) -> Self {
         Self {
             built_fb_payload_rx,
@@ -74,10 +83,10 @@ where
             p2p_rx,
             p2p_tx,
             payload_events_handle,
-            ctx,
+            syncer_config,
             client,
             task_executor,
-            cancel,
+            metrics,
         }
     }
 
@@ -88,10 +97,10 @@ where
             mut p2p_rx,
             p2p_tx,
             payload_events_handle,
-            ctx,
+            syncer_config,
             client,
             task_executor,
-            cancel,
+            metrics,
         } = self;
 
         info!(target: "payload_builder", "flashblocks payload handler started");
@@ -116,15 +125,15 @@ where
                     match message {
                         Message::OpBuiltPayload(payload) => {
                             let payload: OpBuiltPayload = payload.into();
-                            let ctx = ctx.clone();
+                            let syncer_config = syncer_config.clone();
                             let client = client.clone();
                             let payload_events_handle = payload_events_handle.clone();
-                            let cancel = cancel.clone();
+                            let metrics = metrics.clone();
 
                             // execute the flashblock on a thread where blocking is acceptable,
                             // as it's potentially a heavy operation
                             let handle = task_executor.spawn_blocking(move || {
-                                execute_flashblock(payload, ctx, client, cancel)
+                                execute_flashblock(payload, syncer_config, client, metrics)
                             });
                             task_executor.spawn_task(async move {
                                 match handle.await {
@@ -170,17 +179,13 @@ where
 
 fn execute_flashblock<Client>(
     payload: OpBuiltPayload,
-    ctx: OpPayloadSyncerCtx,
+    syncer_config: OpPayloadSyncerConfig,
     client: Client,
-    cancel: tokio_util::sync::CancellationToken,
+    metrics: Arc<OpRBuilderMetrics>,
 ) -> eyre::Result<(OpBuiltPayload, OpFlashblockPayload)>
 where
     Client: ClientBounds,
 {
-    use alloy_consensus::BlockHeader as _;
-    use reth::primitives::SealedHeader;
-    use reth_evm::{ConfigureEvm as _, execute::BlockBuilder as _};
-
     let start = tokio::time::Instant::now();
 
     info!(
@@ -221,11 +226,11 @@ where
         extra_data: payload.block().sealed_header().extra_data.clone(),
     };
 
-    let evm_env = ctx
-        .evm_config()
+    let evm_env = syncer_config
+        .evm_config
         .next_evm_env(&parent_header, &block_env_attributes)
         .wrap_err("failed to create next evm env")?;
-    let evm_factory = OpBlockEvmFactory::new(ctx.evm_config().clone(), evm_env);
+    let evm_factory = OpBlockEvmFactory::new(syncer_config.evm_config.clone(), evm_env);
 
     evm_factory
         .evm_config()
@@ -311,16 +316,11 @@ where
         },
     );
 
-    let job_ctx = ctx.into_op_payload_job_ctx(
-        payload_config,
-        evm_factory,
-        block_env_attributes,
-        hardforks,
-        cancel,
-    );
-
     execute_transactions(
-        &job_ctx,
+        &evm_factory,
+        &hardforks,
+        syncer_config.max_gas_per_txn,
+        syncer_config.max_uncompressed_block_size,
         &mut info,
         &mut state,
         payload.block().body().transactions.clone(),
@@ -328,13 +328,20 @@ where
     )
     .wrap_err("failed to execute best transactions")?;
 
-    let (built_payload, fb_payload) = build_block(&mut state, &job_ctx, None, &mut info, true)
-        .wrap_err("failed to build flashblock")?;
+    let enable_tx_tracking_debug_logs = syncer_config.enable_tx_tracking_debug_logs;
+    let (built_payload, fb_payload) =
+        BlockAssemblyInput::try_new(payload_config, &evm_factory, hardforks)?
+            .assemble(
+                &mut state,
+                None,
+                &mut info,
+                metrics.clone(),
+                true,
+                enable_tx_tracking_debug_logs,
+            )
+            .wrap_err("failed to build flashblock")?;
 
-    job_ctx
-        .metrics
-        .flashblock_sync_duration
-        .record(start.elapsed());
+    metrics.flashblock_sync_duration.record(start.elapsed());
 
     if built_payload.block().hash() != payload.block().hash() {
         error!(
@@ -343,11 +350,11 @@ where
             got = %built_payload.block().hash(),
             "flashblock hash mismatch after execution"
         );
-        job_ctx.metrics.invalid_synced_blocks_count.increment(1);
+        metrics.invalid_synced_blocks_count.increment(1);
         bail!("flashblock hash mismatch after execution");
     }
 
-    job_ctx.metrics.block_synced_success.increment(1);
+    metrics.block_synced_success.increment(1);
 
     info!(
         target: "payload_builder",
@@ -360,18 +367,16 @@ where
 
 #[allow(clippy::too_many_arguments)]
 fn execute_transactions(
-    ctx: &OpPayloadJobCtx,
+    evm_factory: &OpBlockEvmFactory,
+    hardforks: &ActiveHardforks,
+    max_gas_per_txn: Option<u64>,
+    max_uncompressed_block_size: Option<u64>,
     info: &mut ExecutionInfo,
     state: &mut State<impl alloy_evm::Database>,
     txs: Vec<op_alloy_consensus::OpTxEnvelope>,
     gas_limit: u64,
 ) -> eyre::Result<()> {
-    use alloy_eips::Encodable2718;
-    use alloy_evm::Evm as _;
-    use reth_primitives_traits::SignedTransaction;
-    use revm::{DatabaseCommit as _, context::result::ResultAndState};
-
-    let mut evm = ctx.evm_factory.evm(&mut *state);
+    let mut evm = evm_factory.evm(&mut *state);
 
     for tx in txs {
         // Convert to recovered transaction
@@ -385,7 +390,7 @@ fn execute_transactions(
         // Note that this *only* needs to be done post-regolith hardfork, as deposit nonces
         // were not introduced in Bedrock. In addition, regular transactions don't have deposit
         // nonces, so we don't need to touch the DB for those.
-        let depositor_nonce = (ctx.hardforks.is_regolith_active() && tx_recovered.is_deposit())
+        let depositor_nonce = (hardforks.is_regolith_active() && tx_recovered.is_deposit())
             .then(|| {
                 evm.db_mut()
                     .load_cache_account(sender)
@@ -399,7 +404,7 @@ fn execute_transactions(
             .wrap_err("failed to execute transaction")?;
 
         let tx_gas_used = result.gas_used();
-        if let Some(max_gas_per_txn) = ctx.builder_ctx.max_gas_per_txn
+        if let Some(max_gas_per_txn) = max_gas_per_txn
             && tx_gas_used > max_gas_per_txn
         {
             return Err(eyre::eyre!(
@@ -426,7 +431,7 @@ fn execute_transactions(
                     "total uncompressed bytes overflowed when executing flashblock transactions"
                 )
             })?;
-        if let Some(limit) = ctx.builder_ctx.max_uncompressed_block_size
+        if let Some(limit) = max_uncompressed_block_size
             && info.cumulative_uncompressed_bytes > limit
         {
             bail!("flashblock exceeded max uncompressed block size when executing transactions");
@@ -441,8 +446,8 @@ fn execute_transactions(
         };
 
         info.receipts.push(build_receipt(
-            &ctx.evm_factory,
-            &ctx.hardforks,
+            evm_factory,
+            hardforks,
             receipt_ctx,
             depositor_nonce,
         ));
@@ -455,7 +460,7 @@ fn execute_transactions(
     }
 
     // Fetch DA footprint gas scalar for Jovian blocks
-    let da_footprint_gas_scalar = ctx.hardforks.is_jovian_active().then(|| {
+    let da_footprint_gas_scalar = hardforks.is_jovian_active().then(|| {
         L1BlockInfo::fetch_da_footprint_gas_scalar(evm.db_mut())
             .expect("DA footprint should always be available from the database post jovian")
     });
@@ -474,8 +479,6 @@ fn validate_pre_execution(
     parent_hash: alloy_primitives::B256,
     chain_spec: Arc<OpChainSpec>,
 ) -> eyre::Result<()> {
-    use reth::consensus::HeaderValidator;
-
     let consensus = OpBeaconConsensus::new(chain_spec);
     let parent_sealed = SealedHeader::new(parent_header.clone(), parent_hash);
 
