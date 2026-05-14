@@ -44,6 +44,10 @@ Follow the [Rust Style Guide](https://doc.rust-lang.org/nightly/style-guide/) re
 - Every pull request should be small and represent a single change. If the problem is complicated, split it in multiple issues and pull requests.
 - Every pull request should include one or more tests to ensure that rbuilder does not regress in the future.
 
+### Signed commits
+
+Please [sign your commits](https://docs.github.com/en/authentication/managing-commit-signature-verification/signing-commits) before contributing. [SSH commit signing](https://docs.github.com/en/authentication/managing-commit-signature-verification/about-commit-signature-verification#ssh-commit-signature-verification) is the easiest setup, but other methods work as well.
+
 We appreciate you, friend <3.
 
 ---
