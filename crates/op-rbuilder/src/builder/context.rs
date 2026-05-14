@@ -28,7 +28,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, trace};
 
 use crate::{
-    backrun_bundle::{BackrunBundleArgs, BackrunBundleGlobalPool, BackrunBundlePayloadPool},
+    backrun_bundle::{BackrunBundleArgs, BackrunBundlePayloadPool},
     builder::builder_tx::BuilderTxEnv,
     evm::OpBlockEvmFactory,
     hardforks::ActiveHardforks,
@@ -64,8 +64,6 @@ pub struct OpPayloadBuilderCtx {
     /// Per-address rate limiting based on gas and/or compute time. This is an
     /// optional feature.
     pub address_limiter: AddressLimiter,
-    /// Global pool of backrun bundles (per-block views are derived in the per-job ctx).
-    pub backrun_bundle_pool: BackrunBundleGlobalPool,
     /// Backrun bundle configuration.
     pub backrun_bundle_args: BackrunBundleArgs,
     /// Skip reverted txs in subsequent flashblocks
@@ -94,7 +92,7 @@ pub struct OpPayloadJobCtx {
     /// Marker to check whether the job has been cancelled.
     pub cancel: CancellationToken,
     /// Per-block view into the global backrun bundle pool.
-    pub backrun_pool: BackrunBundlePayloadPool,
+    pub backrun_pool: Option<BackrunBundlePayloadPool>,
 }
 
 impl Deref for OpPayloadJobCtx {
@@ -563,10 +561,10 @@ impl OpPayloadJobCtx {
                     0,
                 );
 
-            if can_backrun {
+            if can_backrun && let Some(ref backrun_pool) = self.backrun_pool {
                 let backrun_start_time = Instant::now();
                 let gas_left = block_gas_limit.saturating_sub(info.cumulative_gas_used);
-                let backruns = self.backrun_pool.get_backruns(
+                let backruns = backrun_pool.get_backruns(
                     &target_hash,
                     |addr| evm.db_mut().basic(addr).ok().flatten(),
                     base_fee,

@@ -4,17 +4,14 @@ use tracing::info;
 
 use crate::{
     args::*,
-    backrun_bundle::{
-        BackrunBundleApiServer, BackrunBundleRpc, maintain_backrun_bundle_pool_future,
-    },
+    backrun_bundle::{BackrunBundleApiServer, BackrunBundleRpc},
     builder::{BuilderConfig, FlashblocksServiceBuilder},
     metrics::{VERSION, record_flag_gauge_metrics},
     monitor_tx_pool::monitor_tx_pool,
-    pool::FlashpoolBuilder,
+    pool::{FlashpoolBuilder, FlashpoolExt},
     revert_protection::{EthApiExtServer, RevertProtectionExt},
 };
 use reth::builder::{NodeBuilder, WithLaunchContext};
-use reth_chain_state::CanonStateSubscriptions;
 use reth_cli_commands::launcher::Launcher;
 use reth_db::mdbx::DatabaseEnv;
 use reth_optimism_chainspec::OpChainSpec;
@@ -91,9 +88,6 @@ impl Launcher<OpChainSpecParser, OpRbuilderArgs> for BuilderLauncher {
         let gas_limit_config = builder_config.gas_limit_config.clone();
         let rollup_args = &builder_args.rollup_args;
         let op_node = OpNode::new(rollup_args.clone());
-        let backrun_bundle_enabled = builder_args.backrun_bundle.backruns_enabled;
-        let backrun_bundle_pool = builder_config.backrun_bundle_pool.clone();
-        let backrun_bundle_pool_maintain = backrun_bundle_pool.clone();
 
         let addons: OpAddOns<_, OpEthApiBuilder, OpEngineValidatorBuilder> =
             OpAddOnsBuilder::default()
@@ -125,9 +119,9 @@ impl Launcher<OpChainSpecParser, OpRbuilderArgs> for BuilderLauncher {
                         .add_or_replace_configured(revert_protection_ext.into_rpc())?;
                 }
 
-                if builder_args.backrun_bundle.backruns_enabled {
+                if let Some(backrun_bundle_pool) = ctx.pool().backrun_bundle_pool() {
                     let backrun_rpc = BackrunBundleRpc::new(
-                        backrun_bundle_pool.clone(),
+                        backrun_bundle_pool,
                         ctx.provider().clone(),
                         builder_args
                             .backrun_bundle
@@ -147,17 +141,6 @@ impl Launcher<OpChainSpecParser, OpRbuilderArgs> for BuilderLauncher {
                     let task =
                         monitor_tx_pool(listener, builder_args.enable_tx_tracking_debug_logs);
                     ctx.task_executor.spawn_critical_task("txlogging", task);
-                }
-
-                if backrun_bundle_enabled {
-                    let chain_events = ctx.provider.canonical_state_stream();
-                    let task_executor = ctx.task_executor.clone();
-                    ctx.task_executor
-                        .spawn_task(maintain_backrun_bundle_pool_future(
-                            backrun_bundle_pool_maintain,
-                            chain_events,
-                            task_executor,
-                        ));
                 }
 
                 Ok(())

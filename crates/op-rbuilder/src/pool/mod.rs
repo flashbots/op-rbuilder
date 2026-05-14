@@ -14,6 +14,7 @@ use std::sync::Arc;
 use reth_tasks::TaskExecutor;
 
 use crate::{
+    backrun_bundle::BackrunBundleGlobalPool,
     pool::{metrics::PoolMetrics, presim::TopOfBlockSimulator},
     tx::FBPooledTransaction,
 };
@@ -29,6 +30,9 @@ pub struct Flashpool<P, V> {
     /// Optional pre-simulator: when present, revert-protected txs are simulated
     /// before being added to the pool; those that would revert are rejected.
     simulator: Option<Arc<TopOfBlockSimulator>>,
+
+    /// Global pool for backrun bundles
+    backrun_bundle_pool: Option<BackrunBundleGlobalPool>,
 
     /// Task executor for spawning presim tasks
     task_executor: TaskExecutor,
@@ -46,6 +50,8 @@ pub trait FlashpoolExt {
     /// Checks if a transaction is reverted by checking if the given transaction
     /// hash is present in the reverted cache.
     fn is_tx_reverted(&self, hash: TxHash) -> bool;
+
+    fn backrun_bundle_pool(&self) -> Option<BackrunBundleGlobalPool>;
 }
 
 impl<P: TransactionPool<Transaction = FBPooledTransaction>, V> FlashpoolExt for Flashpool<P, V> {
@@ -53,5 +59,9 @@ impl<P: TransactionPool<Transaction = FBPooledTransaction>, V> FlashpoolExt for 
         self.reverted_cache
             .as_ref()
             .is_some_and(|cache| cache.get(&hash).is_some())
+    }
+
+    fn backrun_bundle_pool(&self) -> Option<BackrunBundleGlobalPool> {
+        self.backrun_bundle_pool.clone()
     }
 }

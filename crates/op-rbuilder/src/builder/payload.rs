@@ -315,7 +315,6 @@ where
             max_gas_per_txn: config.max_gas_per_txn,
             max_uncompressed_block_size: config.max_uncompressed_block_size,
             address_limiter,
-            backrun_bundle_pool: config.backrun_bundle_pool.clone(),
             backrun_bundle_args: config.backrun_bundle_args.clone(),
             exclude_reverts_between_flashblocks: config.exclude_reverts_between_flashblocks,
             enable_tx_tracking_debug_logs: config.enable_tx_tracking_debug_logs,
@@ -400,9 +399,10 @@ where
         )
         .wrap_err("failed to create next evm env")?;
 
-        let backrun_pool = builder_ctx
-            .backrun_bundle_pool
-            .block_pool(config.parent_header.number + 1);
+        let backrun_pool = self
+            .pool
+            .backrun_bundle_pool()
+            .map(|pool| pool.block_pool(config.parent_header.number + 1));
 
         Ok(OpPayloadJobCtx {
             builder_ctx: Arc::clone(builder_ctx),
