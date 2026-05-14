@@ -709,7 +709,7 @@ where
                 result = self.executor.run_blocking_task({
                     let builder = self.clone();
                     let ctx = ctx;
-                    let block_cancel = payload_cancel.token();
+                    let payload_cancel = payload_cancel.clone();
                     let info = info;
                     let cache = cache;
                     let transition = transition;
@@ -741,7 +741,7 @@ where
                             &mut state,
                             &state_provider,
                             &mut best_txs,
-                            &block_cancel,
+                            &payload_cancel,
                             &mut state_root_calc,
                         );
 
@@ -919,7 +919,7 @@ where
         state: &mut State<DB>,
         state_provider: impl reth::providers::StateProvider + Clone,
         best_txs: &mut NextFlashblockPoolTxCursor<'a, Pool>,
-        block_cancel: &CancellationToken,
+        payload_cancel: &super::cancellation::PayloadJobCancellation,
         state_root_calc: &mut StateRootCalculator,
     ) -> eyre::Result<Option<(FlashblocksState, OpBuiltPayload)>> {
         let flashblock_index = fb_state.flashblock_index();
@@ -1012,7 +1012,7 @@ where
         }
 
         // Block cancelled (new FCU, getPayload resolved, or deadline). Skip publishing.
-        if block_cancel.is_cancelled() {
+        if payload_cancel.token().is_cancelled() {
             return Ok(None);
         }
 
@@ -1067,15 +1067,28 @@ where
                 fb_payload.index = flashblock_index;
                 fb_payload.base = None;
 
-                // Block canceled (new FCU, getPayload resolved, or deadline).
-                // Don't publish to ensures every published flashblock is a subset of the resolved payload.
-                if block_cancel.is_cancelled() {
-                    return Ok(None);
-                }
-                let flashblock_byte_size = self
-                    .ws_pub
-                    .publish(&fb_payload)
-                    .wrap_err("failed to publish flashblock via websocket")?;
+                // Atomically: check cancel, then ws-publish + channel sends
+                let flashblock_byte_size = {
+                    let _publish_guard = payload_cancel.lock_publish();
+                    if payload_cancel.token().is_cancelled() {
+                        return Ok(None);
+                    }
+                    let flashblock_byte_size = self
+                        .ws_pub
+                        .publish(&fb_payload)
+                        .wrap_err("failed to publish flashblock via websocket")?;
+                    self.built_fb_payload_tx
+                        .try_send(new_payload.clone())
+                        .wrap_err("failed to send built payload to handler")?;
+                    if let Err(e) = self.built_payload_tx.try_send(new_payload.clone()) {
+                        warn!(
+                            target: "payload_builder",
+                            error = %e,
+                            "Failed to send updated payload"
+                        );
+                    }
+                    flashblock_byte_size
+                };
 
                 // Record slot-relative publish timing (ms since slot start)
                 let slot_offset_ms =
@@ -1092,16 +1105,6 @@ where
                         total_txs = info.executed_transactions.len(),
                         slot_offset_ms,
                         stage = "fb_published"
-                    );
-                }
-                self.built_fb_payload_tx
-                    .try_send(new_payload.clone())
-                    .wrap_err("failed to send built payload to handler")?;
-                if let Err(e) = self.built_payload_tx.try_send(new_payload.clone()) {
-                    warn!(
-                        target: "payload_builder",
-                        error = %e,
-                        "Failed to send updated payload"
                     );
                 }
                 // Record flashblock build duration
