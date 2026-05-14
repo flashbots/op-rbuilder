@@ -1,7 +1,7 @@
 use crate::{
     builder::{
-        assembly::BlockAssemblyInput, p2p::Message, receipt::build_receipt,
-        state_root::StateRootCalculator, syncer_config::OpPayloadSyncerConfig,
+        assembly::BlockAssemblyInput, p2p::Message, state_root::StateRootCalculator,
+        syncer_config::OpPayloadSyncerConfig,
     },
     evm::OpBlockEvmFactory,
     hardforks::ActiveHardforks,
@@ -11,7 +11,7 @@ use crate::{
 };
 use alloy_consensus::BlockHeader;
 use alloy_eips::Encodable2718;
-use alloy_evm::{Evm, eth::receipt_builder::ReceiptBuilderCtx};
+use alloy_evm::Evm;
 use alloy_primitives::B64;
 use eyre::{WrapErr as _, bail};
 use op_alloy_rpc_types_engine::OpFlashblockPayload;
@@ -31,7 +31,7 @@ use reth_optimism_payload_builder::OpBuiltPayload;
 use reth_payload_builder::EthPayloadBuilderAttributes;
 use reth_primitives_traits::{SealedHeader, SignedTransaction};
 use reth_tasks::Runtime;
-use revm::{DatabaseCommit, context::result::ResultAndState};
+use revm::context::result::ResultAndState;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{error, info, trace, warn};
@@ -412,18 +412,18 @@ fn execute_transactions(
             ));
         }
 
-        info.cumulative_gas_used = info
+        let new_cumulative_gas = info
             .cumulative_gas_used
             .checked_add(tx_gas_used)
             .ok_or_else(|| {
                 eyre::eyre!("total gas used overflowed when executing flashblock transactions")
             })?;
-        if info.cumulative_gas_used > gas_limit {
+        if new_cumulative_gas > gas_limit {
             bail!("flashblock exceeded gas limit when executing transactions");
         }
 
         let tx_uncompressed_size = tx_recovered.encode_2718_len() as u64;
-        info.cumulative_uncompressed_bytes = info
+        let _new_cumulative_uncompressed = info
             .cumulative_uncompressed_bytes
             .checked_add(tx_uncompressed_size)
             .ok_or_else(|| {
@@ -437,26 +437,23 @@ fn execute_transactions(
             bail!("flashblock exceeded max uncompressed block size when executing transactions");
         }
 
-        let receipt_ctx = ReceiptBuilderCtx {
-            tx_type: tx.tx_type(),
-            evm: &evm,
-            result,
-            state: &state,
-            cumulative_gas_used: info.cumulative_gas_used,
+        let tx_da_size = if !tx_recovered.is_deposit() {
+            op_alloy_flz::tx_estimated_size_fjord_bytes(tx_recovered.encoded_2718().as_slice())
+        } else {
+            0
         };
 
-        info.receipts.push(build_receipt(
+        info.commit_tx(
+            &tx_recovered,
+            result,
+            state,
+            tx_da_size,
+            None,
+            depositor_nonce,
             evm_factory,
             hardforks,
-            receipt_ctx,
-            depositor_nonce,
-        ));
-
-        evm.db_mut().commit(state);
-
-        // append sender and transaction to the respective lists
-        info.executed_senders.push(sender);
-        info.executed_transactions.push(tx.clone());
+            &mut evm,
+        );
     }
 
     // Fetch DA footprint gas scalar for Jovian blocks

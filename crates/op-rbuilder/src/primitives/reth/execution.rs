@@ -1,8 +1,18 @@
 //! Heavily influenced by [reth](https://github.com/paradigmxyz/reth/blob/1e965caf5fa176f244a31c0d2662ba1b590938db/crates/optimism/payload/src/builder.rs#L570)
+use alloy_consensus::Eip658Value;
+use alloy_eips::Encodable2718;
+use alloy_evm::Evm;
+use alloy_op_evm::block::receipt_builder::OpReceiptBuilder;
 use alloy_primitives::{Address, TxHash, U256};
 use core::fmt::Debug;
 use derive_more::Display;
-use reth_optimism_primitives::{OpReceipt, OpTransactionSigned};
+use op_alloy_consensus::{OpDepositReceipt, OpReceipt, OpTxType};
+use reth_evm::{ConfigureEvm, eth::receipt_builder::ReceiptBuilderCtx};
+use reth_optimism_primitives::OpTransactionSigned;
+use reth_primitives::Recovered;
+use revm::{DatabaseCommit, context::result::ExecutionResult, state::EvmState};
+
+use crate::{evm::OpBlockEvmFactory, hardforks::ActiveHardforks};
 
 #[derive(Debug, Display)]
 pub enum TxnExecutionResult {
@@ -77,7 +87,7 @@ impl ExecutionInfo {
     ///   per tx.
     /// - block DA limit: if configured, ensures the transaction's DA size does not exceed the
     ///   maximum allowed DA limit per block.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     pub fn is_tx_over_limits(
         &self,
         tx_da_size: u64,
@@ -85,7 +95,6 @@ impl ExecutionInfo {
         tx_data_limit: Option<u64>,
         block_data_limit: Option<u64>,
         tx_gas_limit: u64,
-        da_footprint_gas_scalar: Option<u16>,
         block_da_footprint_limit: Option<u64>,
         tx_uncompressed_size: u64,
         max_uncompressed_block_size: Option<u64>,
@@ -103,7 +112,7 @@ impl ExecutionInfo {
         }
 
         // Post Jovian: the tx DA footprint must be less than the block gas limit
-        if let Some(da_footprint_gas_scalar) = da_footprint_gas_scalar {
+        if let Some(da_footprint_gas_scalar) = self.da_footprint_scalar {
             let tx_da_footprint =
                 total_da_bytes_used.saturating_mul(da_footprint_gas_scalar as u64);
             if tx_da_footprint > block_da_footprint_limit.unwrap_or(block_gas_limit) {
@@ -139,6 +148,85 @@ impl ExecutionInfo {
 
         Ok(())
     }
+
+    #[expect(clippy::too_many_arguments)]
+    pub fn commit_tx<E: Evm<DB: revm::DatabaseCommit>>(
+        &mut self,
+        tx: &Recovered<OpTransactionSigned>,
+        execution_result: ExecutionResult<E::HaltReason>,
+        state_changes: EvmState,
+        tx_da_size: u64,
+        miner_fee: Option<u128>,
+        deposit_nonce: Option<u64>,
+        evm_factory: &OpBlockEvmFactory,
+        hardforks: &ActiveHardforks,
+        evm: &mut E,
+    ) {
+        let gas_used = execution_result.gas_used();
+        self.cumulative_gas_used += gas_used;
+        self.cumulative_da_bytes_used += tx_da_size;
+        self.cumulative_uncompressed_bytes += tx.inner().encode_2718_len() as u64;
+
+        let receipt_ctx = ReceiptBuilderCtx {
+            tx_type: tx.inner().tx_type(),
+            evm: &*evm,
+            result: execution_result,
+            state: &state_changes,
+            cumulative_gas_used: self.cumulative_gas_used,
+        };
+        self.receipts.push(build_receipt(
+            evm_factory,
+            hardforks,
+            receipt_ctx,
+            deposit_nonce,
+        ));
+
+        // Commit changes
+        evm.db_mut().commit(state_changes);
+
+        // update add to total fees
+        if let Some(miner_fee) = miner_fee {
+            self.total_fees += U256::from(miner_fee) * U256::from(gas_used);
+        }
+
+        // Append sender and transaction to the respective lists
+        self.executed_senders.push(tx.signer());
+        self.executed_transactions.push(tx.clone().into_inner());
+    }
+}
+
+fn build_receipt<E: Evm>(
+    evm_factory: &OpBlockEvmFactory,
+    hardforks: &ActiveHardforks,
+    receipt_ctx: ReceiptBuilderCtx<'_, OpTxType, E>,
+    deposit_nonce: Option<u64>,
+) -> OpReceipt {
+    let receipt_builder = evm_factory
+        .evm_config()
+        .block_executor_factory()
+        .receipt_builder();
+
+    receipt_builder
+        .build_receipt(receipt_ctx)
+        .unwrap_or_else(|receipt_ctx| {
+            let receipt = alloy_consensus::Receipt {
+                // Success flag was added in `EIP-658: Embedding transaction
+                // status code in receipts`.
+                status: Eip658Value::Eip658(receipt_ctx.result.is_success()),
+                cumulative_gas_used: receipt_ctx.cumulative_gas_used,
+                logs: receipt_ctx.result.into_logs(),
+            };
+
+            receipt_builder.build_deposit_receipt(OpDepositReceipt {
+                inner: receipt,
+                deposit_nonce,
+                // The deposit receipt version was introduced in Canyon to
+                // indicate an update to how receipt hashes should be computed
+                // when set. The state transition process ensures this is only
+                // set for post-Canyon deposit transactions.
+                deposit_receipt_version: hardforks.is_canyon_active().then_some(1),
+            })
+        })
 }
 
 #[cfg(test)]
@@ -152,8 +240,7 @@ mod tests {
             ..Default::default()
         };
 
-        let result =
-            info.is_tx_over_limits(0, 30_000_000, None, None, 21_000, None, None, 50, Some(149));
+        let result = info.is_tx_over_limits(0, 30_000_000, None, None, 21_000, None, 50, Some(149));
 
         assert!(matches!(
             result,
@@ -170,8 +257,7 @@ mod tests {
             ..Default::default()
         };
 
-        let result =
-            info.is_tx_over_limits(0, 30_000_000, None, None, 21_000, None, None, 50, Some(150));
+        let result = info.is_tx_over_limits(0, 30_000_000, None, None, 21_000, None, 50, Some(150));
 
         assert!(result.is_ok());
     }

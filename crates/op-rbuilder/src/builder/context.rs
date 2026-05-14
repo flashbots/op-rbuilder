@@ -4,7 +4,7 @@ use alloy_evm::Database;
 use alloy_primitives::{B256, BlockHash, U256};
 use op_revm::L1BlockInfo;
 use reth_basic_payload_builder::PayloadConfig;
-use reth_evm::{Evm, EvmError, InvalidTxError, eth::receipt_builder::ReceiptBuilderCtx};
+use reth_evm::{Evm, EvmError, InvalidTxError};
 use reth_node_api::PayloadBuilderError;
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
@@ -22,16 +22,14 @@ use reth_payload_primitives::PayloadBuilderAttributes;
 use reth_primitives_traits::{InMemorySize, SealedHeader, SignedTransaction};
 use reth_revm::{State, context::Block};
 use reth_transaction_pool::{BestTransactionsAttributes, PoolTransaction};
-use revm::{
-    Database as _, DatabaseCommit, context::result::ResultAndState, interpreter::as_u64_saturated,
-};
+use revm::{Database as _, context::result::ResultAndState, interpreter::as_u64_saturated};
 use std::{ops::Deref, sync::Arc, time::Instant};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, trace};
 
 use crate::{
     backrun_bundle::{BackrunBundleArgs, BackrunBundleGlobalPool, BackrunBundlePayloadPool},
-    builder::{builder_tx::BuilderTxEnv, receipt::build_receipt},
+    builder::builder_tx::BuilderTxEnv,
     evm::OpBlockEvmFactory,
     hardforks::ActiveHardforks,
     limiter::AddressLimiter,
@@ -243,38 +241,23 @@ impl OpPayloadJobCtx {
                 }
             };
 
-            // add gas used by the transaction to cumulative gas used, before creating the receipt
-            let gas_used = result.gas_used();
-            info.cumulative_gas_used += gas_used;
-
-            if !sequencer_tx.is_deposit() {
-                info.cumulative_da_bytes_used += op_alloy_flz::tx_estimated_size_fjord_bytes(
-                    sequencer_tx.encoded_2718().as_slice(),
-                );
-            }
-            info.cumulative_uncompressed_bytes += sequencer_tx.encode_2718_len() as u64;
-
-            let receipt_ctx = ReceiptBuilderCtx {
-                tx_type: sequencer_tx.tx_type(),
-                evm: &evm,
-                result,
-                state: &state,
-                cumulative_gas_used: info.cumulative_gas_used,
+            let tx_da_size = if !sequencer_tx.is_deposit() {
+                op_alloy_flz::tx_estimated_size_fjord_bytes(sequencer_tx.encoded_2718().as_slice())
+            } else {
+                0
             };
 
-            info.receipts.push(build_receipt(
+            info.commit_tx(
+                &sequencer_tx,
+                result,
+                state,
+                tx_da_size,
+                None,
+                depositor_nonce,
                 &self.evm_factory,
                 &self.hardforks,
-                receipt_ctx,
-                depositor_nonce,
-            ));
-
-            // commit changes
-            evm.db_mut().commit(state);
-
-            // append sender and transaction to the respective lists
-            info.executed_senders.push(sequencer_tx.signer());
-            info.executed_transactions.push(sequencer_tx.into_inner());
+                &mut evm,
+            );
         }
 
         let da_footprint_gas_scalar = self.hardforks.is_jovian_active().then(|| {
@@ -405,7 +388,6 @@ impl OpPayloadJobCtx {
                 tx_da_limit,
                 block_da_limit,
                 tx.gas_limit(),
-                info.da_footprint_scalar,
                 block_da_footprint_limit,
                 tx_uncompressed_size,
                 max_uncompressed_block_size,
@@ -541,43 +523,25 @@ impl OpPayloadJobCtx {
                 continue;
             }
 
-            info.cumulative_gas_used += gas_used;
-            // record tx da size
-            info.cumulative_da_bytes_used += tx_da_size;
-            // record uncompressed tx size
-            info.cumulative_uncompressed_bytes += tx_uncompressed_size;
-
             let tx_succeeded = result.is_success();
 
-            // Push transaction changeset and calculate header bloom filter for receipt.
-            let receipt_ctx = ReceiptBuilderCtx {
-                tx_type: tx.tx_type(),
-                evm: &evm,
-                result,
-                state: &state,
-                cumulative_gas_used: info.cumulative_gas_used,
-            };
-            info.receipts.push(build_receipt(
-                &self.evm_factory,
-                &self.hardforks,
-                receipt_ctx,
-                None,
-            ));
-
-            // commit changes
-            evm.db_mut().commit(state);
-
-            // update add to total fees
             let miner_fee = tx
                 .effective_tip_per_gas(base_fee)
                 .expect("fee is always valid; execution succeeded");
-            info.total_fees += U256::from(miner_fee) * U256::from(gas_used);
+
+            info.commit_tx(
+                &tx,
+                result,
+                state,
+                tx_da_size,
+                Some(miner_fee),
+                None,
+                &self.evm_factory,
+                &self.hardforks,
+                &mut evm,
+            );
 
             let target_hash = B256::new(*tx_hash);
-
-            // append sender and transaction to the respective lists
-            info.executed_senders.push(tx.signer());
-            info.executed_transactions.push(tx.into_inner());
 
             if self.enable_tx_tracking_debug_logs {
                 debug!(
@@ -710,7 +674,6 @@ impl OpPayloadJobCtx {
                         tx_da_limit,
                         block_da_limit,
                         bundle.backrun_tx.gas_limit(),
-                        info.da_footprint_scalar,
                         block_da_footprint_limit,
                         br_tx_uncompressed_size,
                         max_uncompressed_block_size,
@@ -810,30 +773,18 @@ impl OpPayloadJobCtx {
                         .successful_tx_gas_used
                         .record(br_gas_used as f64);
                     log_br_txn(TxnExecutionResult::Success);
-                    info.cumulative_gas_used += br_gas_used;
-                    info.cumulative_da_bytes_used += br_tx_da_size;
-                    info.cumulative_uncompressed_bytes += br_tx_uncompressed_size;
 
-                    let receipt_ctx = ReceiptBuilderCtx {
-                        tx_type: bundle.backrun_tx.tx_type(),
-                        evm: &evm,
-                        result: br_result,
-                        state: &br_state,
-                        cumulative_gas_used: info.cumulative_gas_used,
-                    };
-                    info.receipts.push(build_receipt(
+                    info.commit_tx(
+                        &bundle.backrun_tx,
+                        br_result,
+                        br_state,
+                        br_tx_da_size,
+                        Some(backrun_priority_fee),
+                        None,
                         &self.evm_factory,
                         &self.hardforks,
-                        receipt_ctx,
-                        None,
-                    ));
-                    evm.db_mut().commit(br_state);
-
-                    info.total_fees += U256::from(backrun_priority_fee) * U256::from(br_gas_used);
-
-                    info.executed_senders.push(bundle.backrun_tx.signer());
-                    info.executed_transactions
-                        .push(bundle.backrun_tx.inner().clone());
+                        &mut evm,
+                    );
 
                     tx_backruns_landed += 1;
                 }
