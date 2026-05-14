@@ -3,7 +3,7 @@ use reth_optimism_payload_builder::config::{OpDAConfig, OpGasLimitConfig};
 
 use crate::{
     args::OpRbuilderArgs,
-    backrun_bundle::{BackrunBundleArgs, BackrunBundleGlobalPool},
+    backrun_bundle::BackrunBundleArgs,
     flashtestations::args::FlashtestationsArgs,
     limiter::args::{ComputeLimiterArgs, GasLimiterArgs},
     tx_signer::Signer,
@@ -94,9 +94,6 @@ pub struct BuilderConfig {
     /// Address compute limiter stuff
     pub compute_limiter_config: ComputeLimiterArgs,
 
-    /// Global pool for backrun bundles
-    pub backrun_bundle_pool: BackrunBundleGlobalPool,
-
     /// Backrun bundle configuration
     pub backrun_bundle_args: BackrunBundleArgs,
 
@@ -125,7 +122,6 @@ impl Default for BuilderConfig {
             max_uncompressed_block_size: None,
             gas_limiter_config: GasLimiterArgs::default(),
             compute_limiter_config: ComputeLimiterArgs::default(),
-            backrun_bundle_pool: BackrunBundleGlobalPool::new(false),
             backrun_bundle_args: BackrunBundleArgs::default(),
             flashblocks_config: FlashblocksConfig::default(),
             exclude_reverts_between_flashblocks: false,
@@ -153,9 +149,6 @@ impl TryFrom<OpRbuilderArgs> for BuilderConfig {
             max_uncompressed_block_size: args.max_uncompressed_block_size,
             gas_limiter_config: args.gas_limiter.clone(),
             compute_limiter_config: args.compute_limiter.clone(),
-            backrun_bundle_pool: BackrunBundleGlobalPool::new(
-                args.backrun_bundle.enforce_strict_priority_fee_ordering,
-            ),
             backrun_bundle_args: args.backrun_bundle,
             flashblocks_config,
             exclude_reverts_between_flashblocks: args.exclude_reverts_between_flashblocks,

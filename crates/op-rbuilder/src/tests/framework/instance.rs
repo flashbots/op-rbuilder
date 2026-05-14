@@ -2,7 +2,7 @@ use crate::{
     args::OpRbuilderArgs,
     backrun_bundle::{BackrunBundleApiServer, BackrunBundleRpc},
     builder::{BuilderConfig, FlashblocksServiceBuilder},
-    pool::FlashpoolBuilder,
+    pool::{FlashpoolBuilder, FlashpoolExt},
     revert_protection::{EthApiExtServer, RevertProtectionExt},
     tests::{
         EngineApi, Ipc, TEE_DEBUG_ADDRESS, TransactionPoolObserver, builder_signer, create_test_db,
@@ -109,7 +109,6 @@ impl LocalInstance {
             .expect("Failed to convert rollup args to builder config");
         let da_config = builder_config.da_config.clone();
         let gas_limit_config = builder_config.gas_limit_config.clone();
-        let backrun_bundle_pool = builder_config.backrun_bundle_pool.clone();
         let addons: OpAddOns<_, OpEthApiBuilder, OpEngineValidatorBuilder> =
             OpAddOnsBuilder::default()
                 .with_sequencer(args.rollup_args.sequencer.clone())
@@ -142,10 +141,9 @@ impl LocalInstance {
                         .add_or_replace_configured(revert_protection_ext.into_rpc())?;
                 }
 
-                if args.backrun_bundle.backruns_enabled {
-                    tracing::info!("Backrun bundle RPC enabled");
+                if let Some(backrun_bundle_pool) = ctx.pool().backrun_bundle_pool() {
                     let backrun_rpc = BackrunBundleRpc::new(
-                        backrun_bundle_pool.clone(),
+                        backrun_bundle_pool,
                         ctx.provider().clone(),
                         args.backrun_bundle.enforce_strict_priority_fee_ordering,
                     );

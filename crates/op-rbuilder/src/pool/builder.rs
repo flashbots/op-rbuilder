@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use alloy_primitives::TxHash;
-use futures::{FutureExt, StreamExt};
+use futures::{FutureExt, Stream, StreamExt};
 use moka::sync::Cache;
 use reth_chain_state::CanonStateSubscriptions;
 use reth_evm::ConfigureEvm;
@@ -13,7 +13,9 @@ use reth_optimism_forks::OpHardforks;
 use reth_optimism_node::OpPoolBuilder;
 use reth_optimism_txpool::{OpPooledTx, OpTransactionPool, OpTransactionValidator};
 use reth_primitives_traits::{Block, NodePrimitives};
-use reth_provider::{BlockReaderIdExt, ChainSpecProvider, NodePrimitivesProvider};
+use reth_provider::{
+    BlockReaderIdExt, CanonStateNotification, ChainSpecProvider, NodePrimitivesProvider,
+};
 use reth_tasks::TaskExecutor;
 use reth_transaction_pool::{
     AllTransactionsEvents, EthPoolTransaction, FullTransactionEvent, TransactionPool,
@@ -22,6 +24,9 @@ use reth_transaction_pool::{
 
 use crate::{
     args::OpRbuilderArgs,
+    backrun_bundle::{
+        BackrunBundleArgs, BackrunBundleGlobalPool, maintain_backrun_bundle_pool_future,
+    },
     pool::{
         Flashpool,
         metrics::PoolMetrics,
@@ -36,6 +41,8 @@ pub struct FlashpoolBuilder {
     enable_revert_protection: bool,
     pre_simulate_bundles: bool,
     block_time_secs: u64,
+
+    backrun_bundle_args: BackrunBundleArgs,
 }
 
 impl FlashpoolBuilder {
@@ -51,9 +58,9 @@ impl FlashpoolBuilder {
         Self {
             op_pool_builder,
             enable_revert_protection: builder_args.enable_revert_protection,
-
             pre_simulate_bundles: builder_args.pre_simulate_bundles,
             block_time_secs: builder_args.chain_block_time / 1000,
+            backrun_bundle_args: builder_args.backrun_bundle.clone(),
         }
     }
 }
@@ -85,6 +92,7 @@ where
             enable_revert_protection,
             pre_simulate_bundles,
             block_time_secs,
+            backrun_bundle_args,
         } = self;
 
         let inner_pool = op_pool_builder.build_pool(ctx, evm_config).await?;
@@ -130,10 +138,17 @@ where
             None
         };
 
+        let backrun_bundle_pool = setup_backruns(
+            backrun_bundle_args,
+            ctx.provider().canonical_state_stream(),
+            ctx.task_executor(),
+        );
+
         Ok(Flashpool {
             inner: inner_pool,
             validator,
             simulator,
+            backrun_bundle_pool,
             task_executor: ctx.task_executor().clone(),
             reverted_cache,
             metrics,
@@ -164,4 +179,30 @@ fn setup_revert_protection(
     });
 
     reverted_cache
+}
+
+fn setup_backruns<N, St>(
+    backrun_bundle_args: BackrunBundleArgs,
+    events: St,
+    task_executor: &TaskExecutor,
+) -> Option<BackrunBundleGlobalPool>
+where
+    N: NodePrimitives,
+    St: Stream<Item = CanonStateNotification<N>> + Send + Unpin + 'static,
+{
+    if !backrun_bundle_args.backruns_enabled {
+        return None;
+    }
+
+    let backrun_bundle_pool =
+        BackrunBundleGlobalPool::new(backrun_bundle_args.enforce_strict_priority_fee_ordering);
+
+    let task_executor_clone = task_executor.clone();
+    task_executor.spawn_task(maintain_backrun_bundle_pool_future(
+        backrun_bundle_pool.clone(),
+        events,
+        task_executor_clone,
+    ));
+
+    Some(backrun_bundle_pool)
 }

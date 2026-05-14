@@ -7,7 +7,7 @@ use reth_payload_util::PayloadTransactions;
 use reth_provider::{BlockReaderIdExt, ChainSpecProvider, StateProviderFactory};
 use reth_transaction_pool::TransactionPool;
 
-use crate::tx::FBPooledTransaction;
+use crate::{pool::FlashpoolExt, tx::FBPooledTransaction};
 
 pub trait NodeBounds:
     FullNodeTypes<
@@ -45,10 +45,13 @@ impl<T> NodeComponents for T where
 {
 }
 
-pub trait PoolBounds: TransactionPool<Transaction = FBPooledTransaction> + Unpin + 'static {}
+pub trait PoolBounds:
+    TransactionPool<Transaction = FBPooledTransaction> + FlashpoolExt + Unpin + 'static
+{
+}
 
 impl<T> PoolBounds for T where
-    T: TransactionPool<Transaction = FBPooledTransaction> + Unpin + 'static
+    T: TransactionPool<Transaction = FBPooledTransaction> + FlashpoolExt + Unpin + 'static
 {
 }
 
