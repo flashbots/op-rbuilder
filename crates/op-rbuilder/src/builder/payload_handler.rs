@@ -1,7 +1,7 @@
 use crate::{
     builder::{
         assembly::BlockAssemblyInput, p2p::Message, receipt::build_receipt,
-        syncer_config::OpPayloadSyncerConfig,
+        state_root::StateRootCalculator, syncer_config::OpPayloadSyncerConfig,
     },
     evm::OpBlockEvmFactory,
     hardforks::ActiveHardforks,
@@ -335,8 +335,8 @@ where
                 &mut state,
                 None,
                 &mut info,
+                &mut StateRootCalculator::new(true, false),
                 metrics.clone(),
-                true,
                 enable_tx_tracking_debug_logs,
             )
             .wrap_err("failed to build flashblock")?;

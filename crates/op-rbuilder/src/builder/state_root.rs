@@ -5,19 +5,26 @@
 //! cached trie for incremental computation.
 
 use alloy_primitives::B256;
-use reth_provider::{ProviderError, StateRootProvider};
+use reth_provider::{HashedPostStateProvider, ProviderError, StateRootProvider};
+use reth_revm::db::BundleState;
 use reth_trie::{HashedPostState, TrieInput, prefix_set::TriePrefixSetsMut, updates::TrieUpdates};
 use std::sync::Arc;
 
 /// Output of [`StateRootCalculator::compute`].
+#[derive(Default)]
 pub struct StateRootOutput {
     /// The computed state root hash.
     pub state_root: B256,
+    /// The hashed post-state used for computation.
+    pub hashed_state: HashedPostState,
     /// Trie updates (shared with the calculator's internal cache).
     pub trie_updates: Arc<TrieUpdates>,
 }
 
 /// Manages state root computation across flashblocks.
+///
+/// When `enabled` is false, [`Self::compute`] short-circuits and returns
+/// `B256::ZERO` with empty state and trie updates.
 ///
 /// When `incremental` is true, caches trie updates and cumulative prefix sets
 /// so that each successive flashblock's state root can be computed
@@ -30,20 +37,26 @@ pub struct StateRootOutput {
 /// cumulative prefix sets from all prior flashblocks so the trie walker
 /// re-visits every previously modified path — preventing stale cached hashes
 /// from reverted storage slots.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct StateRootCalculator {
+    enabled: bool,
     incremental: bool,
     prev_trie_updates: Option<Arc<TrieUpdates>>,
     cumulative_prefix_sets: Option<TriePrefixSetsMut>,
 }
 
 impl StateRootCalculator {
-    pub fn new(incremental: bool) -> Self {
+    pub fn new(enabled: bool, incremental: bool) -> Self {
         Self {
+            enabled,
             incremental,
             prev_trie_updates: None,
             cumulative_prefix_sets: None,
         }
+    }
+
+    pub fn is_enabled(&self) -> bool {
+        self.enabled
     }
 
     /// Whether the next [`Self::compute`] call will use cached trie state.
@@ -56,14 +69,31 @@ impl StateRootCalculator {
     /// Updates internal state so the next call can build on this result.
     pub fn compute(
         &mut self,
+        state_provider: &(impl StateRootProvider + HashedPostStateProvider + ?Sized),
+        bundle_state: &BundleState,
+    ) -> Result<StateRootOutput, ProviderError> {
+        if !self.enabled {
+            return Ok(StateRootOutput::default());
+        }
+
+        let hashed_state = state_provider.hashed_post_state(bundle_state);
+        self.compute_from_hashed(state_provider, hashed_state)
+    }
+
+    /// Compute the state root from an already-hashed post-state. Used for tests
+    /// and benchmarks.
+    pub fn compute_from_hashed(
+        &mut self,
         state_provider: &(impl StateRootProvider + ?Sized),
         hashed_state: HashedPostState,
     ) -> Result<StateRootOutput, ProviderError> {
         if !self.incremental {
+            let hashed_state_for_output = hashed_state.clone();
             let (state_root, trie_updates) =
                 state_provider.state_root_with_updates(hashed_state)?;
             return Ok(StateRootOutput {
                 state_root,
+                hashed_state: hashed_state_for_output,
                 trie_updates: Arc::new(trie_updates),
             });
         }
@@ -78,6 +108,7 @@ impl StateRootCalculator {
         }
         let cumulative = prefix_sets.clone();
 
+        let hashed_state_for_output = hashed_state.clone();
         let (state_root, trie_updates) = if let Some(prev_trie) = &self.prev_trie_updates {
             let trie_input = TrieInput::new(prev_trie.as_ref().clone(), hashed_state, prefix_sets);
             state_provider.state_root_from_nodes_with_updates(trie_input)?
@@ -92,6 +123,7 @@ impl StateRootCalculator {
 
         Ok(StateRootOutput {
             state_root,
+            hashed_state: hashed_state_for_output,
             trie_updates,
         })
     }
@@ -170,20 +202,22 @@ mod tests {
         // Full (ground truth): fresh calculator, single call
         let provider = factory.database_provider_ro().unwrap();
         let latest = LatestStateProvider::new(provider);
-        let full = StateRootCalculator::new(false)
-            .compute(&latest, fb2_cumulative_state.clone())
+        let full = StateRootCalculator::new(true, false)
+            .compute_from_hashed(&latest, fb2_cumulative_state.clone())
             .unwrap();
 
         // Incremental: calculator across both flashblocks
-        let mut calc = StateRootCalculator::new(true);
+        let mut calc = StateRootCalculator::new(true, true);
 
         let provider = factory.database_provider_ro().unwrap();
         let latest = LatestStateProvider::new(provider);
-        calc.compute(&latest, fb1_state).unwrap();
+        calc.compute_from_hashed(&latest, fb1_state).unwrap();
 
         let provider = factory.database_provider_ro().unwrap();
         let latest = LatestStateProvider::new(provider);
-        let incremental = calc.compute(&latest, fb2_cumulative_state).unwrap();
+        let incremental = calc
+            .compute_from_hashed(&latest, fb2_cumulative_state)
+            .unwrap();
 
         (full.state_root, incremental.state_root)
     }
