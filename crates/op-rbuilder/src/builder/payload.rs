@@ -5,6 +5,7 @@ use crate::{
         assembly::BlockAssemblyInput,
         best_txs::{FlashblockPoolTxCursor, FlashblockTxTracker},
         builder_tx::{BuilderTransactions, reserve_builder_tx_budget},
+        cancellation::FlashblockJobCancellation,
         context::{OpPayloadBuilderCtx, OpPayloadJobCtx},
         generator::{BuildArguments, PayloadBuilder},
         timing::{FlashblockScheduler, compute_slot_offset_ms},
@@ -349,7 +350,7 @@ where
         config: reth_basic_payload_builder::PayloadConfig<
             OpPayloadBuilderAttributes<op_alloy_consensus::OpTxEnvelope>,
         >,
-        cancel: CancellationToken,
+        cancel: FlashblockJobCancellation,
     ) -> eyre::Result<OpPayloadJobCtx> {
         let builder_ctx = &self.builder_ctx;
         let timestamp = config.attributes.timestamp();
@@ -444,7 +445,7 @@ where
         );
 
         let ctx = self
-            .get_op_payload_job_ctx(config.clone(), payload_cancel.token())
+            .get_op_payload_job_ctx(config.clone(), payload_cancel.flashblock_child())
             .map_err(|e| PayloadBuilderError::Other(e.into()))?;
 
         // Initialize flashblocks state for this block
@@ -624,7 +625,7 @@ where
             ..fb_state
         };
 
-        let fb_cancel = payload_cancel.child_token();
+        let fb_cancel = payload_cancel.flashblock_child();
         let mut ctx = self
             .get_op_payload_job_ctx(config, fb_cancel.clone())
             .map_err(|e| PayloadBuilderError::Other(e.into()))?;
@@ -635,7 +636,7 @@ where
                 .flashblock_timer
                 .instrument(flashblock_scheduler.run(
                     tx,
-                    payload_cancel.token(),
+                    payload_cancel.clone(),
                     fb_cancel,
                     fb_payload.payload_id,
                 )),

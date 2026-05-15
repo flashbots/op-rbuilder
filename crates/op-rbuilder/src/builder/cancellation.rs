@@ -23,6 +23,9 @@ pub(crate) struct PayloadJobCancellation {
     reason: Arc<OnceLock<CancellationReason>>,
 }
 
+#[derive(Clone)]
+pub struct FlashblockJobCancellation(CancellationToken);
+
 impl PayloadJobCancellation {
     /// Creates a new `PayloadJobCancellation` with the token uncancelled.
     pub(crate) fn new() -> Self {
@@ -75,15 +78,23 @@ impl PayloadJobCancellation {
         self.token.clone()
     }
 
-    /// Creates a child token.
-    /// Useful for per-flashblock cancellation.
-    pub(crate) fn child_token(&self) -> CancellationToken {
-        self.token.child_token()
+    pub(crate) fn flashblock_child(&self) -> FlashblockJobCancellation {
+        FlashblockJobCancellation(self.token.child_token())
     }
 
     /// Returns the reason this job was cancelled, or `None` if not cancelled.
     pub(crate) fn reason(&self) -> Option<CancellationReason> {
         self.reason.get().copied()
+    }
+}
+
+impl FlashblockJobCancellation {
+    pub(crate) fn cancel_current_flashblock(&self) {
+        self.0.cancel();
+    }
+
+    pub(crate) fn is_cancelled(&self) -> bool {
+        self.0.is_cancelled()
     }
 }
 
@@ -155,9 +166,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_child_token_cancelled() {
+    async fn test_flashblock_child_cancelled() {
         let cancel = PayloadJobCancellation::new();
-        let child = cancel.child_token();
+        let child = cancel.flashblock_child();
         assert!(!child.is_cancelled());
 
         cancel.cancel_resolved();

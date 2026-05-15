@@ -3,10 +3,12 @@ use std::{ops::Rem, time::SystemTime};
 
 use reth_payload_builder::PayloadId;
 use tokio::sync::mpsc;
-use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, warn};
 
-use crate::builder::config::FlashblocksConfig;
+use crate::builder::{
+    cancellation::{FlashblockJobCancellation, PayloadJobCancellation},
+    config::FlashblocksConfig,
+};
 
 /// Schedules and triggers flashblock builds at predetermined times during a
 /// block slot. This should be created at the start of each payload building
@@ -62,9 +64,9 @@ impl FlashblockScheduler {
     /// Runs the scheduler, sending flashblock triggers at the scheduled times.
     pub(super) async fn run(
         self,
-        tx: mpsc::Sender<CancellationToken>,
-        block_cancel: CancellationToken,
-        mut fb_cancel: CancellationToken,
+        tx: mpsc::Sender<FlashblockJobCancellation>,
+        block_cancel: PayloadJobCancellation,
+        fb_cancel: FlashblockJobCancellation,
         payload_id: PayloadId,
     ) {
         let start = tokio::time::Instant::now();
@@ -73,11 +75,10 @@ impl FlashblockScheduler {
         for (i, send_time) in self.send_times.into_iter().enumerate() {
             tokio::select! {
                 _ = tokio::time::sleep_until(send_time) => {
-                    // Cancel current flashblock building job
-                    fb_cancel.cancel();
+                    fb_cancel.cancel_current_flashblock();
 
                     // Trigger next flashblock building job
-                    fb_cancel = block_cancel.child_token();
+                    let fb_cancel = block_cancel.flashblock_child();
 
                     let elapsed = start.elapsed();
                     debug!(
@@ -90,7 +91,7 @@ impl FlashblockScheduler {
                         "Sending flashblock trigger"
                     );
 
-                    if tx.send(fb_cancel.clone()).await.is_err() {
+                    if tx.send(fb_cancel).await.is_err() {
                         // receiver channel was dropped, return. this will only
                         // happen if the `build_payload` function returns, due
                         // to payload building error or the main cancellation
