@@ -40,7 +40,6 @@ pub enum TxnExecutionResult {
     CoinbaseProfitTooLow,
 }
 
-#[derive(Default, Debug)]
 pub struct ExecutionInfo {
     /// All executed transactions (unrecovered).
     pub executed_transactions: Vec<OpTransactionSigned>,
@@ -250,14 +249,29 @@ fn build_receipt<E: Evm>(
 
 #[cfg(test)]
 mod tests {
+    use alloy_primitives::U256;
+
     use super::{ExecutionInfo, TxnExecutionResult};
+
+    fn execution_info_with_uncompressed_bytes(cumulative_uncompressed_bytes: u64) -> ExecutionInfo {
+        ExecutionInfo {
+            executed_transactions: vec![],
+            executed_senders: vec![],
+            receipts: vec![],
+            cumulative_gas_used: 0,
+            cumulative_da_bytes_used: 0,
+            cumulative_uncompressed_bytes,
+            total_fees: U256::ZERO,
+            da_footprint_scalar: None,
+            optional_blob_fields: None,
+            reverted_bundle_tx_hashes: vec![],
+            last_flashblock_tx_index: 0,
+        }
+    }
 
     #[test]
     fn tx_limit_rejects_when_uncompressed_size_exceeds_limit() {
-        let info = ExecutionInfo {
-            cumulative_uncompressed_bytes: 100,
-            ..Default::default()
-        };
+        let info = execution_info_with_uncompressed_bytes(100);
 
         let result = info.is_tx_over_limits(0, 30_000_000, None, None, 21_000, None, 50, Some(149));
 
@@ -271,10 +285,7 @@ mod tests {
 
     #[test]
     fn tx_limit_allows_exact_uncompressed_size_fit() {
-        let info = ExecutionInfo {
-            cumulative_uncompressed_bytes: 100,
-            ..Default::default()
-        };
+        let info = execution_info_with_uncompressed_bytes(100);
 
         let result = info.is_tx_over_limits(0, 30_000_000, None, None, 21_000, None, 50, Some(150));
 
