@@ -36,9 +36,9 @@ use tracing::{debug, info, warn};
 use crate::{
     builder::{StateRootCalculator, payload::FlashblocksState, state_root::StateRootOutput},
     evm::OpBlockEvmFactory,
+    execution::ExecutionInfo,
     hardforks::ActiveHardforks,
     metrics::OpRBuilderMetrics,
-    primitives::reth::ExecutionInfo,
 };
 
 /// Pre-resolved parameters needed by `build_block`, decoupled from

@@ -23,8 +23,7 @@ use revm::{
 use tracing::{error, trace, warn};
 
 use crate::{
-    evm::OpBlockEvmFactory, hardforks::ActiveHardforks, primitives::reth::ExecutionInfo,
-    tx_signer::Signer,
+    evm::OpBlockEvmFactory, execution::ExecutionInfo, hardforks::ActiveHardforks, tx_signer::Signer,
 };
 
 #[derive(Debug, Default)]

@@ -34,10 +34,10 @@ use crate::{
         cancellation::FlashblockJobCancellation,
     },
     evm::OpBlockEvmFactory,
+    execution::{ExecutionInfo, TxnExecutionResult},
     hardforks::ActiveHardforks,
     limiter::AddressLimiter,
     metrics::OpRBuilderMetrics,
-    primitives::reth::{ExecutionInfo, TxnExecutionResult},
     traits::PayloadTxsBounds,
 };
 

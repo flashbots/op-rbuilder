@@ -2,6 +2,7 @@ pub mod args;
 pub mod backrun_bundle;
 pub mod builder;
 pub mod evm;
+pub mod execution;
 pub mod flashtestations;
 pub mod hardforks;
 pub mod launcher;

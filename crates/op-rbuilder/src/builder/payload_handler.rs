@@ -4,9 +4,9 @@ use crate::{
         syncer_config::OpPayloadSyncerConfig,
     },
     evm::OpBlockEvmFactory,
+    execution::ExecutionInfo,
     hardforks::ActiveHardforks,
     metrics::OpRBuilderMetrics,
-    primitives::reth::ExecutionInfo,
     traits::ClientBounds,
 };
 use alloy_consensus::BlockHeader;

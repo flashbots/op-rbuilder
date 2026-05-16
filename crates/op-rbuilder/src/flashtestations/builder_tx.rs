@@ -19,13 +19,13 @@ use crate::{
         BuilderTransactionCtx, BuilderTransactionError, BuilderTransactions, BuilderTxEnv,
         SimulationSuccessResult, get_nonce,
     },
+    execution::ExecutionInfo,
     flashtestations::{
         BlockData,
         IBlockBuilderPolicy::{self, BlockBuilderProofVerified},
         IERC20Permit,
         IFlashtestationRegistry::{self, TEEServiceRegistered},
     },
-    primitives::reth::ExecutionInfo,
     tx_signer::Signer,
 };
 
