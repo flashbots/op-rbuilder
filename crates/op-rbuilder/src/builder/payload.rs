@@ -196,12 +196,11 @@ impl FlashblocksState {
         self.target_flashblock_count
     }
 
-    fn is_first_flashblock(&self) -> bool {
-        self.flashblock_index == 0
-    }
-
-    fn is_last_flashblock(&self) -> bool {
-        self.flashblock_index == self.target_flashblock_count
+    fn meta(&self) -> FlashblockMeta {
+        FlashblockMeta {
+            flashblock_index: self.flashblock_index,
+            target_flashblock_count: self.target_flashblock_count,
+        }
     }
 
     fn target_gas_for_batch(&self) -> u64 {
@@ -231,6 +230,24 @@ impl FlashblocksState {
     /// Extracts new receipts since the last flashblock
     pub(super) fn slice_new_receipts<'a>(&self, all_receipts: &'a [OpReceipt]) -> &'a [OpReceipt] {
         &all_receipts[self.last_flashblock_tx_index..]
+    }
+}
+
+/// Projection of [`FlashblocksState`] describing where the current
+/// build sits within the slot's flashblock sequence.
+#[derive(Debug, Clone, Copy)]
+struct FlashblockMeta {
+    flashblock_index: u64,
+    target_flashblock_count: u64,
+}
+
+impl FlashblockMeta {
+    fn is_first(&self) -> bool {
+        self.flashblock_index == 0
+    }
+
+    fn is_last(&self) -> bool {
+        self.flashblock_index == self.target_flashblock_count
     }
 }
 
@@ -863,23 +880,24 @@ where
         ctx.metrics.sequencer_tx_gauge.set(sequencer_tx_time);
 
         // We add first builder tx right after deposits
-        if !ctx.attributes().no_tx_pool
-            && let Err(e) = self.builder_tx.add_builder_txs(
+        if !ctx.attributes().no_tx_pool {
+            let flashblock = fb_state.meta();
+            if let Err(e) = self.builder_tx.add_builder_txs(
                 &state_provider,
                 &mut info,
                 &ctx.builder_tx_env(),
                 &mut state,
                 false,
-                fb_state.is_first_flashblock(),
-                fb_state.is_last_flashblock(),
-            )
-        {
-            error!(
-                target: "payload_builder",
-                "Error adding builder txs to fallback block: {}",
-                e
-            );
-        };
+                flashblock.is_first(),
+                flashblock.is_last(),
+            ) {
+                error!(
+                    target: "payload_builder",
+                    "Error adding builder txs to fallback block: {}",
+                    e
+                );
+            }
+        }
 
         let (payload, fb_payload) = ctx.block_assembly_input()?.assemble(
             &mut state,
@@ -940,6 +958,7 @@ where
         );
         let flashblock_build_start_time = Instant::now();
 
+        let flashblock = fb_state.meta();
         let builder_txs = self
             .builder_tx
             .add_builder_txs(
@@ -948,8 +967,8 @@ where
                 &ctx.builder_tx_env(),
                 state,
                 true,
-                fb_state.is_first_flashblock(),
-                fb_state.is_last_flashblock(),
+                flashblock.is_first(),
+                flashblock.is_last(),
             )
             .inspect_err(
                 |e| error!(target: "payload_builder", error = %e, "Error simulating builder txs"),
@@ -1023,14 +1042,15 @@ where
             .payload_transaction_simulation_gauge
             .set(payload_transaction_simulation_time);
 
+        let flashblock = fb_state.meta();
         if let Err(e) = self.builder_tx.add_builder_txs(
             &state_provider,
             info,
             &ctx.builder_tx_env(),
             state,
             false,
-            fb_state.is_first_flashblock(),
-            fb_state.is_last_flashblock(),
+            flashblock.is_first(),
+            flashblock.is_last(),
         ) {
             error!(target: "payload_builder", error = %e, "Error simulating builder txs");
         }
