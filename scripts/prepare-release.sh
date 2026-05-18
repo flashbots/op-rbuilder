@@ -119,8 +119,8 @@ if [[ "$DRY_RUN" == "false" ]]; then
         error "Must be on main branch (currently on: $CURRENT_BRANCH)"
     fi
 
-    # Check for uncommitted changes
-    if [[ -n $(git status --porcelain) ]]; then
+    # Check for uncommitted changes (ignore untracked files)
+    if [[ -n $(git status --porcelain --untracked-files=no) ]]; then
         error "Working directory has uncommitted changes. Please commit or stash them first."
     fi
 fi
