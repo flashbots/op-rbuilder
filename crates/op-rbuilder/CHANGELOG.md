@@ -1,6 +1,33 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [0.4.6] - 2026-05-18
+
+### Bug Fixes
+
+- [`0d63bd8`](https://github.com/flashbots/op-rbuilder/commit/0d63bd84072d17e0321dbeda05af565c6d68013d) Update Cargo.lock file in release script ([#510](https://github.com/flashbots/op-rbuilder/pull/510))
+
+### Documentation
+
+- [`1162908`](https://github.com/flashbots/op-rbuilder/commit/116290840c36b71cecaa549b8a2e58d60fb57087) Require signed commits in CONTRIBUTING ([#515](https://github.com/flashbots/op-rbuilder/pull/515))
+
+### Miscellaneous
+
+- [`376a060`](https://github.com/flashbots/op-rbuilder/commit/376a060142178a8e75fa47d3c28ba471fec6f018) Add flashblock cancel token ([#517](https://github.com/flashbots/op-rbuilder/pull/517))
+- [`a53d0da`](https://github.com/flashbots/op-rbuilder/commit/a53d0dae685c8960f3ea64bc373c1bd8c4468f75) Bump Cargo version to 0.4.6
+
+### Performance
+
+- [`369b538`](https://github.com/flashbots/op-rbuilder/commit/369b538ac2d1d510d5d7c1a5567717e28818ed13) Wake poll on cancellation ([#508](https://github.com/flashbots/op-rbuilder/pull/508))
+
+### Refactor
+
+- [`b01741e`](https://github.com/flashbots/op-rbuilder/commit/b01741e8e6f69472912467e46451e92601bb26ef) Extract build_block into another module ([#506](https://github.com/flashbots/op-rbuilder/pull/506))
+- [`5579a76`](https://github.com/flashbots/op-rbuilder/commit/5579a763c0465b3274c069464dc163461165f1dc) Move state root computation into its module ([#512](https://github.com/flashbots/op-rbuilder/pull/512))
+- [`2710d66`](https://github.com/flashbots/op-rbuilder/commit/2710d66aef74c6aec08476b95bcd39ed3400e9d8) Add commit_tx fn to ExecutionInfo ([#511](https://github.com/flashbots/op-rbuilder/pull/511))
+- [`f233b5b`](https://github.com/flashbots/op-rbuilder/commit/f233b5b0feafe95a2f732aefd7d1eb9523c2b10a) Remove backrun pool from config type ([#516](https://github.com/flashbots/op-rbuilder/pull/516))
+- [`c468d8a`](https://github.com/flashbots/op-rbuilder/commit/c468d8a0da51db3739f3a63a859d564005c726c7) Make job ctx fields private ([#519](https://github.com/flashbots/op-rbuilder/pull/519))
+
 ## [0.4.5] - 2026-05-12
 
 ### Bug Fixes
