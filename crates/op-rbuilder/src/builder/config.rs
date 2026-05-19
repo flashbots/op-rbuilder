@@ -72,7 +72,7 @@ impl Default for FlashblocksConfig {
             number_contract_address: None,
             number_contract_use_permit: false,
             send_offset_ms: 0,
-            end_buffer_ms: 0,
+            end_buffer_ms: 100,
             p2p_enabled: false,
             p2p_port: 9009,
             p2p_private_key_file: None,
