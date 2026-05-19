@@ -20,6 +20,7 @@ use revm::{
     context::{TxEnv, result::ResultAndState},
     context_interface::result::InvalidTransaction,
 };
+use tokio::sync::Semaphore;
 use tracing::{debug, error, warn};
 
 use crate::{evm::OpBlockEvmFactory, pool::metrics::PoolMetrics, tx::FBPooledTransaction};
@@ -28,6 +29,7 @@ use crate::{evm::OpBlockEvmFactory, pool::metrics::PoolMetrics, tx::FBPooledTran
 /// reverting transactions before they enter the pool.
 pub(crate) struct TopOfBlockSimulator {
     tip_state: RwLock<Arc<Option<TipState>>>,
+    permits: Arc<Semaphore>,
 }
 
 impl std::fmt::Debug for TopOfBlockSimulator {
@@ -43,9 +45,10 @@ pub(crate) struct TipState {
 }
 
 impl TopOfBlockSimulator {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(max_concurrent: usize) -> Self {
         Self {
             tip_state: RwLock::new(Arc::new(None)),
+            permits: Arc::new(Semaphore::new(max_concurrent)),
         }
     }
 
@@ -53,9 +56,19 @@ impl TopOfBlockSimulator {
         self: Arc<Self>,
         tx: Recovered<OpTransactionSigned>,
     ) -> eyre::Result<bool> {
-        tokio::task::spawn_blocking(move || self.simulate_tx_sync(tx))
+        let permit = self
+            .permits
+            .clone()
+            .acquire_owned()
             .await
-            .wrap_err("simulate tx task panicked")
+            .wrap_err("presim semaphore closed")?;
+
+        tokio::task::spawn_blocking(move || {
+            let _permit = permit;
+            self.simulate_tx_sync(tx)
+        })
+        .await
+        .wrap_err("simulate tx task panicked")
     }
 
     pub(crate) fn simulate_tx_sync(&self, tx: impl IntoTxEnv<OpTransaction<TxEnv>>) -> bool {
@@ -388,7 +401,7 @@ mod tests {
 
     #[test]
     fn no_tip_state_passes_through() {
-        let simulator = TopOfBlockSimulator::new();
+        let simulator = TopOfBlockSimulator::new(1);
         let signer = PrivateKeySigner::random();
         let tx = simple_transfer(&signer, 0);
 
@@ -397,7 +410,7 @@ mod tests {
 
     #[test]
     fn update_tip_makes_simulation_available() {
-        let simulator = TopOfBlockSimulator::new();
+        let simulator = TopOfBlockSimulator::new(1);
         let signer = PrivateKeySigner::random();
         let provider = funded_provider(signer.address());
 

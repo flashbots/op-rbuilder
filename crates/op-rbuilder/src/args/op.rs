@@ -72,6 +72,14 @@ pub struct OpRbuilderArgs {
     )]
     pub pre_simulate_bundles: bool,
 
+    /// The maximum number of concurrent presim tasks to run.
+    #[arg(
+        long = "builder.presim-max-concurrent",
+        default_value = "4",
+        env = "PRESIM_MAX_CONCURRENT"
+    )]
+    pub presim_max_concurrent: usize,
+
     /// Enables logs to trace transaction lifecycle as it is added to the
     /// mempool and added to a block. Requires `RUST_LOG=tx_trace=debug` in
     /// addition to this flag.

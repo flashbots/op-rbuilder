@@ -40,6 +40,7 @@ pub struct FlashpoolBuilder {
 
     enable_revert_protection: bool,
     pre_simulate_bundles: bool,
+    presim_max_concurrent: usize,
     block_time_secs: u64,
 
     backrun_bundle_args: BackrunBundleArgs,
@@ -59,6 +60,7 @@ impl FlashpoolBuilder {
             op_pool_builder,
             enable_revert_protection: builder_args.enable_revert_protection,
             pre_simulate_bundles: builder_args.pre_simulate_bundles,
+            presim_max_concurrent: builder_args.presim_max_concurrent,
             block_time_secs: builder_args.chain_block_time / 1000,
             backrun_bundle_args: builder_args.backrun_bundle.clone(),
         }
@@ -91,6 +93,7 @@ where
             op_pool_builder,
             enable_revert_protection,
             pre_simulate_bundles,
+            presim_max_concurrent,
             block_time_secs,
             backrun_bundle_args,
         } = self;
@@ -106,7 +109,7 @@ where
         let metrics = Arc::new(PoolMetrics::default());
 
         let simulator = if pre_simulate_bundles {
-            let simulator = Arc::new(TopOfBlockSimulator::new());
+            let simulator = Arc::new(TopOfBlockSimulator::new(presim_max_concurrent));
 
             let chain_events = ctx.provider().canonical_state_stream();
             let op_evm_config = OpEvmConfig::optimism(ctx.provider().chain_spec());
