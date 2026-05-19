@@ -1,3 +1,4 @@
+use parking_lot::{Mutex, MutexGuard};
 use std::sync::{Arc, OnceLock};
 use tokio_util::sync::CancellationToken;
 
@@ -21,6 +22,7 @@ pub(crate) enum CancellationReason {
 pub(crate) struct PayloadJobCancellation {
     token: CancellationToken,
     reason: Arc<OnceLock<CancellationReason>>,
+    publish_lock: Arc<Mutex<()>>,
 }
 
 #[derive(Clone)]
@@ -32,14 +34,22 @@ impl PayloadJobCancellation {
         Self {
             token: CancellationToken::new(),
             reason: Arc::new(OnceLock::new()),
+            publish_lock: Arc::new(Mutex::new(())),
         }
     }
 
     fn cancel_with(&self, reason: CancellationReason) {
+        // Wait for any in-flight flashblock publish to complete
+        let _publish_guard = self.publish_lock.lock();
         // OnceLock ensures that the first writer wins. If already set, the
         // original reason is preserved.
         let _ = self.reason.set(reason);
         self.token.cancel();
+    }
+
+    /// Acquire the publish lock.
+    pub(crate) fn lock_publish(&self) -> MutexGuard<'_, ()> {
+        self.publish_lock.lock()
     }
 
     /// Cancel with `NewFcu` reason.
@@ -187,5 +197,30 @@ mod tests {
         cancel.cancel_resolved();
         cancel.cancel_new_fcu();
         assert_eq!(cancel.reason(), Some(CancellationReason::Resolved));
+    }
+
+    #[test]
+    fn test_cancel_blocked_by_publish_lock() {
+        let cancel = PayloadJobCancellation::new();
+        let guard = cancel.lock_publish();
+
+        let cancel_for_thread = cancel.clone();
+        let handle = std::thread::spawn(move || {
+            cancel_for_thread.cancel_resolved();
+        });
+
+        // Give the cancel thread a chance to attempt the flip.
+        std::thread::sleep(Duration::from_millis(20));
+
+        // Guard is still held -> cancel must not have taken effect.
+        assert!(!cancel.token().is_cancelled());
+        assert_eq!(cancel.reason(), None);
+
+        drop(guard);
+        handle.join().unwrap();
+
+        // After lock release, cancel completes.
+        assert!(cancel.token().is_cancelled());
+        assert!(cancel.is_resolved());
     }
 }
