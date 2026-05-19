@@ -85,50 +85,56 @@ impl ExecutionInfo {
         }
     }
 
-    /// Returns true if the transaction would exceed the block limits:
-    /// - block gas limit: ensures the transaction still fits into the block.
-    /// - tx DA limit: if configured, ensures the tx does not exceed the maximum allowed DA limit
-    ///   per tx.
-    /// - block DA limit: if configured, ensures the transaction's DA size does not exceed the
-    ///   maximum allowed DA limit per block.
-    #[expect(clippy::too_many_arguments)]
-    pub fn is_tx_over_limits(
+    pub fn check_tx_da_limit(
+        &self,
+        tx_da_size: u64,
+        tx_da_limit: Option<u64>,
+    ) -> Result<(), TxnExecutionResult> {
+        if tx_da_limit.is_some_and(|da_limit| tx_da_size > da_limit) {
+            return Err(TxnExecutionResult::TransactionDALimitExceeded);
+        }
+
+        Ok(())
+    }
+
+    pub fn check_block_da_limit(
         &self,
         tx_da_size: u64,
         block_gas_limit: u64,
-        tx_data_limit: Option<u64>,
-        block_data_limit: Option<u64>,
-        tx_gas_limit: u64,
+        block_da_limit: Option<u64>,
         block_da_footprint_limit: Option<u64>,
-        tx_uncompressed_size: u64,
-        max_uncompressed_block_size: Option<u64>,
     ) -> Result<(), TxnExecutionResult> {
-        if tx_data_limit.is_some_and(|da_limit| tx_da_size > da_limit) {
-            return Err(TxnExecutionResult::TransactionDALimitExceeded);
-        }
-        let total_da_bytes_used = self.cumulative_da_bytes_used.saturating_add(tx_da_size);
-        if block_data_limit.is_some_and(|da_limit| total_da_bytes_used > da_limit) {
+        let potential_da_bytes_used = self.cumulative_da_bytes_used.saturating_add(tx_da_size);
+        if block_da_limit.is_some_and(|da_limit| potential_da_bytes_used > da_limit) {
             return Err(TxnExecutionResult::BlockDALimitExceeded(
                 self.cumulative_da_bytes_used,
                 tx_da_size,
-                block_data_limit.unwrap_or_default(),
+                block_da_limit.unwrap_or_default(),
             ));
         }
 
         // Post Jovian: the tx DA footprint must be less than the block gas limit
         if let Some(da_footprint_gas_scalar) = self.da_footprint_scalar {
             let tx_da_footprint =
-                total_da_bytes_used.saturating_mul(da_footprint_gas_scalar as u64);
+                potential_da_bytes_used.saturating_mul(da_footprint_gas_scalar as u64);
             if tx_da_footprint > block_da_footprint_limit.unwrap_or(block_gas_limit) {
                 return Err(TxnExecutionResult::BlockDALimitExceeded(
-                    total_da_bytes_used,
+                    potential_da_bytes_used,
                     tx_da_size,
                     tx_da_footprint,
                 ));
             }
         }
 
-        if self.cumulative_gas_used + tx_gas_limit > block_gas_limit {
+        Ok(())
+    }
+
+    pub fn check_gas_limit(
+        &self,
+        tx_gas_limit: u64,
+        block_gas_limit: u64,
+    ) -> Result<(), TxnExecutionResult> {
+        if self.cumulative_gas_used.saturating_add(tx_gas_limit) > block_gas_limit {
             return Err(TxnExecutionResult::TransactionGasLimitExceeded(
                 self.cumulative_gas_used,
                 tx_gas_limit,
@@ -136,12 +142,20 @@ impl ExecutionInfo {
             ));
         }
 
+        Ok(())
+    }
+
+    pub fn check_uncompressed_size_limit(
+        &self,
+        tx_uncompressed_size: u64,
+        max_uncompressed_block_size: Option<u64>,
+    ) -> Result<(), TxnExecutionResult> {
         // Check block uncompressed size limit
         if let Some(limit) = max_uncompressed_block_size {
-            let total = self
+            let potential_uncompressed_bytes = self
                 .cumulative_uncompressed_bytes
                 .saturating_add(tx_uncompressed_size);
-            if total > limit {
+            if potential_uncompressed_bytes > limit {
                 return Err(TxnExecutionResult::BlockUncompressedSizeExceeded(
                     self.cumulative_uncompressed_bytes,
                     tx_uncompressed_size,
@@ -153,19 +167,55 @@ impl ExecutionInfo {
         Ok(())
     }
 
+    /// Returns true if the transaction would exceed the block limits:
+    /// - block gas limit: ensures the transaction still fits into the block.
+    /// - tx DA limit: if configured, ensures the tx does not exceed the maximum allowed DA limit
+    ///   per tx.
+    /// - block DA limit: if configured, ensures the transaction's DA size does not exceed the
+    ///   maximum allowed DA limit per block.
+    #[expect(clippy::too_many_arguments)]
+    pub fn is_tx_over_limits(
+        &self,
+        tx_da_size: u64,
+        block_gas_limit: u64,
+        tx_da_limit: Option<u64>,
+        block_da_limit: Option<u64>,
+        tx_gas_limit: u64,
+        block_da_footprint_limit: Option<u64>,
+        tx_uncompressed_size: u64,
+        max_uncompressed_block_size: Option<u64>,
+    ) -> Result<(), TxnExecutionResult> {
+        self.check_tx_da_limit(tx_da_size, tx_da_limit)?;
+        self.check_block_da_limit(
+            tx_da_size,
+            block_gas_limit,
+            block_da_limit,
+            block_da_footprint_limit,
+        )?;
+        self.check_gas_limit(tx_gas_limit, block_gas_limit)?;
+        self.check_uncompressed_size_limit(tx_uncompressed_size, max_uncompressed_block_size)?;
+
+        Ok(())
+    }
+
     #[expect(clippy::too_many_arguments)]
     pub fn commit_tx<E: Evm<DB: revm::DatabaseCommit>>(
         &mut self,
         tx: &Recovered<OpTransactionSigned>,
         execution_result: ExecutionResult<E::HaltReason>,
         state_changes: EvmState,
-        tx_da_size: u64,
         miner_fee: Option<u128>,
         deposit_nonce: Option<u64>,
         evm_factory: &OpBlockEvmFactory,
         hardforks: &ActiveHardforks,
         evm: &mut E,
     ) {
+        let tx_da_size = if !tx.is_deposit() {
+            op_alloy_flz::tx_estimated_size_fjord_bytes(tx.encoded_2718().as_slice())
+        } else {
+            0
+        };
+
         let gas_used = execution_result.gas_used();
         self.cumulative_gas_used += gas_used;
         self.cumulative_da_bytes_used += tx_da_size;
