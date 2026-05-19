@@ -17,6 +17,7 @@ mod config;
 mod context;
 mod flashblocks_builder_tx;
 mod generator;
+mod hooks;
 mod p2p;
 mod payload;
 mod payload_handler;
