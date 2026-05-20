@@ -513,6 +513,7 @@ impl OpPayloadJobCtx {
                 num_txs_simulated_fail += 1;
                 reverted_gas_used += gas_used;
                 self.metrics.reverted_tx_gas_used.record(gas_used as f64);
+                self.metrics.reverted_tx_count.increment(1);
                 if is_bundle_tx {
                     num_bundles_reverted += 1;
                 }
@@ -763,6 +764,7 @@ impl OpPayloadJobCtx {
                         num_bundles_reverted += 1;
                         reverted_gas_used += br_gas_used;
                         self.metrics.reverted_tx_gas_used.record(br_gas_used as f64);
+                        self.metrics.reverted_tx_count.increment(1);
                         log_br_txn(TxnExecutionResult::RevertedAndExcluded);
                         continue;
                     }
