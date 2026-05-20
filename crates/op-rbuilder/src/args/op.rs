@@ -15,7 +15,7 @@ use anyhow::{Result, anyhow};
 use clap::Parser;
 use reth_optimism_cli::commands::Commands;
 use reth_optimism_node::args::RollupArgs;
-use std::path::PathBuf;
+use std::{num::NonZeroUsize, path::PathBuf};
 
 /// Parameters for rollup configuration
 #[derive(Debug, Clone, PartialEq, Eq, clap::Args)]
@@ -72,13 +72,10 @@ pub struct OpRbuilderArgs {
     )]
     pub pre_simulate_bundles: bool,
 
-    /// The maximum number of concurrent presim tasks to run.
-    #[arg(
-        long = "builder.presim-max-concurrent",
-        default_value = "4",
-        env = "PRESIM_MAX_CONCURRENT"
-    )]
-    pub presim_max_concurrent: usize,
+    /// The maximum number of concurrent presim tasks to run. If omitted,
+    /// concurrency will be unbounded.
+    #[arg(long = "builder.presim-max-concurrent", env = "PRESIM_MAX_CONCURRENT")]
+    pub presim_max_concurrent: Option<NonZeroUsize>,
 
     /// Enables logs to trace transaction lifecycle as it is added to the
     /// mempool and added to a block. Requires `RUST_LOG=tx_trace=debug` in

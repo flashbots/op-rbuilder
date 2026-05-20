@@ -1,4 +1,4 @@
-use std::{sync::Arc, time::Instant};
+use std::{num::NonZeroUsize, sync::Arc, time::Instant};
 
 use alloy_consensus::{BlockHeader, Header};
 use alloy_evm::{Evm, InvalidTxError};
@@ -31,8 +31,14 @@ use crate::{
 /// reverting transactions before they enter the pool.
 pub(crate) struct TopOfBlockSimulator {
     tip_state: RwLock<Arc<Option<TipState>>>,
-    permits: Arc<Semaphore>,
+    permits: Option<Arc<Semaphore>>,
     metrics: Arc<PoolMetrics>,
+}
+
+/// Holds a concurrency permit when presim limiting is enabled.
+enum PresimPermit {
+    Limited { _permit: OwnedSemaphorePermit },
+    Unlimited,
 }
 
 impl std::fmt::Debug for TopOfBlockSimulator {
@@ -48,11 +54,15 @@ pub(crate) struct TipState {
 }
 
 impl TopOfBlockSimulator {
-    pub(crate) fn new(max_concurrent: usize, metrics: Arc<PoolMetrics>) -> Self {
-        metrics.presim_concurrency_limit.set(max_concurrent as f64);
+    pub(crate) fn new(max_concurrent: Option<NonZeroUsize>, metrics: Arc<PoolMetrics>) -> Self {
+        let permits = max_concurrent.map(|limit| {
+            metrics.presim_concurrency_limit.set(limit.get() as f64);
+            Arc::new(Semaphore::new(limit.get()))
+        });
+
         Self {
             tip_state: RwLock::new(Arc::new(None)),
-            permits: Arc::new(Semaphore::new(max_concurrent)),
+            permits,
             metrics,
         }
     }
@@ -61,7 +71,7 @@ impl TopOfBlockSimulator {
     fn new_for_test() -> Self {
         Self {
             tip_state: RwLock::new(Arc::new(None)),
-            permits: Arc::new(Semaphore::new(1)),
+            permits: None,
             metrics: Arc::new(PoolMetrics::default()),
         }
     }
@@ -82,12 +92,15 @@ impl TopOfBlockSimulator {
         .wrap_err("simulate tx task panicked")
     }
 
-    async fn acquire_permit(&self) -> eyre::Result<OwnedSemaphorePermit> {
+    async fn acquire_permit(&self) -> eyre::Result<PresimPermit> {
+        let Some(permits) = self.permits.clone() else {
+            return Ok(PresimPermit::Unlimited);
+        };
+
         let wait_start = Instant::now();
         let _waiting = self.metrics.presim_waiting.increment_guard();
 
-        let permit = self
-            .permits
+        let permit = permits
             .clone()
             .acquire_owned()
             .await
@@ -97,7 +110,7 @@ impl TopOfBlockSimulator {
             .presim_wait_duration
             .record(wait_start.elapsed());
 
-        Ok(permit)
+        Ok(PresimPermit::Limited { _permit: permit })
     }
 
     pub(crate) fn simulate_tx_sync(&self, tx: impl IntoTxEnv<OpTransaction<TxEnv>>) -> bool {

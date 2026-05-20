@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{num::NonZeroUsize, sync::Arc};
 
 use alloy_primitives::TxHash;
 use futures::{FutureExt, Stream, StreamExt};
@@ -40,7 +40,7 @@ pub struct FlashpoolBuilder {
 
     enable_revert_protection: bool,
     pre_simulate_bundles: bool,
-    presim_max_concurrent: usize,
+    presim_max_concurrent: Option<NonZeroUsize>,
     block_time_secs: u64,
 
     backrun_bundle_args: BackrunBundleArgs,
