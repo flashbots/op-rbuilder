@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{num::NonZeroUsize, sync::Arc, time::Instant};
 
 use alloy_consensus::{BlockHeader, Header};
 use alloy_evm::{Evm, InvalidTxError};
@@ -20,14 +20,26 @@ use revm::{
     context::{TxEnv, result::ResultAndState},
     context_interface::result::InvalidTransaction,
 };
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tracing::{debug, error, warn};
 
-use crate::{evm::OpBlockEvmFactory, pool::metrics::PoolMetrics, tx::FBPooledTransaction};
+use crate::{
+    evm::OpBlockEvmFactory, metrics::GaugeExt, pool::metrics::PoolMetrics, tx::FBPooledTransaction,
+};
 
 /// Pre-simulates transactions against the current head state to filter out
 /// reverting transactions before they enter the pool.
 pub(crate) struct TopOfBlockSimulator {
     tip_state: RwLock<Arc<Option<TipState>>>,
+    permits: Option<Arc<Semaphore>>,
+    metrics: Arc<PoolMetrics>,
+}
+
+/// Holds a concurrency permit when presim limiting is enabled.
+#[derive(derive_more::IsVariant)]
+enum PresimPermit {
+    Limited { _permit: OwnedSemaphorePermit },
+    Unlimited,
 }
 
 impl std::fmt::Debug for TopOfBlockSimulator {
@@ -43,9 +55,25 @@ pub(crate) struct TipState {
 }
 
 impl TopOfBlockSimulator {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(max_concurrent: Option<NonZeroUsize>, metrics: Arc<PoolMetrics>) -> Self {
+        let permits = max_concurrent.map(|limit| {
+            metrics.presim_concurrency_limit.set(limit.get() as f64);
+            Arc::new(Semaphore::new(limit.get()))
+        });
+
         Self {
             tip_state: RwLock::new(Arc::new(None)),
+            permits,
+            metrics,
+        }
+    }
+
+    #[cfg(test)]
+    fn new_for_test() -> Self {
+        Self {
+            tip_state: RwLock::new(Arc::new(None)),
+            permits: None,
+            metrics: Arc::new(PoolMetrics::default()),
         }
     }
 
@@ -53,9 +81,37 @@ impl TopOfBlockSimulator {
         self: Arc<Self>,
         tx: Recovered<OpTransactionSigned>,
     ) -> eyre::Result<bool> {
-        tokio::task::spawn_blocking(move || self.simulate_tx_sync(tx))
+        let permit = self.acquire_permit().await?;
+
+        let in_flight = self.metrics.presim_in_flight.increment_guard();
+        tokio::task::spawn_blocking(move || {
+            let _permit = permit;
+            let _in_flight = in_flight;
+            self.simulate_tx_sync(tx)
+        })
+        .await
+        .wrap_err("simulate tx task panicked")
+    }
+
+    async fn acquire_permit(&self) -> eyre::Result<PresimPermit> {
+        let Some(permits) = self.permits.clone() else {
+            return Ok(PresimPermit::Unlimited);
+        };
+
+        let wait_start = Instant::now();
+        let _waiting = self.metrics.presim_waiting.increment_guard();
+
+        let permit = permits
+            .clone()
+            .acquire_owned()
             .await
-            .wrap_err("simulate tx task panicked")
+            .wrap_err("presim semaphore closed")?;
+
+        self.metrics
+            .presim_wait_duration
+            .record(wait_start.elapsed());
+
+        Ok(PresimPermit::Limited { _permit: permit })
     }
 
     pub(crate) fn simulate_tx_sync(&self, tx: impl IntoTxEnv<OpTransaction<TxEnv>>) -> bool {
@@ -235,6 +291,8 @@ pub(crate) async fn maintain_pending_simulations<Pool, St>(
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use super::*;
     use alloy_consensus::{SignableTransaction, TxEip1559};
     use alloy_evm::EvmEnv;
@@ -388,7 +446,7 @@ mod tests {
 
     #[test]
     fn no_tip_state_passes_through() {
-        let simulator = TopOfBlockSimulator::new();
+        let simulator = TopOfBlockSimulator::new_for_test();
         let signer = PrivateKeySigner::random();
         let tx = simple_transfer(&signer, 0);
 
@@ -397,7 +455,7 @@ mod tests {
 
     #[test]
     fn update_tip_makes_simulation_available() {
-        let simulator = TopOfBlockSimulator::new();
+        let simulator = TopOfBlockSimulator::new_for_test();
         let signer = PrivateKeySigner::random();
         let provider = funded_provider(signer.address());
 
@@ -420,5 +478,42 @@ mod tests {
 
         // Same nonce=0 tx should still succeed — state wasn't persisted
         assert!(tip_state.run_simulation(simple_transfer(&signer, 0)));
+    }
+
+    #[tokio::test]
+    async fn presim_limits_concurrent_tasks() {
+        let simulator = Arc::new(TopOfBlockSimulator::new(
+            NonZeroUsize::new(2),
+            Arc::new(PoolMetrics::default()),
+        ));
+
+        let first = simulator.acquire_permit().await.unwrap();
+        let _second = simulator.acquire_permit().await.unwrap();
+
+        let blocked = tokio::spawn({
+            let simulator = simulator.clone();
+            async move { simulator.acquire_permit().await.unwrap() }
+        });
+
+        tokio::task::yield_now().await;
+        assert!(
+            !blocked.is_finished(),
+            "third task incorrectly acquired a permit"
+        );
+
+        drop(first);
+
+        let third = tokio::time::timeout(Duration::from_millis(100), blocked)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(third.is_limited())
+    }
+
+    #[tokio::test]
+    async fn presim_unlimited_concurrency() {
+        let simulator = TopOfBlockSimulator::new_for_test();
+
+        assert!(simulator.acquire_permit().await.unwrap().is_unlimited());
     }
 }

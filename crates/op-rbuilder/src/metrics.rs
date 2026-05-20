@@ -325,3 +325,27 @@ impl VersionInfo {
         gauge.set(1);
     }
 }
+
+#[must_use = "dropping the guard decrements the gauge"]
+pub struct GaugeIncrementGuard {
+    gauge: Gauge,
+}
+
+pub trait GaugeExt {
+    fn increment_guard(&self) -> GaugeIncrementGuard;
+}
+
+impl GaugeExt for Gauge {
+    fn increment_guard(&self) -> GaugeIncrementGuard {
+        self.increment(1);
+        GaugeIncrementGuard {
+            gauge: self.clone(),
+        }
+    }
+}
+
+impl Drop for GaugeIncrementGuard {
+    fn drop(&mut self) {
+        self.gauge.decrement(1);
+    }
+}
