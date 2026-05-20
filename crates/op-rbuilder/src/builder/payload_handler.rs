@@ -423,7 +423,7 @@ fn execute_transactions(
         }
 
         let tx_uncompressed_size = tx_recovered.encode_2718_len() as u64;
-        let _new_cumulative_uncompressed = info
+        let new_cumulative_uncompressed = info
             .cumulative_uncompressed_bytes
             .checked_add(tx_uncompressed_size)
             .ok_or_else(|| {
@@ -432,7 +432,7 @@ fn execute_transactions(
                 )
             })?;
         if let Some(limit) = max_uncompressed_block_size
-            && info.cumulative_uncompressed_bytes > limit
+            && new_cumulative_uncompressed > limit
         {
             bail!("flashblock exceeded max uncompressed block size when executing transactions");
         }

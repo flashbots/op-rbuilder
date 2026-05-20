@@ -57,9 +57,6 @@ impl<
                     Ok(false) => {}
                     Err(e) => {
                         error!(tx_hash = %tx_hash, error = %e, "pre-simulation task failed");
-                        let _ = inner_pool
-                            .add_transaction(origin, transaction.into_transaction())
-                            .await;
                     }
                 }
                 metrics.presim_duration.record(sim_start.elapsed());
