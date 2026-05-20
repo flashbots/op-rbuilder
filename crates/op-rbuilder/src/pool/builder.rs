@@ -109,7 +109,10 @@ where
         let metrics = Arc::new(PoolMetrics::default());
 
         let simulator = if pre_simulate_bundles {
-            let simulator = Arc::new(TopOfBlockSimulator::new(presim_max_concurrent));
+            let simulator = Arc::new(TopOfBlockSimulator::new(
+                presim_max_concurrent,
+                metrics.clone(),
+            ));
 
             let chain_events = ctx.provider().canonical_state_stream();
             let op_evm_config = OpEvmConfig::optimism(ctx.provider().chain_spec());

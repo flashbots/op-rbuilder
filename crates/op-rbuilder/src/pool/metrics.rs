@@ -1,4 +1,4 @@
-use metrics::{Counter, Histogram, counter};
+use metrics::{Counter, Gauge, Histogram, counter};
 use reth_metrics::Metrics;
 
 #[derive(Metrics, Clone)]
@@ -10,6 +10,14 @@ pub(super) struct PoolMetrics {
     pub presim_tip_state_updates: Counter,
     /// Number of pending txs evicted due to failing top of block simulation
     pub presim_pending_evictions: Counter,
+    /// Number of presim tasks waiting for a concurrency permit.
+    pub presim_waiting: Gauge,
+    /// Number of presim tasks currently executing.
+    pub presim_in_flight: Gauge,
+    /// Histogram of time spent waiting for a presim concurrency permit.
+    pub presim_wait_duration: Histogram,
+    /// Configured maximum number of concurrent presim tasks.
+    pub presim_concurrency_limit: Gauge,
 }
 
 pub(super) fn increment_presim_count(sim_result: &eyre::Result<bool>) {

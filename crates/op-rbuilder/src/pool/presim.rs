@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::Instant};
 
 use alloy_consensus::{BlockHeader, Header};
 use alloy_evm::{Evm, InvalidTxError};
@@ -20,16 +20,19 @@ use revm::{
     context::{TxEnv, result::ResultAndState},
     context_interface::result::InvalidTransaction,
 };
-use tokio::sync::Semaphore;
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tracing::{debug, error, warn};
 
-use crate::{evm::OpBlockEvmFactory, pool::metrics::PoolMetrics, tx::FBPooledTransaction};
+use crate::{
+    evm::OpBlockEvmFactory, metrics::GaugeExt, pool::metrics::PoolMetrics, tx::FBPooledTransaction,
+};
 
 /// Pre-simulates transactions against the current head state to filter out
 /// reverting transactions before they enter the pool.
 pub(crate) struct TopOfBlockSimulator {
     tip_state: RwLock<Arc<Option<TipState>>>,
     permits: Arc<Semaphore>,
+    metrics: Arc<PoolMetrics>,
 }
 
 impl std::fmt::Debug for TopOfBlockSimulator {
@@ -45,10 +48,21 @@ pub(crate) struct TipState {
 }
 
 impl TopOfBlockSimulator {
-    pub(crate) fn new(max_concurrent: usize) -> Self {
+    pub(crate) fn new(max_concurrent: usize, metrics: Arc<PoolMetrics>) -> Self {
+        metrics.presim_concurrency_limit.set(max_concurrent as f64);
         Self {
             tip_state: RwLock::new(Arc::new(None)),
             permits: Arc::new(Semaphore::new(max_concurrent)),
+            metrics,
+        }
+    }
+
+    #[cfg(test)]
+    fn new_for_test() -> Self {
+        Self {
+            tip_state: RwLock::new(Arc::new(None)),
+            permits: Arc::new(Semaphore::new(1)),
+            metrics: Arc::new(PoolMetrics::default()),
         }
     }
 
@@ -56,6 +70,22 @@ impl TopOfBlockSimulator {
         self: Arc<Self>,
         tx: Recovered<OpTransactionSigned>,
     ) -> eyre::Result<bool> {
+        let permit = self.acquire_permit().await?;
+
+        let in_flight = self.metrics.presim_in_flight.increment_guard();
+        tokio::task::spawn_blocking(move || {
+            let _permit = permit;
+            let _in_flight = in_flight;
+            self.simulate_tx_sync(tx)
+        })
+        .await
+        .wrap_err("simulate tx task panicked")
+    }
+
+    async fn acquire_permit(&self) -> eyre::Result<OwnedSemaphorePermit> {
+        let wait_start = Instant::now();
+        let _waiting = self.metrics.presim_waiting.increment_guard();
+
         let permit = self
             .permits
             .clone()
@@ -63,12 +93,11 @@ impl TopOfBlockSimulator {
             .await
             .wrap_err("presim semaphore closed")?;
 
-        tokio::task::spawn_blocking(move || {
-            let _permit = permit;
-            self.simulate_tx_sync(tx)
-        })
-        .await
-        .wrap_err("simulate tx task panicked")
+        self.metrics
+            .presim_wait_duration
+            .record(wait_start.elapsed());
+
+        Ok(permit)
     }
 
     pub(crate) fn simulate_tx_sync(&self, tx: impl IntoTxEnv<OpTransaction<TxEnv>>) -> bool {
@@ -401,7 +430,7 @@ mod tests {
 
     #[test]
     fn no_tip_state_passes_through() {
-        let simulator = TopOfBlockSimulator::new(1);
+        let simulator = TopOfBlockSimulator::new_for_test();
         let signer = PrivateKeySigner::random();
         let tx = simple_transfer(&signer, 0);
 
@@ -410,7 +439,7 @@ mod tests {
 
     #[test]
     fn update_tip_makes_simulation_available() {
-        let simulator = TopOfBlockSimulator::new(1);
+        let simulator = TopOfBlockSimulator::new_for_test();
         let signer = PrivateKeySigner::random();
         let provider = funded_provider(signer.address());
 
