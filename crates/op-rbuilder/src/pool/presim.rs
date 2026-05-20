@@ -36,6 +36,7 @@ pub(crate) struct TopOfBlockSimulator {
 }
 
 /// Holds a concurrency permit when presim limiting is enabled.
+#[derive(derive_more::IsVariant)]
 enum PresimPermit {
     Limited { _permit: OwnedSemaphorePermit },
     Unlimited,
@@ -290,6 +291,8 @@ pub(crate) async fn maintain_pending_simulations<Pool, St>(
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use super::*;
     use alloy_consensus::{SignableTransaction, TxEip1559};
     use alloy_evm::EvmEnv;
@@ -475,5 +478,42 @@ mod tests {
 
         // Same nonce=0 tx should still succeed — state wasn't persisted
         assert!(tip_state.run_simulation(simple_transfer(&signer, 0)));
+    }
+
+    #[tokio::test]
+    async fn presim_limits_concurrent_tasks() {
+        let simulator = Arc::new(TopOfBlockSimulator::new(
+            NonZeroUsize::new(2),
+            Arc::new(PoolMetrics::default()),
+        ));
+
+        let first = simulator.acquire_permit().await.unwrap();
+        let _second = simulator.acquire_permit().await.unwrap();
+
+        let blocked = tokio::spawn({
+            let simulator = simulator.clone();
+            async move { simulator.acquire_permit().await.unwrap() }
+        });
+
+        tokio::task::yield_now().await;
+        assert!(
+            !blocked.is_finished(),
+            "third task incorrectly acquired a permit"
+        );
+
+        drop(first);
+
+        let third = tokio::time::timeout(Duration::from_millis(100), blocked)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(third.is_limited())
+    }
+
+    #[tokio::test]
+    async fn presim_unlimited_concurrency() {
+        let simulator = TopOfBlockSimulator::new_for_test();
+
+        assert!(simulator.acquire_permit().await.unwrap().is_unlimited());
     }
 }
