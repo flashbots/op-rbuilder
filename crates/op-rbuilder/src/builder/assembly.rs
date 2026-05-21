@@ -296,7 +296,7 @@ impl BlockAssemblyInput {
     pub(super) fn assemble<DB, P>(
         self,
         state: &mut State<DB>,
-        fb_state: Option<&mut FlashblocksState>,
+        fb_state: Option<&FlashblocksState>,
         info: &mut ExecutionInfo,
         state_root_calc: &mut StateRootCalculator,
         metrics: Arc<OpRBuilderMetrics>,
@@ -316,10 +316,7 @@ impl BlockAssemblyInput {
 
         self.check_block_number()?;
 
-        let flashblock_index_for_trace = fb_state
-            .as_deref()
-            .map(|s| s.flashblock_index())
-            .unwrap_or(0);
+        let flashblock_index_for_trace = fb_state.map(|s| s.flashblock_index()).unwrap_or(0);
 
         // Calculate the state root (returns defaults when disabled)
         let state_root_start_time = Instant::now();
@@ -379,10 +376,8 @@ impl BlockAssemblyInput {
 
         let block_hash = sealed_block.hash();
 
-        let target_flashblock_count_for_trace = fb_state
-            .as_deref()
-            .map(|s| s.target_flashblock_count())
-            .unwrap_or(0);
+        let target_flashblock_count_for_trace =
+            fb_state.map(|s| s.target_flashblock_count()).unwrap_or(0);
 
         info!(
             target: "payload_builder",
@@ -450,16 +445,13 @@ impl BlockAssemblyInput {
         );
 
         // pick the new transactions from the info field and update the last flashblock index
-        let (new_transactions, new_receipts) = if let Some(fb_state) = fb_state {
-            let new_txs = fb_state.slice_new_transactions(&info.executed_transactions);
-            let new_receipts = fb_state.slice_new_receipts(&info.receipts);
-            fb_state.set_last_flashblock_tx_index(info.executed_transactions.len());
+        let (new_transactions, new_receipts) = if fb_state.is_some() {
+            let new_txs = info.new_transactions_vec();
+            let new_receipts = info.new_receipts_vec();
+            info.set_last_flashblock_tx_index();
             (new_txs, new_receipts)
         } else {
-            (
-                info.executed_transactions.as_slice(),
-                info.receipts.as_slice(),
-            )
+            (info.executed_transactions.clone(), info.receipts.clone())
         };
 
         let new_transactions_encoded: Vec<Bytes> = new_transactions

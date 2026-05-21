@@ -62,6 +62,10 @@ pub struct ExecutionInfo {
     pub optional_blob_fields: Option<(Option<u64>, Option<u64>)>,
     /// Reverted bundle tx hashes to remove from the pool after each flashblock.
     pub reverted_bundle_tx_hashes: Vec<TxHash>,
+
+    /// Index tracking the last consumed flashblock. Used for slicing
+    /// transactions/receipts per flashblock.
+    last_flashblock_tx_index: usize,
 }
 
 impl ExecutionInfo {
@@ -78,6 +82,7 @@ impl ExecutionInfo {
             da_footprint_scalar: None,
             optional_blob_fields: None,
             reverted_bundle_tx_hashes: Vec::new(),
+            last_flashblock_tx_index: 0,
         }
     }
 
@@ -192,6 +197,20 @@ impl ExecutionInfo {
         // Append sender and transaction to the respective lists
         self.executed_senders.push(tx.signer());
         self.executed_transactions.push(tx.clone().into_inner());
+    }
+
+    pub fn set_last_flashblock_tx_index(&mut self) {
+        self.last_flashblock_tx_index = self.executed_transactions.len();
+    }
+
+    /// Extracts new transactions since the last flashblock
+    pub fn new_transactions_vec(&self) -> Vec<OpTransactionSigned> {
+        self.executed_transactions[self.last_flashblock_tx_index..].to_vec()
+    }
+
+    /// Extracts new receipts since the last flashblock
+    pub fn new_receipts_vec(&self) -> Vec<OpReceipt> {
+        self.receipts[self.last_flashblock_tx_index..].to_vec()
     }
 }
 
