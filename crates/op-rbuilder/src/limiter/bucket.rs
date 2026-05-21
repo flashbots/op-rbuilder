@@ -6,6 +6,7 @@ use std::{
 };
 
 use alloy_primitives::Address;
+use metrics::Gauge;
 
 pub(super) trait Token:
     Copy + Ord + Default + Add<Output = Self> + AddAssign + Sub<Output = Self> + SubAssign
@@ -16,39 +17,49 @@ impl<T: Copy + Ord + Default + Add<Output = T> + AddAssign + Sub<Output = Self> 
 {
 }
 
+/// Batch of pending per-address bucket updates produced by a [`BucketLimiterGuard`]. Hands the deltas back to [`BucketLimiter::commit`].
+#[derive(Debug)]
+pub(super) struct PendingDeltas<T>(HashMap<Address, TokenBucket<T>>);
+
+impl<T> PendingDeltas<T> {
+    pub(super) fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
 /// Canonical token-bucket store.
 ///
 /// Holds the persistent `Arc<HashMap>` of buckets; only mutates on
-/// [`AddressBuckets::refresh`] (per-block refill + GC) and
-/// [`AddressBuckets::fold_overlay`] (folding an overlay's deltas back).
-/// Forking an overlay is an O(1) `Arc` bump on the immutable base.
+/// [`AddressBuckets::refill_buckets`] (per-block refill + GC) and
+/// [`AddressBuckets::commit`] (applying a guard's pending deltas).
+/// Beginning a guard is an O(1) `Arc` bump on the immutable base.
 #[derive(Debug, Clone)]
-pub(super) struct AddressBuckets<T> {
+struct AddressBuckets<T> {
     base: Arc<HashMap<Address, TokenBucket<T>>>,
 }
 
 impl<T: Token> AddressBuckets<T> {
-    pub(super) fn new() -> Self {
+    fn new() -> Self {
         Self {
             base: Arc::new(HashMap::new()),
         }
     }
 
-    pub(super) fn len(&self) -> usize {
+    fn len(&self) -> usize {
         self.base.len()
     }
 
-    /// Fork an overlay sharing this canonical's base. O(1).
-    pub(super) fn fork(&self) -> AddressBucketsOverlay<T> {
-        AddressBucketsOverlay {
+    /// Begin a guard sharing this canonical's base. O(1).
+    fn begin(&self) -> AddressBucketsGuard<T> {
+        AddressBucketsGuard {
             base: Arc::clone(&self.base),
-            overlay: Mutex::new(HashMap::new()),
+            pending: Mutex::new(HashMap::new()),
         }
     }
 
     /// Per-block bucket refill + (optional) cleanup. Returns the count of
     /// buckets removed by cleanup.
-    pub(super) fn refresh(&mut self, refill_amount: T, cleanup: bool) -> usize {
+    fn refill_buckets(&mut self, refill_amount: T, cleanup: bool) -> usize {
         let mut new_base = HashMap::with_capacity(self.base.len());
         for (addr, bucket) in self.base.iter() {
             let mut refilled = bucket.clone();
@@ -63,16 +74,16 @@ impl<T: Token> AddressBuckets<T> {
         removed
     }
 
-    /// Apply an overlay's accumulated deltas. Caller must already have
-    /// validated the overlay's epoch. Returns the number of addresses that
-    /// were newly added to the canonical (i.e. not present before the fold).
-    pub(super) fn fold_overlay(&mut self, overlay_map: HashMap<Address, TokenBucket<T>>) -> usize {
-        if overlay_map.is_empty() {
+    /// Apply a guard's accumulated deltas. Caller must already have validated
+    /// the guard's epoch. Returns the number of addresses that were newly
+    /// added to the canonical (i.e. not present before the commit).
+    fn commit(&mut self, deltas: HashMap<Address, TokenBucket<T>>) -> usize {
+        if deltas.is_empty() {
             return 0;
         }
         let mut new_base = (*self.base).clone();
         let mut newly_inserted = 0;
-        for (addr, bucket) in overlay_map {
+        for (addr, bucket) in deltas {
             if new_base.insert(addr, bucket).is_none() {
                 newly_inserted += 1;
             }
@@ -88,26 +99,26 @@ impl<T: Token> Default for AddressBuckets<T> {
     }
 }
 
-/// In-flight working copy. Forked from an [`AddressBuckets`]; mutations
-/// accumulate in a private overlay map until folded back.
+/// In-flight working copy. Begun from an [`AddressBuckets`]; mutations
+/// accumulate in a private pending map until committed back.
 ///
-/// Reads (overlay-then-base) are O(1); the internal `Mutex` only serializes
-/// concurrent access from within a single overlay (typically uncontended:
-/// each overlay is owned by a single build task).
+/// Reads (pending-then-base) are O(1); the internal `Mutex` only serializes
+/// concurrent access from within a single guard (typically uncontended: each
+/// guard is owned by a single build task).
 #[derive(Debug)]
-pub(super) struct AddressBucketsOverlay<T> {
-    /// Immutable view of the canonical's base at fork time.
+struct AddressBucketsGuard<T> {
+    /// Immutable view of the canonical's base at the time the guard began.
     base: Arc<HashMap<Address, TokenBucket<T>>>,
     /// Local mutations layered on top of `base`. An address only appears here
     /// once it's been touched.
-    overlay: Mutex<HashMap<Address, TokenBucket<T>>>,
+    pending: Mutex<HashMap<Address, TokenBucket<T>>>,
 }
 
-impl<T: Token> AddressBucketsOverlay<T> {
+impl<T: Token> AddressBucketsGuard<T> {
     /// Returns `true` if the address has no debt (or has no bucket yet).
-    /// Reads through the overlay first, then the base.
-    pub(super) fn is_debt_free(&self, address: &Address) -> bool {
-        let guard = self.overlay.lock().unwrap_or_else(|p| p.into_inner());
+    /// Reads through the pending map first, then the base.
+    fn is_debt_free(&self, address: &Address) -> bool {
+        let guard = self.pending.lock().unwrap_or_else(|p| p.into_inner());
         if let Some(b) = guard.get(address) {
             return b.debt_free();
         }
@@ -117,10 +128,10 @@ impl<T: Token> AddressBucketsOverlay<T> {
 
     /// Consume the given amount for an address. Always succeeds — excess is
     /// tracked as debt. Reads through to base on first touch, then mutates
-    /// the overlay. Returns `true` if a brand-new bucket was created (i.e.
-    /// the address was not present in the base view either).
-    pub(super) fn consume(&self, address: Address, amount: T, default_capacity: T) -> bool {
-        let mut guard = self.overlay.lock().unwrap_or_else(|p| p.into_inner());
+    /// the pending map. Returns `true` if a brand-new bucket was created
+    /// (i.e. the address was not present in the base view either).
+    fn consume(&self, address: Address, amount: T, default_capacity: T) -> bool {
+        let mut guard = self.pending.lock().unwrap_or_else(|p| p.into_inner());
         let mut created_new = false;
         let bucket = match guard.entry(address) {
             hash_map::Entry::Occupied(e) => e.into_mut(),
@@ -139,33 +150,84 @@ impl<T: Token> AddressBucketsOverlay<T> {
         created_new
     }
 
-    /// Capture the overlay's current state. O(K) where K is the number of
-    /// addresses touched since the fork.
-    pub(super) fn checkpoint(&self) -> OverlayCheckpoint<T> {
-        let guard = self.overlay.lock().unwrap_or_else(|p| p.into_inner());
-        OverlayCheckpoint(guard.clone())
-    }
-
-    /// Restore the overlay to a previously captured checkpoint. Base is not
-    /// touched.
-    pub(super) fn restore(&self, cp: &OverlayCheckpoint<T>) {
-        let mut guard = self.overlay.lock().unwrap_or_else(|p| p.into_inner());
-        *guard = cp.0.clone();
-    }
-
-    /// Consume self, returning the accumulated overlay map.
-    pub(super) fn into_overlay_map(self) -> HashMap<Address, TokenBucket<T>> {
-        self.overlay.into_inner().unwrap_or_else(|p| p.into_inner())
+    /// Consume self, returning the accumulated pending map.
+    fn into_pending(self) -> HashMap<Address, TokenBucket<T>> {
+        self.pending.into_inner().unwrap_or_else(|p| p.into_inner())
     }
 }
 
-/// Opaque overlay-only snapshot.
+/// Configuration for a [`BucketLimiter`].
 #[derive(Debug, Clone)]
-pub(super) struct OverlayCheckpoint<T>(HashMap<Address, TokenBucket<T>>);
+pub(super) struct BucketLimiterConfig<T> {
+    /// Per-address bucket capacity (the steady-state allowance).
+    pub default_capacity: T,
+    /// Amount refilled per block.
+    pub refill_amount: T,
+    /// Cleanup full buckets every N blocks.
+    pub cleanup_interval: u64,
+}
 
-impl<T> Default for OverlayCheckpoint<T> {
-    fn default() -> Self {
-        Self(HashMap::new())
+/// Canonical per-address rate limiter, generic over the resource type.
+/// Wraps [`AddressBuckets`] with config and metric handle.
+#[derive(Debug, Clone)]
+pub(super) struct BucketLimiter<T> {
+    buckets: AddressBuckets<T>,
+    config: BucketLimiterConfig<T>,
+    active_count: Gauge,
+}
+
+impl<T: Token> BucketLimiter<T> {
+    pub(super) fn new(config: BucketLimiterConfig<T>, active_count: Gauge) -> Self {
+        Self {
+            buckets: AddressBuckets::new(),
+            config,
+            active_count,
+        }
+    }
+
+    /// Begin a per-build guard sharing the canonical state.
+    pub(super) fn begin(&self) -> BucketLimiterGuard<T> {
+        BucketLimiterGuard {
+            buckets: self.buckets.begin(),
+            default_capacity: self.config.default_capacity,
+        }
+    }
+
+    /// Per-block refill (and periodic cleanup).
+    pub(super) fn refill_buckets(&mut self, block_number: u64) {
+        let do_cleanup = block_number.is_multiple_of(self.config.cleanup_interval);
+        self.buckets
+            .refill_buckets(self.config.refill_amount, do_cleanup);
+        self.active_count.set(self.buckets.len() as f64);
+    }
+
+    /// Apply a guard's accumulated deltas back into the canonical.
+    pub(super) fn commit(&mut self, deltas: PendingDeltas<T>) {
+        self.buckets.commit(deltas.0);
+        self.active_count.set(self.buckets.len() as f64);
+    }
+}
+
+/// In-flight guard begun from a [`BucketLimiter`]. Reads/consumes go through
+/// here with `&self`; on commit the accumulated deltas are applied back into
+/// the canonical.
+#[derive(Debug)]
+pub(super) struct BucketLimiterGuard<T> {
+    buckets: AddressBucketsGuard<T>,
+    default_capacity: T,
+}
+
+impl<T: Token> BucketLimiterGuard<T> {
+    pub(super) fn is_debt_free(&self, address: &Address) -> bool {
+        self.buckets.is_debt_free(address)
+    }
+
+    pub(super) fn consume(&self, address: Address, amount: T) {
+        self.buckets.consume(address, amount, self.default_capacity);
+    }
+
+    pub(super) fn into_pending(self) -> PendingDeltas<T> {
+        PendingDeltas(self.buckets.into_pending())
     }
 }
 
@@ -175,7 +237,7 @@ impl<T> Default for OverlayCheckpoint<T> {
 /// Buckets can go into debt — `consume` always succeeds, but the bucket
 /// tracks how much was overdrawn.
 #[derive(Debug, Clone)]
-pub(super) struct TokenBucket<T> {
+struct TokenBucket<T> {
     capacity: T,
     available: T,
     debt: T,
@@ -236,20 +298,20 @@ mod tests {
 
         let mut buckets = AddressBuckets::<u64>::new();
 
-        // Seed both addresses via overlay→fold so they land in the canonical.
-        let ov = buckets.fork();
-        ov.consume(addr1, 100, capacity);
-        ov.consume(addr2, 100, capacity);
-        buckets.fold_overlay(ov.into_overlay_map());
+        // Seed both addresses via guard→commit so they land in the canonical.
+        let guard = buckets.begin();
+        guard.consume(addr1, 100, capacity);
+        guard.consume(addr2, 100, capacity);
+        buckets.commit(guard.into_pending());
         assert_eq!(buckets.len(), 2);
 
         // addr1 stays unused; addr2 keeps consuming.
         for block in 1..=10u64 {
-            let _removed = buckets.refresh(refill_rate, block.is_multiple_of(5));
+            let _removed = buckets.refill_buckets(refill_rate, block.is_multiple_of(5));
             if block > 1 {
-                let ov = buckets.fork();
-                ov.consume(addr2, 100, capacity);
-                buckets.fold_overlay(ov.into_overlay_map());
+                let guard = buckets.begin();
+                guard.consume(addr2, 100, capacity);
+                buckets.commit(guard.into_pending());
             }
         }
 

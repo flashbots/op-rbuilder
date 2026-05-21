@@ -1,18 +1,18 @@
 use thiserror::Error;
 
-/// Errors returned when committing an [`AddressLimiterOverlay`] back to its
+/// Errors returned when committing an [`AddressLimiterGuard`] back to its
 /// canonical [`AddressLimiter`].
 ///
-/// [`AddressLimiterOverlay`]: super::AddressLimiterOverlay
+/// [`AddressLimiterGuard`]: super::AddressLimiterGuard
 /// [`AddressLimiter`]: super::AddressLimiter
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum CommitError {
-    /// The canonical limiter advanced (via refresh or a sibling commit) since
-    /// this overlay was forked, so the overlay's deltas are no longer safe to
-    /// apply.
-    #[error("overlay is stale: overlay_epoch={overlay_epoch}, canonical_epoch={canonical_epoch}")]
+    /// The canonical limiter advanced (via `refill_buckets` or a sibling
+    /// commit) since this guard began, so the guard's deltas are no longer
+    /// safe to apply.
+    #[error("guard is stale: guard_epoch={guard_epoch}, canonical_epoch={canonical_epoch}")]
     StaleEpoch {
-        overlay_epoch: u64,
+        guard_epoch: u64,
         canonical_epoch: u64,
     },
 }

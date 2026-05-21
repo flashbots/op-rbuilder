@@ -403,7 +403,7 @@ where
             .backrun_bundle_pool()
             .map(|pool| pool.block_pool(config.parent_header.number + 1));
 
-        let address_limiter = builder_ctx.address_limiter.fork();
+        let address_limiter = builder_ctx.address_limiter.begin();
 
         Ok(OpPayloadJobCtx::new(
             Arc::clone(builder_ctx),
@@ -447,7 +447,7 @@ where
 
         self.builder_ctx
             .address_limiter
-            .refresh(config.parent_header.number + 1);
+            .refill_buckets(config.parent_header.number + 1);
 
         let ctx = self
             .get_op_payload_job_ctx(config.clone(), payload_cancel.flashblock_child())
