@@ -19,8 +19,8 @@ use crate::{
         builder_tx::{BuilderTxBase, BuilderTxEnv},
         get_nonce,
     },
+    execution::ExecutionInfo,
     flashtestations::builder_tx::FlashtestationsBuilderTx,
-    primitives::reth::ExecutionInfo,
     tx_signer::Signer,
 };
 

@@ -34,10 +34,10 @@ use crate::{
         cancellation::FlashblockJobCancellation,
     },
     evm::OpBlockEvmFactory,
+    execution::{ExecutionInfo, TxnExecutionResult},
     hardforks::ActiveHardforks,
     limiter::AddressLimiter,
     metrics::OpRBuilderMetrics,
-    primitives::reth::{ExecutionInfo, TxnExecutionResult},
     traits::PayloadTxsBounds,
 };
 
@@ -256,17 +256,10 @@ impl OpPayloadJobCtx {
                 }
             };
 
-            let tx_da_size = if !sequencer_tx.is_deposit() {
-                op_alloy_flz::tx_estimated_size_fjord_bytes(sequencer_tx.encoded_2718().as_slice())
-            } else {
-                0
-            };
-
             info.commit_tx(
                 &sequencer_tx,
                 result,
                 state,
-                tx_da_size,
                 None,
                 depositor_nonce,
                 &self.evm_factory,
@@ -556,7 +549,6 @@ impl OpPayloadJobCtx {
                 &tx,
                 result,
                 state,
-                tx_da_size,
                 Some(miner_fee),
                 None,
                 &self.evm_factory,
@@ -801,7 +793,6 @@ impl OpPayloadJobCtx {
                         &bundle.backrun_tx,
                         br_result,
                         br_state,
-                        br_tx_da_size,
                         Some(backrun_priority_fee),
                         None,
                         &self.evm_factory,

@@ -4,9 +4,9 @@ use crate::{
         syncer_config::OpPayloadSyncerConfig,
     },
     evm::OpBlockEvmFactory,
+    execution::ExecutionInfo,
     hardforks::ActiveHardforks,
     metrics::OpRBuilderMetrics,
-    primitives::reth::ExecutionInfo,
     traits::ClientBounds,
 };
 use alloy_consensus::BlockHeader;
@@ -412,42 +412,21 @@ fn execute_transactions(
             ));
         }
 
-        let new_cumulative_gas = info
-            .cumulative_gas_used
-            .checked_add(tx_gas_used)
-            .ok_or_else(|| {
-                eyre::eyre!("total gas used overflowed when executing flashblock transactions")
-            })?;
-        if new_cumulative_gas > gas_limit {
-            bail!("flashblock exceeded gas limit when executing transactions");
+        if let Err(err) = info.check_gas_limit(tx_gas_used, gas_limit) {
+            bail!("{err}");
         }
 
-        let tx_uncompressed_size = tx_recovered.encode_2718_len() as u64;
-        let _new_cumulative_uncompressed = info
-            .cumulative_uncompressed_bytes
-            .checked_add(tx_uncompressed_size)
-            .ok_or_else(|| {
-                eyre::eyre!(
-                    "total uncompressed bytes overflowed when executing flashblock transactions"
-                )
-            })?;
-        if let Some(limit) = max_uncompressed_block_size
-            && info.cumulative_uncompressed_bytes > limit
-        {
-            bail!("flashblock exceeded max uncompressed block size when executing transactions");
+        if let Err(err) = info.check_uncompressed_size_limit(
+            tx_recovered.encode_2718_len() as u64,
+            max_uncompressed_block_size,
+        ) {
+            bail!("{err}");
         }
-
-        let tx_da_size = if !tx_recovered.is_deposit() {
-            op_alloy_flz::tx_estimated_size_fjord_bytes(tx_recovered.encoded_2718().as_slice())
-        } else {
-            0
-        };
 
         info.commit_tx(
             &tx_recovered,
             result,
             state,
-            tx_da_size,
             None,
             depositor_nonce,
             evm_factory,

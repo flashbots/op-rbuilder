@@ -23,8 +23,7 @@ use revm::{
 use tracing::{error, trace, warn};
 
 use crate::{
-    evm::OpBlockEvmFactory, hardforks::ActiveHardforks, primitives::reth::ExecutionInfo,
-    tx_signer::Signer,
+    evm::OpBlockEvmFactory, execution::ExecutionInfo, hardforks::ActiveHardforks, tx_signer::Signer,
 };
 
 #[derive(Debug, Default)]
@@ -270,20 +269,18 @@ pub trait BuilderTransactions {
                 continue;
             }
 
-            let tx_uncompressed_size = builder_tx.signed_tx.inner().encode_2718_len() as u64;
-
             // Skip the builder tx if including it would push the cumulative
             // uncompressed block size over the configured limit. The state
             // changes from the simulation are dropped (we never call commit).
-            if let Some(limit) = ctx.max_uncompressed_block_size
-                && info.cumulative_uncompressed_bytes + tx_uncompressed_size > limit
-            {
+            if let Err(err) = info.check_uncompressed_size_limit(
+                builder_tx.signed_tx.inner().encode_2718_len() as u64,
+                ctx.max_uncompressed_block_size,
+            ) {
                 warn!(
                     target: "payload_builder",
                     tx_hash = %builder_tx.signed_tx.tx_hash(),
                     cumulative_uncompressed = info.cumulative_uncompressed_bytes,
-                    tx_uncompressed_size,
-                    limit,
+                    %err,
                     "skipping builder tx: would exceed max uncompressed block size"
                 );
                 continue;
@@ -293,7 +290,6 @@ pub trait BuilderTransactions {
                 &builder_tx.signed_tx,
                 result,
                 state,
-                builder_tx.da_size,
                 None,
                 None,
                 ctx.evm_factory,

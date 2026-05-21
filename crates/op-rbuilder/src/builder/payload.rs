@@ -10,10 +10,10 @@ use crate::{
         timing::{FlashblockScheduler, compute_slot_offset_ms},
     },
     evm::OpBlockEvmFactory,
+    execution::ExecutionInfo,
     hardforks::ActiveHardforks,
     limiter::AddressLimiter,
     metrics::{OpRBuilderMetrics, record_flashblock_publish_timing},
-    primitives::reth::ExecutionInfo,
     runtime_ext::RuntimeExt,
     tokio_metrics::FlashblocksTaskMetrics,
     traits::{ClientBounds, PoolBounds},
@@ -24,7 +24,7 @@ use reth_chainspec::EthChainSpec;
 use reth_node_api::PayloadBuilderError;
 use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
 use reth_optimism_node::{OpBuiltPayload, OpPayloadBuilderAttributes};
-use reth_optimism_primitives::{OpReceipt, OpTransactionSigned};
+use reth_optimism_primitives::OpTransactionSigned;
 use reth_payload_primitives::PayloadBuilderAttributes;
 use reth_payload_util::BestPayloadTransactions;
 use reth_provider::{
@@ -76,9 +76,6 @@ pub(super) struct FlashblocksState {
     da_per_batch: Option<u64>,
     /// DA footprint limit per flashblock
     da_footprint_per_batch: Option<u64>,
-    /// Index into ExecutionInfo tracking the last consumed flashblock
-    /// Used for slicing transactions/receipts per flashblock
-    last_flashblock_tx_index: usize,
 }
 
 struct FallbackBuildOutput<Cache, Transition> {
@@ -127,7 +124,6 @@ impl FlashblocksState {
             gas_per_batch: self.gas_per_batch,
             da_per_batch: self.da_per_batch,
             da_footprint_per_batch: self.da_footprint_per_batch,
-            last_flashblock_tx_index: self.last_flashblock_tx_index,
         }
     }
 
@@ -214,23 +210,6 @@ impl FlashblocksState {
 
     fn target_da_footprint_for_batch(&self) -> Option<u64> {
         self.target_da_footprint_for_batch
-    }
-
-    pub(super) fn set_last_flashblock_tx_index(&mut self, index: usize) {
-        self.last_flashblock_tx_index = index;
-    }
-
-    /// Extracts new transactions since the last flashblock
-    pub(super) fn slice_new_transactions<'a>(
-        &self,
-        all_transactions: &'a [OpTransactionSigned],
-    ) -> &'a [OpTransactionSigned] {
-        &all_transactions[self.last_flashblock_tx_index..]
-    }
-
-    /// Extracts new receipts since the last flashblock
-    pub(super) fn slice_new_receipts<'a>(&self, all_receipts: &'a [OpReceipt]) -> &'a [OpReceipt] {
-        &all_receipts[self.last_flashblock_tx_index..]
     }
 }
 
@@ -732,10 +711,10 @@ where
                         let mut best_txs = FlashblockPoolTxCursor::new(&mut tx_tracker);
 
                         let mut info = info;
-                        let mut fb_state = fb_state;
+                        let fb_state = fb_state;
                         let result = builder.build_next_flashblock(
                             &ctx,
-                            &mut fb_state,
+                            &fb_state,
                             &mut info,
                             &mut state,
                             &state_provider,
@@ -839,7 +818,7 @@ where
     fn build_fallback_block(
         &self,
         ctx: OpPayloadJobCtx,
-        mut fb_state: FlashblocksState,
+        fb_state: FlashblocksState,
         mut cached_reads: CachedReads,
         mut state_root_calc: StateRootCalculator,
     ) -> eyre::Result<FallbackBuildOutput<CacheState, Option<TransitionState>>> {
@@ -878,7 +857,7 @@ where
 
         let (payload, fb_payload) = ctx.block_assembly_input()?.assemble(
             &mut state,
-            Some(&mut fb_state),
+            Some(&fb_state),
             &mut info,
             &mut state_root_calc,
             ctx.metrics.clone(),
@@ -908,7 +887,7 @@ where
     >(
         &self,
         ctx: &OpPayloadJobCtx,
-        fb_state: &mut FlashblocksState,
+        fb_state: &FlashblocksState,
         info: &mut ExecutionInfo,
         state: &mut State<DB>,
         state_provider: impl reth::providers::StateProvider + Clone,
@@ -992,11 +971,11 @@ where
         )
         .wrap_err("failed to execute best transactions")?;
         // Extract last transactions
-        let new_transactions: Vec<_> = fb_state
-            .slice_new_transactions(&info.executed_transactions)
+        let new_transactions = info
+            .new_transactions_vec()
             .iter()
             .map(|tx| tx.tx_hash())
-            .collect::<Vec<_>>();
+            .collect();
         best_txs.mark_committed(new_transactions);
 
         // Remove reverted bundle txs from the pool so they aren't re-simulated in future blocks
