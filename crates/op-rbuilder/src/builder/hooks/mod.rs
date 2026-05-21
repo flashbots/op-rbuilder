@@ -12,7 +12,7 @@ mod ws;
 
 pub(super) use channel::ChannelHook;
 pub(super) use metrics::MetricsHook;
-pub(super) use post_seal::{PostSealHook, SealedCandidate, SealedCtx};
+pub(super) use post_seal::{PostSealHook, SealedCandidate, SlotMeta};
 pub(super) use ws::WsHook;
 
 /// Dispatch a sealed candidate to every hook in `hooks`.
@@ -22,9 +22,9 @@ pub(super) use ws::WsHook;
 pub(super) fn dispatch_post_seal(
     hooks: &[Box<dyn PostSealHook>],
     candidate: &SealedCandidate,
-    ctx: &SealedCtx,
+    slot: &SlotMeta,
 ) {
     for h in hooks {
-        h.on_sealed(candidate, ctx);
+        h.on_sealed(candidate, slot);
     }
 }

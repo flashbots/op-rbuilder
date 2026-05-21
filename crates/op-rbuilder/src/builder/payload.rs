@@ -8,7 +8,7 @@ use crate::{
         context::{OpPayloadBuilderCtx, OpPayloadJobCtx},
         generator::{BuildArguments, PayloadBuilder},
         hooks::{
-            ChannelHook, MetricsHook, PostSealHook, SealedCandidate, SealedCtx, WsHook,
+            ChannelHook, MetricsHook, PostSealHook, SealedCandidate, SlotMeta, WsHook,
             dispatch_post_seal,
         },
         timing::FlashblockScheduler,
@@ -113,7 +113,6 @@ struct FlashblockBuildResult {
     new_payload: OpBuiltPayload,
     fb_payload: OpFlashblockPayload,
     build_duration: core::time::Duration,
-    executed_tx_count: usize,
 }
 
 impl FlashblocksState {
@@ -329,7 +328,11 @@ where
 
         let ws_pub = Arc::new(ws_pub);
         let post_seal_hooks: Vec<Box<dyn PostSealHook>> = vec![
-            Box::new(WsHook::new(Arc::clone(&ws_pub), Arc::clone(&metrics))),
+            Box::new(WsHook::new(
+                Arc::clone(&ws_pub),
+                Arc::clone(&metrics),
+                config.enable_tx_tracking_debug_logs,
+            )),
             Box::new(ChannelHook::new("p2p", built_fb_payload_tx)),
             Box::new(ChannelHook::new("engine", built_payload_tx)),
             Box::new(MetricsHook::new(Arc::clone(&metrics))),
@@ -510,19 +513,15 @@ where
         let candidate = SealedCandidate {
             payload: payload.clone(),
             fb_payload: fb_payload.clone(),
+            build_duration: None,
         };
-        let sealed_ctx = SealedCtx {
+        let slot = SlotMeta {
             payload_id: ctx.payload_id(),
-            block_number: ctx.block_number(),
-            flashblock_index: fb_payload.index,
             no_tx_pool: ctx.attributes().no_tx_pool,
-            executed_tx_count: info.executed_transactions.len(),
             slot_timestamp_secs: config.attributes.timestamp(),
             block_time: self.config.block_time,
-            flashblock_build_duration: None,
-            enable_tx_tracking_debug_logs: self.config.enable_tx_tracking_debug_logs,
         };
-        dispatch_post_seal(&self.post_seal_hooks, &candidate, &sealed_ctx);
+        dispatch_post_seal(&self.post_seal_hooks, &candidate, &slot);
         best_payload_tx.send_replace(Some(payload));
 
         info!(
@@ -799,25 +798,20 @@ where
                         new_payload,
                         fb_payload: built_fb_payload,
                         build_duration,
-                        executed_tx_count,
                     } = result;
 
                     let candidate = SealedCandidate {
                         payload: new_payload.clone(),
                         fb_payload: built_fb_payload,
+                        build_duration: Some(build_duration),
                     };
-                    let sealed_ctx = SealedCtx {
+                    let slot = SlotMeta {
                         payload_id: ctx.payload_id(),
-                        block_number: ctx.block_number(),
-                        flashblock_index: candidate.fb_payload.index,
                         no_tx_pool: ctx.attributes().no_tx_pool,
-                        executed_tx_count,
                         slot_timestamp_secs: ctx.attributes().timestamp(),
                         block_time: self.config.block_time,
-                        flashblock_build_duration: Some(build_duration),
-                        enable_tx_tracking_debug_logs: self.config.enable_tx_tracking_debug_logs,
                     };
-                    dispatch_post_seal(&self.post_seal_hooks, &candidate, &sealed_ctx);
+                    dispatch_post_seal(&self.post_seal_hooks, &candidate, &slot);
                     best_payload_tx.send_replace(Some(new_payload));
                     next_fb_state
                 }
@@ -1091,7 +1085,6 @@ where
                     new_payload,
                     fb_payload,
                     build_duration: flashblock_build_start_time.elapsed(),
-                    executed_tx_count: info.executed_transactions.len(),
                 }))
             }
         }

@@ -1,6 +1,6 @@
 use crate::{
     builder::{
-        hooks::post_seal::{PostSealHook, SealedCandidate, SealedCtx},
+        hooks::post_seal::{PostSealHook, SealedCandidate, SlotMeta},
         timing::compute_slot_offset_ms,
         wspub::WebSocketPublisher,
     },
@@ -11,10 +11,11 @@ use tracing::{debug, warn};
 
 /// Publishes the flashblock payload to WebSocket subscribers, record metrics.
 ///
-/// Suppressed when `SealedCtx::no_tx_pool` is true
-pub(in crate::builder) struct WsHook {
+/// Suppressed when `SlotMeta::no_tx_pool` is true.
+pub(crate) struct WsHook {
     ws_pub: Arc<WebSocketPublisher>,
     metrics: Arc<OpRBuilderMetrics>,
+    enable_tx_tracking_debug_logs: bool,
 }
 
 impl std::fmt::Debug for WsHook {
@@ -24,17 +25,22 @@ impl std::fmt::Debug for WsHook {
 }
 
 impl WsHook {
-    pub(in crate::builder) fn new(
+    pub(crate) fn new(
         ws_pub: Arc<WebSocketPublisher>,
         metrics: Arc<OpRBuilderMetrics>,
+        enable_tx_tracking_debug_logs: bool,
     ) -> Self {
-        Self { ws_pub, metrics }
+        Self {
+            ws_pub,
+            metrics,
+            enable_tx_tracking_debug_logs,
+        }
     }
 }
 
 impl PostSealHook for WsHook {
-    fn on_sealed(&self, candidate: &SealedCandidate, ctx: &SealedCtx) {
-        if ctx.no_tx_pool {
+    fn on_sealed(&self, candidate: &SealedCandidate, slot: &SlotMeta) {
+        if slot.no_tx_pool {
             return;
         }
 
@@ -44,27 +50,27 @@ impl PostSealHook for WsHook {
                 warn!(
                     target: "payload_builder",
                     error = %e,
-                    flashblock_index = ctx.flashblock_index,
+                    flashblock_index = candidate.fb_payload.index,
                     "Failed to publish flashblock via websocket"
                 );
                 return;
             }
         };
 
-        let slot_offset_ms = compute_slot_offset_ms(ctx.slot_timestamp_secs, ctx.block_time);
+        let slot_offset_ms = compute_slot_offset_ms(slot.slot_timestamp_secs, slot.block_time);
         record_flashblock_publish_timing(candidate.fb_payload.index, slot_offset_ms);
         self.metrics
             .flashblock_byte_size_histogram
             .record(byte_size as f64);
 
-        if ctx.enable_tx_tracking_debug_logs {
+        if self.enable_tx_tracking_debug_logs {
             debug!(
                 target: "tx_trace",
-                payload_id = %ctx.payload_id,
-                block_number = ctx.block_number,
+                payload_id = %slot.payload_id,
+                block_number = candidate.payload.block().header().number,
                 flashblock_index = candidate.fb_payload.index,
                 byte_size,
-                total_txs = ctx.executed_tx_count,
+                total_txs = candidate.payload.block().body().transactions.len(),
                 slot_offset_ms,
                 stage = "fb_published"
             );

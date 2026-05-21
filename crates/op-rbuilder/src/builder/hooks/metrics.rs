@@ -1,5 +1,5 @@
 use crate::{
-    builder::hooks::post_seal::{PostSealHook, SealedCandidate, SealedCtx},
+    builder::hooks::post_seal::{PostSealHook, SealedCandidate, SlotMeta},
     metrics::OpRBuilderMetrics,
 };
 use std::sync::Arc;
@@ -7,23 +7,23 @@ use std::sync::Arc;
 /// Records per-flashblock metrics that aren't tied to publication:
 /// build duration and transaction-count histogram.
 #[derive(Debug)]
-pub(in crate::builder) struct MetricsHook {
+pub(crate) struct MetricsHook {
     metrics: Arc<OpRBuilderMetrics>,
 }
 
 impl MetricsHook {
-    pub(in crate::builder) fn new(metrics: Arc<OpRBuilderMetrics>) -> Self {
+    pub(crate) fn new(metrics: Arc<OpRBuilderMetrics>) -> Self {
         Self { metrics }
     }
 }
 
 impl PostSealHook for MetricsHook {
-    fn on_sealed(&self, _candidate: &SealedCandidate, ctx: &SealedCtx) {
-        if let Some(duration) = ctx.flashblock_build_duration {
+    fn on_sealed(&self, candidate: &SealedCandidate, _slot: &SlotMeta) {
+        if let Some(duration) = candidate.build_duration {
             self.metrics.flashblock_build_duration.record(duration);
         }
         self.metrics
             .flashblock_num_tx_histogram
-            .record(ctx.executed_tx_count as f64);
+            .record(candidate.payload.block().body().transactions.len() as f64);
     }
 }

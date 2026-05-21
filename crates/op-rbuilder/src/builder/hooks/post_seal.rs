@@ -8,30 +8,24 @@ use reth_payload_builder::PayloadId;
 ///
 /// `payload` is the full built payload for engine/p2p delivery; `fb_payload`
 /// is the slim, serialisable view streamed to flashblocks subscribers.
+/// `build_duration` is the wall-clock time spent building this flashblock,
+/// or `None` for the fallback candidate (no incremental build step).
 #[derive(Debug, Clone)]
-pub(in crate::builder) struct SealedCandidate {
+pub(crate) struct SealedCandidate {
     pub payload: OpBuiltPayload,
     pub fb_payload: OpFlashblockPayload,
+    pub build_duration: Option<Duration>,
 }
 
-/// Context describing the slot a sealed candidate belongs to.
-///
-/// The fields are intentionally limited to data downstream hooks need.
+/// Slot-level metadata for a given building slot.
 #[derive(Debug, Clone)]
-pub(in crate::builder) struct SealedCtx {
+pub(crate) struct SlotMeta {
     pub payload_id: PayloadId,
-    pub block_number: u64,
-    pub flashblock_index: u64,
     /// True when the FCU specified `no_tx_pool`.
     pub no_tx_pool: bool,
-    pub executed_tx_count: usize,
     /// Slot start timestamp from the payload attributes.
     pub slot_timestamp_secs: u64,
     pub block_time: Duration,
-    /// Wall-clock time spent building this flashblock.
-    /// `None` for the fallback candidate.
-    pub flashblock_build_duration: Option<Duration>,
-    pub enable_tx_tracking_debug_logs: bool,
 }
 
 /// Hook invoked after a flashblock or fallback candidate has been sealed.
@@ -39,8 +33,6 @@ pub(in crate::builder) struct SealedCtx {
 /// Implementations should be cheap and non-blocking: dispatch happens on the
 /// builder's hot path. Errors are intentionally swallowed at the dispatch site;
 /// hooks that want to surface failures should do so via metrics or logs.
-pub(in crate::builder) trait PostSealHook:
-    Send + Sync + std::fmt::Debug
-{
-    fn on_sealed(&self, candidate: &SealedCandidate, ctx: &SealedCtx);
+pub(crate) trait PostSealHook: Send + Sync + std::fmt::Debug {
+    fn on_sealed(&self, candidate: &SealedCandidate, slot: &SlotMeta);
 }
