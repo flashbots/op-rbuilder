@@ -68,8 +68,13 @@ impl PayloadJobCancellation {
     }
 
     /// Future that resolves when cancelled (any reason).
-    pub(crate) fn cancelled(&self) -> tokio_util::sync::WaitForCancellationFuture<'_> {
+    pub(crate) fn wait_for_cancellation(&self) -> tokio_util::sync::WaitForCancellationFuture<'_> {
         self.token.cancelled()
+    }
+
+    /// Returns true if this job has been cancelled for any reason.
+    pub(crate) fn is_cancelled(&self) -> bool {
+        self.token.is_cancelled()
     }
 
     /// Returns the underlying token.
@@ -145,24 +150,28 @@ mod tests {
         let cancel = PayloadJobCancellation::new();
         cancel.cancel_deadline();
         assert!(cancel.token().is_cancelled());
+        assert!(cancel.is_cancelled());
         assert!(!cancel.is_new_fcu());
         assert!(!cancel.is_resolved());
         assert_eq!(cancel.reason(), Some(CancellationReason::Deadline));
     }
 
     #[tokio::test]
-    async fn test_awaitable() {
+    async fn test_wait_for_cancellation() {
         let cancel = PayloadJobCancellation::new();
-        let token = cancel.token();
+        let cancel_to_fire = cancel.clone();
 
         tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(10)).await;
-            cancel.cancel_resolved();
+            cancel_to_fire.cancel_resolved();
         });
 
-        timeout(Duration::from_millis(100), token.cancelled())
+        timeout(Duration::from_millis(100), cancel.wait_for_cancellation())
             .await
             .expect("token should fire when resolved fires");
+
+        assert!(cancel.is_cancelled());
+        assert_eq!(cancel.reason(), Some(CancellationReason::Resolved));
     }
 
     #[tokio::test]
@@ -178,6 +187,7 @@ mod tests {
     #[tokio::test]
     async fn test_reason_none_when_not_cancelled() {
         let cancel = PayloadJobCancellation::new();
+        assert!(!cancel.is_cancelled());
         assert_eq!(cancel.reason(), None);
     }
 
