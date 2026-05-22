@@ -8,6 +8,9 @@ pub(super) struct PoolMetrics {
     pub presim_duration: Histogram,
     /// Number of updates to the tip state for the top of block simulator
     pub presim_tip_state_updates: Counter,
+    /// Number of times the tip state was dropped because no canonical state
+    /// notification arrived within the staleness window (e.g. during sync).
+    pub presim_tip_state_evictions: Counter,
     /// Number of pending txs evicted due to failing top of block simulation
     pub presim_pending_evictions: Counter,
     /// Number of presim tasks waiting for a concurrency permit.
