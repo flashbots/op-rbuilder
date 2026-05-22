@@ -35,7 +35,7 @@ use crate::{
     },
     evm::OpBlockEvmFactory,
     hardforks::ActiveHardforks,
-    limiter::AddressLimiter,
+    limiter::{AddressLimiter, AddressLimiterGuard},
     metrics::OpRBuilderMetrics,
     primitives::reth::{ExecutionInfo, TxnExecutionResult},
     traits::PayloadTxsBounds,
@@ -64,8 +64,9 @@ pub struct OpPayloadBuilderCtx {
     pub max_gas_per_txn: Option<u64>,
     /// Maximum cumulative uncompressed (EIP-2718 encoded) block size in bytes.
     pub max_uncompressed_block_size: Option<u64>,
-    /// Per-address rate limiting based on gas and/or compute time. This is an
-    /// optional feature.
+    /// Canonical per-address rate limiter (gas and/or compute time). Each
+    /// payload job begins a per-build [`AddressLimiterGuard`] off this; the
+    /// only direct mutation here is the per-block `refill_buckets`.
     pub address_limiter: AddressLimiter,
     /// Backrun bundle configuration.
     pub backrun_bundle_args: BackrunBundleArgs,
@@ -82,6 +83,7 @@ pub struct OpPayloadBuilderCtx {
 /// Container type that holds all necessities to build a new payload.
 /// This struct is constructed once per payload job.
 #[derive(derive_more::Constructor, derive_more::Deref)]
+#[allow(clippy::too_many_arguments)]
 pub struct OpPayloadJobCtx {
     /// Builder-lifetime configuration shared with all other in-flight jobs.
     #[deref]
@@ -98,6 +100,12 @@ pub struct OpPayloadJobCtx {
     cancel: FlashblockJobCancellation,
     /// Per-block view into the global backrun bundle pool.
     backrun_pool: Option<BackrunBundlePayloadPool>,
+    /// Per-build guard onto the canonical [`AddressLimiter`] held by
+    /// `builder_ctx`. Charges accumulate privately here and auto-commit back
+    /// into the canonical when this ctx is dropped. Shadows the
+    /// `address_limiter` field reached via `Deref` to `OpPayloadBuilderCtx`,
+    /// so `self.address_limiter` inside this ctx always hits the guard.
+    address_limiter: AddressLimiterGuard,
 }
 
 impl OpPayloadJobCtx {

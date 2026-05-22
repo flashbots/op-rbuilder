@@ -403,6 +403,8 @@ where
             .backrun_bundle_pool()
             .map(|pool| pool.block_pool(config.parent_header.number + 1));
 
+        let address_limiter = builder_ctx.address_limiter.begin();
+
         Ok(OpPayloadJobCtx::new(
             Arc::clone(builder_ctx),
             evm_factory,
@@ -411,6 +413,7 @@ where
             hardforks,
             cancel,
             backrun_pool,
+            address_limiter,
         ))
     }
 
@@ -442,6 +445,10 @@ where
             config.attributes.payload_attributes.id.to_string(),
         );
 
+        self.builder_ctx
+            .address_limiter
+            .refill_buckets(config.parent_header.number + 1);
+
         let ctx = self
             .get_op_payload_job_ctx(config.clone(), payload_cancel.flashblock_child())
             .map_err(|e| PayloadBuilderError::Other(e.into()))?;
@@ -456,8 +463,6 @@ where
             !ctx.disable_state_root || ctx.attributes().no_tx_pool,
             ctx.enable_incremental_state_root,
         );
-
-        ctx.address_limiter.refresh(ctx.block_number());
 
         // Phase 1: Build the fallback block.
         let fallback_span = if span.is_none() {
