@@ -367,10 +367,19 @@ pub trait BuilderTransactions {
         evm: &mut OpEvm<impl Database, NoOpInspector, PrecompilesMap>,
     ) -> Result<SimulationSuccessResult<T>, BuilderTransactionError> {
         let evm_env = alloy_evm::EvmEnv::from((evm.cfg.clone(), evm.block.clone()));
-        let tx_env = tx.try_into_tx_env(&evm_env)?;
-        let to = tx_env.base.kind.into_to().unwrap_or_default();
+        // alloy 2.0 / op-alloy 0.24: `TryIntoTxEnv` is implemented on the inner
+        // `TransactionRequest`, not the OP newtype. Build the underlying
+        // `TxEnv` and wrap it in `OpTx` (matches op-reth's `OpTxEnvConverter`).
+        let inner: alloy_rpc_types_eth::TransactionRequest = tx.into();
+        let base_tx_env: revm::context::TxEnv = inner.try_into_tx_env(&evm_env)?;
+        let to = base_tx_env.kind.into_to().unwrap_or_default();
+        let op_tx = alloy_op_evm::OpTx(op_revm::OpTransaction {
+            base: base_tx_env,
+            enveloped_tx: Some(alloy_primitives::Bytes::new()),
+            deposit: Default::default(),
+        });
 
-        let ResultAndState { result, state } = match evm.transact(tx_env) {
+        let ResultAndState { result, state } = match evm.transact(op_tx) {
             Ok(res) => res,
             Err(err) => {
                 if err.is_invalid_tx_err() {
@@ -383,13 +392,9 @@ pub trait BuilderTransactions {
             }
         };
 
+        let gas_used = result.tx_gas_used();
         match result {
-            ExecutionResult::Success {
-                output,
-                gas_used,
-                logs,
-                ..
-            } => {
+            ExecutionResult::Success { output, logs, .. } => {
                 let topics: HashSet<B256> = logs
                     .into_iter()
                     .flat_map(|log| log.topics().to_vec())

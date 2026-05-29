@@ -12,7 +12,6 @@ use op_alloy_rpc_types_engine::{
     OpFlashblockPayload, OpFlashblockPayloadBase, OpFlashblockPayloadDelta,
     OpFlashblockPayloadMetadata,
 };
-use reth::payload::PayloadBuilderAttributes;
 use reth_basic_payload_builder::PayloadConfig;
 use reth_execution_types::BlockExecutionOutput;
 use reth_node_api::{Block, BuiltPayloadExecutedBlock, PayloadBuilderError};
@@ -20,7 +19,7 @@ use reth_optimism_consensus::{calculate_receipt_root_no_memo_optimism, isthmus};
 use reth_optimism_node::{OpBuiltPayload, OpPayloadBuilderAttributes};
 use reth_optimism_primitives::OpTransactionSigned;
 use reth_payload_builder::PayloadId;
-use reth_primitives::SealedHeader;
+use reth_primitives_traits::SealedHeader;
 use reth_primitives_traits::RecoveredBlock;
 use reth_provider::{
     HashedPostStateProvider, ProviderError, StateRootProvider, StorageRootProvider,
@@ -83,7 +82,7 @@ impl BlockAssemblyInput {
 
         let withdrawals = hardforks
             .is_shanghai_active()
-            .then(|| attributes.payload_attributes.withdrawals.clone());
+            .then(|| attributes.withdrawals.clone());
 
         let extra_data = if hardforks.is_jovian_active() {
             attributes
@@ -111,7 +110,7 @@ impl BlockAssemblyInput {
     }
 
     fn payload_id(&self) -> PayloadId {
-        self.attributes.payload_id()
+        self.attributes.id
     }
 
     fn merge_transitions_into_bundle_state<DB, P>(
@@ -268,8 +267,8 @@ impl BlockAssemblyInput {
             receipts_root,
             withdrawals_root,
             logs_bloom,
-            timestamp: self.attributes.payload_attributes.timestamp,
-            mix_hash: self.attributes.payload_attributes.prev_randao,
+            timestamp: self.attributes.timestamp,
+            mix_hash: self.attributes.prev_randao,
             nonce: BEACON_NONCE.into(),
             base_fee_per_gas: Some(self.base_fee),
             number: self.parent_header.number + 1,
@@ -277,10 +276,13 @@ impl BlockAssemblyInput {
             difficulty: U256::ZERO,
             gas_used: info.cumulative_gas_used,
             extra_data: self.extra_data.clone(),
-            parent_beacon_block_root: self.attributes.payload_attributes.parent_beacon_block_root,
+            parent_beacon_block_root: self.attributes.parent_beacon_block_root,
             blob_gas_used,
             excess_blob_gas,
             requests_hash,
+            // EIP-7701/7934 — not activated on OP chains; emitted as None
+            block_access_list_hash: None,
+            slot_number: None,
         };
 
         alloy_consensus::Block::<OpTransactionSigned>::new(
@@ -484,6 +486,11 @@ impl BlockAssemblyInput {
                             deposit_receipt_version: r.deposit_receipt_version,
                         },
                     ),
+                    // EIP-7918: PostExec receipts are protocol-internal and
+                    // not produced by user txs in the standard block-building
+                    // path. Treat as a Legacy passthrough; if PostExec lands
+                    // in production, this match arm needs revisiting.
+                    OpReceipt::PostExec(r) => op_alloy_consensus::OpReceipt::PostExec(r.clone()),
                 };
                 (tx.tx_hash(), converted_receipt)
             })
@@ -504,7 +511,6 @@ impl BlockAssemblyInput {
             base: Some(OpFlashblockPayloadBase {
                 parent_beacon_block_root: self
                     .attributes
-                    .payload_attributes
                     .parent_beacon_block_root
                     .ok_or_else(|| {
                         PayloadBuilderError::Other(
@@ -512,11 +518,11 @@ impl BlockAssemblyInput {
                         )
                     })?,
                 parent_hash: self.parent_header.hash(),
-                fee_recipient: self.attributes.suggested_fee_recipient(),
-                prev_randao: self.attributes.payload_attributes.prev_randao,
+                fee_recipient: self.attributes.suggested_fee_recipient,
+                prev_randao: self.attributes.prev_randao,
                 block_number: self.parent_header.number + 1,
                 gas_limit: self.block_gas_limit,
-                timestamp: self.attributes.payload_attributes.timestamp,
+                timestamp: self.attributes.timestamp,
                 extra_data: self.extra_data.clone(),
                 base_fee_per_gas: U256::from(self.base_fee),
             }),

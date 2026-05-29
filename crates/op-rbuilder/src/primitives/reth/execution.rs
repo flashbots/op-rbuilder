@@ -9,7 +9,7 @@ use derive_more::Display;
 use op_alloy_consensus::{OpDepositReceipt, OpReceipt, OpTxType};
 use reth_evm::{ConfigureEvm, eth::receipt_builder::ReceiptBuilderCtx};
 use reth_optimism_primitives::OpTransactionSigned;
-use reth_primitives::Recovered;
+use reth_primitives_traits::Recovered;
 use revm::{DatabaseCommit, context::result::ExecutionResult, state::EvmState};
 
 use crate::{evm::OpBlockEvmFactory, hardforks::ActiveHardforks};
@@ -162,7 +162,7 @@ impl ExecutionInfo {
         hardforks: &ActiveHardforks,
         evm: &mut E,
     ) {
-        let gas_used = execution_result.gas_used();
+        let gas_used = execution_result.tx_gas_used();
         self.cumulative_gas_used += gas_used;
         self.cumulative_da_bytes_used += tx_da_size;
         self.cumulative_uncompressed_bytes += tx.inner().encode_2718_len() as u64;

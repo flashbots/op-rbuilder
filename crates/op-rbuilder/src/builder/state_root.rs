@@ -180,10 +180,14 @@ mod tests {
 
         if populate_trie {
             for (hashed_address, _, _) in initial_accounts {
-                let (_, _, storage_updates) =
-                    StorageRoot::from_tx_hashed(tx.tx_ref(), *hashed_address)
-                        .root_with_updates()
-                        .unwrap();
+                let (_, _, storage_updates) = StorageRoot::<
+                    reth_trie_db::DatabaseTrieCursorFactory<_, reth_trie_db::LegacyKeyAdapter>,
+                    reth_trie_db::DatabaseHashedCursorFactory<_>,
+                >::from_tx_hashed(
+                    tx.tx_ref(), *hashed_address
+                )
+                .root_with_updates()
+                .unwrap();
                 let sorted_updates = storage_updates.into_sorted();
                 tx.write_storage_trie_updates_sorted(core::iter::once((
                     hashed_address,
@@ -192,8 +196,12 @@ mod tests {
                 .unwrap();
             }
 
-            let (_initial_root, account_trie_updates) =
-                StateRoot::from_tx(tx.tx_ref()).root_with_updates().unwrap();
+            let (_initial_root, account_trie_updates) = StateRoot::<
+                reth_trie_db::DatabaseTrieCursorFactory<_, reth_trie_db::LegacyKeyAdapter>,
+                reth_trie_db::DatabaseHashedCursorFactory<_>,
+            >::from_tx(tx.tx_ref())
+            .root_with_updates()
+            .unwrap();
             tx.write_trie_updates(account_trie_updates).unwrap();
         }
 
