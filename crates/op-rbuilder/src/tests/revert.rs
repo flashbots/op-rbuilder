@@ -40,8 +40,10 @@ async fn monitor_transaction_gc(rbuilder: LocalInstance) -> eyre::Result<()> {
         pending_txn.push(txn);
     }
 
-    // generate 10 blocks
-    for i in 0..10 {
+    // generate 11 blocks: alloy v2 GC uses `block_number > max` (strict), so
+    // a bundle with max=latest+1+j is GC'd only after building block latest+2+j.
+    // After building (i+1) blocks: bundles [0..i] are dropped, [i..10] pending.
+    for i in 0..=10 {
         let generated_block = driver.build_new_block_with_current_timestamp(None).await?;
 
         // flashblocks should include three transactions (deposit + 2 builder txs)
@@ -50,13 +52,11 @@ async fn monitor_transaction_gc(rbuilder: LocalInstance) -> eyre::Result<()> {
         // Validate builder transactions using BuilderTxValidation
         generated_block.assert_builder_tx_count(2);
 
-        // since we created the 10 transactions with increasing block ranges, as we generate blocks
-        // one transaction will be gc on each block.
-        // transactions from [0, i] should be dropped, transactions from [i+1, 10] should be queued
-        for tx in pending_txn.iter().take(i + 1) {
+        let dropped = i.min(10);
+        for tx in pending_txn.iter().take(dropped) {
             assert!(rbuilder.pool().is_dropped(*tx.tx_hash()));
         }
-        for tx in pending_txn.iter().take(10).skip(i + 1) {
+        for tx in pending_txn.iter().take(10).skip(dropped) {
             assert!(rbuilder.pool().is_pending(*tx.tx_hash()));
         }
     }
@@ -156,11 +156,16 @@ async fn bundle(rbuilder: LocalInstance) -> eyre::Result<()> {
     // After the block the transaction is still pending in the pool
     assert!(rbuilder.pool().is_pending(*reverted_bundle.tx_hash()));
 
-    // Test 3: Chain progresses beyond the bundle range. The transaction is dropped from the pool
-    driver.build_new_block().await?; // Block 4
+    // Test 3: Chain progresses beyond the bundle range. The transaction is
+    // dropped from the pool. alloy v2 conditional GC uses strict `>`, so the
+    // bundle is GC'd only after the head exceeds max_block_number=4.
+    driver.build_new_block().await?; // Block 4 — still eligible, not yet dropped
+    assert!(rbuilder.pool().is_pending(*reverted_bundle.tx_hash()));
+
+    driver.build_new_block().await?; // Block 5 — exceeds max, dropped
     assert!(rbuilder.pool().is_dropped(*reverted_bundle.tx_hash()));
 
-    driver.build_new_block().await?; // Block 5
+    driver.build_new_block().await?; // Block 6
     assert!(rbuilder.pool().is_dropped(*reverted_bundle.tx_hash()));
 
     Ok(())
@@ -430,7 +435,14 @@ async fn check_transaction_receipt_status_message(rbuilder: LocalInstance) -> ey
     let receipt = provider.get_transaction_receipt(*tx_hash).await?;
     assert!(receipt.is_none());
 
-    // Dropped
+    // After block 3 the bundle is still in the pool (alloy v2 conditional GC
+    // uses strict `>`, so the bundle is GC'd only after the head exceeds
+    // max_block_number=3).
+    let _ = driver.build_new_block().await?;
+    let receipt = provider.get_transaction_receipt(*tx_hash).await?;
+    assert!(receipt.is_none());
+
+    // Block 4 exceeds max; the bundle is dropped.
     let _ = driver.build_new_block().await?;
     let err = provider
         .get_transaction_receipt(*tx_hash)

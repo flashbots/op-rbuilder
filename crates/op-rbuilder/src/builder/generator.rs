@@ -3,13 +3,13 @@ use futures_util::{Future, FutureExt};
 use reth::providers::{BlockReaderIdExt, StateProviderFactory};
 use reth_basic_payload_builder::{HeaderForPayload, PayloadConfig, PrecachedState};
 use reth_node_api::{NodePrimitives, PayloadKind};
-use reth_payload_builder::{
-    BuildNewPayload, KeepPayloadJobAlive, PayloadBuilderError, PayloadJob, PayloadJobGenerator,
-};
 use reth_optimism_node::OpPayloadBuilderAttributes;
 use reth_optimism_payload_builder::OpPayloadAttrs;
 use reth_optimism_primitives::OpTransactionSigned;
-use reth_payload_builder::PayloadId;
+use reth_payload_builder::{
+    BuildNewPayload, KeepPayloadJobAlive, PayloadBuilderError, PayloadId, PayloadJob,
+    PayloadJobGenerator,
+};
 use reth_payload_primitives::{BuiltPayload, PayloadAttributes};
 use reth_primitives_traits::HeaderTy;
 use reth_provider::CanonStateNotification;
@@ -154,7 +154,9 @@ where
         let version = reth_payload_primitives::EngineApiMessageVersion::default() as u8;
         let mut builder_attributes = reth_optimism_node::OpPayloadBuilderAttributes::<
             OpTransactionSigned,
-        >::try_new(parent_hash, rpc_attributes.0.clone(), version)
+        >::try_new(
+            parent_hash, rpc_attributes.0.clone(), version
+        )
         .map_err(PayloadBuilderError::other)?;
         builder_attributes.id = id;
         let attributes = builder_attributes;

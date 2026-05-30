@@ -247,9 +247,9 @@ mod tests {
 
     fn is_debt_free_via_guard(limiter: &AddressLimiter, address: &Address) -> bool {
         let guard = limiter.begin();
-        let result = guard.is_debt_free(address);
+
         // Drop without consuming → empty guard; auto-commit is a no-op.
-        result
+        guard.is_debt_free(address)
     }
 
     #[test]

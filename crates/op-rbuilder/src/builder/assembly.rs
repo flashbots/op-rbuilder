@@ -19,8 +19,7 @@ use reth_optimism_consensus::{calculate_receipt_root_no_memo_optimism, isthmus};
 use reth_optimism_node::{OpBuiltPayload, OpPayloadBuilderAttributes};
 use reth_optimism_primitives::OpTransactionSigned;
 use reth_payload_builder::PayloadId;
-use reth_primitives_traits::SealedHeader;
-use reth_primitives_traits::RecoveredBlock;
+use reth_primitives_traits::{RecoveredBlock, SealedHeader};
 use reth_provider::{
     HashedPostStateProvider, ProviderError, StateRootProvider, StorageRootProvider,
 };
@@ -509,14 +508,13 @@ impl BlockAssemblyInput {
             payload_id: self.payload_id(),
             index: 0,
             base: Some(OpFlashblockPayloadBase {
-                parent_beacon_block_root: self
-                    .attributes
-                    .parent_beacon_block_root
-                    .ok_or_else(|| {
+                parent_beacon_block_root: self.attributes.parent_beacon_block_root.ok_or_else(
+                    || {
                         PayloadBuilderError::Other(
                             eyre::eyre!("parent beacon block root not found").into(),
                         )
-                    })?,
+                    },
+                )?,
                 parent_hash: self.parent_header.hash(),
                 fee_recipient: self.attributes.suggested_fee_recipient,
                 prev_randao: self.attributes.prev_randao,
