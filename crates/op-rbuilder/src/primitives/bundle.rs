@@ -145,6 +145,7 @@ pub enum BundleConditionalError {
     FlashblockMinGreaterThanMax { min: u64, max: u64 },
 }
 
+#[derive(Debug)]
 pub struct BundleConditional {
     pub transaction_conditional: TransactionConditional,
     pub min_flashblock_number: Option<u64>,
@@ -242,6 +243,7 @@ pub struct BundleResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::assert_matches;
 
     #[test]
     fn test_bundle_conditional_no_bounds() {
@@ -292,13 +294,13 @@ mod tests {
         let last_block = 1000;
         let result = bundle.conditional(last_block);
 
-        assert!(matches!(
+        assert_matches!(
             result,
             Err(BundleConditionalError::MinGreaterThanMax {
                 min: 1010,
                 max: 1005
             })
-        ));
+        );
     }
 
     #[test]
@@ -311,13 +313,13 @@ mod tests {
         let last_block = 1000;
         let result = bundle.conditional(last_block);
 
-        assert!(matches!(
+        assert_matches!(
             result,
             Err(BundleConditionalError::MaxBlockInPast {
                 max: 999,
                 current: 1000
             })
-        ));
+        );
     }
 
     #[test]
@@ -330,14 +332,14 @@ mod tests {
         let last_block = 1000;
         let result = bundle.conditional(last_block);
 
-        assert!(matches!(
+        assert_matches!(
             result,
             Err(BundleConditionalError::MaxBlockTooHigh {
                 max: 1020,
                 current: 1000,
                 max_allowed: 1010
             })
-        ));
+        );
     }
 
     #[test]
@@ -350,13 +352,13 @@ mod tests {
         let last_block = 1000;
         let result = bundle.conditional(last_block);
 
-        assert!(matches!(
+        assert_matches!(
             result,
             Err(BundleConditionalError::MinTooHighForDefaultRange {
                 min: 1015,
                 max_allowed: 1010
             })
-        ));
+        );
     }
 
     #[test]
@@ -421,10 +423,10 @@ mod tests {
         let last_block = 1000;
         let result = bundle.conditional(last_block);
 
-        assert!(matches!(
+        assert_matches!(
             result,
             Err(BundleConditionalError::FlashblockMinGreaterThanMax { min: 105, max: 100 })
-        ));
+        );
     }
 
     #[test]

@@ -230,6 +230,7 @@ mod tests {
     use crate::tx_signer::Signer;
     use alloy_primitives::{B256, U256};
     use reth_optimism_primitives::OpTransactionSigned;
+    use std::assert_matches;
 
     fn pool_bundle_count(pool: &BackrunBundlePayloadPool) -> usize {
         pool.per_tx_bundle_counts().sum()
@@ -441,9 +442,9 @@ mod tests {
         assert!(gp.cancel_bundle(uuid, bundle_replacement_nonce + 3, 25));
         assert!(!gp.cancel_bundle(uuid, bundle_replacement_nonce + 2, 30));
         assert!(!gp.cancel_bundle(uuid, bundle_replacement_nonce + 3, 30));
-        assert!(matches!(
+        assert_matches!(
             gp.inner.replacements.get(&uuid).as_deref(),
             Some(&UuidEntry::Cancellation { nonce, max_block: 25 }) if nonce == bundle_replacement_nonce + 3
-        ));
+        );
     }
 }
