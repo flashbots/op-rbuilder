@@ -441,8 +441,8 @@ impl BlockAssemblyInput {
         let executed = BuiltPayloadExecutedBlock {
             recovered_block: Arc::new(recovered_block),
             execution_output: Arc::new(execution_output),
-            trie_updates: either::Either::Left(trie_updates),
-            hashed_state: either::Either::Left(Arc::new(hashed_state)),
+            trie_updates,
+            hashed_state: Arc::new(hashed_state),
         };
         debug!(
             target: "payload_builder",

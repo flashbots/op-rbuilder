@@ -196,6 +196,11 @@ impl<P: TransactionPool<Transaction = FBPooledTransaction> + 'static> Transactio
                 &self,
                 versioned_hashes: &[B256],
             ) -> Result<Vec<Option<BlobAndProofV2>>, BlobStoreError>;
+            fn get_blobs_for_versioned_hashes_v4(
+                &self,
+                versioned_hashes: &[B256],
+                indices_bitarray: alloy_primitives::B128,
+            ) -> Result<Vec<Option<alloy_eips::eip4844::BlobCellsAndProofsV1>>, BlobStoreError>;
         }
     }
 }
