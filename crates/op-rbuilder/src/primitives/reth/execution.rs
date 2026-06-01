@@ -232,6 +232,7 @@ fn build_receipt<E: Evm>(
 #[cfg(test)]
 mod tests {
     use super::{ExecutionInfo, TxnExecutionResult};
+    use std::assert_matches;
 
     #[test]
     fn tx_limit_rejects_when_uncompressed_size_exceeds_limit() {
@@ -242,12 +243,12 @@ mod tests {
 
         let result = info.is_tx_over_limits(0, 30_000_000, None, None, 21_000, None, 50, Some(149));
 
-        assert!(matches!(
+        assert_matches!(
             result,
             Err(TxnExecutionResult::BlockUncompressedSizeExceeded(
                 100, 50, 149
             ))
-        ));
+        );
     }
 
     #[test]
