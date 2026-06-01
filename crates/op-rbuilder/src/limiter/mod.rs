@@ -225,6 +225,7 @@ impl Drop for AddressLimiterGuard {
 mod tests {
     use super::*;
     use alloy_primitives::Address;
+    use std::assert_matches;
 
     fn create_test_config(max_gas: u64, refill_rate: u64, cleanup_interval: u64) -> GasLimiterArgs {
         GasLimiterArgs {
@@ -349,7 +350,7 @@ mod tests {
         limiter.refill_buckets(1);
 
         let err = guard.commit().expect_err("must reject stale commit");
-        assert!(matches!(err, CommitError::StaleEpoch { .. }));
+        assert_matches!(err, CommitError::StaleEpoch { .. });
     }
 
     #[test]
