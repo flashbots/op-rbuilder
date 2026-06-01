@@ -17,11 +17,6 @@ impl<P: TransactionPool<Transaction = FBPooledTransaction> + Clone + 'static> Fl
         origin: TransactionOrigin,
         transaction: FBPooledTransaction,
     ) -> PoolResult<AddedTransactionOutcome> {
-        // NOTE: reth v2 removed `OpPool::validator()`, so we can no longer
-        // pre-validate before deciding whether to dispatch to presim. The inner
-        // pool still validates inside `add_transaction`; on the presim path
-        // that validation happens inside the spawned task and any failure is
-        // logged but not surfaced to the caller.
         if transaction.revert_protected()
             && let Some(ref simulator) = self.simulator
         {

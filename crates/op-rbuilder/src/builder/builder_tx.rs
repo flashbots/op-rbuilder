@@ -367,9 +367,6 @@ pub trait BuilderTransactions {
         evm: &mut OpEvm<impl Database, NoOpInspector, PrecompilesMap>,
     ) -> Result<SimulationSuccessResult<T>, BuilderTransactionError> {
         let evm_env = alloy_evm::EvmEnv::from((evm.cfg.clone(), evm.block.clone()));
-        // alloy 2.0 / op-alloy 0.24: `TryIntoTxEnv` is implemented on the inner
-        // `TransactionRequest`, not the OP newtype. Build the underlying
-        // `TxEnv` and wrap it in `OpTx` (matches op-reth's `OpTxEnvConverter`).
         let inner: alloy_rpc_types_eth::TransactionRequest = tx.into();
         let base_tx_env: revm::context::TxEnv = inner.try_into_tx_env(&evm_env)?;
         let to = base_tx_env.kind.into_to().unwrap_or_default();

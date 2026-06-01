@@ -142,24 +142,13 @@ where
             ..
         } = input;
 
-        // Convert the wire-format attributes into the builder-format
-        // attributes. `try_new` re-derives the id internally; we then overwrite
-        // it with the engine-supplied `id` so the builder agrees with the
-        // engine API on identity.
-        //
-        // NOTE: `EngineApiMessageVersion::default()` is V4 upstream, which
-        // means `id` here is the V4 hash. Pre-v2 op-reth defaulted to V3;
-        // installations driving flashblocks through rollup-boost expect V3.
-        // Patching the version is a separate concern.
         let version = reth_payload_primitives::EngineApiMessageVersion::default() as u8;
-        let mut builder_attributes = reth_optimism_node::OpPayloadBuilderAttributes::<
-            OpTransactionSigned,
-        >::try_new(
-            parent_hash, rpc_attributes.0.clone(), version
+        let attributes = reth_optimism_node::OpPayloadBuilderAttributes::<OpTransactionSigned>::try_new(
+            parent_hash,
+            rpc_attributes.0.clone(),
+            version,
         )
         .map_err(PayloadBuilderError::other)?;
-        builder_attributes.id = id;
-        let attributes = builder_attributes;
 
         // Calculate and record FCU arrival delay metric in milliseconds
         // Expected: FCU should arrive at (payload_timestamp - block_time)
@@ -262,10 +251,6 @@ where
 {
     /// The configuration for how the payload will be created.
     config: PayloadConfig<Builder::Attributes, HeaderForPayload<Builder::BuiltPayload>>,
-    /// Original RPC-level attributes returned via `payload_attributes()`. The
-    /// engine API expects `OpPayloadAttrs` for `<OpEngineTypes as
-    /// PayloadTypes>::PayloadAttributes`, while the builder works internally
-    /// with `OpPayloadBuilderAttributes` (held inside `config`).
     rpc_attributes: OpPayloadAttrs,
     /// How to spawn building tasks
     executor: Runtime,

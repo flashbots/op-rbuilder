@@ -40,8 +40,10 @@ async fn monitor_transaction_gc(rbuilder: LocalInstance) -> eyre::Result<()> {
         pending_txn.push(txn);
     }
 
-    // generate 11 blocks: alloy v2 GC uses `block_number > max` (strict), so
-    // a bundle with max=latest+1+j is GC'd only after building block latest+2+j.
+    // generate 11 blocks: the conditional-tx maintenance task in op-reth's
+    // pool removes a bundle once `block_number > max_block_number` (alloy v2
+    // uses strict `>`), so a bundle with max=latest+1+j is only removed from
+    // the pool after building block latest+2+j.
     // After building (i+1) blocks: bundles [0..i] are dropped, [i..10] pending.
     for i in 0..=10 {
         let generated_block = driver.build_new_block_with_current_timestamp(None).await?;
@@ -157,8 +159,9 @@ async fn bundle(rbuilder: LocalInstance) -> eyre::Result<()> {
     assert!(rbuilder.pool().is_pending(*reverted_bundle.tx_hash()));
 
     // Test 3: Chain progresses beyond the bundle range. The transaction is
-    // dropped from the pool. alloy v2 conditional GC uses strict `>`, so the
-    // bundle is GC'd only after the head exceeds max_block_number=4.
+    // dropped from the pool. The conditional-tx maintenance task uses strict
+    // `>` (alloy v2), so the bundle is only removed from the pool once the
+    // head exceeds max_block_number=4.
     driver.build_new_block().await?; // Block 4 — still eligible, not yet dropped
     assert!(rbuilder.pool().is_pending(*reverted_bundle.tx_hash()));
 
@@ -435,9 +438,9 @@ async fn check_transaction_receipt_status_message(rbuilder: LocalInstance) -> ey
     let receipt = provider.get_transaction_receipt(*tx_hash).await?;
     assert!(receipt.is_none());
 
-    // After block 3 the bundle is still in the pool (alloy v2 conditional GC
-    // uses strict `>`, so the bundle is GC'd only after the head exceeds
-    // max_block_number=3).
+    // After block 3 the bundle is still in the pool — the conditional-tx
+    // maintenance task uses strict `>` (alloy v2), so the bundle is only
+    // removed from the pool once the head exceeds max_block_number=3.
     let _ = driver.build_new_block().await?;
     let receipt = provider.get_transaction_receipt(*tx_hash).await?;
     assert!(receipt.is_none());

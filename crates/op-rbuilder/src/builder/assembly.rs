@@ -485,10 +485,6 @@ impl BlockAssemblyInput {
                             deposit_receipt_version: r.deposit_receipt_version,
                         },
                     ),
-                    // EIP-7918: PostExec receipts are protocol-internal and
-                    // not produced by user txs in the standard block-building
-                    // path. Treat as a Legacy passthrough; if PostExec lands
-                    // in production, this match arm needs revisiting.
                     OpReceipt::PostExec(r) => op_alloy_consensus::OpReceipt::PostExec(r.clone()),
                 };
                 (tx.tx_hash(), converted_receipt)
