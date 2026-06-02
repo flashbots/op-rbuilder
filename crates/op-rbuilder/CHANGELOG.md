@@ -1,6 +1,25 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [0.4.7] - 2026-06-02
+
+### Bug Fixes
+
+- [`6ae8f55`](https://github.com/flashbots/op-rbuilder/commit/6ae8f553413d85b0d93db7e89de4525d681b5367) Fix flashblock uncompressed limit check and presim error handling ([#524](https://github.com/flashbots/op-rbuilder/pull/524))
+
+### Features
+
+- [`c2e80b6`](https://github.com/flashbots/op-rbuilder/commit/c2e80b67c94d867a630e2d7627c84693f6166119) Limit max concurrency ([#522](https://github.com/flashbots/op-rbuilder/pull/522))
+
+### Miscellaneous
+
+- [`b537a2d`](https://github.com/flashbots/op-rbuilder/commit/b537a2d1e1a12a6e164b707f844b017ad6ff5e6b) Update rust to version 1.96 ([#529](https://github.com/flashbots/op-rbuilder/pull/529))
+- [`ee245e5`](https://github.com/flashbots/op-rbuilder/commit/ee245e592967adccb443a283977ee5c1422f793a) Bump Cargo version to 0.4.7
+
+### Refactor
+
+- [`55edd74`](https://github.com/flashbots/op-rbuilder/commit/55edd746e9e73ab295b10b3d91de8b6f4e9e597c) Canonical + overlay design with epoch tag ([#488](https://github.com/flashbots/op-rbuilder/pull/488))
+
 ## [0.4.6] - 2026-05-18
 
 ### Bug Fixes
