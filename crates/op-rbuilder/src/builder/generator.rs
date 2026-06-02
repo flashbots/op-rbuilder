@@ -143,12 +143,13 @@ where
         } = input;
 
         let version = reth_payload_primitives::EngineApiMessageVersion::default() as u8;
-        let attributes = reth_optimism_node::OpPayloadBuilderAttributes::<OpTransactionSigned>::try_new(
-            parent_hash,
-            rpc_attributes.0.clone(),
-            version,
-        )
-        .map_err(PayloadBuilderError::other)?;
+        let attributes =
+            reth_optimism_node::OpPayloadBuilderAttributes::<OpTransactionSigned>::try_new(
+                parent_hash,
+                rpc_attributes.0.clone(),
+                version,
+            )
+            .map_err(PayloadBuilderError::other)?;
 
         // Calculate and record FCU arrival delay metric in milliseconds
         // Expected: FCU should arrive at (payload_timestamp - block_time)
