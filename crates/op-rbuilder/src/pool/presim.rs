@@ -1,5 +1,3 @@
-use std::{num::NonZeroUsize, sync::Arc, time::Instant};
-
 use alloy_consensus::{BlockHeader, Header};
 use alloy_evm::{Evm, InvalidTxError};
 use alloy_primitives::{Address, B256, Bytes};
@@ -19,6 +17,11 @@ use reth_transaction_pool::{FullTransactionEvent, PoolTransaction, TransactionPo
 use revm::{
     context::{TxEnv, result::ResultAndState},
     context_interface::result::InvalidTransaction,
+};
+use std::{
+    num::NonZeroUsize,
+    sync::Arc,
+    time::{Duration, Instant},
 };
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tracing::{debug, error, warn};
@@ -121,7 +124,7 @@ impl TopOfBlockSimulator {
         };
 
         let Some(ref tip_state) = *tip_state else {
-            warn!("tip state for top of block simulator not initialized yet");
+            debug!("no tip state available for top of block simulator, passing through");
             return true;
         };
 
@@ -130,6 +133,11 @@ impl TopOfBlockSimulator {
 
     pub(crate) fn update_tip(&self, tip_state: TipState) {
         *self.tip_state.write() = Arc::new(Some(tip_state));
+    }
+
+    /// Drop any held tip state, releasing the underlying read transaction.
+    pub(crate) fn clear_tip(&self) {
+        *self.tip_state.write() = Arc::new(None);
     }
 }
 
@@ -208,13 +216,17 @@ impl TipState {
     }
 }
 
+/// If no canonical state notification arrives within this window, drop the
+/// held tip state so we don't pin a read transaction open for the sync duration
+const STALE_TIP_TIMEOUT: Duration = Duration::from_secs(30);
+
 pub(crate) async fn maintain_tip_state<N, St, Provider>(
     simulator: Arc<TopOfBlockSimulator>,
     provider: Provider,
     evm_config: OpEvmConfig,
     block_time_secs: u64,
     metrics: Arc<PoolMetrics>,
-    mut events: St,
+    events: St,
 ) where
     N: NodePrimitives<Block: Block<Header = Header>>,
     St: Stream<Item = CanonStateNotification<N>> + Send + Unpin + 'static,
@@ -226,18 +238,67 @@ pub(crate) async fn maintain_tip_state<N, St, Provider>(
         + Sync
         + 'static,
 {
-    loop {
-        let Some(event) = events.next().await else {
-            break;
-        };
+    maintain_tip_state_with_timeout(
+        simulator,
+        provider,
+        evm_config,
+        block_time_secs,
+        metrics,
+        events,
+        STALE_TIP_TIMEOUT,
+    )
+    .await
+}
 
-        match TipState::create(&provider, evm_config.clone(), block_time_secs, event.tip()) {
-            Ok(tip_state) => {
-                simulator.update_tip(tip_state);
-                metrics.presim_tip_state_updates.increment(1);
+async fn maintain_tip_state_with_timeout<N, St, Provider>(
+    simulator: Arc<TopOfBlockSimulator>,
+    provider: Provider,
+    evm_config: OpEvmConfig,
+    block_time_secs: u64,
+    metrics: Arc<PoolMetrics>,
+    mut events: St,
+    stale_timeout: Duration,
+) where
+    N: NodePrimitives<Block: Block<Header = Header>>,
+    St: Stream<Item = CanonStateNotification<N>> + Send + Unpin + 'static,
+    Provider: StateProviderFactory
+        + ChainSpecProvider<ChainSpec = OpChainSpec>
+        + BlockReaderIdExt<Header = Header>
+        + Clone
+        + Send
+        + Sync
+        + 'static,
+{
+    let mut evicted = false;
+    loop {
+        match tokio::time::timeout(stale_timeout, events.next()).await {
+            Ok(Some(event)) => {
+                if evicted {
+                    debug!("resumed receiving canon state notifications");
+                    evicted = false;
+                }
+                match TipState::create(&provider, evm_config.clone(), block_time_secs, event.tip())
+                {
+                    Ok(tip_state) => {
+                        simulator.update_tip(tip_state);
+                        metrics.presim_tip_state_updates.increment(1);
+                    }
+                    Err(e) => {
+                        warn!(error = %e, "failed to create tip state for pre-simulation");
+                    }
+                }
             }
-            Err(e) => {
-                warn!(error = %e, "failed to create tip state for pre-simulation");
+            Ok(None) => break,
+            Err(_) => {
+                if !evicted {
+                    simulator.clear_tip();
+                    metrics.presim_tip_state_evictions.increment(1);
+                    warn!(
+                        timeout_secs = stale_timeout.as_secs(),
+                        "no canon state notification received, dropping presim tip state"
+                    );
+                    evicted = true;
+                }
             }
         }
     }
@@ -465,6 +526,21 @@ mod tests {
         // After update — successfully rejected
         simulator.update_tip(tip_state_with_provider(provider));
         assert!(!simulator.simulate_tx_sync(reverting_create(&signer, 0)));
+    }
+
+    #[test]
+    fn clear_tip_drops_state_provider() {
+        let simulator = TopOfBlockSimulator::new_for_test();
+        let signer = PrivateKeySigner::random();
+        let provider = funded_provider(signer.address());
+
+        simulator.update_tip(tip_state_with_provider(provider));
+        assert!(!simulator.simulate_tx_sync(reverting_create(&signer, 0)));
+
+        // After clear: back to pass-through behavior;
+        // state provider no longer held
+        simulator.clear_tip();
+        assert!(simulator.simulate_tx_sync(reverting_create(&signer, 0)));
     }
 
     #[test]
