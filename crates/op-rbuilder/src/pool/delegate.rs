@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
 use alloy_eips::{
-    eip4844::{BlobAndProofV1, BlobAndProofV2},
+    eip4844::{BlobAndProofV1, BlobAndProofV2, BlobCellsAndProofsV1},
     eip7594::BlobTransactionSidecarVariant,
 };
-use alloy_primitives::{Address, B256, TxHash, map::AddressSet};
+use alloy_primitives::{Address, B128, B256, TxHash, map::AddressSet};
 use delegate::delegate;
 use reth::network::types::HandleMempoolData;
 use reth_primitives_traits::Recovered;
@@ -13,16 +13,14 @@ use reth_transaction_pool::{
     BestTransactionsAttributes, BlockInfo, GetPooledTransactionLimit, NewBlobSidecar,
     NewTransactionEvent, PoolResult, PoolSize, PoolTransaction, PropagatedTransactions,
     TransactionEvents, TransactionListenerKind, TransactionOrigin, TransactionPool,
-    TransactionValidator, ValidPoolTransaction, blobstore::BlobStoreError,
+    ValidPoolTransaction, blobstore::BlobStoreError,
 };
 use tokio::sync::mpsc::Receiver;
 
 use crate::{pool::Flashpool, tx::FBPooledTransaction};
 
-impl<
-    P: TransactionPool<Transaction = FBPooledTransaction> + 'static,
-    V: TransactionValidator<Transaction = FBPooledTransaction> + Clone,
-> TransactionPool for Flashpool<P, V>
+impl<P: TransactionPool<Transaction = FBPooledTransaction> + 'static> TransactionPool
+    for Flashpool<P>
 {
     type Transaction = FBPooledTransaction;
 
@@ -44,9 +42,14 @@ impl<
                 transaction: Self::Transaction,
             ) -> impl Future<Output = PoolResult<TransactionEvents>> + Send;
 
+            fn add_transactions(
+                &self,
+                origin: TransactionOrigin,
+                transactions: Vec<Self::Transaction>,
+            ) -> impl Future<Output = Vec<PoolResult<AddedTransactionOutcome>>> + Send;
             fn add_transactions_with_origins(
                 &self,
-                transactions: impl IntoIterator<Item = (TransactionOrigin, Self::Transaction)> + Send,
+                transactions: Vec<(TransactionOrigin, Self::Transaction)>,
             ) -> impl Future<Output = Vec<PoolResult<AddedTransactionOutcome>>> + Send;
             fn transaction_event_listener(
                 &self,
@@ -193,6 +196,11 @@ impl<
                 &self,
                 versioned_hashes: &[B256],
             ) -> Result<Vec<Option<BlobAndProofV2>>, BlobStoreError>;
+            fn get_blobs_for_versioned_hashes_v4(
+                &self,
+                versioned_hashes: &[B256],
+                indices_bitarray: B128,
+            ) -> Result<Vec<Option<BlobCellsAndProofsV1>>, BlobStoreError>;
         }
     }
 }

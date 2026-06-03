@@ -20,12 +20,9 @@ use crate::{
 };
 
 #[derive(Debug, Clone)]
-pub struct Flashpool<P, V> {
+pub struct Flashpool<P> {
     /// The reth transaction pool we're wrapping around
     inner: P,
-
-    /// The transaction validator
-    validator: V,
 
     /// Optional pre-simulator: when present, revert-protected txs are simulated
     /// before being added to the pool; those that would revert are rejected.
@@ -54,7 +51,7 @@ pub trait FlashpoolExt {
     fn backrun_bundle_pool(&self) -> Option<BackrunBundleGlobalPool>;
 }
 
-impl<P: TransactionPool<Transaction = FBPooledTransaction>, V> FlashpoolExt for Flashpool<P, V> {
+impl<P: TransactionPool<Transaction = FBPooledTransaction>> FlashpoolExt for Flashpool<P> {
     fn is_tx_reverted(&self, hash: TxHash) -> bool {
         self.reverted_cache
             .as_ref()

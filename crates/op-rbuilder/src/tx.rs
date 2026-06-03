@@ -103,6 +103,10 @@ where
         self.inner.clone_into_consensus()
     }
 
+    fn consensus_ref(&self) -> Recovered<&Self::Consensus> {
+        self.inner.consensus_ref()
+    }
+
     fn into_consensus(self) -> Recovered<Self::Consensus> {
         self.inner.into_consensus()
     }

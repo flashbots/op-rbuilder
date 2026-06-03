@@ -4,9 +4,10 @@ use reth::providers::{BlockReaderIdExt, StateProviderFactory};
 use reth_basic_payload_builder::{HeaderForPayload, PayloadConfig, PrecachedState};
 use reth_node_api::{NodePrimitives, PayloadKind};
 use reth_payload_builder::{
-    KeepPayloadJobAlive, PayloadBuilderError, PayloadJob, PayloadJobGenerator,
+    BuildNewPayload, KeepPayloadJobAlive, PayloadBuilderError, PayloadId, PayloadJob,
+    PayloadJobGenerator,
 };
-use reth_payload_primitives::{BuiltPayload, PayloadBuilderAttributes};
+use reth_payload_primitives::{BuiltPayload, PayloadAttributes};
 use reth_primitives_traits::HeaderTy;
 use reth_provider::CanonStateNotification;
 use reth_revm::cached::CachedReads;
@@ -34,7 +35,7 @@ use super::cancellation::PayloadJobCancellation;
 #[async_trait::async_trait]
 pub(super) trait PayloadBuilder: Send + Sync + Clone {
     /// The builder-level payload attributes (used internally during building).
-    type Attributes: PayloadBuilderAttributes + Clone + Unpin + Send + Sync + 'static;
+    type Attributes: PayloadAttributes + Clone + Unpin + Send + Sync + 'static;
     /// The type of the built payload.
     type BuiltPayload: BuiltPayload;
 
@@ -127,10 +128,11 @@ where
     /// `engine_forkchoiceUpdatedVX`
     fn new_payload_job(
         &self,
-        attributes: <Self::Job as PayloadJob>::PayloadAttributes,
+        input: BuildNewPayload<<Self::Job as PayloadJob>::PayloadAttributes>,
+        id: PayloadId,
     ) -> Result<Self::Job, PayloadBuilderError> {
-        let parent_hash = attributes.parent();
-        let id = attributes.payload_id();
+        let attributes = input.attributes;
+        let parent_hash = input.parent_hash;
 
         // Calculate and record FCU arrival delay metric in milliseconds
         // Expected: FCU should arrive at (payload_timestamp - block_time)
@@ -177,7 +179,7 @@ where
         let deadline = job_deadline(timestamp) + self.extra_block_deadline;
 
         let deadline = Box::pin(tokio::time::sleep(deadline));
-        let config = PayloadConfig::new(Arc::new(parent_header.clone()), attributes);
+        let config = PayloadConfig::new(Arc::new(parent_header.clone()), attributes, id);
 
         let cancelled_fut = Box::pin(cancel.token().cancelled_owned());
 
@@ -309,7 +311,7 @@ where
                 cancel: cancellation,
             };
 
-            let payload_id = args.config.attributes.payload_id();
+            let payload_id = args.config.payload_id();
             if let Err(e) = builder.try_build(args, watch_tx).await {
                 tracing::error!(id = %payload_id, "build task failed: {:?}", e);
             }
