@@ -17,11 +17,19 @@ impl<P: TransactionPool<Transaction = FBPooledTransaction> + Clone + 'static> Fl
         origin: TransactionOrigin,
         transaction: FBPooledTransaction,
     ) -> PoolResult<AddedTransactionOutcome> {
-        // NOTE: reth v2 removed `OpPool::validator()`, so we can no longer
+        // TODO: reth v2 removed `OpPool::validator()`, so we can no longer
         // pre-validate before deciding whether to dispatch to presim. The inner
         // pool still validates inside `add_transaction`; on the presim path
         // that validation happens inside the spawned task and any failure is
         // logged but not surfaced to the caller.
+        //
+        // See https://github.com/flashbots/op-rbuilder/pull/532#discussion_r3350982371
+        //
+        // let validation_outcome = self
+        //          .validator
+        //          .validate_transaction(origin, transaction)
+        //          .await;
+
         if transaction.revert_protected()
             && let Some(ref simulator) = self.simulator
         {
