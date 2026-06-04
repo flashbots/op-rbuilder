@@ -384,9 +384,7 @@ where
                 .attributes
                 .gas_limit
                 .unwrap_or(config.parent_header.gas_limit),
-            parent_beacon_block_root: config
-                .attributes
-                .parent_beacon_block_root,
+            parent_beacon_block_root: config.attributes.parent_beacon_block_root,
             extra_data,
         };
 
@@ -439,10 +437,7 @@ where
         // The build_payload span is created and instrumented in try_build() using
         // tracing::Instrument, which safely manages it across async .await points.
         let span = tracing::Span::current();
-        span.record(
-            "payload_id",
-            config.attributes.id.to_string(),
-        );
+        span.record("payload_id", config.attributes.id.to_string());
 
         self.builder_ctx
             .address_limiter

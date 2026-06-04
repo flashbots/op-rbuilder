@@ -503,14 +503,13 @@ impl BlockAssemblyInput {
             payload_id: self.payload_id(),
             index: 0,
             base: Some(OpFlashblockPayloadBase {
-                parent_beacon_block_root: self
-                    .attributes
-                    .parent_beacon_block_root
-                    .ok_or_else(|| {
+                parent_beacon_block_root: self.attributes.parent_beacon_block_root.ok_or_else(
+                    || {
                         PayloadBuilderError::Other(
                             eyre::eyre!("parent beacon block root not found").into(),
                         )
-                    })?,
+                    },
+                )?,
                 parent_hash: self.parent_header.hash(),
                 fee_recipient: self.attributes.suggested_fee_recipient(),
                 prev_randao: self.attributes.prev_randao,
