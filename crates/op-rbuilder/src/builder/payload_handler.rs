@@ -28,7 +28,6 @@ use reth_optimism_consensus::OpBeaconConsensus;
 use reth_optimism_evm::OpNextBlockEnvAttributes;
 use reth_optimism_node::{OpEngineTypes, OpPayloadBuilderAttributes};
 use reth_optimism_payload_builder::OpBuiltPayload;
-use reth_payload_builder::EthPayloadBuilderAttributes;
 use reth_primitives_traits::{SealedHeader, SignedTransaction};
 use reth_tasks::Runtime;
 use revm::context::result::ResultAndState;
@@ -296,24 +295,23 @@ where
     let payload_config = PayloadConfig::new(
         Arc::new(SealedHeader::new(parent_header, parent_hash)),
         OpPayloadBuilderAttributes {
-            payload_attributes: EthPayloadBuilderAttributes {
-                id: payload.id(),
-                parent: parent_hash,
-                suggested_fee_recipient: payload.block().sealed_header().beneficiary,
-                withdrawals: payload
-                    .block()
-                    .body()
-                    .withdrawals
-                    .clone()
-                    .unwrap_or_default(),
-                parent_beacon_block_root: payload.block().sealed_header().parent_beacon_block_root,
-                timestamp,
-                prev_randao: payload.block().sealed_header().mix_hash,
-            },
+            id: payload.id(),
+            parent: parent_hash,
+            suggested_fee_recipient: payload.block().sealed_header().beneficiary,
+            withdrawals: payload
+                .block()
+                .body()
+                .withdrawals
+                .clone()
+                .unwrap_or_default(),
+            parent_beacon_block_root: payload.block().sealed_header().parent_beacon_block_root,
+            timestamp,
+            prev_randao: payload.block().sealed_header().mix_hash,
             eip_1559_params: eip_1559_parameters,
             min_base_fee,
             ..Default::default()
         },
+        payload.id(),
     );
 
     execute_transactions(
@@ -403,7 +401,7 @@ fn execute_transactions(
             .transact(&tx_recovered)
             .wrap_err("failed to execute transaction")?;
 
-        let tx_gas_used = result.gas_used();
+        let tx_gas_used = result.tx_gas_used();
         if let Some(max_gas_per_txn) = max_gas_per_txn
             && tx_gas_used > max_gas_per_txn
         {

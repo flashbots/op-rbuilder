@@ -18,7 +18,6 @@ use reth_optimism_txpool::{
     conditional::MaybeConditionalTransaction, estimated_da_size::DataAvailabilitySized,
 };
 use reth_payload_builder::PayloadId;
-use reth_payload_primitives::PayloadBuilderAttributes;
 use reth_primitives_traits::{InMemorySize, SealedHeader, SignedTransaction};
 use reth_provider::ProviderError;
 use reth_revm::{State, context::Block};
@@ -495,7 +494,7 @@ impl OpPayloadJobCtx {
             // Run the per-address gas limiting before checking if the tx has
             // reverted or not, as this is a check against maliciously searchers
             // sending txs that are expensive to compute but always revert.
-            let gas_used = result.gas_used();
+            let gas_used = result.tx_gas_used();
             if self.enable_tx_tracking_debug_logs {
                 debug!(
                     target: "tx_trace",
@@ -759,7 +758,7 @@ impl OpPayloadJobCtx {
                         .record(bundle.backrun_tx.inner().size() as f64);
                     num_txs_simulated += 1;
 
-                    let br_gas_used = br_result.gas_used();
+                    let br_gas_used = br_result.tx_gas_used();
 
                     self.address_limiter
                         .consume_gas(bundle.backrun_tx.signer(), br_gas_used);

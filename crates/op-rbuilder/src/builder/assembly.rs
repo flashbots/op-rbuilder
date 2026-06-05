@@ -12,7 +12,6 @@ use op_alloy_rpc_types_engine::{
     OpFlashblockPayload, OpFlashblockPayloadBase, OpFlashblockPayloadDelta,
     OpFlashblockPayloadMetadata,
 };
-use reth::payload::PayloadBuilderAttributes;
 use reth_basic_payload_builder::PayloadConfig;
 use reth_execution_types::BlockExecutionOutput;
 use reth_node_api::{Block, BuiltPayloadExecutedBlock, PayloadBuilderError};
@@ -20,8 +19,7 @@ use reth_optimism_consensus::{calculate_receipt_root_no_memo_optimism, isthmus};
 use reth_optimism_node::{OpBuiltPayload, OpPayloadBuilderAttributes};
 use reth_optimism_primitives::OpTransactionSigned;
 use reth_payload_builder::PayloadId;
-use reth_primitives::SealedHeader;
-use reth_primitives_traits::RecoveredBlock;
+use reth_primitives_traits::{RecoveredBlock, SealedHeader};
 use reth_provider::{
     HashedPostStateProvider, ProviderError, StateRootProvider, StorageRootProvider,
 };
@@ -83,7 +81,7 @@ impl BlockAssemblyInput {
 
         let withdrawals = hardforks
             .is_shanghai_active()
-            .then(|| attributes.payload_attributes.withdrawals.clone());
+            .then(|| attributes.withdrawals.clone());
 
         let extra_data = if hardforks.is_jovian_active() {
             attributes
@@ -268,8 +266,8 @@ impl BlockAssemblyInput {
             receipts_root,
             withdrawals_root,
             logs_bloom,
-            timestamp: self.attributes.payload_attributes.timestamp,
-            mix_hash: self.attributes.payload_attributes.prev_randao,
+            timestamp: self.attributes.timestamp,
+            mix_hash: self.attributes.prev_randao,
             nonce: BEACON_NONCE.into(),
             base_fee_per_gas: Some(self.base_fee),
             number: self.parent_header.number + 1,
@@ -277,10 +275,12 @@ impl BlockAssemblyInput {
             difficulty: U256::ZERO,
             gas_used: info.cumulative_gas_used,
             extra_data: self.extra_data.clone(),
-            parent_beacon_block_root: self.attributes.payload_attributes.parent_beacon_block_root,
+            parent_beacon_block_root: self.attributes.parent_beacon_block_root,
             blob_gas_used,
             excess_blob_gas,
             requests_hash,
+            block_access_list_hash: None,
+            slot_number: None,
         };
 
         alloy_consensus::Block::<OpTransactionSigned>::new(
@@ -440,8 +440,8 @@ impl BlockAssemblyInput {
         let executed = BuiltPayloadExecutedBlock {
             recovered_block: Arc::new(recovered_block),
             execution_output: Arc::new(execution_output),
-            trie_updates: either::Either::Left(trie_updates),
-            hashed_state: either::Either::Left(Arc::new(hashed_state)),
+            trie_updates,
+            hashed_state: Arc::new(hashed_state),
         };
         debug!(
             target: "payload_builder",
@@ -477,6 +477,7 @@ impl BlockAssemblyInput {
                     OpReceipt::Eip2930(r) => op_alloy_consensus::OpReceipt::Eip2930(r.clone()),
                     OpReceipt::Eip1559(r) => op_alloy_consensus::OpReceipt::Eip1559(r.clone()),
                     OpReceipt::Eip7702(r) => op_alloy_consensus::OpReceipt::Eip7702(r.clone()),
+                    OpReceipt::PostExec(r) => op_alloy_consensus::OpReceipt::PostExec(r.clone()),
                     OpReceipt::Deposit(r) => op_alloy_consensus::OpReceipt::Deposit(
                         op_alloy_consensus::OpDepositReceipt {
                             inner: r.inner.clone(),
@@ -502,21 +503,19 @@ impl BlockAssemblyInput {
             payload_id: self.payload_id(),
             index: 0,
             base: Some(OpFlashblockPayloadBase {
-                parent_beacon_block_root: self
-                    .attributes
-                    .payload_attributes
-                    .parent_beacon_block_root
-                    .ok_or_else(|| {
+                parent_beacon_block_root: self.attributes.parent_beacon_block_root.ok_or_else(
+                    || {
                         PayloadBuilderError::Other(
                             eyre::eyre!("parent beacon block root not found").into(),
                         )
-                    })?,
+                    },
+                )?,
                 parent_hash: self.parent_header.hash(),
                 fee_recipient: self.attributes.suggested_fee_recipient(),
-                prev_randao: self.attributes.payload_attributes.prev_randao,
+                prev_randao: self.attributes.prev_randao,
                 block_number: self.parent_header.number + 1,
                 gas_limit: self.block_gas_limit,
-                timestamp: self.attributes.payload_attributes.timestamp,
+                timestamp: self.attributes.timestamp,
                 extra_data: self.extra_data.clone(),
                 base_fee_per_gas: U256::from(self.base_fee),
             }),

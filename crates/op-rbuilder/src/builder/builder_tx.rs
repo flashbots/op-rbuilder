@@ -1,7 +1,7 @@
 use alloy_consensus::TxEip1559;
 use alloy_eips::{Encodable2718, eip7623::TOTAL_COST_FLOOR_PER_TOKEN};
 use alloy_evm::{Database, rpc::TryIntoTxEnv};
-use alloy_op_evm::OpEvm;
+use alloy_op_evm::{OpEvm, OpTx};
 use alloy_primitives::{Address, B256, BlockHash, Bytes, TxKind, U256, map::HashSet};
 use alloy_sol_types::{ContractError, Revert, SolCall, SolError, SolInterface};
 use core::fmt::Debug;
@@ -366,11 +366,16 @@ pub trait BuilderTransactions {
         expected_logs: Vec<B256>,
         evm: &mut OpEvm<impl Database, NoOpInspector, PrecompilesMap>,
     ) -> Result<SimulationSuccessResult<T>, BuilderTransactionError> {
-        let evm_env = alloy_evm::EvmEnv::from((evm.cfg.clone(), evm.block.clone()));
-        let tx_env = tx.try_into_tx_env(&evm_env)?;
-        let to = tx_env.base.kind.into_to().unwrap_or_default();
+        let evm_env = alloy_evm::EvmEnv::new(evm.cfg_env().clone(), evm.block().clone());
+        let tx_env: revm::context::TxEnv = tx.as_ref().clone().try_into_tx_env(&evm_env)?;
+        let to = tx_env.kind.into_to().unwrap_or_default();
+        let op_tx = OpTx(op_revm::OpTransaction {
+            base: tx_env,
+            enveloped_tx: Some(Bytes::new()),
+            deposit: Default::default(),
+        });
 
-        let ResultAndState { result, state } = match evm.transact(tx_env) {
+        let ResultAndState { result, state } = match evm.transact(op_tx) {
             Ok(res) => res,
             Err(err) => {
                 if err.is_invalid_tx_err() {
@@ -382,14 +387,10 @@ pub trait BuilderTransactions {
                 }
             }
         };
+        let gas_used = result.tx_gas_used();
 
         match result {
-            ExecutionResult::Success {
-                output,
-                gas_used,
-                logs,
-                ..
-            } => {
+            ExecutionResult::Success { output, logs, .. } => {
                 let topics: HashSet<B256> = logs
                     .into_iter()
                     .flat_map(|log| log.topics().to_vec())

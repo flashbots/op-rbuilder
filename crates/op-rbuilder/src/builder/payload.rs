@@ -24,8 +24,8 @@ use reth_chainspec::EthChainSpec;
 use reth_node_api::PayloadBuilderError;
 use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
 use reth_optimism_node::{OpBuiltPayload, OpPayloadBuilderAttributes};
+use reth_optimism_payload_builder::OpPayloadAttrs;
 use reth_optimism_primitives::{OpReceipt, OpTransactionSigned};
-use reth_payload_primitives::PayloadBuilderAttributes;
 use reth_payload_util::BestPayloadTransactions;
 use reth_provider::{
     HashedPostStateProvider, ProviderError, StateRootProvider, StorageRootProvider,
@@ -384,10 +384,7 @@ where
                 .attributes
                 .gas_limit
                 .unwrap_or(config.parent_header.gas_limit),
-            parent_beacon_block_root: config
-                .attributes
-                .payload_attributes
-                .parent_beacon_block_root,
+            parent_beacon_block_root: config.attributes.parent_beacon_block_root,
             extra_data,
         };
 
@@ -440,10 +437,7 @@ where
         // The build_payload span is created and instrumented in try_build() using
         // tracing::Instrument, which safely manages it across async .await points.
         let span = tracing::Span::current();
-        span.record(
-            "payload_id",
-            config.attributes.payload_attributes.id.to_string(),
-        );
+        span.record("payload_id", config.attributes.id.to_string());
 
         self.builder_ctx
             .address_limiter
@@ -1196,7 +1190,7 @@ where
     Client: ClientBounds + 'static,
     BuilderTx: BuilderTransactions + Send + Sync + 'static,
 {
-    type Attributes = OpPayloadBuilderAttributes<OpTransactionSigned>;
+    type Attributes = OpPayloadAttrs;
     type BuiltPayload = OpBuiltPayload;
 
     async fn try_build(
@@ -1204,6 +1198,24 @@ where
         args: BuildArguments<Self::Attributes, Self::BuiltPayload>,
         best_payload_tx: watch::Sender<Option<Self::BuiltPayload>>,
     ) -> Result<(), PayloadBuilderError> {
+        let payload_id = args.config.payload_id;
+        let builder_attrs = OpPayloadBuilderAttributes::<OpTransactionSigned>::from_rpc_attrs(
+            args.config.parent_header.hash(),
+            payload_id,
+            args.config.attributes.0,
+        )
+        .map_err(PayloadBuilderError::other)?;
+        let args: BuildArguments<OpPayloadBuilderAttributes<OpTransactionSigned>, OpBuiltPayload> =
+            BuildArguments {
+                cached_reads: args.cached_reads,
+                config: reth_basic_payload_builder::PayloadConfig {
+                    parent_header: args.config.parent_header,
+                    attributes: builder_attrs,
+                    payload_id,
+                },
+                cancel: args.cancel,
+            };
+
         let span = if cfg!(feature = "telemetry")
             && args
                 .config

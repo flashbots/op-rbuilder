@@ -11,7 +11,7 @@ use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_evm::OpEvmConfig;
 use reth_optimism_forks::OpHardforks;
 use reth_optimism_node::OpPoolBuilder;
-use reth_optimism_txpool::{OpPooledTx, OpTransactionPool, OpTransactionValidator};
+use reth_optimism_txpool::{OpPooledTx, OpTransactionPool};
 use reth_primitives_traits::{Block, NodePrimitives};
 use reth_provider::{
     BlockReaderIdExt, CanonStateNotification, ChainSpecProvider, NodePrimitivesProvider,
@@ -19,7 +19,7 @@ use reth_provider::{
 use reth_tasks::TaskExecutor;
 use reth_transaction_pool::{
     AllTransactionsEvents, EthPoolTransaction, FullTransactionEvent, TransactionPool,
-    TransactionValidationTaskExecutor, blobstore::DiskFileBlobStore,
+    blobstore::DiskFileBlobStore,
 };
 
 use crate::{
@@ -77,12 +77,8 @@ where
     FBPooledTransaction: EthPoolTransaction<Consensus = TxTy<Node::Types>> + OpPooledTx,
     Evm: ConfigureEvm<Primitives = PrimitivesTy<Node::Types>> + Clone + 'static,
 {
-    type Pool = Flashpool<
-        OpTransactionPool<Node::Provider, DiskFileBlobStore, Evm, FBPooledTransaction>,
-        TransactionValidationTaskExecutor<
-            OpTransactionValidator<Node::Provider, FBPooledTransaction, Evm>,
-        >,
-    >;
+    type Pool =
+        Flashpool<OpTransactionPool<Node::Provider, DiskFileBlobStore, Evm, FBPooledTransaction>>;
 
     async fn build_pool(
         self,
@@ -105,7 +101,6 @@ where
             inner_pool.all_transactions_event_listener(),
         ));
 
-        let validator = inner_pool.validator().clone();
         let metrics = Arc::new(PoolMetrics::default());
 
         let simulator = if pre_simulate_bundles {
@@ -152,7 +147,6 @@ where
 
         Ok(Flashpool {
             inner: inner_pool,
-            validator,
             simulator,
             backrun_bundle_pool,
             task_executor: ctx.task_executor().clone(),
