@@ -137,13 +137,21 @@ mod tests {
     use reth_db::{tables, transaction::DbTxMut};
     use reth_primitives_traits::{Account, StorageEntry};
     use reth_provider::{
-        DatabaseProviderFactory, LatestStateProvider, StorageTrieWriter, TrieWriter,
-        test_utils::create_test_provider_factory,
+        DatabaseProviderFactory, LatestStateProvider, StorageSettingsCache, StorageTrieWriter,
+        TrieWriter, test_utils::create_test_provider_factory,
     };
     use reth_trie::{HashedStorage, StateRoot, StorageRoot};
-    use reth_trie_db::{DatabaseStateRoot, DatabaseStorageRoot};
+    use reth_trie_db::{
+        DatabaseHashedCursorFactory, DatabaseStateRoot, DatabaseStorageRoot,
+        DatabaseTrieCursorFactory,
+    };
 
     type InitialAccount = (B256, Account, Vec<(B256, U256)>);
+
+    type DbStateRoot<'a, TX, A> =
+        StateRoot<DatabaseTrieCursorFactory<&'a TX, A>, DatabaseHashedCursorFactory<&'a TX>>;
+    type DbStorageRoot<'a, TX, A> =
+        StorageRoot<DatabaseTrieCursorFactory<&'a TX, A>, DatabaseHashedCursorFactory<&'a TX>>;
 
     /// Helper: insert an account and its storage into the DB.
     fn insert_account(
@@ -179,22 +187,28 @@ mod tests {
         }
 
         if populate_trie {
-            for (hashed_address, _, _) in initial_accounts {
-                let (_, _, storage_updates) =
-                    StorageRoot::from_tx_hashed(tx.tx_ref(), *hashed_address)
+            // Seed the trie using the same key adapter the provider will read back with,
+            // dispatched off the database's storage settings (legacy vs packed).
+            reth_trie_db::with_adapter!(tx, |A| {
+                for (hashed_address, _, _) in initial_accounts {
+                    let (_, _, storage_updates) =
+                        DbStorageRoot::<_, A>::from_tx_hashed(tx.tx_ref(), *hashed_address)
+                            .root_with_updates()
+                            .unwrap();
+                    let sorted_updates = storage_updates.into_sorted();
+                    tx.write_storage_trie_updates_sorted(core::iter::once((
+                        hashed_address,
+                        &sorted_updates,
+                    )))
+                    .unwrap();
+                }
+
+                let (_initial_root, account_trie_updates) =
+                    DbStateRoot::<_, A>::from_tx(tx.tx_ref())
                         .root_with_updates()
                         .unwrap();
-                let sorted_updates = storage_updates.into_sorted();
-                tx.write_storage_trie_updates_sorted(core::iter::once((
-                    hashed_address,
-                    &sorted_updates,
-                )))
-                .unwrap();
-            }
-
-            let (_initial_root, account_trie_updates) =
-                StateRoot::from_tx(tx.tx_ref()).root_with_updates().unwrap();
-            tx.write_trie_updates(account_trie_updates).unwrap();
+                tx.write_trie_updates(account_trie_updates).unwrap();
+            });
         }
 
         tx.commit().unwrap();
