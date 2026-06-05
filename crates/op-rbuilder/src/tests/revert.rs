@@ -52,11 +52,17 @@ async fn monitor_transaction_gc(rbuilder: LocalInstance) -> eyre::Result<()> {
 
         // since we created the 10 transactions with increasing block ranges, as we generate blocks
         // one transaction will be gc on each block.
-        // transactions from [0, i] should be dropped, transactions from [i+1, 10] should be queued
-        for tx in pending_txn.iter().take(i + 1) {
+        //
+        // A conditional tx with `block_number_max = N` is eligible up to and including block N and
+        // is only GC'd once the chain advances *past* N: alloy's
+        // `TransactionConditional::has_exceeded_block_number` uses a strict `>` comparison
+        // (it was `>=` before alloy 1.8). Here tx `j` has `block_number_max = latest + j + 1` and
+        // the chain head at iteration `i` is `latest + i + 1`, so txs `[0, i)` are now past their
+        // range and dropped, while txs `[i, 10)` are still within range and remain pending.
+        for tx in pending_txn.iter().take(i) {
             assert!(rbuilder.pool().is_dropped(*tx.tx_hash()));
         }
-        for tx in pending_txn.iter().take(10).skip(i + 1) {
+        for tx in pending_txn.iter().take(10).skip(i) {
             assert!(rbuilder.pool().is_pending(*tx.tx_hash()));
         }
     }
@@ -156,10 +162,14 @@ async fn bundle(rbuilder: LocalInstance) -> eyre::Result<()> {
     // After the block the transaction is still pending in the pool
     assert!(rbuilder.pool().is_pending(*reverted_bundle.tx_hash()));
 
-    // Test 3: Chain progresses beyond the bundle range. The transaction is dropped from the pool
+    // Test 3: At block 4 (== max_block_number) the bundle is still within its range, so it is
+    // retried (and reverts) but remains in the pool.
     driver.build_new_block().await?; // Block 4
-    assert!(rbuilder.pool().is_dropped(*reverted_bundle.tx_hash()));
+    assert!(rbuilder.pool().is_pending(*reverted_bundle.tx_hash()));
 
+    // Once the chain progresses *past* the bundle range the transaction is dropped from the pool.
+    // alloy's `has_exceeded_block_number` uses a strict `>` comparison against `block_number_max`
+    // (it was `>=` before alloy 1.8), so the drop happens at block max + 1.
     driver.build_new_block().await?; // Block 5
     assert!(rbuilder.pool().is_dropped(*reverted_bundle.tx_hash()));
 
@@ -422,16 +432,24 @@ async fn check_transaction_receipt_status_message(rbuilder: LocalInstance) -> ey
         .await?;
     let tx_hash = reverting_tx.tx_hash();
 
-    let _ = driver.build_new_block().await?;
+    let _ = driver.build_new_block().await?; // Block 1
     let receipt = provider.get_transaction_receipt(*tx_hash).await?;
     assert!(receipt.is_none());
 
-    let _ = driver.build_new_block().await?;
+    let _ = driver.build_new_block().await?; // Block 2
     let receipt = provider.get_transaction_receipt(*tx_hash).await?;
     assert!(receipt.is_none());
 
-    // Dropped
-    let _ = driver.build_new_block().await?;
+    // Block 3 (== max_block_number): the bundle is still within range, so it is retried (and
+    // reverts) but not yet dropped from the pool; the receipt is still absent rather than an error.
+    let _ = driver.build_new_block().await?; // Block 3
+    let receipt = provider.get_transaction_receipt(*tx_hash).await?;
+    assert!(receipt.is_none());
+
+    // Block 4 (> max_block_number): the chain has advanced past the bundle range, so it is dropped
+    // from the pool and the receipt endpoint reports the drop. alloy's `has_exceeded_block_number`
+    // uses a strict `>` comparison against `block_number_max` (it was `>=` before alloy 1.8).
+    let _ = driver.build_new_block().await?; // Block 4
     let err = provider
         .get_transaction_receipt(*tx_hash)
         .await
