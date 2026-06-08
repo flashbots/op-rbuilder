@@ -1,6 +1,17 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [0.4.8] - 2026-06-08
+
+### Miscellaneous
+
+- [`d35f193`](https://github.com/flashbots/op-rbuilder/commit/d35f193dc0bbb3b9b13be53619132985e3a869f3) Bump to op-reth/v2.3.0 (reth 81c0261 / revm 38 / alloy 2.0) for Karst ([#532](https://github.com/flashbots/op-rbuilder/pull/532))
+- [`f98b1f5`](https://github.com/flashbots/op-rbuilder/commit/f98b1f5b139983989be987ff4bfbdd6d8f745ada) Bump Cargo version to 0.4.8
+
+### Refactor
+
+- [`0681535`](https://github.com/flashbots/op-rbuilder/commit/0681535e7ee337392b846252d60a02bc42423030) Introduce FlashblockMeta to replace bool pair ([#528](https://github.com/flashbots/op-rbuilder/pull/528))
+
 ## [0.4.7] - 2026-06-02
 
 ### Bug Fixes
