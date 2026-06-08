@@ -1,6 +1,18 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [0.4.8] - 2026-06-08
+
+### Dependency Upgrade
+
+- [`d35f193`](https://github.com/flashbots/op-rbuilder/commit/d35f193dc0bbb3b9b13be53619132985e3a869f3) Bump to op-reth/v2.3.0 (reth 81c0261 / revm 38 / alloy 2.0) for Karst ([#532](https://github.com/flashbots/op-rbuilder/pull/532))
+  - **Known regression:** op-reth v2 wraps the inner pool in `OpPool<P>` and does not re-expose `Pool::validator()` through the wrapper, so Flashpool no longer pre-validates transactions before dispatching them to the presim path. Obviously-invalid txs (bad balance, nonce gap, fee too low, etc.) will now burn an EVM simulation before being rejected by the inner pool. The fix is [ethereum-optimism/optimism#20408](https://github.com/ethereum-optimism/optimism/pull/20408), which adds `OpPool::validate()` and is slated to ship in **op-reth v2.3.1**. Once we bump to v2.3.1, Flashpool can call `inner.validate(...)` directly and the fast-fail behavior is restored.
+- [`f98b1f5`](https://github.com/flashbots/op-rbuilder/commit/f98b1f5b139983989be987ff4bfbdd6d8f745ada) Bump Cargo version to 0.4.8
+
+### Refactor
+
+- [`0681535`](https://github.com/flashbots/op-rbuilder/commit/0681535e7ee337392b846252d60a02bc42423030) Introduce FlashblockMeta to replace bool pair ([#528](https://github.com/flashbots/op-rbuilder/pull/528))
+
 ## [0.4.7] - 2026-06-02
 
 ### Bug Fixes
