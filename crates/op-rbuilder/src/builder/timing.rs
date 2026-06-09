@@ -104,7 +104,7 @@ impl FlashblockScheduler {
                         return;
                     }
                 }
-                _ = block_cancel.cancelled() => {
+                _ = block_cancel.wait_for_cancellation() => {
                     warn!(
                         target: "payload_builder",
                         id = %payload_id,
