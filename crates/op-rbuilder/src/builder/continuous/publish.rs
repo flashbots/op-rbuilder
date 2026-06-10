@@ -13,7 +13,7 @@ use crate::{
         builder_tx::BuilderTransactions,
         cancellation::FlashblockJobCancellation,
         context::OpPayloadJobCtx,
-        payload::{FlashblocksState, OpPayloadBuilder},
+        payload::{FlashblocksState, OpPayloadBuilder, PayloadBuildStats},
         timing::compute_slot_offset_ms,
     },
     metrics::record_flashblock_publish_timing,
@@ -38,7 +38,7 @@ use tracing::{debug, info, metadata::Level, span, warn};
 // ├─ Ready(candidate) → plan_with_candidate → execute_outcome → Advance | Stop
 // └─ AwaitFallback    → wait
 //                        ├─ Some(candidate) → plan_with_candidate → execute_outcome → Advance | Stop
-//                        └─ None            → record_base_and_stop
+//                        └─ None            → PayloadBuildStats::new → Stop
 
 enum TriggerCandidate {
     Ready {
@@ -148,7 +148,7 @@ where
         new_fb_cancel: FlashblockJobCancellation,
         target_flashblocks: u64,
         parent_hash: B256,
-    ) -> Result<ControlFlow<(), FlashblockInterval>, PayloadBuilderError> {
+    ) -> Result<ControlFlow<PayloadBuildStats, FlashblockInterval>, PayloadBuilderError> {
         // The consumed `candidate_slot` Arc clone is dropped here; the build
         // task still holds its own clone until it observes cancel.
         let FlashblockInterval {
@@ -188,7 +188,6 @@ where
                     deps,
                     &fb_span,
                     base_ctx,
-                    None,
                     &base_fb_state,
                     &base_info,
                     *candidate,
@@ -238,7 +237,6 @@ where
                             deps,
                             &fb_span,
                             base_state.ctx,
-                            Some(&base_ctx),
                             &base_fb_state,
                             &base_info,
                             candidate,
@@ -262,14 +260,14 @@ where
                             fallback_no_candidate_metrics_source(),
                             StopMetricsSource::IntervalBase,
                         );
-                        self.record_base_and_stop(
-                            deps,
-                            &base_ctx,
-                            &base_fb_state,
-                            &base_info,
+                        Ok(ControlFlow::Break(PayloadBuildStats::new(
+                            deps.payload_cancel.clone(),
+                            deps.span.clone(),
+                            base_fb_state.flashblock_index(),
+                            base_info.executed_transactions.len(),
+                            base_info.cumulative_uncompressed_bytes,
                             target_flashblocks,
-                        );
-                        Ok(ControlFlow::Break(()))
+                        )))
                     }
                 }
             }
@@ -280,16 +278,12 @@ where
     ///
     /// `candidate_ctx` is the context the candidate was built against
     /// (`base_ctx` on the Ready path, `base_state.ctx` on the Fallback path).
-    /// `suppressed_base_ctx` overrides which context's `flashblocks_metrics`
-    /// receives the suppressed-stop record — only set when distinct from
-    /// `candidate_ctx` (Fallback path).
     #[expect(clippy::too_many_arguments)]
     fn execute_outcome(
         &self,
         deps: &JobDeps<'_>,
         fb_span: &tracing::Span,
         candidate_ctx: OpPayloadJobCtx,
-        suppressed_base_ctx: Option<&OpPayloadJobCtx>,
         base_fb_state: &FlashblocksState,
         base_info: &ExecutionInfo,
         candidate: BestCandidate,
@@ -300,7 +294,7 @@ where
         new_fb_cancel: FlashblockJobCancellation,
         target_flashblocks: u64,
         parent_hash: B256,
-    ) -> Result<ControlFlow<(), FlashblockInterval>, PayloadBuilderError> {
+    ) -> Result<ControlFlow<PayloadBuildStats, FlashblockInterval>, PayloadBuilderError> {
         match outcome {
             TriggerOutcome::PublishAndAdvance | TriggerOutcome::PublishAndStop => {
                 let byte_size = self.publish_candidate(
@@ -347,14 +341,14 @@ where
                     candidates_improved,
                     CandidateLogEvent::CandidatePublishSuppressed,
                 );
-                self.record_base_and_stop(
-                    deps,
-                    suppressed_base_ctx.unwrap_or(&candidate_ctx),
-                    base_fb_state,
-                    base_info,
+                Ok(ControlFlow::Break(PayloadBuildStats::new(
+                    deps.payload_cancel.clone(),
+                    deps.span.clone(),
+                    base_fb_state.flashblock_index(),
+                    base_info.executed_transactions.len(),
+                    base_info.cumulative_uncompressed_bytes,
                     target_flashblocks,
-                );
-                Ok(ControlFlow::Break(()))
+                )))
             }
         }
     }
@@ -386,24 +380,6 @@ where
         );
     }
 
-    fn record_base_and_stop(
-        &self,
-        deps: &JobDeps<'_>,
-        base_ctx: &OpPayloadJobCtx,
-        base_fb_state: &FlashblocksState,
-        base_info: &ExecutionInfo,
-        target_flashblocks: u64,
-    ) {
-        Self::record_cancellation_reason(self.metrics(), deps.payload_cancel, deps.span);
-        self.record_flashblocks_metrics(
-            base_ctx,
-            base_fb_state,
-            base_info,
-            target_flashblocks,
-            deps.span,
-        );
-    }
-
     /// Record publish-side metrics for the just-published candidate, then
     /// either advance to the next flashblock interval or stop, per `stop`
     /// (decided up-front by `plan_with_candidate`).
@@ -421,7 +397,7 @@ where
         target_flashblocks: u64,
         parent_hash: B256,
         stop: bool,
-    ) -> Result<ControlFlow<(), FlashblockInterval>, PayloadBuilderError> {
+    ) -> Result<ControlFlow<PayloadBuildStats, FlashblockInterval>, PayloadBuilderError> {
         let BestCandidate {
             result: (next_fb_state, _new_payload, _fb_payload_delta),
             cache,
@@ -502,15 +478,14 @@ where
         base_state.fb_state = next_fb_state;
 
         if stop {
-            Self::record_cancellation_reason(self.metrics(), deps.payload_cancel, deps.span);
-            self.record_flashblocks_metrics(
-                &base_state.ctx,
-                &base_state.fb_state,
-                &base_state.info,
+            return Ok(ControlFlow::Break(PayloadBuildStats::new(
+                deps.payload_cancel.clone(),
+                deps.span.clone(),
+                base_state.fb_state.flashblock_index(),
+                base_state.info.executed_transactions.len(),
+                base_state.info.cumulative_uncompressed_bytes,
                 target_flashblocks,
-                deps.span,
-            );
-            return Ok(ControlFlow::Break(()));
+            )));
         }
 
         base_state.ctx = base_state.ctx.with_cancel(new_fb_cancel);

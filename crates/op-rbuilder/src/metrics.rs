@@ -200,6 +200,7 @@ pub struct OpRBuilderMetrics {
     pub continuous_fee_improvement: Histogram,
     /// Builds completed but not published due to resolved gate
     pub flashblock_publish_suppressed_total: Counter,
+    /// TODO: Use labels for these
     /// Payload job ended because getPayload resolved
     pub payload_job_cancellation_resolved: Counter,
     /// Payload job ended because a new FCU arrived

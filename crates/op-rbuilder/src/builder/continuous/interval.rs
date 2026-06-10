@@ -6,7 +6,7 @@ use crate::{
     builder::{
         builder_tx::BuilderTransactions,
         cancellation::{FlashblockJobCancellation, PayloadJobCancellation},
-        payload::OpPayloadBuilder,
+        payload::{OpPayloadBuilder, PayloadBuildStats},
     },
     traits::{ClientBounds, PoolBounds},
 };
@@ -43,7 +43,7 @@ where
         parent_hash: B256,
         mut fb_trigger_rx: mpsc::Receiver<FlashblockJobCancellation>,
         base_state: BuildState,
-    ) -> Result<(), PayloadBuilderError> {
+    ) -> Result<PayloadBuildStats, PayloadBuilderError> {
         debug!(
             target: "payload_builder",
             "Continuous build mode enabled"
@@ -69,8 +69,7 @@ where
                             ControlFlow::Continue(next) => interval = next,
                             // Terminal interval: last flashblock, payload cancelled
                             // mid-flight, or fallback produced no candidate.
-                            // Stop metrics already recorded in publish_and_spawn_next.
-                            ControlFlow::Break(()) => return Ok(()),
+                            ControlFlow::Break(stats) => return Ok(stats),
                         }
                     }
                     None => {
@@ -86,15 +85,14 @@ where
             }
         }
 
-        Self::record_cancellation_reason(self.metrics(), deps.payload_cancel, deps.span);
-        self.record_flashblocks_metrics(
-            &interval.base_ctx,
-            &interval.base_fb_state,
-            &interval.base_info,
+        Ok(PayloadBuildStats::new(
+            deps.payload_cancel.clone(),
+            deps.span.clone(),
+            interval.base_fb_state.flashblock_index(),
+            interval.base_info.executed_transactions.len(),
+            interval.base_info.cumulative_uncompressed_bytes,
             target_flashblocks,
-            deps.span,
-        );
-        Ok(())
+        ))
     }
 
     /// Spawn the build task for a new flashblock interval and bundle the
