@@ -315,14 +315,6 @@ impl<Pool, Client, BuilderTx> OpPayloadBuilderInner<Pool, Client, BuilderTx> {
         &self.client
     }
 
-    pub(crate) fn built_fb_payload_tx(&self) -> &mpsc::Sender<OpBuiltPayload> {
-        &self.built_fb_payload_tx
-    }
-
-    pub(crate) fn built_payload_tx(&self) -> &mpsc::Sender<OpBuiltPayload> {
-        &self.built_payload_tx
-    }
-
     pub(crate) fn ws_pub(&self) -> &WebSocketPublisher {
         &self.ws_pub
     }
@@ -1020,7 +1012,7 @@ where
         })
     }
 
-    fn notify_built_payload(&self, payload: OpBuiltPayload) {
+    pub(crate) fn notify_built_payload(&self, payload: OpBuiltPayload) {
         if let Err(e) = self.built_fb_payload_tx.try_send(payload.clone()) {
             warn!(
                 target: "payload_builder",
