@@ -40,7 +40,7 @@ pub enum TxnExecutionResult {
     CoinbaseProfitTooLow,
 }
 
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Clone)]
 pub struct ExecutionInfo {
     /// All executed transactions (unrecovered).
     pub executed_transactions: Vec<OpTransactionSigned>,
