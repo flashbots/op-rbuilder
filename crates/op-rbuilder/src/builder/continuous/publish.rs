@@ -103,14 +103,15 @@ where
 {
     /// Publish a candidate flashblock immediately. The context is only used for
     /// publish timing metadata, so this can run before awaiting the build task.
-    /// Returns the serialized byte size.
+    /// Returns `(byte_size, slot_offset_ms)` so the caller can include
+    /// slot_offset_ms in the fb_published tx_trace log.
     fn publish_candidate(
         &self,
         candidate: &BestCandidate,
         best_payload_tx: &watch::Sender<Option<OpBuiltPayload>>,
         fb_span: &tracing::Span,
         ctx: &OpPayloadJobCtx,
-    ) -> Result<usize, PayloadBuilderError> {
+    ) -> Result<(usize, f64), PayloadBuilderError> {
         let _publish_span = if fb_span.is_none() {
             tracing::Span::none()
         } else {
@@ -128,7 +129,7 @@ where
         let slot_offset_ms =
             compute_slot_offset_ms(ctx.attributes().timestamp(), self.config().block_time);
         record_flashblock_publish_timing(candidate.fb_state.flashblock_index(), slot_offset_ms);
-        Ok(flashblock_byte_size)
+        Ok((flashblock_byte_size, slot_offset_ms))
     }
 
     pub(super) async fn publish_and_spawn_next(
@@ -288,7 +289,7 @@ where
     ) -> Result<ControlFlow<PayloadBuildStats, FlashblockInterval>, PayloadBuilderError> {
         match outcome {
             TriggerOutcome::PublishAndAdvance | TriggerOutcome::PublishAndStop => {
-                let byte_size = self.publish_candidate(
+                let (byte_size, slot_offset_ms) = self.publish_candidate(
                     &candidate,
                     deps.best_payload_tx,
                     fb_span,
@@ -307,6 +308,7 @@ where
                     candidate_ctx,
                     candidate,
                     byte_size,
+                    slot_offset_ms,
                     candidates_evaluated,
                     candidates_improved,
                     new_fb_cancel,
@@ -382,6 +384,7 @@ where
         ctx: OpPayloadJobCtx,
         candidate: BestCandidate,
         byte_size: usize,
+        slot_offset_ms: f64,
         candidates_evaluated: u64,
         candidates_improved: u64,
         new_fb_cancel: FlashblockJobCancellation,
@@ -426,6 +429,7 @@ where
                 flashblock_index = base_state.fb_state.flashblock_index(),
                 byte_size,
                 total_txs = base_state.info.executed_transactions.len(),
+                slot_offset_ms,
                 stage = "fb_published"
             );
         }
@@ -440,17 +444,16 @@ where
             .metrics
             .flashblock_num_tx_histogram
             .record(base_state.info.executed_transactions.len() as f64);
-        // Record only the winning candidate's single-build time, so this stays
-        // comparable with the non-continuous path. The full trigger-to-trigger
-        // interval is in `continuous_build_duration`.
+        // Record only the winning candidate's single-build time.
+        // The full trigger-to-trigger interval is in `continuous_build_duration`.
         base_state
             .ctx
             .metrics
             .flashblock_build_duration
             .record(build_duration);
-        // Record pool-fetch and assemble durations for the published winner only,
-        // keeping histogram cadence comparable with the non-continuous path which
-        // samples once per flashblock. None for the empty-baseline candidate.
+
+        // Record pool-fetch and assemble durations for published winner only.
+        // None for empty-baseline candidate.
         if let Some(d) = transaction_pool_fetch_duration {
             base_state
                 .ctx

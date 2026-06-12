@@ -214,11 +214,9 @@ where
                     tx_tracker: base_tx_tracker.clone(),
                     result: (next_flashblock_state, new_payload, fb_payload),
                     build_duration: empty_build_duration,
-                    // The empty-baseline candidate has no pool fetch and its
-                    // assemble is not separately timed; leave both None so the
-                    // winner-only recording in advance_or_stop_published is a
-                    // no-op when this becomes the published candidate.
+                    // no pool fetch
                     transaction_pool_fetch_duration: None,
+                    // not measured for empty candidate
                     total_block_built_duration: None,
                     limiter_snapshot: ctx.address_limiter().snapshot_pending(),
                     candidates_evaluated,
