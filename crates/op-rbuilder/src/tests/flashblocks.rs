@@ -5,6 +5,7 @@ use alloy_provider::Provider;
 use macros::rb_test;
 use op_alloy_consensus::OpTxEnvelope;
 use std::time::Duration;
+use tokio::time::timeout;
 
 use crate::{
     args::{FlashblocksArgs, OpRbuilderArgs},
@@ -413,6 +414,104 @@ async fn smoke_continuous_trigger_miss_fallback_publishes_candidate(
     );
 
     flashblocks_listener.stop().await
+}
+
+#[rb_test(args = OpRbuilderArgs {
+    chain_block_time: 1000,
+    enable_revert_protection: true,
+    flashblocks: FlashblocksArgs {
+        flashblocks_port: 1245,
+        flashblocks_addr: "127.0.0.1".into(),
+        flashblocks_block_time: 200,
+        flashblocks_continuous_build: true,
+        ..Default::default()
+    },
+    ..Default::default()
+})]
+async fn smoke_continuous_empty_pool_all_flashblocks_in_order(
+    rbuilder: LocalInstance,
+) -> eyre::Result<()> {
+    let flashblocks_listener = rbuilder.spawn_flashblocks_listener();
+    let driver = rbuilder.driver().await?;
+
+    // No user txs: every flashblock is built by the empty-candidate path.
+    let _block = driver.build_new_block_with_current_timestamp(None).await?;
+
+    let flashblocks = flashblocks_listener.get_flashblocks();
+    assert_eq!(
+        6,
+        flashblocks.len(),
+        "empty-pool continuous mode should still produce 6 flashblocks"
+    );
+
+    for (expected_index, flashblock) in flashblocks.iter().enumerate() {
+        assert_eq!(
+            expected_index as u64, flashblock.index,
+            "empty-pool continuous flashblocks should arrive in index order"
+        );
+    }
+
+    flashblocks_listener.stop().await
+}
+
+#[rb_test(args = OpRbuilderArgs {
+    chain_block_time: 1000,
+    enable_revert_protection: true,
+    // With `exclude_reverts_between_flashblocks: true`
+    exclude_reverts_between_flashblocks: true,
+    flashblocks: FlashblocksArgs {
+        flashblocks_port: 1244,
+        flashblocks_addr: "127.0.0.1".into(),
+        flashblocks_block_time: 200,
+        flashblocks_continuous_build: true,
+        ..Default::default()
+    },
+    ..Default::default()
+})]
+async fn continuous_reverted_bundle_tx_evicted_from_pool(
+    rbuilder: LocalInstance,
+) -> eyre::Result<()> {
+    let driver = rbuilder.driver().await?;
+
+    // Send a revert-protected bundle tx that always reverts.
+    let reverting_tx = driver
+        .create_transaction()
+        .random_reverting_transaction()
+        .with_bundle(BundleOpts::default())
+        .send()
+        .await?;
+    let tx_hash = *reverting_tx.tx_hash();
+
+    // Build one block; by the time it is committed the candidate loop has run at
+    // least one pool-backed candidate and should have evicted the reverting tx.
+    let block = driver.build_new_block_with_current_timestamp(None).await?;
+
+    // The reverting tx must NOT appear in the final block.
+    assert!(
+        !block.includes(&tx_hash),
+        "reverting bundle tx should not be included in the block"
+    );
+
+    // Poll until the pool observer records the Discarded event or a deadline
+    // expires. The eviction call races with the observer's async event processing.
+    let dropped = timeout(Duration::from_secs(3), async {
+        loop {
+            if rbuilder.pool().is_dropped(tx_hash) {
+                return true;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap_or(false);
+
+    assert!(
+        dropped,
+        "reverting revert-protected bundle tx should have been evicted from the pool \
+         by the continuous candidate loop (pool never reported Discarded event)"
+    );
+
+    Ok(())
 }
 
 #[rb_test(args = OpRbuilderArgs {

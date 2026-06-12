@@ -42,6 +42,7 @@ where
     Client: ClientBounds + 'static,
     BuilderTx: BuilderTransactions + Send + Sync + 'static,
 {
+    #[expect(clippy::too_many_arguments)]
     fn build_empty_flashblock_candidate<
         DB: Database<Error = ProviderError> + std::fmt::Debug + AsRef<P>,
         P: StateRootProvider + HashedPostStateProvider + StorageRootProvider,
@@ -53,6 +54,8 @@ where
         state: &mut State<DB>,
         state_provider: impl reth::providers::StateProvider + Clone,
         state_root_calc: &mut StateRootCalculator,
+        target_da_for_batch: Option<u64>,
+        target_da_footprint_for_batch: Option<u64>,
     ) -> eyre::Result<(FlashblocksState, OpBuiltPayload, OpFlashblockPayload)> {
         if let Err(e) = self.builder_tx().add_builder_txs(
             &state_provider,
@@ -86,10 +89,8 @@ where
         fb_payload.index = fb_state.flashblock_index();
         fb_payload.base = None;
 
-        let next_target_da = fb_state.target_da_for_batch();
-        let next_target_da_footprint = fb_state.target_da_footprint_for_batch();
         Ok((
-            fb_state.next_after_seal(next_target_da, next_target_da_footprint),
+            fb_state.next_after_seal(target_da_for_batch, target_da_footprint_for_batch),
             new_payload,
             fb_payload,
         ))
@@ -190,6 +191,8 @@ where
             state,
             &state_provider,
             &mut empty_candidate_state_root_calc,
+            target_da_for_batch,
+            target_da_footprint_for_batch,
         );
         let empty_build_duration = empty_build_start.elapsed();
         candidates_evaluated += 1;
@@ -313,6 +316,11 @@ where
                 .collect::<Vec<_>>();
             best_txs.mark_committed(new_transactions);
             drop(best_txs);
+
+            if !sim_info.reverted_bundle_tx_hashes.is_empty() {
+                let hashes = sim_info.reverted_bundle_tx_hashes.drain(..).collect();
+                self.pool().remove_transactions(hashes);
+            }
 
             if exec_cancelled || ctx.cancel().is_cancelled() || block_cancel.is_cancelled() {
                 break;
