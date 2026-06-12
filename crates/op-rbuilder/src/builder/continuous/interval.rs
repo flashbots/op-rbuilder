@@ -85,6 +85,15 @@ where
             }
         }
 
+        // Record the wall time of the final in-flight interval. The trigger arm
+        // records via publish_and_spawn_next (before any branching), so it never
+        // reaches here. Both break arms — payload-cancel and channel-closed —
+        // drop the interval without publishing; recording here ensures the
+        // histogram captures the final (often longest) interval exactly once.
+        self.metrics()
+            .continuous_build_duration
+            .record(interval.build_start.elapsed());
+
         Ok(PayloadBuildStats::new(
             deps.payload_cancel.clone(),
             deps.span.clone(),
