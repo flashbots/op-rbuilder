@@ -25,7 +25,7 @@ use reth_node_api::PayloadBuilderError;
 use reth_optimism_node::OpBuiltPayload;
 use std::{ops::ControlFlow, time::Instant};
 use tokio::sync::watch;
-use tracing::{debug, info, metadata::Level, span, warn};
+use tracing::{debug, info, metadata::Level, span};
 
 // === Per-interval publishing and advancement =================
 //
@@ -123,20 +123,11 @@ where
             .ws_pub()
             .publish(fb_payload_delta)
             .map_err(PayloadBuilderError::other)?;
+        best_payload_tx.send_replace(Some(new_payload.clone()));
+        self.notify_built_payload(new_payload.clone());
         let slot_offset_ms =
             compute_slot_offset_ms(ctx.attributes().timestamp(), self.config().block_time);
         record_flashblock_publish_timing(candidate.fb_state.flashblock_index(), slot_offset_ms);
-        self.built_fb_payload_tx()
-            .try_send(new_payload.clone())
-            .map_err(PayloadBuilderError::other)?;
-        if let Err(e) = self.built_payload_tx().try_send(new_payload.clone()) {
-            warn!(
-                target: "payload_builder",
-                error = %e,
-                "Failed to send updated payload"
-            );
-        }
-        best_payload_tx.send_replace(Some(new_payload.clone()));
         Ok(flashblock_byte_size)
     }
 
