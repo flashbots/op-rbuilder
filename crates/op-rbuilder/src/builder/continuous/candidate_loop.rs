@@ -54,10 +54,6 @@ where
         state: &mut State<DB>,
         state_provider: impl reth::providers::StateProvider + Clone,
         state_root_calc: &mut StateRootCalculator,
-        // Builder-tx-reduced DA budgets: must be passed in from the caller after
-        // `reserve_builder_tx_budget` has been applied, so the next flashblock's
-        // DA window is computed from the residual that actually reaches pool txs
-        // (matching the legacy per-trigger path in `build_next_flashblock`).
         target_da_for_batch: Option<u64>,
         target_da_footprint_for_batch: Option<u64>,
     ) -> eyre::Result<(FlashblocksState, OpBuiltPayload, OpFlashblockPayload)> {
@@ -320,6 +316,11 @@ where
                 .collect::<Vec<_>>();
             best_txs.mark_committed(new_transactions);
             drop(best_txs);
+
+            if !sim_info.reverted_bundle_tx_hashes.is_empty() {
+                let hashes = sim_info.reverted_bundle_tx_hashes.drain(..).collect();
+                self.pool().remove_transactions(hashes);
+            }
 
             if exec_cancelled || ctx.cancel().is_cancelled() || block_cancel.is_cancelled() {
                 break;
