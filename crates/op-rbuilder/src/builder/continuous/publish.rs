@@ -398,6 +398,8 @@ where
             tx_tracker,
             limiter_snapshot,
             build_duration,
+            transaction_pool_fetch_duration,
+            total_block_built_duration,
             state_root_calc,
             ..
         } = candidate;
@@ -446,6 +448,21 @@ where
             .metrics
             .flashblock_build_duration
             .record(build_duration);
+        // Record pool-fetch and assemble durations for the published winner only,
+        // keeping histogram cadence comparable with the non-continuous path which
+        // samples once per flashblock. None for the empty-baseline candidate.
+        if let Some(d) = transaction_pool_fetch_duration {
+            base_state
+                .ctx
+                .metrics
+                .transaction_pool_fetch_duration
+                .record(d);
+            base_state.ctx.metrics.transaction_pool_fetch_gauge.set(d);
+        }
+        if let Some(d) = total_block_built_duration {
+            base_state.ctx.metrics.total_block_built_duration.record(d);
+            base_state.ctx.metrics.total_block_built_gauge.set(d);
+        }
 
         fb_span.record(
             "tx_count",

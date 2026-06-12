@@ -79,6 +79,16 @@ pub(super) struct BestCandidate {
     pub(super) limiter_snapshot: AddressLimiterDeltas,
     /// Wall time spent building this single candidate.
     pub(super) build_duration: Duration,
+    /// Wall time to fetch the transaction pool iterator for this candidate.
+    /// `None` for the empty-baseline candidate, which has no pool fetch.
+    /// Recorded on `transaction_pool_fetch_duration` only for the published
+    /// winner, keeping cadence comparable with the non-continuous path.
+    pub(super) transaction_pool_fetch_duration: Option<Duration>,
+    /// Wall time for the assemble (state-root + seal) step of this candidate.
+    /// `None` for the empty-baseline candidate (its assemble is not separately
+    /// timed to avoid contorting the empty path).
+    /// Recorded on `total_block_built_duration` only for the published winner.
+    pub(super) total_block_built_duration: Option<Duration>,
     /// Number of candidates evaluated when this candidate became best.
     pub(super) candidates_evaluated: u64,
     /// Number of times the interval best improved including this candidate.
