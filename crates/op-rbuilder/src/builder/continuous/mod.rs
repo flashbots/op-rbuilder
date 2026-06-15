@@ -14,7 +14,16 @@ mod shared_best;
 mod transition;
 mod types;
 
+/// Test-only knobs for continuous build mode.
+///
+/// Threaded through [`BuilderConfig`](crate::builder::BuilderConfig) because the
+/// builder is constructed inside the node and is otherwise unreachable from a
+/// test. Always default (empty) outside `#[cfg(test)]`.
 #[cfg(test)]
-pub(crate) mod test_hooks {
-    pub(crate) use super::shared_best::test_hooks::force_next_take_misses;
+#[derive(Debug, Clone, Default)]
+pub struct ContinuousTestHooks {
+    /// Number of `SharedBest::take()` calls to force to miss, consumed once
+    /// across this builder's `SharedBest` instances. Deterministically
+    /// exercises the trigger-miss fallback path.
+    pub force_take_miss_count: u64,
 }

@@ -1,7 +1,7 @@
 use crate::{
     args::OpRbuilderArgs,
     backrun_bundle::{BackrunBundleApiServer, BackrunBundleRpc},
-    builder::{BuilderConfig, FlashblocksServiceBuilder},
+    builder::{BuilderConfig, ContinuousTestHooks, FlashblocksServiceBuilder},
     pool::{FlashpoolBuilder, FlashpoolExt},
     revert_protection::{EthApiExtServer, RevertProtectionExt},
     tests::{
@@ -84,6 +84,35 @@ impl LocalInstance {
         args: OpRbuilderArgs,
         config: NodeConfig<OpChainSpec>,
     ) -> eyre::Result<Self> {
+        Box::pin(Self::new_with_config_and_hooks(
+            args,
+            config,
+            ContinuousTestHooks::default(),
+        ))
+        .await
+    }
+
+    /// Like [`Self::new`], but injects test-only continuous-build hooks into the
+    /// builder config. Lets a test configure builder behavior (e.g. forced
+    /// `SharedBest::take()` misses) that is unreachable once the builder is
+    /// constructed inside the node.
+    pub async fn new_with_test_hooks(
+        args: OpRbuilderArgs,
+        hooks: ContinuousTestHooks,
+    ) -> eyre::Result<Self> {
+        Box::pin(Self::new_with_config_and_hooks(
+            args,
+            default_node_config(),
+            hooks,
+        ))
+        .await
+    }
+
+    pub async fn new_with_config_and_hooks(
+        args: OpRbuilderArgs,
+        config: NodeConfig<OpChainSpec>,
+        continuous_test_hooks: ContinuousTestHooks,
+    ) -> eyre::Result<Self> {
         let mut args = args;
         let task_runtime = task_runtime();
         let op_node = OpNode::new(args.rollup_args.clone());
@@ -105,8 +134,9 @@ impl LocalInstance {
             None
         };
 
-        let builder_config = BuilderConfig::try_from(args.clone())
+        let mut builder_config = BuilderConfig::try_from(args.clone())
             .expect("Failed to convert rollup args to builder config");
+        builder_config.continuous_test_hooks = continuous_test_hooks;
         let da_config = builder_config.da_config.clone();
         let gas_limit_config = builder_config.gas_limit_config.clone();
         let addons: OpAddOns<_, OpEthApiBuilder, OpEngineValidatorBuilder> =

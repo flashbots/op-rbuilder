@@ -368,6 +368,9 @@ pub(crate) struct OpPayloadBuilderInner<Pool, Client, BuilderTx> {
     pool_change_epoch: Arc<AtomicU64>,
     /// Task executor used to offload blocking work.
     executor: Runtime,
+    /// Per-builder counter of remaining forced `SharedBest::take()` misses.
+    #[cfg(test)]
+    pub(crate) force_take_miss_counter: Arc<AtomicU64>,
 }
 
 impl<Pool, Client, BuilderTx> OpPayloadBuilderInner<Pool, Client, BuilderTx> {
@@ -458,6 +461,11 @@ where
             disable_state_root: config.flashblocks_config.disable_state_root,
             enable_incremental_state_root: config.flashblocks_config.enable_incremental_state_root,
         });
+        #[cfg(test)]
+        let force_take_miss_counter = Arc::new(AtomicU64::new(
+            config.continuous_test_hooks.force_take_miss_count,
+        ));
+
         Self {
             inner: Arc::new(OpPayloadBuilderInner {
                 builder_ctx,
@@ -471,6 +479,8 @@ where
                 task_metrics,
                 pool_change_epoch,
                 executor,
+                #[cfg(test)]
+                force_take_miss_counter,
             }),
         }
     }

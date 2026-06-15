@@ -3,9 +3,10 @@ use quote::{ToTokens, quote};
 use syn::{Expr, ItemFn, Meta, Token, parse_macro_input, punctuated::Punctuated};
 
 struct TestConfig {
-    args: Option<Expr>,   // Expression to pass to LocalInstance::new()
-    config: Option<Expr>, // NodeConfig<OpChainSpec> for new_with_config
-    multi_threaded: bool, // Whether to use multi_thread flavor
+    args: Option<Expr>,       // Expression to pass to LocalInstance::new()
+    config: Option<Expr>,     // NodeConfig<OpChainSpec> for new_with_config
+    test_hooks: Option<Expr>, // ContinuousTestHooks injected into the builder config
+    multi_threaded: bool,     // Whether to use multi_thread flavor
 }
 
 impl syn::parse::Parse for TestConfig {
@@ -13,6 +14,7 @@ impl syn::parse::Parse for TestConfig {
         let mut config = TestConfig {
             args: None,
             config: None,
+            test_hooks: None,
             multi_threaded: false,
         };
 
@@ -33,7 +35,7 @@ impl syn::parse::Parse for TestConfig {
                             return Err(syn::Error::new_spanned(
                                 path,
                                 format!(
-                                    "Unknown attribute '{}'. Use 'multi_threaded', 'args', or 'config'",
+                                    "Unknown attribute '{}'. Use 'multi_threaded', 'args', 'config', or 'test_hooks'",
                                     name
                                 ),
                             ));
@@ -47,11 +49,13 @@ impl syn::parse::Parse for TestConfig {
                             config.args = Some(nv.value);
                         } else if name == "config" {
                             config.config = Some(nv.value);
+                        } else if name == "test_hooks" {
+                            config.test_hooks = Some(nv.value);
                         } else {
                             return Err(syn::Error::new_spanned(
                                 nv.path,
                                 format!(
-                                    "Unknown attribute '{}'. Use 'multi_threaded', 'args', or 'config'",
+                                    "Unknown attribute '{}'. Use 'multi_threaded', 'args', 'config', or 'test_hooks'",
                                     name
                                 ),
                             ));
@@ -61,7 +65,7 @@ impl syn::parse::Parse for TestConfig {
                 _ => {
                     return Err(syn::Error::new_spanned(
                         arg,
-                        "Invalid attribute format. Use 'multi_threaded', 'args', or 'config'",
+                        "Invalid attribute format. Use 'multi_threaded', 'args', 'config', or 'test_hooks'",
                     ));
                 }
             }
@@ -71,44 +75,49 @@ impl syn::parse::Parse for TestConfig {
     }
 }
 
-fn generate_instance_init(args: &Option<Expr>, config: &Option<Expr>) -> proc_macro2::TokenStream {
-    let default_args = quote! {
-        {
-            let mut args = crate::args::OpRbuilderArgs::default();
-            args.flashblocks.flashblocks_port = crate::tests::get_available_port();
-            args.flashblocks.flashblocks_end_buffer_ms = 75;
-            args
-        }
-    };
-
-    let modify_args = |args_expr: &proc_macro2::TokenStream| {
-        quote! {
+fn generate_instance_init(
+    args: &Option<Expr>,
+    config: &Option<Expr>,
+    test_hooks: &Option<Expr>,
+) -> proc_macro2::TokenStream {
+    let args_init = match args {
+        None => quote! {
+            {
+                let mut args = crate::args::OpRbuilderArgs::default();
+                args.flashblocks.flashblocks_port = crate::tests::get_available_port();
+                args.flashblocks.flashblocks_end_buffer_ms = 75;
+                args
+            }
+        },
+        Some(args_expr) => quote! {
             {
                 let mut args = #args_expr;
                 args.flashblocks.flashblocks_port = crate::tests::get_available_port();
                 args.flashblocks.flashblocks_end_buffer_ms = 75;
                 args
             }
-        }
+        },
     };
 
-    match (args, config) {
+    match (config, test_hooks) {
         (None, None) => {
-            quote! { crate::tests::LocalInstance::new(#default_args).await? }
+            quote! { crate::tests::LocalInstance::new(#args_init).await? }
         }
-        (Some(args_expr), None) => {
-            let modified_args = modify_args(&quote! { #args_expr });
-            quote! { crate::tests::LocalInstance::new(#modified_args).await? }
-        }
-        (None, Some(config_expr)) => {
+        (Some(config_expr), None) => {
             quote! {
-                crate::tests::LocalInstance::new_with_config(#default_args, #config_expr).await?
+                crate::tests::LocalInstance::new_with_config(#args_init, #config_expr).await?
             }
         }
-        (Some(args_expr), Some(config_expr)) => {
-            let modified_args = modify_args(&quote! { #args_expr });
+        (None, Some(hooks_expr)) => {
             quote! {
-                crate::tests::LocalInstance::new_with_config(#modified_args, #config_expr).await?
+                crate::tests::LocalInstance::new_with_test_hooks(#args_init, #hooks_expr).await?
+            }
+        }
+        (Some(config_expr), Some(hooks_expr)) => {
+            quote! {
+                crate::tests::LocalInstance::new_with_config_and_hooks(
+                    #args_init, #config_expr, #hooks_expr
+                ).await?
             }
         }
     }
@@ -122,7 +131,7 @@ pub fn rb_test(args: TokenStream, input: TokenStream) -> TokenStream {
     validate_signature(&input_fn);
 
     let test_name = &input_fn.sig.ident;
-    let instance_init = generate_instance_init(&config.args, &config.config);
+    let instance_init = generate_instance_init(&config.args, &config.config, &config.test_hooks);
 
     let test_attribute = if config.multi_threaded {
         quote! { #[tokio::test(flavor = "multi_thread")] }

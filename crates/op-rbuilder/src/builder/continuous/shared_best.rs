@@ -1,4 +1,6 @@
 use super::types::BestCandidate;
+#[cfg(test)]
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use tracing::warn;
 
@@ -59,57 +61,43 @@ impl<T: CandidateCounters> CandidateSlot<T> {
 /// build task. The build task writes on each improvement; the main loop takes
 /// on trigger to publish without awaiting task completion.
 #[derive(Clone)]
-pub(super) struct SharedBest(CandidateSlot<BestCandidate>);
+pub(super) struct SharedBest {
+    slot: CandidateSlot<BestCandidate>,
+    #[cfg(test)]
+    force_take_miss: Arc<AtomicU64>,
+}
 
 impl SharedBest {
-    pub(super) fn new() -> Self {
-        Self(CandidateSlot::new())
+    pub(super) fn new(#[cfg(test)] force_take_miss: Arc<AtomicU64>) -> Self {
+        Self {
+            slot: CandidateSlot::new(),
+            #[cfg(test)]
+            force_take_miss,
+        }
     }
 
     /// Take the current candidate (if any).
     pub(super) fn take(&self) -> Option<BestCandidate> {
         #[cfg(test)]
-        if test_hooks::should_force_take_miss() {
-            return None;
-        }
-        self.0.take()
-    }
-
-    pub(super) fn store(&self, candidate: BestCandidate) {
-        self.0.store(candidate);
-    }
-
-    pub(super) fn refresh_metrics(&self, candidates_evaluated: u64, candidates_improved: u64) {
-        self.0
-            .refresh_metrics(candidates_evaluated, candidates_improved);
-    }
-}
-
-#[cfg(test)]
-pub(crate) mod test_hooks {
-    use std::sync::atomic::{AtomicU64, Ordering};
-
-    static FORCE_TAKE_MISS_COUNT: AtomicU64 = AtomicU64::new(0);
-
-    pub(crate) struct ForceTakeMissGuard;
-
-    impl Drop for ForceTakeMissGuard {
-        fn drop(&mut self) {
-            FORCE_TAKE_MISS_COUNT.store(0, Ordering::Release);
-        }
-    }
-
-    pub(crate) fn force_next_take_misses(count: u64) -> ForceTakeMissGuard {
-        FORCE_TAKE_MISS_COUNT.store(count, Ordering::Release);
-        ForceTakeMissGuard
-    }
-
-    pub(super) fn should_force_take_miss() -> bool {
-        FORCE_TAKE_MISS_COUNT
+        if self
+            .force_take_miss
             .fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
                 count.checked_sub(1)
             })
             .is_ok()
+        {
+            return None;
+        }
+        self.slot.take()
+    }
+
+    pub(super) fn store(&self, candidate: BestCandidate) {
+        self.slot.store(candidate);
+    }
+
+    pub(super) fn refresh_metrics(&self, candidates_evaluated: u64, candidates_improved: u64) {
+        self.slot
+            .refresh_metrics(candidates_evaluated, candidates_improved);
     }
 }
 

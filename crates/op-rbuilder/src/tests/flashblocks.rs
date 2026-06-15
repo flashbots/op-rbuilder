@@ -9,6 +9,7 @@ use tokio::time::timeout;
 
 use crate::{
     args::{FlashblocksArgs, OpRbuilderArgs},
+    builder::ContinuousTestHooks,
     tests::{
         BlockTransactionsExt, BundleOpts, ChainDriver, FLASHBLOCKS_NUMBER_ADDRESS,
         FlashblocksListener, TransactionBuilderExt, flashblocks_number_contract::FlashblocksNumber,
@@ -375,22 +376,27 @@ async fn smoke_continuous_resolve_after_publish_preserves_published_state(
     flashblocks_listener.stop().await
 }
 
-#[rb_test(args = OpRbuilderArgs {
-    chain_block_time: 1000,
-    enable_revert_protection: true,
-    flashblocks: FlashblocksArgs {
-        flashblocks_port: 1243,
-        flashblocks_addr: "127.0.0.1".into(),
-        flashblocks_block_time: 200,
-        flashblocks_continuous_build: true,
+// `test_hooks` forces the first SharedBest::take() on this builder instance to miss,
+// exercising the trigger-miss fallback path. It is injected into the builder config
+// rather than configured through production args.
+#[rb_test(
+    args = OpRbuilderArgs {
+        chain_block_time: 1000,
+        enable_revert_protection: true,
+        flashblocks: FlashblocksArgs {
+            flashblocks_port: 1243,
+            flashblocks_addr: "127.0.0.1".into(),
+            flashblocks_block_time: 200,
+            flashblocks_continuous_build: true,
+            ..Default::default()
+        },
         ..Default::default()
     },
-    ..Default::default()
-})]
+    test_hooks = ContinuousTestHooks { force_take_miss_count: 1 },
+)]
 async fn smoke_continuous_trigger_miss_fallback_publishes_candidate(
     rbuilder: LocalInstance,
 ) -> eyre::Result<()> {
-    let _force_miss = crate::builder::continuous_test_hooks::force_next_take_misses(1);
     let driver = rbuilder.driver().await?;
     let flashblocks_listener = rbuilder.spawn_flashblocks_listener();
 

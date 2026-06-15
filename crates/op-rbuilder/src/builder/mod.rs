@@ -37,7 +37,7 @@ pub use service::FlashblocksServiceBuilder;
 pub use state_root::StateRootCalculator;
 
 #[cfg(test)]
-pub(crate) use continuous::test_hooks as continuous_test_hooks;
+pub use continuous::ContinuousTestHooks;
 
 /// Configuration values that are applicable to any type of block builder.
 #[derive(Debug, Clone)]
@@ -109,6 +109,10 @@ pub struct BuilderConfig {
 
     /// Enable transaction tracking logs
     pub enable_tx_tracking_debug_logs: bool,
+
+    /// Test-only continuous-build hooks. Always default (empty) outside tests.
+    #[cfg(test)]
+    pub continuous_test_hooks: ContinuousTestHooks,
 }
 
 impl Default for BuilderConfig {
@@ -130,6 +134,8 @@ impl Default for BuilderConfig {
             flashblocks_config: FlashblocksConfig::default(),
             exclude_reverts_between_flashblocks: false,
             enable_tx_tracking_debug_logs: false,
+            #[cfg(test)]
+            continuous_test_hooks: ContinuousTestHooks::default(),
         }
     }
 }
@@ -157,6 +163,8 @@ impl TryFrom<OpRbuilderArgs> for BuilderConfig {
             flashblocks_config,
             exclude_reverts_between_flashblocks: args.exclude_reverts_between_flashblocks,
             enable_tx_tracking_debug_logs: false,
+            #[cfg(test)]
+            continuous_test_hooks: ContinuousTestHooks::default(),
         })
     }
 }
