@@ -642,7 +642,7 @@ dependencies = [
 [[package]]
 name = "alloy-op-evm"
 version = "0.32.0"
-source = "git+https://github.com/ethereum-optimism/optimism?tag=op-reth%2Fv2.3.2-rc.1#eefdfb53ab25b46face1564fae666e7838b0a432"
+source = "git+https://github.com/ethereum-optimism/optimism?tag=op-reth%2Fv2.3.2-rc.2#fdca4cde225f141e61323007585ce3ae4b43248d"
 dependencies = [
  "alloy-consensus 2.0.5",
  "alloy-eips 2.0.5",
@@ -659,7 +659,7 @@ dependencies = [
 [[package]]
 name = "alloy-op-hardforks"
 version = "0.5.0"
-source = "git+https://github.com/ethereum-optimism/optimism?tag=op-reth%2Fv2.3.2-rc.1#eefdfb53ab25b46face1564fae666e7838b0a432"
+source = "git+https://github.com/ethereum-optimism/optimism?tag=op-reth%2Fv2.3.2-rc.2#fdca4cde225f141e61323007585ce3ae4b43248d"
 dependencies = [
  "alloy-chains",
  "alloy-hardforks 0.4.7",
@@ -7794,7 +7794,7 @@ checksum = "d6790f58c7ff633d8771f42965289203411a5e5c68388703c06e14f24770b41e"
 [[package]]
 name = "op-alloy"
 version = "2.0.0"
-source = "git+https://github.com/ethereum-optimism/optimism?tag=op-reth%2Fv2.3.2-rc.1#eefdfb53ab25b46face1564fae666e7838b0a432"
+source = "git+https://github.com/ethereum-optimism/optimism?tag=op-reth%2Fv2.3.2-rc.2#fdca4cde225f141e61323007585ce3ae4b43248d"
 dependencies = [
  "op-alloy-consensus",
  "op-alloy-network",
@@ -7806,7 +7806,7 @@ dependencies = [
 [[package]]
 name = "op-alloy-consensus"
 version = "2.0.0"
-source = "git+https://github.com/ethereum-optimism/optimism?tag=op-reth%2Fv2.3.2-rc.1#eefdfb53ab25b46face1564fae666e7838b0a432"
+source = "git+https://github.com/ethereum-optimism/optimism?tag=op-reth%2Fv2.3.2-rc.2#fdca4cde225f141e61323007585ce3ae4b43248d"
 dependencies = [
  "alloy-consensus 2.0.5",
  "alloy-eips 2.0.5",
@@ -7835,7 +7835,7 @@ checksum = "a79f352fc3893dcd670172e615afef993a41798a1d3fc0db88a3e60ef2e70ecc"
 [[package]]
 name = "op-alloy-network"
 version = "2.0.0"
-source = "git+https://github.com/ethereum-optimism/optimism?tag=op-reth%2Fv2.3.2-rc.1#eefdfb53ab25b46face1564fae666e7838b0a432"
+source = "git+https://github.com/ethereum-optimism/optimism?tag=op-reth%2Fv2.3.2-rc.2#fdca4cde225f141e61323007585ce3ae4b43248d"
 dependencies = [
  "alloy-consensus 2.0.5",
  "alloy-network 2.0.5",
@@ -7848,7 +7848,7 @@ dependencies = [
 [[package]]
 name = "op-alloy-provider"
 version = "2.0.0"
-source = "git+https://github.com/ethereum-optimism/optimism?tag=op-reth%2Fv2.3.2-rc.1#eefdfb53ab25b46face1564fae666e7838b0a432"
+source = "git+https://github.com/ethereum-optimism/optimism?tag=op-reth%2Fv2.3.2-rc.2#fdca4cde225f141e61323007585ce3ae4b43248d"
 dependencies = [
  "alloy-network 2.0.5",
  "alloy-primitives",
@@ -7862,7 +7862,7 @@ dependencies = [
 [[package]]
 name = "op-alloy-rpc-jsonrpsee"
 version = "2.0.0"
-source = "git+https://github.com/ethereum-optimism/optimism?tag=op-reth%2Fv2.3.2-rc.1#eefdfb53ab25b46face1564fae666e7838b0a432"
+source = "git+https://github.com/ethereum-optimism/optimism?tag=op-reth%2Fv2.3.2-rc.2#fdca4cde225f141e61323007585ce3ae4b43248d"
 dependencies = [
  "alloy-primitives",
  "jsonrpsee",
@@ -7871,7 +7871,7 @@ dependencies = [
 [[package]]
 name = "op-alloy-rpc-types"
 version = "2.0.0"
-source = "git+https://github.com/ethereum-optimism/optimism?tag=op-reth%2Fv2.3.2-rc.1#eefdfb53ab25b46face1564fae666e7838b0a432"
+source = "git+https://github.com/ethereum-optimism/optimism?tag=op-reth%2Fv2.3.2-rc.2#fdca4cde225f141e61323007585ce3ae4b43248d"
 dependencies = [
  "alloy-consensus 2.0.5",
  "alloy-eips 2.0.5",
@@ -7892,7 +7892,7 @@ dependencies = [
 [[package]]
 name = "op-alloy-rpc-types-engine"
 version = "2.0.0"
-source = "git+https://github.com/ethereum-optimism/optimism?tag=op-reth%2Fv2.3.2-rc.1#eefdfb53ab25b46face1564fae666e7838b0a432"
+source = "git+https://github.com/ethereum-optimism/optimism?tag=op-reth%2Fv2.3.2-rc.2#fdca4cde225f141e61323007585ce3ae4b43248d"
 dependencies = [
  "alloy-consensus 2.0.5",
  "alloy-eips 2.0.5",
@@ -8038,7 +8038,7 @@ dependencies = [
 [[package]]
 name = "op-revm"
 version = "20.0.0"
-source = "git+https://github.com/ethereum-optimism/optimism?tag=op-reth%2Fv2.3.2-rc.1#eefdfb53ab25b46face1564fae666e7838b0a432"
+source = "git+https://github.com/ethereum-optimism/optimism?tag=op-reth%2Fv2.3.2-rc.2#fdca4cde225f141e61323007585ce3ae4b43248d"
 dependencies = [
  "auto_impl",
  "revm",
@@ -11110,7 +11110,7 @@ dependencies = [
 [[package]]
 name = "reth-optimism-chainspec"
 version = "1.11.3"
-source = "git+https://github.com/ethereum-optimism/optimism?tag=op-reth%2Fv2.3.2-rc.1#eefdfb53ab25b46face1564fae666e7838b0a432"
+source = "git+https://github.com/ethereum-optimism/optimism?tag=op-reth%2Fv2.3.2-rc.2#fdca4cde225f141e61323007585ce3ae4b43248d"
 dependencies = [
  "alloy-chains",
  "alloy-consensus 2.0.5",
@@ -11138,7 +11138,7 @@ dependencies = [
 [[package]]
 name = "reth-optimism-cli"
 version = "1.11.3"
-source = "git+https://github.com/ethereum-optimism/optimism?tag=op-reth%2Fv2.3.2-rc.1#eefdfb53ab25b46face1564fae666e7838b0a432"
+source = "git+https://github.com/ethereum-optimism/optimism?tag=op-reth%2Fv2.3.2-rc.2#fdca4cde225f141e61323007585ce3ae4b43248d"
 dependencies = [
  "alloy-consensus 2.0.5",
  "alloy-eips 2.0.5",
@@ -11191,7 +11191,7 @@ dependencies = [
 [[package]]
 name = "reth-optimism-consensus"
 version = "1.11.3"
-source = "git+https://github.com/ethereum-optimism/optimism?tag=op-reth%2Fv2.3.2-rc.1#eefdfb53ab25b46face1564fae666e7838b0a432"
+source = "git+https://github.com/ethereum-optimism/optimism?tag=op-reth%2Fv2.3.2-rc.2#fdca4cde225f141e61323007585ce3ae4b43248d"
 dependencies = [
  "alloy-consensus 2.0.5",
  "alloy-eips 2.0.5",
@@ -11216,7 +11216,7 @@ dependencies = [
 [[package]]
 name = "reth-optimism-evm"
 version = "1.11.3"
-source = "git+https://github.com/ethereum-optimism/optimism?tag=op-reth%2Fv2.3.2-rc.1#eefdfb53ab25b46face1564fae666e7838b0a432"
+source = "git+https://github.com/ethereum-optimism/optimism?tag=op-reth%2Fv2.3.2-rc.2#fdca4cde225f141e61323007585ce3ae4b43248d"
 dependencies = [
  "alloy-consensus 2.0.5",
  "alloy-eips 2.0.5",
@@ -11246,7 +11246,7 @@ dependencies = [
 [[package]]
 name = "reth-optimism-exex"
 version = "1.11.3"
-source = "git+https://github.com/ethereum-optimism/optimism?tag=op-reth%2Fv2.3.2-rc.1#eefdfb53ab25b46face1564fae666e7838b0a432"
+source = "git+https://github.com/ethereum-optimism/optimism?tag=op-reth%2Fv2.3.2-rc.2#fdca4cde225f141e61323007585ce3ae4b43248d"
 dependencies = [
  "alloy-consensus 2.0.5",
  "alloy-eips 2.0.5",
@@ -11264,7 +11264,7 @@ dependencies = [
 [[package]]
 name = "reth-optimism-flashblocks"
 version = "1.11.3"
-source = "git+https://github.com/ethereum-optimism/optimism?tag=op-reth%2Fv2.3.2-rc.1#eefdfb53ab25b46face1564fae666e7838b0a432"
+source = "git+https://github.com/ethereum-optimism/optimism?tag=op-reth%2Fv2.3.2-rc.2#fdca4cde225f141e61323007585ce3ae4b43248d"
 dependencies = [
  "alloy-consensus 2.0.5",
  "alloy-eips 2.0.5",
@@ -11302,7 +11302,7 @@ dependencies = [
 [[package]]
 name = "reth-optimism-forks"
 version = "1.11.3"
-source = "git+https://github.com/ethereum-optimism/optimism?tag=op-reth%2Fv2.3.2-rc.1#eefdfb53ab25b46face1564fae666e7838b0a432"
+source = "git+https://github.com/ethereum-optimism/optimism?tag=op-reth%2Fv2.3.2-rc.2#fdca4cde225f141e61323007585ce3ae4b43248d"
 dependencies = [
  "alloy-op-hardforks",
  "alloy-primitives",
@@ -11313,7 +11313,7 @@ dependencies = [
 [[package]]
 name = "reth-optimism-node"
 version = "1.11.3"
-source = "git+https://github.com/ethereum-optimism/optimism?tag=op-reth%2Fv2.3.2-rc.1#eefdfb53ab25b46face1564fae666e7838b0a432"
+source = "git+https://github.com/ethereum-optimism/optimism?tag=op-reth%2Fv2.3.2-rc.2#fdca4cde225f141e61323007585ce3ae4b43248d"
 dependencies = [
  "alloy-consensus 2.0.5",
  "alloy-primitives",
@@ -11365,7 +11365,7 @@ dependencies = [
 [[package]]
 name = "reth-optimism-payload-builder"
 version = "1.11.3"
-source = "git+https://github.com/ethereum-optimism/optimism?tag=op-reth%2Fv2.3.2-rc.1#eefdfb53ab25b46face1564fae666e7838b0a432"
+source = "git+https://github.com/ethereum-optimism/optimism?tag=op-reth%2Fv2.3.2-rc.2#fdca4cde225f141e61323007585ce3ae4b43248d"
 dependencies = [
  "alloy-consensus 2.0.5",
  "alloy-eips 2.0.5",
@@ -11405,7 +11405,7 @@ dependencies = [
 [[package]]
 name = "reth-optimism-post-exec-replay"
 version = "1.11.3"
-source = "git+https://github.com/ethereum-optimism/optimism?tag=op-reth%2Fv2.3.2-rc.1#eefdfb53ab25b46face1564fae666e7838b0a432"
+source = "git+https://github.com/ethereum-optimism/optimism?tag=op-reth%2Fv2.3.2-rc.2#fdca4cde225f141e61323007585ce3ae4b43248d"
 dependencies = [
  "alloy-consensus 2.0.5",
  "alloy-eips 2.0.5",
@@ -11424,7 +11424,7 @@ dependencies = [
 [[package]]
 name = "reth-optimism-primitives"
 version = "1.11.3"
-source = "git+https://github.com/ethereum-optimism/optimism?tag=op-reth%2Fv2.3.2-rc.1#eefdfb53ab25b46face1564fae666e7838b0a432"
+source = "git+https://github.com/ethereum-optimism/optimism?tag=op-reth%2Fv2.3.2-rc.2#fdca4cde225f141e61323007585ce3ae4b43248d"
 dependencies = [
  "alloy-consensus 2.0.5",
  "alloy-eips 2.0.5",
@@ -11439,7 +11439,7 @@ dependencies = [
 [[package]]
 name = "reth-optimism-rpc"
 version = "1.11.3"
-source = "git+https://github.com/ethereum-optimism/optimism?tag=op-reth%2Fv2.3.2-rc.1#eefdfb53ab25b46face1564fae666e7838b0a432"
+source = "git+https://github.com/ethereum-optimism/optimism?tag=op-reth%2Fv2.3.2-rc.2#fdca4cde225f141e61323007585ce3ae4b43248d"
 dependencies = [
  "alloy-consensus 2.0.5",
  "alloy-eips 2.0.5",
@@ -11512,7 +11512,7 @@ dependencies = [
 [[package]]
 name = "reth-optimism-storage"
 version = "1.11.3"
-source = "git+https://github.com/ethereum-optimism/optimism?tag=op-reth%2Fv2.3.2-rc.1#eefdfb53ab25b46face1564fae666e7838b0a432"
+source = "git+https://github.com/ethereum-optimism/optimism?tag=op-reth%2Fv2.3.2-rc.2#fdca4cde225f141e61323007585ce3ae4b43248d"
 dependencies = [
  "alloy-consensus 2.0.5",
  "reth-optimism-primitives",
@@ -11522,7 +11522,7 @@ dependencies = [
 [[package]]
 name = "reth-optimism-trie"
 version = "1.11.3"
-source = "git+https://github.com/ethereum-optimism/optimism?tag=op-reth%2Fv2.3.2-rc.1#eefdfb53ab25b46face1564fae666e7838b0a432"
+source = "git+https://github.com/ethereum-optimism/optimism?tag=op-reth%2Fv2.3.2-rc.2#fdca4cde225f141e61323007585ce3ae4b43248d"
 dependencies = [
  "alloy-eips 2.0.5",
  "alloy-primitives",
@@ -11557,7 +11557,7 @@ dependencies = [
 [[package]]
 name = "reth-optimism-txpool"
 version = "1.11.3"
-source = "git+https://github.com/ethereum-optimism/optimism?tag=op-reth%2Fv2.3.2-rc.1#eefdfb53ab25b46face1564fae666e7838b0a432"
+source = "git+https://github.com/ethereum-optimism/optimism?tag=op-reth%2Fv2.3.2-rc.2#fdca4cde225f141e61323007585ce3ae4b43248d"
 dependencies = [
  "alloy-consensus 2.0.5",
  "alloy-eips 2.0.5",
