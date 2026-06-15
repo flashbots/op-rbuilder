@@ -63,6 +63,10 @@ pub struct FlashblocksConfig {
 
     /// Enable continuous building between scheduler triggers.
     pub continuous_build: bool,
+
+    /// Initial number of forced `SharedBest::take()` misses for test isolation.
+    /// Only consumed under `#[cfg(test)]`.
+    pub initial_force_take_miss_count: u64,
 }
 
 impl Default for FlashblocksConfig {
@@ -83,6 +87,7 @@ impl Default for FlashblocksConfig {
             p2p_max_peer_count: 50,
             ws_subscriber_limit: None,
             continuous_build: false,
+            initial_force_take_miss_count: 0,
         }
     }
 }
@@ -128,6 +133,7 @@ impl TryFrom<OpRbuilderArgs> for FlashblocksConfig {
             p2p_max_peer_count: args.flashblocks.p2p.p2p_max_peer_count,
             ws_subscriber_limit: args.flashblocks.ws_subscriber_limit,
             continuous_build: args.flashblocks.flashblocks_continuous_build,
+            initial_force_take_miss_count: args.flashblocks.initial_force_take_miss_count,
         })
     }
 }
