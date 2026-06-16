@@ -1,6 +1,29 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [0.4.9] - 2026-06-16
+
+### Bug Fixes
+
+- [`0531f05`](https://github.com/flashbots/op-rbuilder/commit/0531f059cb056d98e456407041588f86e97423f6) Don't publish flashblock after payload cancellation ([#525](https://github.com/flashbots/op-rbuilder/pull/525))
+- [`9e23075`](https://github.com/flashbots/op-rbuilder/commit/9e23075de193f577a2f9e54c948805d954174947) Warn-only payload-channel sends + publish ordering parity in continuous mode ([#535](https://github.com/flashbots/op-rbuilder/pull/535))
+- [`895bea3`](https://github.com/flashbots/op-rbuilder/commit/895bea36184c6547b74e76ed8dcbfae966717805) Da budget and reverted bundle eviction ([#536](https://github.com/flashbots/op-rbuilder/pull/536))
+- [`103ff3d`](https://github.com/flashbots/op-rbuilder/commit/103ff3d1dee544e4abba3fe4df2c4fee761bee6c) Metrics recording ([#538](https://github.com/flashbots/op-rbuilder/pull/538))
+
+### Features
+
+- [`6e9b820`](https://github.com/flashbots/op-rbuilder/commit/6e9b82036167585084ea7a54782ca4a517a82e54) Continuous-build mode ([#458](https://github.com/flashbots/op-rbuilder/pull/458))
+
+### Miscellaneous
+
+- [`599a512`](https://github.com/flashbots/op-rbuilder/commit/599a5120aa87692fa6686c18cab71bed82993c98) Make op-rbuilder compatible with upcoming op-node ([#537](https://github.com/flashbots/op-rbuilder/pull/537))
+- [`7a655b0`](https://github.com/flashbots/op-rbuilder/commit/7a655b06b13175babb8033794eecb4a88024b0b9) Bound builder tx simulation gas limit to per tx limit ([#543](https://github.com/flashbots/op-rbuilder/pull/543))
+- [`d43aea5`](https://github.com/flashbots/op-rbuilder/commit/d43aea513f19fe7f440791e1d20deaef3d482914) Bump Cargo version to 0.4.9
+
+### Refactor
+
+- [`56fc263`](https://github.com/flashbots/op-rbuilder/commit/56fc263cab2cbf634658126f60663b9f9dbc1151) Payload building so metrics are recorded better ([#534](https://github.com/flashbots/op-rbuilder/pull/534))
+
 ## [0.4.8] - 2026-06-08
 
 ### Dependency Upgrade
