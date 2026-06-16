@@ -9,7 +9,7 @@ use op_alloy_rpc_types::OpTransactionRequest;
 use reth_evm::precompiles::PrecompilesMap;
 use reth_provider::StateProvider;
 use reth_revm::State;
-use revm::{DatabaseRef, inspector::NoOpInspector};
+use revm::{DatabaseRef, context_interface::Cfg as _, inspector::NoOpInspector};
 use tracing::warn;
 
 use crate::{
@@ -246,8 +246,9 @@ impl FlashblocksNumberBuilderTx {
         ctx: &BuilderTxEnv<'_>,
         evm: &mut OpEvm<impl Database + DatabaseRef, NoOpInspector, PrecompilesMap>,
     ) -> Result<SimulationSuccessResult<T>, BuilderTransactionError> {
+        let simulation_gas_limit = ctx.block_gas_limit.min(evm.cfg_env().tx_gas_limit_cap());
         let tx_req = OpTransactionRequest::default()
-            .gas_limit(ctx.block_gas_limit)
+            .gas_limit(simulation_gas_limit)
             .max_fee_per_gas(ctx.base_fee.into())
             .to(self.flashblock_number_address)
             .from(self.signer.address) // use tee key as signer for simulations

@@ -10,7 +10,7 @@ use reth_evm::{Evm, precompiles::PrecompilesMap};
 use reth_optimism_primitives::OpTransactionSigned;
 use reth_provider::StateProvider;
 use reth_revm::{State, database::StateProviderDatabase};
-use revm::{DatabaseCommit, DatabaseRef, inspector::NoOpInspector};
+use revm::{DatabaseCommit, DatabaseRef, context_interface::Cfg as _, inspector::NoOpInspector};
 use std::sync::{Arc, atomic::AtomicBool};
 use tracing::{debug, info, warn};
 
@@ -323,8 +323,9 @@ impl FlashtestationsBuilderTx {
         ctx: &BuilderTxEnv<'_>,
         evm: &mut OpEvm<impl Database + DatabaseRef, NoOpInspector, PrecompilesMap>,
     ) -> Result<SimulationSuccessResult<T>, BuilderTransactionError> {
+        let simulation_gas_limit = ctx.block_gas_limit.min(evm.cfg_env().tx_gas_limit_cap());
         let tx_req = OpTransactionRequest::default()
-            .gas_limit(ctx.block_gas_limit)
+            .gas_limit(simulation_gas_limit)
             .max_fee_per_gas(ctx.base_fee.into())
             .to(contract_address)
             .from(self.builder_signer.address)
