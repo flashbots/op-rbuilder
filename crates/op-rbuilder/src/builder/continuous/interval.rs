@@ -85,6 +85,11 @@ where
             }
         }
 
+        // Record the wall time of the final in-flight interval.
+        self.metrics()
+            .continuous_build_duration
+            .record(interval.build_start.elapsed());
+
         Ok(PayloadBuildStats::new(
             deps.payload_cancel.clone(),
             deps.span.clone(),

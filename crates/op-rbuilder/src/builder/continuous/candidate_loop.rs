@@ -214,6 +214,10 @@ where
                     tx_tracker: base_tx_tracker.clone(),
                     result: (next_flashblock_state, new_payload, fb_payload),
                     build_duration: empty_build_duration,
+                    // no pool fetch
+                    transaction_pool_fetch_duration: None,
+                    // not measured for empty candidate
+                    total_block_built_duration: None,
                     limiter_snapshot: ctx.address_limiter().snapshot_pending(),
                     candidates_evaluated,
                     candidates_improved: candidates_improved + 1,
@@ -288,12 +292,6 @@ where
                 flashblock_index,
             );
             let transaction_pool_fetch_time = best_txs_start_time.elapsed();
-            ctx.metrics
-                .transaction_pool_fetch_duration
-                .record(transaction_pool_fetch_time);
-            ctx.metrics
-                .transaction_pool_fetch_gauge
-                .set(transaction_pool_fetch_time);
 
             let exec_cancelled = ctx
                 .execute_best_transactions(
@@ -359,12 +357,6 @@ where
                         .map_err(|e| eyre::eyre!("failed to assemble candidate: {e}"))
                 });
             let total_block_built_duration = total_block_built_start.elapsed();
-            ctx.metrics
-                .total_block_built_duration
-                .record(total_block_built_duration);
-            ctx.metrics
-                .total_block_built_gauge
-                .set(total_block_built_duration);
 
             candidates_evaluated += 1;
 
@@ -397,6 +389,8 @@ where
                             fb_state: sim_fb_state,
                             tx_tracker: sim_tx_tracker,
                             build_duration: candidate_build_start.elapsed(),
+                            transaction_pool_fetch_duration: Some(transaction_pool_fetch_time),
+                            total_block_built_duration: Some(total_block_built_duration),
                             result: (next_flashblock_state, new_payload, fb_payload),
                             limiter_snapshot: ctx.address_limiter().snapshot_pending(),
                             candidates_evaluated,
