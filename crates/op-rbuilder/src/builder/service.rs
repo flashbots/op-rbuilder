@@ -16,13 +16,12 @@ use crate::{
     traits::{NodeBounds, PoolBounds},
 };
 use eyre::WrapErr as _;
-use futures_util::StreamExt;
 use reth_node_api::NodeTypes;
 use reth_node_builder::{BuilderContext, components::PayloadServiceBuilder};
 use reth_optimism_evm::OpEvmConfig;
 use reth_payload_builder::{PayloadBuilderHandle, PayloadBuilderService};
 use reth_provider::CanonStateSubscriptions;
-use reth_transaction_pool::FullTransactionEvent;
+use reth_transaction_pool::TransactionListenerKind;
 use std::{
     sync::{
         Arc,
@@ -119,18 +118,13 @@ impl FlashblocksServiceBuilder {
         let pool_change_epoch = Arc::new(AtomicU64::new(0));
 
         if flashblocks_config.continuous_build {
-            let mut pool_events = pool.all_transactions_event_listener();
+            let mut pending_txs =
+                pool.pending_transactions_listener_for(TransactionListenerKind::All);
             let pool_change_epoch = pool_change_epoch.clone();
             ctx.task_executor().spawn_task(async move {
-                while let Some(event) = pool_events.next().await {
-                    match event {
-                        // Only events that can improve a candidate trigger rebuilds.
-                        FullTransactionEvent::Pending(_)
-                        | FullTransactionEvent::Replaced { .. } => {
-                            pool_change_epoch.fetch_add(1, Ordering::Relaxed);
-                        }
-                        _ => {}
-                    }
+                // Every new pending tx may improve current candidate
+                while pending_txs.recv().await.is_some() {
+                    pool_change_epoch.fetch_add(1, Ordering::Relaxed);
                 }
             });
         }
