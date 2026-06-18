@@ -1399,7 +1399,6 @@ where
                 cached_reads: args.cached_reads,
                 config: reth_basic_payload_builder::PayloadConfig {
                     parent_header: args.config.parent_header,
-                    parent_block_info: args.config.parent_block_info,
                     attributes: builder_attrs,
                     payload_id,
                 },
