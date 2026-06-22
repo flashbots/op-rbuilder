@@ -532,12 +532,12 @@ where
             .map_err(|e| PayloadBuilderError::Other(e.into()))?;
 
         // Initialize flashblocks state for this block
-        let mut fb_state = FlashblocksState::new(
+        let fb_state = FlashblocksState::new(
             self.config
                 .flashblocks_config
                 .flashblocks_per_block(self.config.block_time),
         );
-        let mut state_root_calc = StateRootCalculator::new(
+        let state_root_calc = StateRootCalculator::new(
             !ctx.disable_state_root || ctx.attributes().no_tx_pool,
             ctx.enable_incremental_state_root,
         );
@@ -555,8 +555,8 @@ where
             fb_payload,
             mut cache,
             mut transition,
-            fb_state: returned_fb_state,
-            state_root_calc: returned_state_root_calc,
+            mut fb_state,
+            mut state_root_calc,
         } = tracing::Instrument::instrument(
             self.executor.run_blocking_task({
                 let builder = self.clone();
@@ -569,8 +569,6 @@ where
             fallback_span,
         )
         .await?;
-        fb_state = returned_fb_state;
-        state_root_calc = returned_state_root_calc;
 
         if payload_cancel.is_cancelled() {
             return Ok(PayloadBuildStats::new(
