@@ -831,9 +831,9 @@ where
                     let info = info;
                     let cache = cache;
                     let transition = transition;
-                    let mut tx_tracker = tx_tracker;
+                    let tx_tracker = tx_tracker;
                     let fb_state = fb_state;
-                    let mut state_root_calc = state_root_calc;
+                    let state_root_calc = state_root_calc;
                     let fb_span = fb_span.clone();
                     move || {
                         // Enter the flashblock span so child spans are properly parented
@@ -848,32 +848,16 @@ where
                             .build();
                         state.transition_state = transition;
 
-                        let mut info = info;
-                        let mut fb_state = fb_state;
-                        let result = builder.build_next_flashblock(
-                            &ctx,
-                            &mut fb_state,
-                            &mut info,
+                        builder.build_next_flashblock(
+                            ctx,
+                            fb_state,
+                            info,
                             &mut state,
                             &state_provider,
-                            &mut tx_tracker,
-                            &block_cancel,
-                            &mut state_root_calc,
-                        );
-
-                        let cache = std::mem::take(&mut state.cache);
-                        let transition_state = state.transition_state.take();
-
-                        Ok(FlashblockBuildOutput {
-                            ctx,
-                            build_result: result,
-                            cache,
-                            transition: transition_state,
                             tx_tracker,
-                            info,
-                            fb_state,
+                            &block_cancel,
                             state_root_calc,
-                        })
+                        ).map_err(|e| PayloadBuilderError::Other(e.into()))
                     }
                 }) => result?,
             };
@@ -1122,15 +1106,15 @@ where
         P: StateRootProvider + HashedPostStateProvider + StorageRootProvider,
     >(
         &self,
-        ctx: &OpPayloadJobCtx,
-        fb_state: &mut FlashblocksState,
-        info: &mut ExecutionInfo,
+        ctx: OpPayloadJobCtx,
+        mut fb_state: FlashblocksState,
+        mut info: ExecutionInfo,
         state: &mut State<DB>,
         state_provider: impl reth::providers::StateProvider + Clone,
-        tx_tracker: &mut FlashblockTxTracker,
+        mut tx_tracker: FlashblockTxTracker,
         block_cancel: &CancellationToken,
-        state_root_calc: &mut StateRootCalculator,
-    ) -> eyre::Result<Option<BuiltFlashblockOutput>> {
+        mut state_root_calc: StateRootCalculator,
+    ) -> eyre::Result<FlashblockBuildOutput> {
         let flashblock_index = fb_state.flashblock_index();
         let mut target_gas_for_batch = fb_state.target_gas_for_batch();
         let mut target_da_for_batch = fb_state.target_da_for_batch();
@@ -1155,7 +1139,7 @@ where
             .builder_tx
             .add_builder_txs(
                 &state_provider,
-                info,
+                &mut info,
                 &ctx.builder_tx_env(),
                 state,
                 true,
@@ -1180,7 +1164,7 @@ where
         );
 
         let best_txs_start_time = Instant::now();
-        let mut best_txs = FlashblockPoolTxCursor::new(tx_tracker);
+        let mut best_txs = FlashblockPoolTxCursor::new(&mut tx_tracker);
         best_txs.refresh_iterator(
             BestPayloadTransactions::new(
                 self.pool
@@ -1198,7 +1182,7 @@ where
 
         let tx_execution_start_time = Instant::now();
         ctx.execute_best_transactions(
-            info,
+            &mut info,
             state,
             &mut best_txs,
             target_gas_for_batch.min(ctx.block_gas_limit()),
@@ -1224,7 +1208,18 @@ where
 
         // Block cancelled (new FCU, getPayload resolved, or deadline). Skip publishing.
         if block_cancel.is_cancelled() {
-            return Ok(None);
+            let cache = std::mem::take(&mut state.cache);
+            let transition = state.transition_state.take();
+            return Ok(FlashblockBuildOutput {
+                ctx,
+                build_result: Ok(None),
+                cache,
+                transition,
+                tx_tracker,
+                info,
+                fb_state,
+                state_root_calc,
+            });
         }
 
         let payload_transaction_simulation_time = tx_execution_start_time.elapsed();
@@ -1238,7 +1233,7 @@ where
         let flashblock = fb_state.meta();
         if let Err(e) = self.builder_tx.add_builder_txs(
             &state_provider,
-            info,
+            &mut info,
             &ctx.builder_tx_env(),
             state,
             false,
@@ -1252,9 +1247,9 @@ where
             .block_assembly_input()?
             .assemble(
                 state,
-                Some(fb_state),
-                info,
-                state_root_calc,
+                Some(&mut fb_state),
+                &mut info,
+                &mut state_root_calc,
                 ctx.metrics.clone(),
                 ctx.enable_tx_tracking_debug_logs,
             )
@@ -1267,19 +1262,41 @@ where
         // Block canceled (new FCU, getPayload resolved, or deadline). The async outer
         // loop owns publishing and re-checks cancellation before every side effect.
         if block_cancel.is_cancelled() {
-            return Ok(None);
+            let cache = std::mem::take(&mut state.cache);
+            let transition = state.transition_state.take();
+            return Ok(FlashblockBuildOutput {
+                ctx,
+                build_result: Ok(None),
+                cache,
+                transition,
+                tx_tracker,
+                info,
+                fb_state,
+                state_root_calc,
+            });
         }
 
         // Advance batch budgets for the next flashblock.
         let next_flashblock_state =
             fb_state.next_after_seal(target_da_for_batch, target_da_footprint_for_batch);
 
-        Ok(Some(BuiltFlashblockOutput {
-            next_flashblock_state,
-            new_payload,
-            fb_payload,
-            build_duration: flashblock_build_start_time.elapsed(),
-        }))
+        let cache = std::mem::take(&mut state.cache);
+        let transition = state.transition_state.take();
+        Ok(FlashblockBuildOutput {
+            ctx,
+            build_result: Ok(Some(BuiltFlashblockOutput {
+                next_flashblock_state,
+                new_payload,
+                fb_payload,
+                build_duration: flashblock_build_start_time.elapsed(),
+            })),
+            cache,
+            transition,
+            tx_tracker,
+            info,
+            fb_state,
+            state_root_calc,
+        })
     }
 
     fn record_payload_stats(
