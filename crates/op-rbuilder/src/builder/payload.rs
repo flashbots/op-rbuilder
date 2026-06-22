@@ -880,53 +880,48 @@ where
                 ));
             }
 
-            let next_flashblock_state = match build_result {
-                Ok(Some(built_flashblock)) => {
-                    let Some(next_flashblock_state) = self
-                        .publish_flashblock_payload(
-                            &state.ctx,
-                            deps.best_payload_tx,
-                            &state.fb_state,
-                            deps.payload_cancel,
-                            built_flashblock,
-                        )
-                        .map_err(|e| PayloadBuilderError::Other(e.into()))?
-                    else {
-                        return Ok(deps.build_stats(
-                            state.fb_state.flashblock_index(),
-                            state.info.executed_transactions.len(),
-                            state.info.cumulative_uncompressed_bytes,
-                            target_flashblocks,
-                        ));
-                    };
+            let Some(built_flashblock) = build_result.map_err(|err| {
+                state
+                    .ctx
+                    .metrics
+                    .payload_job_cancellation_error
+                    .increment(1);
+                deps.span.record("cancellation_reason", "error");
+                error!(
+                    target: "payload_builder",
+                    id = %state.ctx.payload_id(),
+                    flashblock_index = state.fb_state.flashblock_index(),
+                    block_number = state.ctx.block_number(),
+                    %err,
+                    "Failed to build flashblock",
+                );
+                PayloadBuilderError::Other(err.into())
+            })?
+            else {
+                return Ok(deps.build_stats(
+                    state.fb_state.flashblock_index(),
+                    state.info.executed_transactions.len(),
+                    state.info.cumulative_uncompressed_bytes,
+                    target_flashblocks,
+                ));
+            };
 
-                    next_flashblock_state
-                }
-                Ok(None) => {
-                    return Ok(deps.build_stats(
-                        state.fb_state.flashblock_index(),
-                        state.info.executed_transactions.len(),
-                        state.info.cumulative_uncompressed_bytes,
-                        target_flashblocks,
-                    ));
-                }
-                Err(err) => {
-                    state
-                        .ctx
-                        .metrics
-                        .payload_job_cancellation_error
-                        .increment(1);
-                    deps.span.record("cancellation_reason", "error");
-                    error!(
-                        target: "payload_builder",
-                        id = %state.ctx.payload_id(),
-                        flashblock_index = state.fb_state.flashblock_index(),
-                        block_number = state.ctx.block_number(),
-                        %err,
-                        "Failed to build flashblock",
-                    );
-                    return Err(PayloadBuilderError::Other(err.into()));
-                }
+            let Some(next_flashblock_state) = self
+                .publish_flashblock_payload(
+                    &state.ctx,
+                    deps.best_payload_tx,
+                    &state.fb_state,
+                    deps.payload_cancel,
+                    built_flashblock,
+                )
+                .map_err(|e| PayloadBuilderError::Other(e.into()))?
+            else {
+                return Ok(deps.build_stats(
+                    state.fb_state.flashblock_index(),
+                    state.info.executed_transactions.len(),
+                    state.info.cumulative_uncompressed_bytes,
+                    target_flashblocks,
+                ));
             };
 
             state.fb_state = next_flashblock_state;
