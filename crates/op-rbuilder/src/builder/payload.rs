@@ -19,6 +19,7 @@ use crate::{
     tokio_metrics::FlashblocksTaskMetrics,
     traits::{ClientBounds, PoolBounds},
 };
+use alloy_primitives::B256;
 use eyre::WrapErr as _;
 use op_alloy_rpc_types_engine::OpFlashblockPayload;
 use reth_chainspec::EthChainSpec;
@@ -550,13 +551,13 @@ where
         };
         let FallbackBuildOutput {
             ctx,
-            mut info,
+            info,
             payload,
             fb_payload,
-            mut cache,
-            mut transition,
+            cache,
+            transition,
             mut fb_state,
-            mut state_root_calc,
+            state_root_calc,
         } = tracing::Instrument::instrument(
             self.executor.run_blocking_task({
                 let builder = self.clone();
@@ -700,11 +701,11 @@ where
         };
 
         let fb_cancel = payload_cancel.flashblock_child();
-        let mut ctx = self
+        let ctx = self
             .get_op_payload_job_ctx(config, fb_cancel.clone())
             .map_err(|e| PayloadBuilderError::Other(e.into()))?;
 
-        let (tx, mut rx) = mpsc::channel((expected_flashblocks + 1) as usize);
+        let (tx, rx) = mpsc::channel((expected_flashblocks + 1) as usize);
         tokio::spawn(
             self.task_metrics
                 .flashblock_timer
@@ -719,54 +720,72 @@ where
         // State data was extracted in Phase 1 block scope above.
         // We carry (CacheState, Option<TransitionState>) between iterations
         // and reconstruct State<DB> inside each sync scope.
-        let mut tx_tracker = FlashblockTxTracker::default();
+        let tx_tracker = FlashblockTxTracker::default();
         let parent_hash = ctx.parent_hash();
 
-        // Gate: continuous build mode
-        if self.config.flashblocks_config.continuous_build {
-            let deps = JobDeps {
-                span: &span,
-                best_payload_tx: &best_payload_tx,
-                payload_cancel: &payload_cancel,
-            };
-            let base_state = BuildState {
-                ctx,
-                info,
-                cache,
-                transition,
-                tx_tracker,
-                fb_state,
-                state_root_calc,
-            };
-            return self
-                .run_continuous_flashblocks(deps, target_flashblocks, parent_hash, rx, base_state)
-                .await;
-        }
+        let deps = JobDeps {
+            span: &span,
+            best_payload_tx: &best_payload_tx,
+            payload_cancel: &payload_cancel,
+        };
+        let base_state = BuildState {
+            ctx,
+            info,
+            cache,
+            transition,
+            tx_tracker,
+            fb_state,
+            state_root_calc,
+        };
 
-        // State machine: explicit select! at every phase for deterministic cancellation.
+        if self.config.flashblocks_config.continuous_build {
+            self.run_continuous_flashblocks(deps, target_flashblocks, parent_hash, rx, base_state)
+                .await
+        } else {
+            self.run_naive_flashblocks(deps, target_flashblocks, parent_hash, rx, base_state)
+                .await
+        }
+    }
+
+    pub(crate) async fn run_naive_flashblocks(
+        &self,
+        deps: JobDeps<'_>,
+        target_flashblocks: u64,
+        parent_hash: B256,
+        mut fb_trigger_rx: mpsc::Receiver<FlashblockJobCancellation>,
+        base_state: BuildState,
+    ) -> Result<PayloadBuildStats, PayloadBuilderError> {
+        let BuildState {
+            mut ctx,
+            mut info,
+            mut cache,
+            mut transition,
+            mut tx_tracker,
+            mut fb_state,
+            mut state_root_calc,
+        } = base_state;
+
         loop {
             // Phase 1: Wait for scheduler trigger, or exit on cancellation.
             let new_fb_cancel = tokio::select! {
-                // ensures cancellation is checked before trigger.
                 biased;
-                _ = payload_cancel.wait_for_cancellation() => {
+                _ = deps.payload_cancel.wait_for_cancellation() => {
                     return Ok(PayloadBuildStats::new(
-                        payload_cancel,
-                        span,
+                        deps.payload_cancel.clone(),
+                        deps.span.clone(),
                         fb_state.flashblock_index(),
                         info.executed_transactions.len(),
                         info.cumulative_uncompressed_bytes,
                         target_flashblocks,
                     ));
                 }
-
-                trigger = rx.recv() => match trigger {
+                trigger = fb_trigger_rx.recv() => match trigger {
                     Some(t) => t,
                     None => {
                         // Channel closed — scheduler exhausted or canceled
                         return Ok(PayloadBuildStats::new(
-                            payload_cancel,
-                            span,
+                            deps.payload_cancel.clone(),
+                            deps.span.clone(),
                             fb_state.flashblock_index(),
                             info.executed_transactions.len(),
                             info.cumulative_uncompressed_bytes,
@@ -778,18 +797,18 @@ where
 
             debug!(
                 target: "payload_builder",
-                id = %fb_payload.payload_id,
+                id = %ctx.payload_id(),
                 flashblock_index = fb_state.flashblock_index(),
                 block_number = ctx.block_number(),
                 "Received signal to build flashblock",
             );
             ctx = ctx.with_cancel(new_fb_cancel);
 
-            let fb_span = if span.is_none() {
+            let fb_span = if deps.span.is_none() {
                 tracing::Span::none()
             } else {
                 span!(
-                    parent: &span,
+                    parent: deps.span,
                     Level::INFO,
                     "build_flashblock",
                     flashblock_index = fb_state.flashblock_index(),
@@ -800,22 +819,19 @@ where
             };
 
             // Phase 2: Build flashblock (blocking task), or exit on cancellation.
-            // Note: ctx, info, cache, transition, committed_txs, fb_state are moved into
-            // the blocking task closure. If a cancellation branch fires, the blocking task
-            // is dropped (the thread finishes but the oneshot result is discarded).
             let num_txs = info.executed_transactions.len();
             let uncompressed_byte_size = info.cumulative_uncompressed_bytes;
             let flashblock_index = fb_state.flashblock_index();
             let build_output = tokio::select! {
                 biased;
-                _ = payload_cancel.wait_for_cancellation() => {
-                    if payload_cancel.is_resolved() {
+                _ = deps.payload_cancel.wait_for_cancellation() => {
+                    if deps.payload_cancel.is_resolved() {
                         // Suppressed flashblock: we received getResolve during flashblock building
                         self.builder_ctx.metrics.flashblock_publish_suppressed_total.increment(1);
                     }
                     return Ok(PayloadBuildStats::new(
-                        payload_cancel,
-                        span,
+                        deps.payload_cancel.clone(),
+                        deps.span.clone(),
                         flashblock_index,
                         num_txs,
                         uncompressed_byte_size,
@@ -825,7 +841,7 @@ where
                 result = self.executor.run_blocking_task({
                     let builder = self.clone();
                     let ctx = ctx;
-                    let block_cancel = payload_cancel.token();
+                    let block_cancel = deps.payload_cancel.token();
                     let info = info;
                     let cache = cache;
                     let transition = transition;
@@ -886,13 +902,13 @@ where
             // Phase 3: Publish
             // no .await between check and publish (structural guarantee).
             // If resolved or new_fcu fired during the build, skip publishing.
-            if payload_cancel.is_resolved() || payload_cancel.is_new_fcu() {
-                if payload_cancel.is_resolved() {
+            if deps.payload_cancel.is_resolved() || deps.payload_cancel.is_new_fcu() {
+                if deps.payload_cancel.is_resolved() {
                     ctx.metrics.flashblock_publish_suppressed_total.increment(1);
                 }
                 return Ok(PayloadBuildStats::new(
-                    payload_cancel,
-                    span,
+                    deps.payload_cancel.clone(),
+                    deps.span.clone(),
                     fb_state.flashblock_index(),
                     info.executed_transactions.len(),
                     info.cumulative_uncompressed_bytes,
@@ -905,16 +921,16 @@ where
                     let Some(next_flashblock_state) = self
                         .publish_flashblock_payload(
                             &ctx,
-                            &best_payload_tx,
+                            deps.best_payload_tx,
                             &fb_state,
-                            &payload_cancel,
+                            deps.payload_cancel,
                             built_flashblock,
                         )
                         .map_err(|e| PayloadBuilderError::Other(e.into()))?
                     else {
                         return Ok(PayloadBuildStats::new(
-                            payload_cancel,
-                            span,
+                            deps.payload_cancel.clone(),
+                            deps.span.clone(),
                             fb_state.flashblock_index(),
                             info.executed_transactions.len(),
                             info.cumulative_uncompressed_bytes,
@@ -926,8 +942,8 @@ where
                 }
                 Ok(None) => {
                     return Ok(PayloadBuildStats::new(
-                        payload_cancel,
-                        span,
+                        deps.payload_cancel.clone(),
+                        deps.span.clone(),
                         fb_state.flashblock_index(),
                         info.executed_transactions.len(),
                         info.cumulative_uncompressed_bytes,
@@ -936,10 +952,10 @@ where
                 }
                 Err(err) => {
                     ctx.metrics.payload_job_cancellation_error.increment(1);
-                    span.record("cancellation_reason", "error");
+                    deps.span.record("cancellation_reason", "error");
                     error!(
                         target: "payload_builder",
-                        id = %fb_payload.payload_id,
+                        id = %ctx.payload_id(),
                         flashblock_index = fb_state.flashblock_index(),
                         block_number = ctx.block_number(),
                         %err,
