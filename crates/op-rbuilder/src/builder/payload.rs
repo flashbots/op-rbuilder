@@ -438,6 +438,18 @@ where
     }
 }
 
+/// Waits for the next flashblock trigger or payload cancellation.
+async fn wait_for_trigger(
+    cancel: &PayloadJobCancellation,
+    fb_trigger_rx: &mut mpsc::Receiver<FlashblockJobCancellation>,
+) -> Option<FlashblockJobCancellation> {
+    tokio::select! {
+        biased;
+        _ = cancel.wait_for_cancellation() => None,
+        trigger = fb_trigger_rx.recv() => trigger,
+    }
+}
+
 impl<Pool, Client, BuilderTx> OpPayloadBuilder<Pool, Client, BuilderTx>
 where
     Pool: PoolBounds + 'static,
@@ -796,30 +808,15 @@ where
 
         loop {
             // Phase 1: Wait for scheduler trigger, or exit on cancellation.
-            let new_fb_cancel = tokio::select! {
-                biased;
-                _ = deps.payload_cancel.wait_for_cancellation() => {
-                    return Ok(deps.build_stats(
-                        fb_state.flashblock_index(),
-                        info.executed_transactions.len(),
-                        info.cumulative_uncompressed_bytes,
-                        target_flashblocks,
-                    ));
-                }
-                trigger = fb_trigger_rx.recv() => match trigger {
-                    Some(t) => t,
-                    None => {
-                        // Channel closed — scheduler exhausted or canceled
-                        return Ok(PayloadBuildStats::new(
-                            deps.payload_cancel.clone(),
-                            deps.span.clone(),
-                            fb_state.flashblock_index(),
-                            info.executed_transactions.len(),
-                            info.cumulative_uncompressed_bytes,
-                            target_flashblocks,
-                        ));
-                    }
-                },
+            let Some(new_fb_cancel) =
+                wait_for_trigger(deps.payload_cancel, &mut fb_trigger_rx).await
+            else {
+                return Ok(deps.build_stats(
+                    fb_state.flashblock_index(),
+                    info.executed_transactions.len(),
+                    info.cumulative_uncompressed_bytes,
+                    target_flashblocks,
+                ));
             };
 
             debug!(
