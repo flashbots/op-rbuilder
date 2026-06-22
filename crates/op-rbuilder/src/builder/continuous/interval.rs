@@ -90,9 +90,7 @@ where
             .continuous_build_duration
             .record(interval.build_start.elapsed());
 
-        Ok(PayloadBuildStats::new(
-            deps.payload_cancel.clone(),
-            deps.span.clone(),
+        Ok(deps.build_stats(
             interval.base_fb_state.flashblock_index(),
             interval.base_info.executed_transactions.len(),
             interval.base_info.cumulative_uncompressed_bytes,

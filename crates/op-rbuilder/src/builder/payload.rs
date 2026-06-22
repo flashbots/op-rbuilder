@@ -89,6 +89,25 @@ pub(crate) struct JobDeps<'a> {
     pub(crate) payload_cancel: &'a PayloadJobCancellation,
 }
 
+impl<'a> JobDeps<'a> {
+    pub(crate) fn build_stats(
+        &self,
+        flashblock_index: u64,
+        num_txs: usize,
+        uncompressed_byte_size: u64,
+        target_flashblocks: u64,
+    ) -> PayloadBuildStats {
+        PayloadBuildStats::new(
+            self.payload_cancel.clone(),
+            self.span.clone(),
+            flashblock_index,
+            num_txs,
+            uncompressed_byte_size,
+            target_flashblocks,
+        )
+    }
+}
+
 struct FallbackBuildOutput<Cache, Transition> {
     ctx: OpPayloadJobCtx,
     info: ExecutionInfo,
@@ -780,9 +799,7 @@ where
             let new_fb_cancel = tokio::select! {
                 biased;
                 _ = deps.payload_cancel.wait_for_cancellation() => {
-                    return Ok(PayloadBuildStats::new(
-                        deps.payload_cancel.clone(),
-                        deps.span.clone(),
+                    return Ok(deps.build_stats(
                         fb_state.flashblock_index(),
                         info.executed_transactions.len(),
                         info.cumulative_uncompressed_bytes,
@@ -839,9 +856,7 @@ where
                         // Suppressed flashblock: we received getResolve during flashblock building
                         self.builder_ctx.metrics.flashblock_publish_suppressed_total.increment(1);
                     }
-                    return Ok(PayloadBuildStats::new(
-                        deps.payload_cancel.clone(),
-                        deps.span.clone(),
+                    return Ok(deps.build_stats(
                         flashblock_index,
                         num_txs,
                         uncompressed_byte_size,
@@ -894,9 +909,7 @@ where
                 if deps.payload_cancel.is_resolved() {
                     ctx.metrics.flashblock_publish_suppressed_total.increment(1);
                 }
-                return Ok(PayloadBuildStats::new(
-                    deps.payload_cancel.clone(),
-                    deps.span.clone(),
+                return Ok(deps.build_stats(
                     fb_state.flashblock_index(),
                     info.executed_transactions.len(),
                     info.cumulative_uncompressed_bytes,
@@ -916,9 +929,7 @@ where
                         )
                         .map_err(|e| PayloadBuilderError::Other(e.into()))?
                     else {
-                        return Ok(PayloadBuildStats::new(
-                            deps.payload_cancel.clone(),
-                            deps.span.clone(),
+                        return Ok(deps.build_stats(
                             fb_state.flashblock_index(),
                             info.executed_transactions.len(),
                             info.cumulative_uncompressed_bytes,
@@ -929,9 +940,7 @@ where
                     next_flashblock_state
                 }
                 Ok(None) => {
-                    return Ok(PayloadBuildStats::new(
-                        deps.payload_cancel.clone(),
-                        deps.span.clone(),
+                    return Ok(deps.build_stats(
                         fb_state.flashblock_index(),
                         info.executed_transactions.len(),
                         info.cumulative_uncompressed_bytes,
