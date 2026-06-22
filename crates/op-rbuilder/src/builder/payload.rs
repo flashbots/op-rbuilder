@@ -98,11 +98,11 @@ struct FallbackBuildOutput<Cache, Transition> {
     state_root_calc: StateRootCalculator,
 }
 
-struct FlashblockBuildOutput<Cache, Transition> {
+struct FlashblockBuildOutput {
     ctx: OpPayloadJobCtx,
     build_result: eyre::Result<Option<BuiltFlashblockOutput>>,
-    cache: Cache,
-    transition: Transition,
+    cache: CacheState,
+    transition: Option<TransitionState>,
     tx_tracker: FlashblockTxTracker,
     info: ExecutionInfo,
     fb_state: FlashblocksState,
