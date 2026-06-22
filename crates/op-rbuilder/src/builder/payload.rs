@@ -6,7 +6,6 @@ use crate::{
         builder_tx::{BuilderTransactions, reserve_builder_tx_budget},
         cancellation::{CancellationReason, FlashblockJobCancellation, PayloadJobCancellation},
         context::{OpPayloadBuilderCtx, OpPayloadJobCtx},
-        continuous::{BuildState, JobDeps},
         generator::{BuildArguments, PayloadBuilder},
         timing::{FlashblockScheduler, compute_slot_offset_ms},
     },
@@ -71,6 +70,27 @@ pub(crate) struct FlashblocksState {
     /// Index into ExecutionInfo tracking the last consumed flashblock
     /// Used for slicing transactions/receipts per flashblock
     last_flashblock_tx_index: usize,
+}
+
+pub(crate) struct BuildState {
+    pub(crate) ctx: OpPayloadJobCtx,
+    pub(crate) info: ExecutionInfo,
+    pub(crate) cache: CacheState,
+    pub(crate) transition: Option<TransitionState>,
+    pub(crate) tx_tracker: FlashblockTxTracker,
+    pub(crate) fb_state: FlashblocksState,
+    /// Per-interval state-root calculator. Cloned per candidate inside the
+    /// build task so each seal sees the same baseline, then replaced with the
+    /// winner's calculator before the next interval begins.
+    pub(crate) state_root_calc: StateRootCalculator,
+}
+
+/// References borrowed by the continuous build job for the duration of a single
+/// payload.
+pub(crate) struct JobDeps<'a> {
+    pub(crate) span: &'a tracing::Span,
+    pub(crate) best_payload_tx: &'a watch::Sender<Option<OpBuiltPayload>>,
+    pub(crate) payload_cancel: &'a PayloadJobCancellation,
 }
 
 struct FallbackBuildOutput<Cache, Transition> {

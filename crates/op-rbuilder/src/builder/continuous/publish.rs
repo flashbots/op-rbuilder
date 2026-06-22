@@ -3,17 +3,14 @@ use super::{
         StopMetricsSource, TriggerOutcome, fallback_no_candidate_metrics_source,
         plan_with_candidate,
     },
-    types::{
-        BestCandidate, BuildOutput, BuildReceiver, BuildState, CandidateLoopResult,
-        FlashblockInterval, JobDeps,
-    },
+    types::{BestCandidate, BuildOutput, BuildReceiver, CandidateLoopResult, FlashblockInterval},
 };
 use crate::{
     builder::{
         builder_tx::BuilderTransactions,
         cancellation::FlashblockJobCancellation,
         context::OpPayloadJobCtx,
-        payload::{FlashblocksState, OpPayloadBuilder, PayloadBuildStats},
+        payload::{BuildState, FlashblocksState, JobDeps, OpPayloadBuilder, PayloadBuildStats},
         timing::compute_slot_offset_ms,
     },
     metrics::record_flashblock_publish_timing,

@@ -1,12 +1,12 @@
 use super::{
     shared_best::SharedBest,
-    types::{BuildOutput, BuildReceiver, BuildState, FlashblockInterval, JobDeps},
+    types::{BuildOutput, BuildReceiver, FlashblockInterval},
 };
 use crate::{
     builder::{
         builder_tx::BuilderTransactions,
         cancellation::{FlashblockJobCancellation, PayloadJobCancellation},
-        payload::{OpPayloadBuilder, PayloadBuildStats},
+        payload::{BuildState, JobDeps, OpPayloadBuilder, PayloadBuildStats},
     },
     traits::{ClientBounds, PoolBounds},
 };

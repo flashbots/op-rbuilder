@@ -1,8 +1,10 @@
 use super::shared_best::SharedBest;
 use crate::{
     builder::{
-        best_txs::FlashblockTxTracker, cancellation::PayloadJobCancellation,
-        context::OpPayloadJobCtx, payload::FlashblocksState, state_root::StateRootCalculator,
+        best_txs::FlashblockTxTracker,
+        context::OpPayloadJobCtx,
+        payload::{BuildState, FlashblocksState},
+        state_root::StateRootCalculator,
     },
     limiter::AddressLimiterDeltas,
     primitives::reth::ExecutionInfo,
@@ -13,28 +15,7 @@ use reth_node_api::PayloadBuilderError;
 use reth_optimism_node::OpBuiltPayload;
 use reth_revm::db::{CacheState, TransitionState};
 use std::time::{Duration, Instant};
-use tokio::sync::{oneshot, watch};
-
-pub(crate) struct BuildState {
-    pub(crate) ctx: OpPayloadJobCtx,
-    pub(crate) info: ExecutionInfo,
-    pub(crate) cache: CacheState,
-    pub(crate) transition: Option<TransitionState>,
-    pub(crate) tx_tracker: FlashblockTxTracker,
-    pub(crate) fb_state: FlashblocksState,
-    /// Per-interval state-root calculator. Cloned per candidate inside the
-    /// build task so each seal sees the same baseline, then replaced with the
-    /// winner's calculator before the next interval begins.
-    pub(crate) state_root_calc: StateRootCalculator,
-}
-
-/// References borrowed by the continuous build job for the duration of a single
-/// payload.
-pub(crate) struct JobDeps<'a> {
-    pub(crate) span: &'a tracing::Span,
-    pub(crate) best_payload_tx: &'a watch::Sender<Option<OpBuiltPayload>>,
-    pub(crate) payload_cancel: &'a PayloadJobCancellation,
-}
+use tokio::sync::oneshot;
 
 /// Result of a continuous candidate loop within a single flashblock interval.
 /// Contains the best sealed candidate and statistics.
