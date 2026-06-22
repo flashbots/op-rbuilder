@@ -6,7 +6,7 @@ use crate::{
     builder::{
         builder_tx::BuilderTransactions,
         cancellation::{FlashblockJobCancellation, PayloadJobCancellation},
-        payload::{BuildState, JobDeps, OpPayloadBuilder, PayloadBuildStats},
+        payload::{BuildProgress, BuildState, JobDeps, OpPayloadBuilder, PayloadBuildStats},
     },
     traits::{ClientBounds, PoolBounds},
 };
@@ -91,9 +91,7 @@ where
             .record(interval.build_start.elapsed());
 
         Ok(deps.build_stats(
-            interval.base_fb_state.flashblock_index(),
-            interval.base_info.executed_transactions.len(),
-            interval.base_info.cumulative_uncompressed_bytes,
+            BuildProgress::from_parts(&interval.base_fb_state, &interval.base_info),
             target_flashblocks,
         ))
     }

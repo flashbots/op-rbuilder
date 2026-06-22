@@ -10,7 +10,10 @@ use crate::{
         builder_tx::BuilderTransactions,
         cancellation::FlashblockJobCancellation,
         context::OpPayloadJobCtx,
-        payload::{BuildState, FlashblocksState, JobDeps, OpPayloadBuilder, PayloadBuildStats},
+        payload::{
+            BuildProgress, BuildState, FlashblocksState, JobDeps, OpPayloadBuilder,
+            PayloadBuildStats,
+        },
         timing::compute_slot_offset_ms,
     },
     metrics::record_flashblock_publish_timing,
@@ -250,9 +253,7 @@ where
                             StopMetricsSource::IntervalBase,
                         );
                         Ok(ControlFlow::Break(deps.build_stats(
-                            base_fb_state.flashblock_index(),
-                            base_info.executed_transactions.len(),
-                            base_info.cumulative_uncompressed_bytes,
+                            BuildProgress::from_parts(&base_fb_state, &base_info),
                             target_flashblocks,
                         )))
                     }
@@ -330,9 +331,7 @@ where
                     CandidateLogEvent::CandidatePublishSuppressed,
                 );
                 Ok(ControlFlow::Break(deps.build_stats(
-                    base_fb_state.flashblock_index(),
-                    base_info.executed_transactions.len(),
-                    base_info.cumulative_uncompressed_bytes,
+                    BuildProgress::from_parts(base_fb_state, base_info),
                     target_flashblocks,
                 )))
             }
@@ -482,12 +481,9 @@ where
         base_state.fb_state = next_fb_state;
 
         if stop {
-            return Ok(ControlFlow::Break(deps.build_stats(
-                base_state.fb_state.flashblock_index(),
-                base_state.info.executed_transactions.len(),
-                base_state.info.cumulative_uncompressed_bytes,
-                target_flashblocks,
-            )));
+            return Ok(ControlFlow::Break(
+                deps.build_stats(base_state.progress(), target_flashblocks),
+            ));
         }
 
         base_state.ctx = base_state.ctx.with_cancel(new_fb_cancel);

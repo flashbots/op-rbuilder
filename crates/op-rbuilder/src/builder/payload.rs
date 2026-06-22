@@ -81,6 +81,34 @@ pub(crate) struct BuildState {
     pub(crate) state_root_calc: StateRootCalculator,
 }
 
+impl BuildState {
+    /// The reportable size of the work built so far, used to construct the
+    /// final [`PayloadBuildStats`] when the job stops.
+    pub(crate) fn progress(&self) -> BuildProgress {
+        BuildProgress::from_parts(&self.fb_state, &self.info)
+    }
+}
+
+/// Snapshot of how much of a payload has been built: enough to report build
+/// stats on exit, but cheap enough (all scalars) to capture before moving
+/// [`BuildState`] into a build task that may be cancelled.
+#[derive(Clone, Copy)]
+pub(crate) struct BuildProgress {
+    flashblock_index: u64,
+    num_txs: usize,
+    uncompressed_byte_size: u64,
+}
+
+impl BuildProgress {
+    pub(crate) fn from_parts(fb_state: &FlashblocksState, info: &ExecutionInfo) -> Self {
+        Self {
+            flashblock_index: fb_state.flashblock_index(),
+            num_txs: info.executed_transactions.len(),
+            uncompressed_byte_size: info.cumulative_uncompressed_bytes,
+        }
+    }
+}
+
 /// References borrowed by the continuous build job for the duration of a single
 /// payload.
 pub(crate) struct JobDeps<'a> {
@@ -92,17 +120,15 @@ pub(crate) struct JobDeps<'a> {
 impl<'a> JobDeps<'a> {
     pub(crate) fn build_stats(
         &self,
-        flashblock_index: u64,
-        num_txs: usize,
-        uncompressed_byte_size: u64,
+        progress: BuildProgress,
         target_flashblocks: u64,
     ) -> PayloadBuildStats {
         PayloadBuildStats::new(
             self.payload_cancel.clone(),
             self.span.clone(),
-            flashblock_index,
-            num_txs,
-            uncompressed_byte_size,
+            progress.flashblock_index,
+            progress.num_txs,
+            progress.uncompressed_byte_size,
             target_flashblocks,
         )
     }
@@ -122,6 +148,18 @@ struct FallbackBuildOutput<Cache, Transition> {
 struct FlashblockBuildOutput {
     state: BuildState,
     build_result: eyre::Result<Option<BuiltFlashblockOutput>>,
+}
+
+/// Result of building one flashblock in the naive loop: either carry the
+/// advanced state into the next iteration, or stop and report the progress
+/// reached.
+// `Continue` is the hot path and `BuildState` is already moved by value through
+// the build loop; boxing it just to shrink the rare `Stop` variant would add an
+// allocation per flashblock for no benefit.
+#[allow(clippy::large_enum_variant)]
+enum FlashblockOutcome {
+    Continue(BuildState),
+    Stop(BuildProgress),
 }
 
 struct BuiltFlashblockOutput {
@@ -797,135 +835,126 @@ where
         mut state: BuildState,
     ) -> Result<PayloadBuildStats, PayloadBuilderError> {
         loop {
-            // Phase 1: Wait for scheduler trigger, or exit on cancellation.
-            let Some(new_fb_cancel) =
-                wait_for_trigger(deps.payload_cancel, &mut fb_trigger_rx).await
-            else {
-                return Ok(deps.build_stats(
-                    state.fb_state.flashblock_index(),
-                    state.info.executed_transactions.len(),
-                    state.info.cumulative_uncompressed_bytes,
-                    target_flashblocks,
-                ));
-            };
+            match self
+                .build_one_flashblock(&deps, parent_hash, &mut fb_trigger_rx, state)
+                .await?
+            {
+                FlashblockOutcome::Continue(next) => state = next,
+                FlashblockOutcome::Stop(progress) => {
+                    return Ok(deps.build_stats(progress, target_flashblocks));
+                }
+            }
+        }
+    }
 
-            debug!(
+    /// Build, and on success publish, a single flashblock. Returns the advanced
+    /// [`BuildState`] to continue the loop, or the [`BuildProgress`] reached if
+    /// the job should stop (scheduler finished, payload cancelled, or the
+    /// candidate was suppressed). Build errors propagate via `?`.
+    async fn build_one_flashblock(
+        &self,
+        deps: &JobDeps<'_>,
+        parent_hash: B256,
+        fb_trigger_rx: &mut mpsc::Receiver<FlashblockJobCancellation>,
+        mut state: BuildState,
+    ) -> Result<FlashblockOutcome, PayloadBuilderError> {
+        // Phase 1: Wait for scheduler trigger, or exit on cancellation.
+        let Some(new_fb_cancel) = wait_for_trigger(deps.payload_cancel, fb_trigger_rx).await else {
+            return Ok(FlashblockOutcome::Stop(state.progress()));
+        };
+
+        debug!(
+            target: "payload_builder",
+            id = %state.ctx.payload_id(),
+            flashblock_index = state.fb_state.flashblock_index(),
+            block_number = state.ctx.block_number(),
+            "Received signal to build flashblock",
+        );
+        state.ctx = state.ctx.with_cancel(new_fb_cancel);
+
+        let fb_span = if deps.span.is_none() {
+            tracing::Span::none()
+        } else {
+            span!(
+                parent: deps.span,
+                Level::INFO,
+                "build_flashblock",
+                flashblock_index = state.fb_state.flashblock_index(),
+                block_number = state.ctx.block_number(),
+                tx_count = tracing::field::Empty,
+                gas_used = tracing::field::Empty,
+            )
+        };
+
+        // Phase 2: Build flashblock (blocking task), or exit on cancellation.
+        // Capture progress before moving `state` into the build task, which
+        // drops it if cancellation wins the race.
+        let pre_build_progress = state.progress();
+        let Some(FlashblockBuildOutput {
+            state: new_state,
+            build_result,
+        }) = self
+            .run_blocking_flashblock_build(deps.payload_cancel, state, parent_hash, fb_span.clone())
+            .await?
+        else {
+            return Ok(FlashblockOutcome::Stop(pre_build_progress));
+        };
+        state = new_state;
+
+        // Record span attributes now that we have results
+        fb_span.record("tx_count", state.info.executed_transactions.len() as u64);
+        fb_span.record("gas_used", state.info.cumulative_gas_used);
+
+        // Phase 3: Publish
+        // no .await between check and publish (structural guarantee).
+        // If resolved or new_fcu fired during the build, skip publishing.
+        if deps.payload_cancel.is_resolved() || deps.payload_cancel.is_new_fcu() {
+            if deps.payload_cancel.is_resolved() {
+                state
+                    .ctx
+                    .metrics
+                    .flashblock_publish_suppressed_total
+                    .increment(1);
+            }
+            return Ok(FlashblockOutcome::Stop(state.progress()));
+        }
+
+        let Some(built_flashblock) = build_result.map_err(|err| {
+            state
+                .ctx
+                .metrics
+                .payload_job_cancellation_error
+                .increment(1);
+            deps.span.record("cancellation_reason", "error");
+            error!(
                 target: "payload_builder",
                 id = %state.ctx.payload_id(),
                 flashblock_index = state.fb_state.flashblock_index(),
                 block_number = state.ctx.block_number(),
-                "Received signal to build flashblock",
+                %err,
+                "Failed to build flashblock",
             );
-            state.ctx = state.ctx.with_cancel(new_fb_cancel);
+            PayloadBuilderError::Other(err.into())
+        })?
+        else {
+            return Ok(FlashblockOutcome::Stop(state.progress()));
+        };
 
-            let fb_span = if deps.span.is_none() {
-                tracing::Span::none()
-            } else {
-                span!(
-                    parent: deps.span,
-                    Level::INFO,
-                    "build_flashblock",
-                    flashblock_index = state.fb_state.flashblock_index(),
-                    block_number = state.ctx.block_number(),
-                    tx_count = tracing::field::Empty,
-                    gas_used = tracing::field::Empty,
-                )
-            };
+        let Some(next_flashblock_state) = self
+            .publish_flashblock_payload(
+                &state.ctx,
+                deps.best_payload_tx,
+                &state.fb_state,
+                deps.payload_cancel,
+                built_flashblock,
+            )
+            .map_err(|e| PayloadBuilderError::Other(e.into()))?
+        else {
+            return Ok(FlashblockOutcome::Stop(state.progress()));
+        };
 
-            // Phase 2: Build flashblock (blocking task), or exit on cancellation.
-            let num_txs = state.info.executed_transactions.len();
-            let uncompressed_byte_size = state.info.cumulative_uncompressed_bytes;
-            let flashblock_index = state.fb_state.flashblock_index();
-            let Some(FlashblockBuildOutput {
-                state: new_state,
-                build_result,
-            }) = self
-                .run_blocking_flashblock_build(
-                    deps.payload_cancel,
-                    state,
-                    parent_hash,
-                    fb_span.clone(),
-                )
-                .await?
-            else {
-                return Ok(deps.build_stats(
-                    flashblock_index,
-                    num_txs,
-                    uncompressed_byte_size,
-                    target_flashblocks,
-                ));
-            };
-            state = new_state;
-
-            // Record span attributes now that we have results
-            fb_span.record("tx_count", state.info.executed_transactions.len() as u64);
-            fb_span.record("gas_used", state.info.cumulative_gas_used);
-
-            // Phase 3: Publish
-            // no .await between check and publish (structural guarantee).
-            // If resolved or new_fcu fired during the build, skip publishing.
-            if deps.payload_cancel.is_resolved() || deps.payload_cancel.is_new_fcu() {
-                if deps.payload_cancel.is_resolved() {
-                    state
-                        .ctx
-                        .metrics
-                        .flashblock_publish_suppressed_total
-                        .increment(1);
-                }
-                return Ok(deps.build_stats(
-                    state.fb_state.flashblock_index(),
-                    state.info.executed_transactions.len(),
-                    state.info.cumulative_uncompressed_bytes,
-                    target_flashblocks,
-                ));
-            }
-
-            let Some(built_flashblock) = build_result.map_err(|err| {
-                state
-                    .ctx
-                    .metrics
-                    .payload_job_cancellation_error
-                    .increment(1);
-                deps.span.record("cancellation_reason", "error");
-                error!(
-                    target: "payload_builder",
-                    id = %state.ctx.payload_id(),
-                    flashblock_index = state.fb_state.flashblock_index(),
-                    block_number = state.ctx.block_number(),
-                    %err,
-                    "Failed to build flashblock",
-                );
-                PayloadBuilderError::Other(err.into())
-            })?
-            else {
-                return Ok(deps.build_stats(
-                    state.fb_state.flashblock_index(),
-                    state.info.executed_transactions.len(),
-                    state.info.cumulative_uncompressed_bytes,
-                    target_flashblocks,
-                ));
-            };
-
-            let Some(next_flashblock_state) = self
-                .publish_flashblock_payload(
-                    &state.ctx,
-                    deps.best_payload_tx,
-                    &state.fb_state,
-                    deps.payload_cancel,
-                    built_flashblock,
-                )
-                .map_err(|e| PayloadBuilderError::Other(e.into()))?
-            else {
-                return Ok(deps.build_stats(
-                    state.fb_state.flashblock_index(),
-                    state.info.executed_transactions.len(),
-                    state.info.cumulative_uncompressed_bytes,
-                    target_flashblocks,
-                ));
-            };
-
-            state.fb_state = next_flashblock_state;
-        }
+        state.fb_state = next_flashblock_state;
+        Ok(FlashblockOutcome::Continue(state))
     }
 
     async fn run_blocking_flashblock_build(
