@@ -39,7 +39,6 @@ use reth_revm::{
     db::{CacheState, TransitionState},
 };
 use reth_tasks::Runtime;
-use reth_transaction_pool::TransactionPool;
 use revm::Database;
 use std::{
     ops::Deref,
@@ -49,20 +48,6 @@ use std::{
 use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, info_span, metadata::Level, span, warn};
-
-type NextFlashblockPoolTxCursor<'a, Pool> = FlashblockPoolTxCursor<
-    'a,
-    <Pool as TransactionPool>::Transaction,
-    Box<
-        dyn reth_transaction_pool::BestTransactions<
-                Item = Arc<
-                    reth_transaction_pool::ValidPoolTransaction<
-                        <Pool as TransactionPool>::Transaction,
-                    >,
-                >,
-            >,
-    >,
->;
 
 #[derive(Debug, Default, Clone)]
 pub(crate) struct FlashblocksState {
@@ -863,8 +848,6 @@ where
                             .build();
                         state.transition_state = transition;
 
-                        let mut best_txs = FlashblockPoolTxCursor::new(&mut tx_tracker);
-
                         let mut info = info;
                         let mut fb_state = fb_state;
                         let result = builder.build_next_flashblock(
@@ -873,7 +856,7 @@ where
                             &mut info,
                             &mut state,
                             &state_provider,
-                            &mut best_txs,
+                            &mut tx_tracker,
                             &block_cancel,
                             &mut state_root_calc,
                         );
@@ -1135,7 +1118,6 @@ where
 
     #[expect(clippy::too_many_arguments)]
     fn build_next_flashblock<
-        'a,
         DB: Database<Error = ProviderError> + std::fmt::Debug + AsRef<P>,
         P: StateRootProvider + HashedPostStateProvider + StorageRootProvider,
     >(
@@ -1145,7 +1127,7 @@ where
         info: &mut ExecutionInfo,
         state: &mut State<DB>,
         state_provider: impl reth::providers::StateProvider + Clone,
-        best_txs: &mut NextFlashblockPoolTxCursor<'a, Pool>,
+        tx_tracker: &mut FlashblockTxTracker,
         block_cancel: &CancellationToken,
         state_root_calc: &mut StateRootCalculator,
     ) -> eyre::Result<Option<BuiltFlashblockOutput>> {
@@ -1198,6 +1180,7 @@ where
         );
 
         let best_txs_start_time = Instant::now();
+        let mut best_txs = FlashblockPoolTxCursor::new(tx_tracker);
         best_txs.refresh_iterator(
             BestPayloadTransactions::new(
                 self.pool
@@ -1217,7 +1200,7 @@ where
         ctx.execute_best_transactions(
             info,
             state,
-            best_txs,
+            &mut best_txs,
             target_gas_for_batch.min(ctx.block_gas_limit()),
             target_da_for_batch,
             target_da_footprint_for_batch,
