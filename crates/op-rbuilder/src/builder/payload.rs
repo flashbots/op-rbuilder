@@ -846,45 +846,34 @@ where
             let num_txs = info.executed_transactions.len();
             let uncompressed_byte_size = info.cumulative_uncompressed_bytes;
             let flashblock_index = fb_state.flashblock_index();
-            let build_output = tokio::select! {
-                biased;
-                _ = deps.payload_cancel.wait_for_cancellation() => {
-                    if deps.payload_cancel.is_resolved() {
-                        // Suppressed flashblock: we received getResolve during flashblock building
-                        self.builder_ctx.metrics.flashblock_publish_suppressed_total.increment(1);
-                    }
-                    return Ok(deps.build_stats(
-                        flashblock_index,
-                        num_txs,
-                        uncompressed_byte_size,
-                        target_flashblocks,
-                    ));
-                }
-                result = self.executor.run_blocking_task({
-                    let builder = self.clone();
-                    let block_cancel = deps.payload_cancel.token();
-                    let fb_span = fb_span.clone();
-                    let build_state = BuildState {
-                        ctx,
-                        info,
-                        cache,
-                        transition,
-                        tx_tracker,
-                        fb_state,
-                        state_root_calc,
-                    };
-                    move || {
-                        let _enter = fb_span.enter();
-                        builder.build_next_flashblock(build_state, parent_hash, &block_cancel)
-                            .map_err(|e| PayloadBuilderError::Other(e.into()))
-                    }
-                }) => result?,
+            let build_state = BuildState {
+                ctx,
+                info,
+                cache,
+                transition,
+                tx_tracker,
+                fb_state,
+                state_root_calc,
             };
-
-            let FlashblockBuildOutput {
+            let Some(FlashblockBuildOutput {
                 state: new_state,
                 build_result,
-            } = build_output;
+            }) = self
+                .run_blocking_flashblock_build(
+                    deps.payload_cancel,
+                    build_state,
+                    parent_hash,
+                    fb_span.clone(),
+                )
+                .await?
+            else {
+                return Ok(deps.build_stats(
+                    flashblock_index,
+                    num_txs,
+                    uncompressed_byte_size,
+                    target_flashblocks,
+                ));
+            };
             BuildState {
                 ctx,
                 info,
@@ -960,6 +949,33 @@ where
             };
 
             fb_state = next_flashblock_state;
+        }
+    }
+
+    async fn run_blocking_flashblock_build(
+        &self,
+        cancel: &PayloadJobCancellation,
+        build_state: BuildState,
+        parent_hash: B256,
+        fb_span: tracing::Span,
+    ) -> Result<Option<FlashblockBuildOutput>, PayloadBuilderError> {
+        tokio::select! {
+            biased;
+            _ = cancel.wait_for_cancellation() => {
+                if cancel.is_resolved() {
+                    self.builder_ctx.metrics.flashblock_publish_suppressed_total.increment(1);
+                }
+                Ok(None)
+            }
+            result = self.executor.run_blocking_task({
+                let builder = self.clone();
+                let block_cancel = cancel.token();
+                move || {
+                    let _enter = fb_span.enter();
+                    builder.build_next_flashblock(build_state, parent_hash, &block_cancel)
+                        .map_err(|e| PayloadBuilderError::Other(e.into()))
+                }
+            }) => result.map(Some),
         }
     }
 
