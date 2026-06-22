@@ -29,9 +29,6 @@ use reth_optimism_payload_builder::OpPayloadAttrs;
 use reth_optimism_primitives::{OpReceipt, OpTransactionSigned};
 use reth_payload_builder::PayloadId;
 use reth_payload_util::BestPayloadTransactions;
-use reth_provider::{
-    HashedPostStateProvider, ProviderError, StateRootProvider, StorageRootProvider,
-};
 use reth_revm::{
     State,
     cached::CachedReads,
@@ -39,7 +36,6 @@ use reth_revm::{
     db::{CacheState, TransitionState},
 };
 use reth_tasks::Runtime;
-use revm::Database;
 use std::{
     ops::Deref,
     sync::{Arc, atomic::AtomicU64},
@@ -105,14 +101,8 @@ struct FallbackBuildOutput<Cache, Transition> {
 }
 
 struct FlashblockBuildOutput {
-    ctx: OpPayloadJobCtx,
+    state: BuildState,
     build_result: eyre::Result<Option<BuiltFlashblockOutput>>,
-    cache: CacheState,
-    transition: Option<TransitionState>,
-    tx_tracker: FlashblockTxTracker,
-    info: ExecutionInfo,
-    fb_state: FlashblocksState,
-    state_root_calc: StateRootCalculator,
 }
 
 struct BuiltFlashblockOutput {
@@ -860,60 +850,38 @@ where
                 }
                 result = self.executor.run_blocking_task({
                     let builder = self.clone();
-                    let ctx = ctx;
                     let block_cancel = deps.payload_cancel.token();
-                    let info = info;
-                    let cache = cache;
-                    let transition = transition;
-                    let tx_tracker = tx_tracker;
-                    let fb_state = fb_state;
-                    let state_root_calc = state_root_calc;
                     let fb_span = fb_span.clone();
+                    let build_state = BuildState {
+                        ctx,
+                        info,
+                        cache,
+                        transition,
+                        tx_tracker,
+                        fb_state,
+                        state_root_calc,
+                    };
                     move || {
-                        // Enter the flashblock span so child spans are properly parented
                         let _enter = fb_span.enter();
-
-                        // reconstruct state
-                        let state_provider = builder.client.state_by_block_hash(parent_hash)?;
-                        let mut state = State::builder()
-                            .with_database(StateProviderDatabase::new(&state_provider))
-                            .with_cached_prestate(cache)
-                            .with_bundle_update()
-                            .build();
-                        state.transition_state = transition;
-
-                        builder.build_next_flashblock(
-                            ctx,
-                            fb_state,
-                            info,
-                            &mut state,
-                            &state_provider,
-                            tx_tracker,
-                            &block_cancel,
-                            state_root_calc,
-                        ).map_err(|e| PayloadBuilderError::Other(e.into()))
+                        builder.build_next_flashblock(build_state, parent_hash, &block_cancel)
+                            .map_err(|e| PayloadBuilderError::Other(e.into()))
                     }
                 }) => result?,
             };
 
             let FlashblockBuildOutput {
-                ctx: returned_ctx,
+                state: new_state,
                 build_result,
-                cache: new_cache,
-                transition: new_transition,
-                tx_tracker: new_tx_tracker,
-                info: new_info,
-                fb_state: returned_fb_state,
-                state_root_calc: returned_state_root_calc,
             } = build_output;
-
-            ctx = returned_ctx;
-            fb_state = returned_fb_state;
-            state_root_calc = returned_state_root_calc;
-            info = new_info;
-            cache = new_cache;
-            transition = new_transition;
-            tx_tracker = new_tx_tracker;
+            BuildState {
+                ctx,
+                info,
+                cache,
+                transition,
+                tx_tracker,
+                fb_state,
+                state_root_calc,
+            } = new_state;
 
             // Record span attributes now that we have results
             fb_span.record("tx_count", info.executed_transactions.len() as u64);
@@ -1134,21 +1102,30 @@ where
         Ok(Some(next_flashblock_state))
     }
 
-    #[expect(clippy::too_many_arguments)]
-    fn build_next_flashblock<
-        DB: Database<Error = ProviderError> + std::fmt::Debug + AsRef<P>,
-        P: StateRootProvider + HashedPostStateProvider + StorageRootProvider,
-    >(
+    fn build_next_flashblock(
         &self,
-        ctx: OpPayloadJobCtx,
-        mut fb_state: FlashblocksState,
-        mut info: ExecutionInfo,
-        state: &mut State<DB>,
-        state_provider: impl reth::providers::StateProvider + Clone,
-        mut tx_tracker: FlashblockTxTracker,
+        build_state: BuildState,
+        parent_hash: B256,
         block_cancel: &CancellationToken,
-        mut state_root_calc: StateRootCalculator,
     ) -> eyre::Result<FlashblockBuildOutput> {
+        let BuildState {
+            ctx,
+            mut fb_state,
+            mut info,
+            cache,
+            transition,
+            mut tx_tracker,
+            mut state_root_calc,
+        } = build_state;
+
+        let state_provider = self.client.state_by_block_hash(parent_hash)?;
+        let mut evm_state = State::builder()
+            .with_database(StateProviderDatabase::new(&state_provider))
+            .with_cached_prestate(cache)
+            .with_bundle_update()
+            .build();
+        evm_state.transition_state = transition;
+
         let flashblock_index = fb_state.flashblock_index();
         let mut target_gas_for_batch = fb_state.target_gas_for_batch();
         let mut target_da_for_batch = fb_state.target_da_for_batch();
@@ -1175,7 +1152,7 @@ where
                 &state_provider,
                 &mut info,
                 &ctx.builder_tx_env(),
-                state,
+                &mut evm_state,
                 true,
                 flashblock.is_first(),
                 flashblock.is_last(),
@@ -1217,7 +1194,7 @@ where
         let tx_execution_start_time = Instant::now();
         ctx.execute_best_transactions(
             &mut info,
-            state,
+            &mut evm_state,
             &mut best_txs,
             target_gas_for_batch.min(ctx.block_gas_limit()),
             target_da_for_batch,
@@ -1242,17 +1219,19 @@ where
 
         // Block cancelled (new FCU, getPayload resolved, or deadline). Skip publishing.
         if block_cancel.is_cancelled() {
-            let cache = std::mem::take(&mut state.cache);
-            let transition = state.transition_state.take();
+            let cache = std::mem::take(&mut evm_state.cache);
+            let transition = evm_state.transition_state.take();
             return Ok(FlashblockBuildOutput {
-                ctx,
+                state: BuildState {
+                    ctx,
+                    info,
+                    cache,
+                    transition,
+                    tx_tracker,
+                    fb_state,
+                    state_root_calc,
+                },
                 build_result: Ok(None),
-                cache,
-                transition,
-                tx_tracker,
-                info,
-                fb_state,
-                state_root_calc,
             });
         }
 
@@ -1269,7 +1248,7 @@ where
             &state_provider,
             &mut info,
             &ctx.builder_tx_env(),
-            state,
+            &mut evm_state,
             false,
             flashblock.is_first(),
             flashblock.is_last(),
@@ -1280,7 +1259,7 @@ where
         let (new_payload, mut fb_payload) = ctx
             .block_assembly_input()?
             .assemble(
-                state,
+                &mut evm_state,
                 Some(&mut fb_state),
                 &mut info,
                 &mut state_root_calc,
@@ -1296,17 +1275,19 @@ where
         // Block canceled (new FCU, getPayload resolved, or deadline). The async outer
         // loop owns publishing and re-checks cancellation before every side effect.
         if block_cancel.is_cancelled() {
-            let cache = std::mem::take(&mut state.cache);
-            let transition = state.transition_state.take();
+            let cache = std::mem::take(&mut evm_state.cache);
+            let transition = evm_state.transition_state.take();
             return Ok(FlashblockBuildOutput {
-                ctx,
+                state: BuildState {
+                    ctx,
+                    info,
+                    cache,
+                    transition,
+                    tx_tracker,
+                    fb_state,
+                    state_root_calc,
+                },
                 build_result: Ok(None),
-                cache,
-                transition,
-                tx_tracker,
-                info,
-                fb_state,
-                state_root_calc,
             });
         }
 
@@ -1314,22 +1295,24 @@ where
         let next_flashblock_state =
             fb_state.next_after_seal(target_da_for_batch, target_da_footprint_for_batch);
 
-        let cache = std::mem::take(&mut state.cache);
-        let transition = state.transition_state.take();
+        let cache = std::mem::take(&mut evm_state.cache);
+        let transition = evm_state.transition_state.take();
         Ok(FlashblockBuildOutput {
-            ctx,
+            state: BuildState {
+                ctx,
+                info,
+                cache,
+                transition,
+                tx_tracker,
+                fb_state,
+                state_root_calc,
+            },
             build_result: Ok(Some(BuiltFlashblockOutput {
                 next_flashblock_state,
                 new_payload,
                 fb_payload,
                 build_duration: flashblock_build_start_time.elapsed(),
             })),
-            cache,
-            transition,
-            tx_tracker,
-            info,
-            fb_state,
-            state_root_calc,
         })
     }
 
