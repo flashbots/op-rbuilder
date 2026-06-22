@@ -794,39 +794,29 @@ where
         target_flashblocks: u64,
         parent_hash: B256,
         mut fb_trigger_rx: mpsc::Receiver<FlashblockJobCancellation>,
-        base_state: BuildState,
+        mut state: BuildState,
     ) -> Result<PayloadBuildStats, PayloadBuilderError> {
-        let BuildState {
-            mut ctx,
-            mut info,
-            mut cache,
-            mut transition,
-            mut tx_tracker,
-            mut fb_state,
-            mut state_root_calc,
-        } = base_state;
-
         loop {
             // Phase 1: Wait for scheduler trigger, or exit on cancellation.
             let Some(new_fb_cancel) =
                 wait_for_trigger(deps.payload_cancel, &mut fb_trigger_rx).await
             else {
                 return Ok(deps.build_stats(
-                    fb_state.flashblock_index(),
-                    info.executed_transactions.len(),
-                    info.cumulative_uncompressed_bytes,
+                    state.fb_state.flashblock_index(),
+                    state.info.executed_transactions.len(),
+                    state.info.cumulative_uncompressed_bytes,
                     target_flashblocks,
                 ));
             };
 
             debug!(
                 target: "payload_builder",
-                id = %ctx.payload_id(),
-                flashblock_index = fb_state.flashblock_index(),
-                block_number = ctx.block_number(),
+                id = %state.ctx.payload_id(),
+                flashblock_index = state.fb_state.flashblock_index(),
+                block_number = state.ctx.block_number(),
                 "Received signal to build flashblock",
             );
-            ctx = ctx.with_cancel(new_fb_cancel);
+            state.ctx = state.ctx.with_cancel(new_fb_cancel);
 
             let fb_span = if deps.span.is_none() {
                 tracing::Span::none()
@@ -835,33 +825,24 @@ where
                     parent: deps.span,
                     Level::INFO,
                     "build_flashblock",
-                    flashblock_index = fb_state.flashblock_index(),
-                    block_number = ctx.block_number(),
+                    flashblock_index = state.fb_state.flashblock_index(),
+                    block_number = state.ctx.block_number(),
                     tx_count = tracing::field::Empty,
                     gas_used = tracing::field::Empty,
                 )
             };
 
             // Phase 2: Build flashblock (blocking task), or exit on cancellation.
-            let num_txs = info.executed_transactions.len();
-            let uncompressed_byte_size = info.cumulative_uncompressed_bytes;
-            let flashblock_index = fb_state.flashblock_index();
-            let build_state = BuildState {
-                ctx,
-                info,
-                cache,
-                transition,
-                tx_tracker,
-                fb_state,
-                state_root_calc,
-            };
+            let num_txs = state.info.executed_transactions.len();
+            let uncompressed_byte_size = state.info.cumulative_uncompressed_bytes;
+            let flashblock_index = state.fb_state.flashblock_index();
             let Some(FlashblockBuildOutput {
                 state: new_state,
                 build_result,
             }) = self
                 .run_blocking_flashblock_build(
                     deps.payload_cancel,
-                    build_state,
+                    state,
                     parent_hash,
                     fb_span.clone(),
                 )
@@ -874,31 +855,27 @@ where
                     target_flashblocks,
                 ));
             };
-            BuildState {
-                ctx,
-                info,
-                cache,
-                transition,
-                tx_tracker,
-                fb_state,
-                state_root_calc,
-            } = new_state;
+            state = new_state;
 
             // Record span attributes now that we have results
-            fb_span.record("tx_count", info.executed_transactions.len() as u64);
-            fb_span.record("gas_used", info.cumulative_gas_used);
+            fb_span.record("tx_count", state.info.executed_transactions.len() as u64);
+            fb_span.record("gas_used", state.info.cumulative_gas_used);
 
             // Phase 3: Publish
             // no .await between check and publish (structural guarantee).
             // If resolved or new_fcu fired during the build, skip publishing.
             if deps.payload_cancel.is_resolved() || deps.payload_cancel.is_new_fcu() {
                 if deps.payload_cancel.is_resolved() {
-                    ctx.metrics.flashblock_publish_suppressed_total.increment(1);
+                    state
+                        .ctx
+                        .metrics
+                        .flashblock_publish_suppressed_total
+                        .increment(1);
                 }
                 return Ok(deps.build_stats(
-                    fb_state.flashblock_index(),
-                    info.executed_transactions.len(),
-                    info.cumulative_uncompressed_bytes,
+                    state.fb_state.flashblock_index(),
+                    state.info.executed_transactions.len(),
+                    state.info.cumulative_uncompressed_bytes,
                     target_flashblocks,
                 ));
             }
@@ -907,18 +884,18 @@ where
                 Ok(Some(built_flashblock)) => {
                     let Some(next_flashblock_state) = self
                         .publish_flashblock_payload(
-                            &ctx,
+                            &state.ctx,
                             deps.best_payload_tx,
-                            &fb_state,
+                            &state.fb_state,
                             deps.payload_cancel,
                             built_flashblock,
                         )
                         .map_err(|e| PayloadBuilderError::Other(e.into()))?
                     else {
                         return Ok(deps.build_stats(
-                            fb_state.flashblock_index(),
-                            info.executed_transactions.len(),
-                            info.cumulative_uncompressed_bytes,
+                            state.fb_state.flashblock_index(),
+                            state.info.executed_transactions.len(),
+                            state.info.cumulative_uncompressed_bytes,
                             target_flashblocks,
                         ));
                     };
@@ -927,20 +904,24 @@ where
                 }
                 Ok(None) => {
                     return Ok(deps.build_stats(
-                        fb_state.flashblock_index(),
-                        info.executed_transactions.len(),
-                        info.cumulative_uncompressed_bytes,
+                        state.fb_state.flashblock_index(),
+                        state.info.executed_transactions.len(),
+                        state.info.cumulative_uncompressed_bytes,
                         target_flashblocks,
                     ));
                 }
                 Err(err) => {
-                    ctx.metrics.payload_job_cancellation_error.increment(1);
+                    state
+                        .ctx
+                        .metrics
+                        .payload_job_cancellation_error
+                        .increment(1);
                     deps.span.record("cancellation_reason", "error");
                     error!(
                         target: "payload_builder",
-                        id = %ctx.payload_id(),
-                        flashblock_index = fb_state.flashblock_index(),
-                        block_number = ctx.block_number(),
+                        id = %state.ctx.payload_id(),
+                        flashblock_index = state.fb_state.flashblock_index(),
+                        block_number = state.ctx.block_number(),
                         %err,
                         "Failed to build flashblock",
                     );
@@ -948,7 +929,7 @@ where
                 }
             };
 
-            fb_state = next_flashblock_state;
+            state.fb_state = next_flashblock_state;
         }
     }
 
