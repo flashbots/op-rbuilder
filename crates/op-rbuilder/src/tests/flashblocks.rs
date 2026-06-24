@@ -383,6 +383,8 @@ async fn smoke_continuous_resolve_after_publish_preserves_published_state(
         flashblocks_addr: "127.0.0.1".into(),
         flashblocks_block_time: 200,
         flashblocks_continuous_build: true,
+        // Force the first SharedBest::take() on this builder instance to miss and trigger fallback path.
+        initial_force_take_miss_count: 1,
         ..Default::default()
     },
     ..Default::default()
@@ -390,7 +392,6 @@ async fn smoke_continuous_resolve_after_publish_preserves_published_state(
 async fn smoke_continuous_trigger_miss_fallback_publishes_candidate(
     rbuilder: LocalInstance,
 ) -> eyre::Result<()> {
-    let _force_miss = crate::builder::continuous_test_hooks::force_next_take_misses(1);
     let driver = rbuilder.driver().await?;
     let flashblocks_listener = rbuilder.spawn_flashblocks_listener();
 

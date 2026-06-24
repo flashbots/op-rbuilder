@@ -13,6 +13,8 @@ use crate::{
 use alloy_primitives::B256;
 use reth_node_api::PayloadBuilderError;
 use reth_revm::{State, database::StateProviderDatabase};
+#[cfg(test)]
+use std::sync::Arc;
 use std::{ops::ControlFlow, time::Instant};
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, field, metadata::Level, span};
@@ -127,7 +129,10 @@ where
             )
         };
 
-        let candidate_slot = SharedBest::new();
+        let candidate_slot = SharedBest::new(
+            #[cfg(test)]
+            Arc::clone(&self.force_take_miss_counter),
+        );
         let base_ctx = base_state.ctx.clone();
         let base_fb_state = base_state.fb_state.clone();
         let base_info = base_state.info.clone();

@@ -243,6 +243,11 @@ pub struct FlashblocksArgs {
         default_value = "false"
     )]
     pub flashblocks_continuous_build: bool,
+
+    /// Number of forced `SharedBest::take()` misses for test isolation.
+    /// Consumed only under `#[cfg(test)]`; else always 0.
+    #[arg(skip)]
+    pub initial_force_take_miss_count: u64,
 }
 
 impl Default for FlashblocksArgs {

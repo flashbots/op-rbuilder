@@ -36,9 +36,6 @@ pub use context::OpPayloadJobCtx;
 pub use service::FlashblocksServiceBuilder;
 pub use state_root::StateRootCalculator;
 
-#[cfg(test)]
-pub(crate) use continuous::test_hooks as continuous_test_hooks;
-
 /// Configuration values that are applicable to any type of block builder.
 #[derive(Debug, Clone)]
 pub struct BuilderConfig {
