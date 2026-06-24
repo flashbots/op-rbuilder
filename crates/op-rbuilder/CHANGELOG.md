@@ -1,6 +1,17 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [0.4.10] - 2026-06-24
+
+### Miscellaneous
+
+- [`b92058a`](https://github.com/flashbots/op-rbuilder/commit/b92058aacb9b591eb8fa71609eabcf4b58c9df50) Revert "Make op-rbuilder compatible with upcoming op-node ([#537](https://github.com/flashbots/op-rbuilder/pull/537))" ([#545](https://github.com/flashbots/op-rbuilder/pull/545))
+- [`be750b3`](https://github.com/flashbots/op-rbuilder/commit/be750b3a91f08f16c7c4fbc9135e338a0193f505) Bump Cargo version to 0.4.10
+
+### Performance
+
+- [`e91e1d6`](https://github.com/flashbots/op-rbuilder/commit/e91e1d61b33a1e53ca72ac4858f93be6d92126d5) Use hash-only pending-tx listener for continuous pool-change epoch ([#541](https://github.com/flashbots/op-rbuilder/pull/541))
+
 ## [0.4.9] - 2026-06-16
 
 ### Bug Fixes
