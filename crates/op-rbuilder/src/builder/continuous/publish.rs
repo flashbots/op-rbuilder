@@ -3,17 +3,17 @@ use super::{
         StopMetricsSource, TriggerOutcome, fallback_no_candidate_metrics_source,
         plan_with_candidate,
     },
-    types::{
-        BestCandidate, BuildOutput, BuildReceiver, BuildState, CandidateLoopResult,
-        FlashblockInterval, JobDeps,
-    },
+    types::{BestCandidate, BuildOutput, BuildReceiver, CandidateLoopResult, FlashblockInterval},
 };
 use crate::{
     builder::{
         builder_tx::BuilderTransactions,
         cancellation::FlashblockJobCancellation,
         context::OpPayloadJobCtx,
-        payload::{FlashblocksState, OpPayloadBuilder, PayloadBuildStats},
+        payload::{
+            BuildProgress, BuildState, FlashblocksState, JobDeps, OpPayloadBuilder,
+            PayloadBuildStats,
+        },
         timing::compute_slot_offset_ms,
     },
     metrics::record_flashblock_publish_timing,
@@ -252,12 +252,8 @@ where
                             fallback_no_candidate_metrics_source(),
                             StopMetricsSource::IntervalBase,
                         );
-                        Ok(ControlFlow::Break(PayloadBuildStats::new(
-                            deps.payload_cancel.clone(),
-                            deps.span.clone(),
-                            base_fb_state.flashblock_index(),
-                            base_info.executed_transactions.len(),
-                            base_info.cumulative_uncompressed_bytes,
+                        Ok(ControlFlow::Break(deps.build_stats(
+                            BuildProgress::from_parts(&base_fb_state, &base_info),
                             target_flashblocks,
                         )))
                     }
@@ -334,12 +330,8 @@ where
                     candidates_improved,
                     CandidateLogEvent::CandidatePublishSuppressed,
                 );
-                Ok(ControlFlow::Break(PayloadBuildStats::new(
-                    deps.payload_cancel.clone(),
-                    deps.span.clone(),
-                    base_fb_state.flashblock_index(),
-                    base_info.executed_transactions.len(),
-                    base_info.cumulative_uncompressed_bytes,
+                Ok(ControlFlow::Break(deps.build_stats(
+                    BuildProgress::from_parts(base_fb_state, base_info),
                     target_flashblocks,
                 )))
             }
@@ -489,14 +481,9 @@ where
         base_state.fb_state = next_fb_state;
 
         if stop {
-            return Ok(ControlFlow::Break(PayloadBuildStats::new(
-                deps.payload_cancel.clone(),
-                deps.span.clone(),
-                base_state.fb_state.flashblock_index(),
-                base_state.info.executed_transactions.len(),
-                base_state.info.cumulative_uncompressed_bytes,
-                target_flashblocks,
-            )));
+            return Ok(ControlFlow::Break(
+                deps.build_stats(base_state.progress(), target_flashblocks),
+            ));
         }
 
         base_state.ctx = base_state.ctx.with_cancel(new_fb_cancel);

@@ -1,12 +1,12 @@
 use super::{
     shared_best::SharedBest,
-    types::{BuildOutput, BuildReceiver, BuildState, FlashblockInterval, JobDeps},
+    types::{BuildOutput, BuildReceiver, FlashblockInterval},
 };
 use crate::{
     builder::{
         builder_tx::BuilderTransactions,
         cancellation::{FlashblockJobCancellation, PayloadJobCancellation},
-        payload::{OpPayloadBuilder, PayloadBuildStats},
+        payload::{BuildProgress, BuildState, JobDeps, OpPayloadBuilder, PayloadBuildStats},
     },
     traits::{ClientBounds, PoolBounds},
 };
@@ -90,12 +90,8 @@ where
             .continuous_build_duration
             .record(interval.build_start.elapsed());
 
-        Ok(PayloadBuildStats::new(
-            deps.payload_cancel.clone(),
-            deps.span.clone(),
-            interval.base_fb_state.flashblock_index(),
-            interval.base_info.executed_transactions.len(),
-            interval.base_info.cumulative_uncompressed_bytes,
+        Ok(deps.build_stats(
+            BuildProgress::from_parts(&interval.base_fb_state, &interval.base_info),
             target_flashblocks,
         ))
     }

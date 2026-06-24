@@ -14,8 +14,6 @@ mod shared_best;
 mod transition;
 mod types;
 
-pub(crate) use types::{BuildState, JobDeps};
-
 #[cfg(test)]
 pub(crate) mod test_hooks {
     pub(crate) use super::shared_best::test_hooks::force_next_take_misses;
