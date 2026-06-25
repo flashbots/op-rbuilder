@@ -1,6 +1,9 @@
+use alloy_consensus::BlockHeader;
 use eyre::Result;
+use futures_util::StreamExt;
+use reth_node_api::{ConsensusEngineEvent, ForkchoiceStatus};
 use reth_optimism_rpc::OpEthApiBuilder;
-use tracing::info;
+use tracing::{debug, info};
 
 use crate::{
     args::*,
@@ -142,6 +145,53 @@ impl Launcher<OpChainSpecParser, OpRbuilderArgs> for BuilderLauncher {
                         monitor_tx_pool(listener, builder_args.enable_tx_tracking_debug_logs);
                     ctx.task_executor.spawn_critical_task("txlogging", task);
                 }
+
+                let mut engine_events = ctx.engine_events.new_listener();
+                ctx.task_executor.spawn_task(async move {
+                    while let Some(event) = engine_events.next().await {
+                        match event {
+                            ConsensusEngineEvent::CanonicalBlockAdded(executed, _) => {
+                                let block = executed.sealed_block();
+                                debug!(
+                                    target: "op_rbuilder::chain",
+                                    number = block.number(),
+                                    hash = %block.hash(),
+                                    txs = block.transaction_count(),
+                                    "Block added to canonical chain"
+                                );
+                            }
+                            ConsensusEngineEvent::CanonicalChainCommitted(head, _) => {
+                                debug!(
+                                    target: "op_rbuilder::chain",
+                                    number = head.number(),
+                                    hash = %head.hash(),
+                                    "Canonical chain committed"
+                                );
+                            }
+                            ConsensusEngineEvent::BlockReceived(num_hash) => {
+                                debug!(
+                                    target: "op_rbuilder::chain",
+                                    number = num_hash.number,
+                                    hash = %num_hash.hash,
+                                    "Received new payload from consensus engine"
+                                );
+                            }
+                            ConsensusEngineEvent::ForkchoiceUpdated(
+                                state,
+                                ForkchoiceStatus::Valid,
+                            ) => {
+                                debug!(
+                                    target: "op_rbuilder::chain",
+                                    head = %state.head_block_hash,
+                                    safe = %state.safe_block_hash,
+                                    finalized = %state.finalized_block_hash,
+                                    "Forkchoice updated"
+                                );
+                            }
+                            _ => {}
+                        }
+                    }
+                });
 
                 Ok(())
             })
