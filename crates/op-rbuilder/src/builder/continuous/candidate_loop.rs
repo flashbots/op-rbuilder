@@ -24,6 +24,7 @@ use reth_provider::{
 use reth_revm::State;
 use revm::Database;
 use std::{
+    mem,
     sync::atomic::Ordering,
     time::{Duration, Instant},
 };
@@ -316,7 +317,7 @@ where
             drop(best_txs);
 
             if !sim_info.reverted_bundle_tx_hashes.is_empty() {
-                let hashes = sim_info.reverted_bundle_tx_hashes.drain(..).collect();
+                let hashes = mem::take(&mut sim_info.reverted_bundle_tx_hashes);
                 self.pool().remove_transactions(hashes);
             }
 

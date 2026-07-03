@@ -37,6 +37,7 @@ use reth_revm::{
 };
 use reth_tasks::Runtime;
 use std::{
+    mem,
     ops::Deref,
     sync::{Arc, atomic::AtomicU64},
     time::{Duration, Instant},
@@ -1240,7 +1241,7 @@ where
 
         // Remove reverted bundle txs from the pool so they aren't re-simulated in future blocks
         if !info.reverted_bundle_tx_hashes.is_empty() {
-            let hashes = info.reverted_bundle_tx_hashes.drain(..).collect();
+            let hashes = mem::take(&mut info.reverted_bundle_tx_hashes);
             self.pool.remove_transactions(hashes);
         }
 
