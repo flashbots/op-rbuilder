@@ -95,12 +95,7 @@ impl LocalInstance {
         args: OpRbuilderArgs,
         hooks: ContinuousTestHooks,
     ) -> eyre::Result<Self> {
-        Box::pin(Self::new_with_config_and_hooks(
-            args,
-            default_node_config(),
-            hooks,
-        ))
-        .await
+        Self::new_with_config_and_hooks(args, default_node_config(), hooks).await
     }
 
     pub async fn new_with_config_and_hooks(
