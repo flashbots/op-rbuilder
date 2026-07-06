@@ -16,7 +16,6 @@ pub(crate) mod cancellation;
 mod config;
 mod context;
 mod continuous;
-mod flashblocks_builder_tx;
 mod generator;
 mod p2p;
 mod payload;
@@ -28,8 +27,9 @@ mod timing;
 mod wspub;
 
 pub use builder_tx::{
-    BuilderTransactionCtx, BuilderTransactionError, BuilderTransactions, BuilderTxEnv,
-    InvalidContractDataError, SimulationSuccessResult, get_balance, get_nonce,
+    BuilderTxEnv, BuilderTxError, BuilderTxPosition, BuilderTxProducer, BuilderTxSchedule,
+    ScheduledBuilderTx, SimulatedBuilderTx, SimulationState, SimulationSuccessResult, get_nonce,
+    sign_tx, simulate_call,
 };
 pub use config::FlashblocksConfig;
 pub use context::OpPayloadJobCtx;

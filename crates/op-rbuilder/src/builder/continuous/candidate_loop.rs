@@ -5,7 +5,7 @@ use super::{
 use crate::{
     builder::{
         best_txs::{FlashblockPoolTxCursor, FlashblockTxTracker},
-        builder_tx::{BuilderTransactions, reserve_builder_tx_budget},
+        builder_tx::reserve_builder_tx_budget,
         context::OpPayloadJobCtx,
         payload::{FlashblocksState, OpPayloadBuilder},
         state_root::StateRootCalculator,
@@ -19,13 +19,13 @@ use op_alloy_rpc_types_engine::OpFlashblockPayload;
 use reth_optimism_node::OpBuiltPayload;
 use reth_payload_util::BestPayloadTransactions;
 use reth_provider::{
-    HashedPostStateProvider, ProviderError, StateRootProvider, StorageRootProvider,
+    HashedPostStateProvider, ProviderError, StateProvider, StateRootProvider, StorageRootProvider,
 };
 use reth_revm::State;
 use revm::Database;
 use std::{
     mem,
-    sync::atomic::Ordering,
+    sync::{Arc, atomic::Ordering},
     time::{Duration, Instant},
 };
 use tokio_util::sync::CancellationToken;
@@ -37,11 +37,10 @@ use tracing::{error, field, info, metadata::Level, span, warn};
 // clones state, executes txs, seals a flashblock, and writes the new
 // best into [`SharedBest`] until its per-interval cancel fires.
 
-impl<Pool, Client, BuilderTx> OpPayloadBuilder<Pool, Client, BuilderTx>
+impl<Pool, Client> OpPayloadBuilder<Pool, Client>
 where
     Pool: PoolBounds + 'static,
     Client: ClientBounds + 'static,
-    BuilderTx: BuilderTransactions + Send + Sync + 'static,
 {
     #[expect(clippy::too_many_arguments)]
     fn build_empty_flashblock_candidate<
@@ -53,20 +52,19 @@ where
         fb_state: &mut FlashblocksState,
         info: &mut ExecutionInfo,
         state: &mut State<DB>,
-        state_provider: impl reth::providers::StateProvider + Clone,
+        state_provider: Arc<dyn StateProvider + Send>,
         state_root_calc: &mut StateRootCalculator,
         target_da_for_batch: Option<u64>,
         target_da_footprint_for_batch: Option<u64>,
     ) -> eyre::Result<(FlashblocksState, OpBuiltPayload, OpFlashblockPayload)> {
-        if let Err(e) = self.builder_tx().add_builder_txs(
-            &state_provider,
-            info,
-            &ctx.builder_tx_env(),
-            state,
-            false,
-            fb_state.is_first_flashblock(),
-            fb_state.is_last_flashblock(),
-        ) {
+        if fb_state.is_last_flashblock()
+            && let Err(e) = self.builder_tx_schedule().commit_bottom_of_block(
+                state_provider,
+                info,
+                &ctx.builder_tx_env(),
+                state,
+            )
+        {
             error!(
                 target: "payload_builder",
                 "Error adding bottom builder txs to empty flashblock candidate: {}",
@@ -107,7 +105,7 @@ where
         fb_state: &mut FlashblocksState,
         info: &mut ExecutionInfo,
         state: &mut State<DB>,
-        state_provider: impl reth::providers::StateProvider + Clone,
+        state_provider: Arc<dyn StateProvider + Send>,
         tx_tracker: &mut FlashblockTxTracker,
         state_root_calc: &mut StateRootCalculator,
         block_cancel: &CancellationToken,
@@ -131,24 +129,41 @@ where
             "continuous: starting candidate loop",
         );
 
-        let builder_txs = self
-            .builder_tx()
-            .add_builder_txs(
-                &state_provider,
+        let schedule = self.builder_tx_schedule();
+        if fb_state.is_first_flashblock() {
+            schedule
+                .commit_top_of_block(state_provider.clone(), info, &ctx.builder_tx_env(), state)
+                .inspect_err(
+                    |e| error!(target: "payload_builder", "Error simulating builder txs: {}", e),
+                )
+                .ok();
+        } else {
+            schedule
+                .commit_top_of_flashblock(
+                    state_provider.clone(),
+                    info,
+                    &ctx.builder_tx_env(),
+                    state,
+                )
+                .inspect_err(
+                    |e| error!(target: "payload_builder", "Error simulating builder txs: {}", e),
+                )
+                .ok();
+        }
+
+        let bottom_builder_txs_estimate = if fb_state.is_last_flashblock() {
+            self.builder_tx_schedule().estimate_bottom_of_block(
+                state_provider.clone(),
                 info,
                 &ctx.builder_tx_env(),
                 state,
-                true,
-                fb_state.is_first_flashblock(),
-                fb_state.is_last_flashblock(),
             )
-            .inspect_err(
-                |e| error!(target: "payload_builder", "Error simulating builder txs: {}", e),
-            )
-            .unwrap_or_default();
+        } else {
+            vec![]
+        };
 
         let max_uncompressed_block_size = reserve_builder_tx_budget(
-            &builder_txs,
+            &bottom_builder_txs_estimate,
             &mut target_gas_for_batch,
             &mut target_da_for_batch,
             &mut target_da_footprint_for_batch,
@@ -190,7 +205,7 @@ where
             &mut empty_candidate_fb_state,
             &mut empty_candidate_info,
             state,
-            &state_provider,
+            state_provider.clone(),
             &mut empty_candidate_state_root_calc,
             target_da_for_batch,
             target_da_footprint_for_batch,
@@ -325,15 +340,14 @@ where
                 break;
             }
 
-            if let Err(e) = self.builder_tx().add_builder_txs(
-                &state_provider,
-                &mut sim_info,
-                &ctx.builder_tx_env(),
-                state,
-                false,
-                sim_fb_state.is_first_flashblock(),
-                sim_fb_state.is_last_flashblock(),
-            ) {
+            if sim_fb_state.is_last_flashblock()
+                && let Err(e) = self.builder_tx_schedule().commit_bottom_of_block(
+                    state_provider.clone(),
+                    &mut sim_info,
+                    &ctx.builder_tx_env(),
+                    state,
+                )
+            {
                 error!(target: "payload_builder", "Error adding bottom builder txs: {}", e);
             }
 

@@ -3,7 +3,7 @@ use crate::{
     builder::{
         BuilderConfig,
         best_txs::{FlashblockPoolTxCursor, FlashblockTxTracker},
-        builder_tx::{BuilderTransactions, reserve_builder_tx_budget},
+        builder_tx::{BuilderTxSchedule, reserve_builder_tx_budget},
         cancellation::{CancellationReason, FlashblockJobCancellation, PayloadJobCancellation},
         context::{OpPayloadBuilderCtx, OpPayloadJobCtx},
         generator::{BuildArguments, PayloadBuilder},
@@ -29,6 +29,7 @@ use reth_optimism_payload_builder::OpPayloadAttrs;
 use reth_optimism_primitives::{OpReceipt, OpTransactionSigned};
 use reth_payload_builder::PayloadId;
 use reth_payload_util::BestPayloadTransactions;
+use reth_provider::StateProvider;
 use reth_revm::{
     State,
     cached::CachedReads,
@@ -337,10 +338,6 @@ struct FlashblockMeta {
 }
 
 impl FlashblockMeta {
-    fn is_first(&self) -> bool {
-        self.flashblock_index == 0
-    }
-
     fn is_last(&self) -> bool {
         self.flashblock_index == self.target_flashblock_count
     }
@@ -348,12 +345,12 @@ impl FlashblockMeta {
 
 /// Optimism's payload builder
 #[derive(Debug)]
-pub(crate) struct OpPayloadBuilder<Pool, Client, BuilderTx> {
-    inner: Arc<OpPayloadBuilderInner<Pool, Client, BuilderTx>>,
+pub(crate) struct OpPayloadBuilder<Pool, Client> {
+    inner: Arc<OpPayloadBuilderInner<Pool, Client>>,
 }
 
 #[derive(Debug)]
-pub(crate) struct OpPayloadBuilderInner<Pool, Client, BuilderTx> {
+pub(crate) struct OpPayloadBuilderInner<Pool, Client> {
     /// Builder context
     builder_ctx: Arc<OpPayloadBuilderCtx>,
     /// The transaction pool
@@ -371,8 +368,8 @@ pub(crate) struct OpPayloadBuilderInner<Pool, Client, BuilderTx> {
     ws_pub: WebSocketPublisher,
     /// System configuration for the builder
     config: BuilderConfig,
-    /// The end of builder transaction type
-    builder_tx: BuilderTx,
+    /// Builder-transaction producers scheduled at named dispatch points.
+    builder_tx_schedule: BuilderTxSchedule,
     /// Tokio task metrics for monitoring spawned tasks
     task_metrics: Arc<FlashblocksTaskMetrics>,
     /// Monotonic epoch that advances on pool mutations.
@@ -381,7 +378,7 @@ pub(crate) struct OpPayloadBuilderInner<Pool, Client, BuilderTx> {
     executor: Runtime,
 }
 
-impl<Pool, Client, BuilderTx> OpPayloadBuilderInner<Pool, Client, BuilderTx> {
+impl<Pool, Client> OpPayloadBuilderInner<Pool, Client> {
     pub(crate) fn pool(&self) -> &Pool {
         &self.pool
     }
@@ -402,8 +399,8 @@ impl<Pool, Client, BuilderTx> OpPayloadBuilderInner<Pool, Client, BuilderTx> {
         &self.builder_ctx.metrics
     }
 
-    pub(crate) fn builder_tx(&self) -> &BuilderTx {
-        &self.builder_tx
+    pub(crate) fn builder_tx_schedule(&self) -> &BuilderTxSchedule {
+        &self.builder_tx_schedule
     }
 
     pub(crate) fn pool_change_epoch(&self) -> &AtomicU64 {
@@ -415,15 +412,15 @@ impl<Pool, Client, BuilderTx> OpPayloadBuilderInner<Pool, Client, BuilderTx> {
     }
 }
 
-impl<Pool, Client, BuilderTx> Deref for OpPayloadBuilder<Pool, Client, BuilderTx> {
-    type Target = OpPayloadBuilderInner<Pool, Client, BuilderTx>;
+impl<Pool, Client> Deref for OpPayloadBuilder<Pool, Client> {
+    type Target = OpPayloadBuilderInner<Pool, Client>;
 
     fn deref(&self) -> &Self::Target {
         self.inner.as_ref()
     }
 }
 
-impl<Pool, Client, BuilderTx> Clone for OpPayloadBuilder<Pool, Client, BuilderTx> {
+impl<Pool, Client> Clone for OpPayloadBuilder<Pool, Client> {
     fn clone(&self) -> Self {
         Self {
             inner: Arc::clone(&self.inner),
@@ -431,7 +428,7 @@ impl<Pool, Client, BuilderTx> Clone for OpPayloadBuilder<Pool, Client, BuilderTx
     }
 }
 
-impl<Pool, Client, BuilderTx> OpPayloadBuilder<Pool, Client, BuilderTx>
+impl<Pool, Client> OpPayloadBuilder<Pool, Client>
 where
     Client: ClientBounds,
 {
@@ -441,7 +438,7 @@ where
         pool: Pool,
         client: Client,
         config: BuilderConfig,
-        builder_tx: BuilderTx,
+        builder_tx_schedule: BuilderTxSchedule,
         built_fb_payload_tx: mpsc::Sender<OpBuiltPayload>,
         built_payload_tx: mpsc::Sender<OpBuiltPayload>,
         ws_pub: WebSocketPublisher,
@@ -478,7 +475,7 @@ where
                 built_payload_tx,
                 ws_pub,
                 config,
-                builder_tx,
+                builder_tx_schedule,
                 task_metrics,
                 pool_change_epoch,
                 executor,
@@ -499,11 +496,10 @@ async fn wait_for_trigger(
     }
 }
 
-impl<Pool, Client, BuilderTx> OpPayloadBuilder<Pool, Client, BuilderTx>
+impl<Pool, Client> OpPayloadBuilder<Pool, Client>
 where
     Pool: PoolBounds + 'static,
     Client: ClientBounds + 'static,
-    BuilderTx: BuilderTransactions + Send + Sync + 'static,
 {
     fn get_op_payload_job_ctx(
         &self,
@@ -1003,8 +999,9 @@ where
         mut cached_reads: CachedReads,
         mut state_root_calc: StateRootCalculator,
     ) -> eyre::Result<FallbackBuildOutput<CacheState, Option<TransitionState>>> {
-        let state_provider = self.client.state_by_block_hash(ctx.parent().hash())?;
-        let db = StateProviderDatabase::new(&state_provider);
+        let state_provider: Arc<dyn StateProvider + Send> =
+            Arc::from(self.client.state_by_block_hash(ctx.parent().hash())?);
+        let db = StateProviderDatabase::new(state_provider.clone());
 
         let sequencer_tx_start_time = Instant::now();
         let mut state = State::builder()
@@ -1017,24 +1014,20 @@ where
         ctx.metrics.sequencer_tx_duration.record(sequencer_tx_time);
         ctx.metrics.sequencer_tx_gauge.set(sequencer_tx_time);
 
-        // We add first builder tx right after deposits
-        if !ctx.attributes().no_tx_pool {
-            let flashblock = fb_state.meta();
-            if let Err(e) = self.builder_tx.add_builder_txs(
-                &state_provider,
+        // Add the top-of-block builder txs right after sequencer txs
+        if !ctx.attributes().no_tx_pool
+            && let Err(e) = self.builder_tx_schedule.commit_top_of_block(
+                state_provider.clone(),
                 &mut info,
                 &ctx.builder_tx_env(),
                 &mut state,
-                false,
-                flashblock.is_first(),
-                flashblock.is_last(),
-            ) {
-                error!(
-                    target: "payload_builder",
-                    "Error adding builder txs to fallback block: {}",
-                    e
-                );
-            }
+            )
+        {
+            error!(
+                target: "payload_builder",
+                error = %e,
+                "Error adding builder txs to fallback block",
+            );
         }
 
         let (payload, fb_payload) = ctx.block_assembly_input()?.assemble(
@@ -1164,9 +1157,10 @@ where
             mut state_root_calc,
         } = build_state;
 
-        let state_provider = self.client.state_by_block_hash(parent_hash)?;
+        let state_provider: Arc<dyn StateProvider + Send> =
+            Arc::from(self.client.state_by_block_hash(parent_hash)?);
         let mut evm_state = State::builder()
-            .with_database(StateProviderDatabase::new(&state_provider))
+            .with_database(StateProviderDatabase::new(state_provider.clone()))
             .with_cached_prestate(cache)
             .with_bundle_update()
             .build();
@@ -1192,26 +1186,31 @@ where
         let flashblock_build_start_time = Instant::now();
 
         let flashblock = fb_state.meta();
-        let builder_txs = self
-            .builder_tx
-            .add_builder_txs(
-                &state_provider,
+        self.builder_tx_schedule
+            .commit_top_of_flashblock(
+                state_provider.clone(),
                 &mut info,
                 &ctx.builder_tx_env(),
                 &mut evm_state,
-                true,
-                flashblock.is_first(),
-                flashblock.is_last(),
             )
             .inspect_err(
                 |e| error!(target: "payload_builder", error = %e, "Error simulating builder txs"),
             )
-            .unwrap_or_default();
+            .ok();
 
-        // only reserve builder tx gas / da size that has not been committed yet
-        // committed builder txs would have counted towards the gas / da used
+        let bottom_builder_txs_estimate = if flashblock.is_last() {
+            self.builder_tx_schedule.estimate_bottom_of_block(
+                state_provider.clone(),
+                &info,
+                &ctx.builder_tx_env(),
+                &evm_state,
+            )
+        } else {
+            vec![]
+        };
+
         let max_uncompressed_block_size = reserve_builder_tx_budget(
-            &builder_txs,
+            &bottom_builder_txs_estimate,
             &mut target_gas_for_batch,
             &mut target_da_for_batch,
             &mut target_da_footprint_for_batch,
@@ -1289,16 +1288,14 @@ where
             .payload_transaction_simulation_gauge
             .set(payload_transaction_simulation_time);
 
-        let flashblock = fb_state.meta();
-        if let Err(e) = self.builder_tx.add_builder_txs(
-            &state_provider,
-            &mut info,
-            &ctx.builder_tx_env(),
-            &mut evm_state,
-            false,
-            flashblock.is_first(),
-            flashblock.is_last(),
-        ) {
+        if flashblock.is_last()
+            && let Err(e) = self.builder_tx_schedule.commit_bottom_of_block(
+                state_provider.clone(),
+                &mut info,
+                &ctx.builder_tx_env(),
+                &mut evm_state,
+            )
+        {
             error!(target: "payload_builder", error = %e, "Error simulating builder txs");
         }
 
@@ -1436,11 +1433,10 @@ where
 }
 
 #[async_trait::async_trait]
-impl<Pool, Client, BuilderTx> PayloadBuilder for OpPayloadBuilder<Pool, Client, BuilderTx>
+impl<Pool, Client> PayloadBuilder for OpPayloadBuilder<Pool, Client>
 where
     Pool: PoolBounds + 'static,
     Client: ClientBounds + 'static,
-    BuilderTx: BuilderTransactions + Send + Sync + 'static,
 {
     type Attributes = OpPayloadAttrs;
     type BuiltPayload = OpBuiltPayload;

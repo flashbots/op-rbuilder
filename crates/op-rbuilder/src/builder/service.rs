@@ -1,9 +1,8 @@
 use super::payload::OpPayloadBuilder;
 use crate::{
     builder::{
-        BuilderConfig,
-        builder_tx::BuilderTransactions,
-        flashblocks_builder_tx::{FlashblocksBuilderTx, FlashblocksNumberBuilderTx},
+        BuilderConfig, BuilderTxPosition, BuilderTxSchedule, ScheduledBuilderTx,
+        builder_tx::{ClaimBuilderTx, FlashblockNumberBuilderTx},
         generator::BlockPayloadJobGenerator,
         p2p::{AGENT_VERSION, FLASHBLOCKS_STREAM_PROTOCOL, Message},
         payload_handler::PayloadHandler,
@@ -35,16 +34,15 @@ use tracing::{error, info, warn};
 pub struct FlashblocksServiceBuilder(pub BuilderConfig);
 
 impl FlashblocksServiceBuilder {
-    fn spawn_payload_builder_service_internal<Node, Pool, BuilderTx>(
+    fn spawn_payload_builder_service_internal<Node, Pool>(
         self,
         ctx: &BuilderContext<Node>,
         pool: Pool,
-        builder_tx: BuilderTx,
+        builder_tx_schedule: BuilderTxSchedule,
     ) -> eyre::Result<PayloadBuilderHandle<<Node::Types as NodeTypes>::Payload>>
     where
         Node: NodeBounds,
         Pool: PoolBounds,
-        BuilderTx: BuilderTransactions + Unpin + Clone + Send + Sync + 'static,
     {
         let flashblocks_config = &self.0.flashblocks_config;
 
@@ -145,7 +143,7 @@ impl FlashblocksServiceBuilder {
             pool,
             ctx.provider().clone(),
             self.0.clone(),
-            builder_tx,
+            builder_tx_schedule,
             built_fb_payload_tx,
             built_payload_tx,
             ws_pub,
@@ -201,6 +199,63 @@ impl FlashblocksServiceBuilder {
         info!(target: "payload_builder", "Flashblocks payload builder service started");
         Ok(payload_builder_handle)
     }
+
+    async fn build_builder_tx_schedule(&self) -> BuilderTxSchedule {
+        let mut scheduled = vec![];
+
+        let Some(signer) = self.0.builder_signer else {
+            return BuilderTxSchedule::new(scheduled);
+        };
+
+        let flashtestations_builder_tx = if self.0.flashtestations_config.flashtestations_enabled {
+            bootstrap_flashtestations(self.0.flashtestations_config.clone(), signer)
+                .await
+                .inspect_err(|e| warn!(
+                    target: "payload_builder",
+                    error = %e,
+                    "Failed to bootstrap flashtestations, builder will not include flashtestations txs"
+                ))
+                .ok()
+        } else {
+            None
+        };
+
+        scheduled.push(ScheduledBuilderTx::new(
+            Arc::new(ClaimBuilderTx::new(Some(signer))),
+            BuilderTxPosition::TopOfBlock,
+        ));
+
+        if let Some(flashblocks_number_contract_address) =
+            self.0.flashblocks_config.number_contract_address
+        {
+            let use_permit = self.0.flashblocks_config.number_contract_use_permit;
+            let tee_signer = flashtestations_builder_tx
+                .as_ref()
+                .map(|ft| *ft.tee_signer());
+
+            scheduled.push(ScheduledBuilderTx::new(
+                Arc::new(FlashblockNumberBuilderTx::new(
+                    signer,
+                    flashblocks_number_contract_address,
+                    use_permit,
+                    tee_signer,
+                )),
+                BuilderTxPosition::TopOfFlashblock,
+            ));
+        }
+
+        // Flashtestations runs at bottom-of-block on the last flashblock, after all other txs.
+        if self.0.flashtestations_config.flashtestations_enabled
+            && let Some(flashtestations_builder_tx) = flashtestations_builder_tx
+        {
+            scheduled.push(ScheduledBuilderTx::new(
+                Arc::new(flashtestations_builder_tx),
+                BuilderTxPosition::BottomOfBlock,
+            ));
+        }
+
+        BuilderTxSchedule::new(scheduled)
+    }
 }
 
 impl<Node, Pool> PayloadServiceBuilder<Node, Pool, OpEvmConfig> for FlashblocksServiceBuilder
@@ -214,49 +269,7 @@ where
         pool: Pool,
         _: OpEvmConfig,
     ) -> eyre::Result<PayloadBuilderHandle<<Node::Types as NodeTypes>::Payload>> {
-        let signer = self.0.builder_signer;
-        let flashtestations_builder_tx = if let Some(builder_key) = signer
-            && self.0.flashtestations_config.flashtestations_enabled
-        {
-            match bootstrap_flashtestations(self.0.flashtestations_config.clone(), builder_key)
-                .await
-            {
-                Ok(builder_tx) => Some(builder_tx),
-                Err(e) => {
-                    warn!(
-                        target: "payload_builder",
-                        error = %e,
-                        "Failed to bootstrap flashtestations, builder will not include flashtestations txs"
-                    );
-                    None
-                }
-            }
-        } else {
-            None
-        };
-
-        let flashblocks_config = &self.0.flashblocks_config;
-        if let Some(builder_signer) = signer
-            && let Some(flashblocks_number_contract_address) =
-                flashblocks_config.number_contract_address
-        {
-            let use_permit = flashblocks_config.number_contract_use_permit;
-            self.spawn_payload_builder_service_internal(
-                ctx,
-                pool,
-                FlashblocksNumberBuilderTx::new(
-                    builder_signer,
-                    flashblocks_number_contract_address,
-                    use_permit,
-                    flashtestations_builder_tx,
-                ),
-            )
-        } else {
-            self.spawn_payload_builder_service_internal(
-                ctx,
-                pool,
-                FlashblocksBuilderTx::new(signer, flashtestations_builder_tx),
-            )
-        }
+        let builder_tx_schedule = self.build_builder_tx_schedule().await;
+        self.spawn_payload_builder_service_internal(ctx, pool, builder_tx_schedule)
     }
 }
