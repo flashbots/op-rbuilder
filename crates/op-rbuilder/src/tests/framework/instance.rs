@@ -84,12 +84,7 @@ impl LocalInstance {
         args: OpRbuilderArgs,
         config: NodeConfig<OpChainSpec>,
     ) -> eyre::Result<Self> {
-        Box::pin(Self::new_with_config_and_hooks(
-            args,
-            config,
-            ContinuousTestHooks::default(),
-        ))
-        .await
+        Self::new_with_config_and_hooks(args, config, ContinuousTestHooks::default()).await
     }
 
     /// Like [`Self::new`], but injects test-only continuous-build hooks into the
