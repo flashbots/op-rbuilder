@@ -37,6 +37,7 @@ use reth_revm::{
 };
 use reth_tasks::Runtime;
 use std::{
+    mem,
     ops::Deref,
     sync::{Arc, atomic::AtomicU64},
     time::{Duration, Instant},
@@ -94,7 +95,8 @@ impl BuildState {
 /// [`BuildState`] into a build task that may be cancelled.
 #[derive(Clone, Copy)]
 pub(crate) struct BuildProgress {
-    flashblock_index: u64,
+    /// Number of flashblocks built so far, excluding the index-0 fallback
+    flashblocks_built: u64,
     num_txs: usize,
     uncompressed_byte_size: u64,
 }
@@ -102,7 +104,7 @@ pub(crate) struct BuildProgress {
 impl BuildProgress {
     pub(crate) fn from_parts(fb_state: &FlashblocksState, info: &ExecutionInfo) -> Self {
         Self {
-            flashblock_index: fb_state.flashblock_index(),
+            flashblocks_built: fb_state.scheduled_flashblocks_built(),
             num_txs: info.executed_transactions.len(),
             uncompressed_byte_size: info.cumulative_uncompressed_bytes,
         }
@@ -126,7 +128,7 @@ impl<'a> JobDeps<'a> {
         PayloadBuildStats::new(
             self.payload_cancel.clone(),
             self.span.clone(),
-            progress.flashblock_index,
+            progress.flashblocks_built,
             progress.num_txs,
             progress.uncompressed_byte_size,
             target_flashblocks,
@@ -173,7 +175,8 @@ struct BuiltFlashblockOutput {
 pub(crate) struct PayloadBuildStats {
     cancellation: PayloadJobCancellation,
     span: tracing::Span,
-    flashblock_index: u64,
+    /// Flashblocks built, excluding the index-0 fallback
+    flashblocks_built: u64,
     num_txs: usize,
     uncompressed_byte_size: u64,
     target_flashblocks: u64,
@@ -266,6 +269,14 @@ impl FlashblocksState {
 
     pub(crate) fn flashblock_index(&self) -> u64 {
         self.flashblock_index
+    }
+
+    /// Number of scheduled flashblocks built so far, which excludes the index-0
+    /// fallback. `flashblock_index` is the index of the *next* flashblock to
+    /// build and only advances on a successful publish, so subtracting the
+    /// fallback's slot yields this count on every exit path.
+    fn scheduled_flashblocks_built(&self) -> u64 {
+        self.flashblock_index.saturating_sub(1)
     }
 
     pub(crate) fn target_flashblock_count(&self) -> u64 {
@@ -654,7 +665,7 @@ where
             return Ok(PayloadBuildStats::new(
                 payload_cancel,
                 span,
-                fb_state.flashblock_index(),
+                fb_state.scheduled_flashblocks_built(),
                 info.executed_transactions.len(),
                 info.cumulative_uncompressed_bytes,
                 0,
@@ -708,7 +719,7 @@ where
             return Ok(PayloadBuildStats::new(
                 payload_cancel,
                 span,
-                fb_state.flashblock_index(),
+                fb_state.scheduled_flashblocks_built(),
                 info.executed_transactions.len(),
                 info.cumulative_uncompressed_bytes,
                 0,
@@ -1240,7 +1251,7 @@ where
 
         // Remove reverted bundle txs from the pool so they aren't re-simulated in future blocks
         if !info.reverted_bundle_tx_hashes.is_empty() {
-            let hashes = info.reverted_bundle_tx_hashes.drain(..).collect();
+            let hashes = mem::take(&mut info.reverted_bundle_tx_hashes);
             self.pool.remove_transactions(hashes);
         }
 
@@ -1354,7 +1365,7 @@ where
         let PayloadBuildStats {
             cancellation,
             span,
-            flashblock_index,
+            flashblocks_built,
             num_txs,
             uncompressed_byte_size,
             target_flashblocks,
@@ -1395,10 +1406,10 @@ where
         metrics.total_block_built_gauge.set(block_build_duration);
 
         metrics.block_built_success.increment(1);
-        metrics.flashblock_count.record(flashblock_index as f64);
+        metrics.flashblock_count.record(flashblocks_built as f64);
         metrics
             .missing_flashblocks_count
-            .increment(target_flashblocks.saturating_sub(flashblock_index));
+            .increment(target_flashblocks.saturating_sub(flashblocks_built));
         metrics
             .block_uncompressed_size
             .record(uncompressed_byte_size as f64);
@@ -1408,11 +1419,11 @@ where
             event = "build_complete",
             id = %payload_id,
             target_flashblocks,
-            flashblock_index,
+            flashblocks_built,
             "Flashblocks building complete"
         );
 
-        span.record("flashblocks_built", flashblock_index);
+        span.record("flashblocks_built", flashblocks_built);
     }
 }
 
