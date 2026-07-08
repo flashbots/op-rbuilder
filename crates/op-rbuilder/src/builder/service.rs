@@ -46,10 +46,6 @@ impl FlashblocksServiceBuilder {
         Pool: PoolBounds,
         BuilderTx: BuilderTransactions + Unpin + Clone + Send + Sync + 'static,
     {
-        // TODO: is there a different global token?
-        // this is effectively unused right now due to the usage of reth's `task_executor`.
-        let cancel = tokio_util::sync::CancellationToken::new();
-
         let flashblocks_config = &self.0.flashblocks_config;
 
         let (incoming_message_rx, outgoing_message_tx) = if flashblocks_config.p2p_enabled {
@@ -78,6 +74,9 @@ impl FlashblocksServiceBuilder {
                     vec![]
                 };
 
+            let cancel = tokio_util::sync::CancellationToken::new();
+            let cancel_guard = cancel.clone().drop_guard();
+
             let p2p::NodeBuildResult {
                 node,
                 outgoing_message_tx,
@@ -93,6 +92,7 @@ impl FlashblocksServiceBuilder {
                 .wrap_err("failed to build flashblocks p2p node")?;
             let multiaddrs = node.multiaddrs();
             ctx.task_executor().spawn_task(async move {
+                let _cancel_guard = cancel_guard;
                 if let Err(e) = node.run().await {
                     error!(error = %e, "p2p node exited");
                 }
