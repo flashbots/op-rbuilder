@@ -20,6 +20,7 @@ use crate::{
 };
 use alloy_primitives::B256;
 use eyre::WrapErr as _;
+use futures::FutureExt;
 use op_alloy_rpc_types_engine::OpFlashblockPayload;
 use reth_chainspec::EthChainSpec;
 use reth_node_api::PayloadBuilderError;
@@ -796,16 +797,32 @@ where
             .map_err(|e| PayloadBuilderError::Other(e.into()))?;
 
         let (tx, rx) = mpsc::channel((expected_flashblocks + 1) as usize);
-        tokio::spawn(
+        let scheduler_payload_id = fb_payload.payload_id;
+        let scheduler_task =
             self.task_metrics
                 .flashblock_timer
                 .instrument(flashblock_scheduler.run(
                     tx,
                     payload_cancel.clone(),
                     fb_cancel,
-                    fb_payload.payload_id,
-                )),
-        );
+                    scheduler_payload_id,
+                ));
+        let scheduler_metrics = self.builder_ctx.metrics.clone();
+
+        self.executor.spawn_task(async move {
+            if std::panic::AssertUnwindSafe(scheduler_task)
+                .catch_unwind()
+                .await
+                .is_err()
+            {
+                scheduler_metrics.flashblock_scheduler_death.increment(1);
+                error!(
+                    target: "payload_builder",
+                    id = %scheduler_payload_id,
+                    "Flashblock scheduler task panicked, no further flashblocks will be triggered for this payload",
+                );
+            }
+        });
 
         // State data was extracted in Phase 1 block scope above.
         // We carry (CacheState, Option<TransitionState>) between iterations
