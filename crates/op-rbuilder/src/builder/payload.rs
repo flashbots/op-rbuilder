@@ -1063,6 +1063,10 @@ where
 
     pub(crate) fn notify_built_payload(&self, payload: OpBuiltPayload) {
         if let Err(e) = self.built_fb_payload_tx.try_send(payload.clone()) {
+            self.builder_ctx
+                .metrics
+                .built_fb_payload_send_failed
+                .increment(1);
             warn!(
                 target: "payload_builder",
                 error = %e,
@@ -1071,6 +1075,10 @@ where
         }
 
         if let Err(e) = self.built_payload_tx.try_send(payload) {
+            self.builder_ctx
+                .metrics
+                .built_payload_send_failed
+                .increment(1);
             warn!(
                 target: "payload_builder",
                 error = %e,

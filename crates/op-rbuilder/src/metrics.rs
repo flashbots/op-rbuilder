@@ -211,6 +211,13 @@ pub struct OpRBuilderMetrics {
     pub payload_job_cancellation_complete: Counter,
     /// Payload job ended due to a build error
     pub payload_job_cancellation_error: Counter,
+    /// Built flashblock payload dropped because the channel to `PayloadHandler`'s
+    /// p2p fan-out was full or closed. Nonzero means peers missed a flashblock.
+    pub built_fb_payload_send_failed: Counter,
+    /// Built payload dropped because the channel to `PayloadHandler`'s engine-tree
+    /// feedback was full or closed. Nonzero means the engine tree missed a
+    /// pre-cached payload and had to re-validate our own block the expensive way.
+    pub built_payload_send_failed: Counter,
 }
 
 impl OpRBuilderMetrics {
