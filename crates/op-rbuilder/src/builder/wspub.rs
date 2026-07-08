@@ -304,3 +304,201 @@ impl Debug for WebSocketPublisher {
             .finish()
     }
 }
+
+/// Golden-byte pins for the flashblock JSON that [`WebSocketPublisher::publish`] ships to
+/// rollup-boost. The payload type lives upstream (op-alloy), so a dependency bump can silently
+/// move the wire format under deployed consumers; round-trip tests can't catch that because both
+/// sides drift together, so these assert the exact bytes in both directions.
+#[cfg(test)]
+mod golden_wire {
+    use alloy_consensus::{Eip658Value, Receipt};
+    use alloy_primitives::{Address, Bloom, Bytes, Log, LogData, U256, address, b256};
+    use op_alloy_consensus::{OpDepositReceipt, OpReceipt};
+    use op_alloy_rpc_types_engine::{
+        OpFlashblockPayload, OpFlashblockPayloadBase, OpFlashblockPayloadDelta,
+        OpFlashblockPayloadMetadata,
+    };
+    use reth_payload_builder::PayloadId;
+    use std::collections::BTreeMap;
+
+    fn eip1559_receipt() -> OpReceipt {
+        OpReceipt::Eip1559(Receipt {
+            status: Eip658Value::Eip658(true),
+            cumulative_gas_used: 21_000,
+            logs: vec![Log {
+                address: address!("00000000000000000000000000000000000000aa"),
+                data: LogData::new_unchecked(
+                    vec![b256!(
+                        "00000000000000000000000000000000000000000000000000000000000000a1"
+                    )],
+                    Bytes::from_static(&[0x01, 0x02]),
+                ),
+            }],
+        })
+    }
+
+    fn deposit_receipt() -> OpReceipt {
+        OpReceipt::Deposit(OpDepositReceipt {
+            inner: Receipt {
+                status: Eip658Value::Eip658(true),
+                cumulative_gas_used: 50_000,
+                logs: vec![],
+            },
+            deposit_nonce: Some(7),
+            deposit_receipt_version: Some(1),
+        })
+    }
+
+    /// First flashblock of a block: carries `base`, a deposit receipt, and Jovian blob gas.
+    fn payload_index0() -> OpFlashblockPayload {
+        let mut new_account_balances = BTreeMap::new();
+        new_account_balances.insert(
+            address!("00000000000000000000000000000000000000bb"),
+            U256::from(0x2540be400u64),
+        );
+
+        let mut receipts = BTreeMap::new();
+        receipts.insert(
+            b256!("1111111111111111111111111111111111111111111111111111111111111111"),
+            deposit_receipt(),
+        );
+
+        OpFlashblockPayload {
+            payload_id: PayloadId::new([0x0a; 8]),
+            index: 0,
+            base: Some(OpFlashblockPayloadBase {
+                parent_beacon_block_root: b256!(
+                    "2222222222222222222222222222222222222222222222222222222222222222"
+                ),
+                parent_hash: b256!(
+                    "3333333333333333333333333333333333333333333333333333333333333333"
+                ),
+                fee_recipient: address!("4200000000000000000000000000000000000011"),
+                prev_randao: b256!(
+                    "4444444444444444444444444444444444444444444444444444444444444444"
+                ),
+                block_number: 100,
+                gas_limit: 30_000_000,
+                timestamp: 1_752_000_000,
+                extra_data: Bytes::from_static(&[0x00, 0x01, 0x02]),
+                base_fee_per_gas: U256::from(1_000_000_000u64),
+            }),
+            diff: OpFlashblockPayloadDelta {
+                state_root: b256!(
+                    "5555555555555555555555555555555555555555555555555555555555555555"
+                ),
+                receipts_root: b256!(
+                    "6666666666666666666666666666666666666666666666666666666666666666"
+                ),
+                logs_bloom: Bloom::ZERO,
+                gas_used: 50_000,
+                block_hash: b256!(
+                    "7777777777777777777777777777777777777777777777777777777777777777"
+                ),
+                transactions: vec![Bytes::from_static(&[0x7e, 0x01, 0x02, 0x03])],
+                withdrawals: vec![],
+                withdrawals_root: b256!(
+                    "8888888888888888888888888888888888888888888888888888888888888888"
+                ),
+                blob_gas_used: Some(0),
+            },
+            metadata: OpFlashblockPayloadMetadata {
+                block_number: 100,
+                new_account_balances,
+                receipts,
+            },
+        }
+    }
+
+    /// Later flashblock: no `base`, a 1559 receipt, pre-Jovian (`blob_gas_used: None` is omitted).
+    fn payload_index3() -> OpFlashblockPayload {
+        let mut new_account_balances = BTreeMap::new();
+        new_account_balances.insert(Address::ZERO, U256::ZERO);
+
+        let mut receipts = BTreeMap::new();
+        receipts.insert(
+            b256!("9999999999999999999999999999999999999999999999999999999999999999"),
+            eip1559_receipt(),
+        );
+
+        OpFlashblockPayload {
+            payload_id: PayloadId::new([0x0a; 8]),
+            index: 3,
+            base: None,
+            diff: OpFlashblockPayloadDelta {
+                state_root: b256!(
+                    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                ),
+                receipts_root: b256!(
+                    "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                ),
+                logs_bloom: Bloom::ZERO,
+                gas_used: 71_000,
+                block_hash: b256!(
+                    "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+                ),
+                transactions: vec![Bytes::from_static(&[0x02, 0xff])],
+                withdrawals: vec![],
+                withdrawals_root: b256!(
+                    "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+                ),
+                blob_gas_used: None,
+            },
+            metadata: OpFlashblockPayloadMetadata {
+                block_number: 100,
+                new_account_balances,
+                receipts,
+            },
+        }
+    }
+
+    // Notable encodings these pins guard (all live wire behavior today):
+    // - `base.{block_number,gas_limit,timestamp}` are quantity-hex, but
+    //   `metadata.block_number` is a plain JSON number — inconsistent by history, now load-bearing.
+    // - receipts are internally tagged (`"type":"0x2"/"0x7e"`) with camelCase fields.
+    // - `base` and `diff.blob_gas_used` are omitted entirely when `None`.
+    const PINNED_INDEX0: &str = r#"{"payload_id":"0x0a0a0a0a0a0a0a0a","index":0,"base":{"parent_beacon_block_root":"0x2222222222222222222222222222222222222222222222222222222222222222","parent_hash":"0x3333333333333333333333333333333333333333333333333333333333333333","fee_recipient":"0x4200000000000000000000000000000000000011","prev_randao":"0x4444444444444444444444444444444444444444444444444444444444444444","block_number":"0x64","gas_limit":"0x1c9c380","timestamp":"0x686d6600","extra_data":"0x000102","base_fee_per_gas":"0x3b9aca00"},"diff":{"state_root":"0x5555555555555555555555555555555555555555555555555555555555555555","receipts_root":"0x6666666666666666666666666666666666666666666666666666666666666666","logs_bloom":"0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000","gas_used":"0xc350","block_hash":"0x7777777777777777777777777777777777777777777777777777777777777777","transactions":["0x7e010203"],"withdrawals":[],"withdrawals_root":"0x8888888888888888888888888888888888888888888888888888888888888888","blob_gas_used":"0x0"},"metadata":{"block_number":100,"new_account_balances":{"0x00000000000000000000000000000000000000bb":"0x2540be400"},"receipts":{"0x1111111111111111111111111111111111111111111111111111111111111111":{"type":"0x7e","status":"0x1","cumulativeGasUsed":"0xc350","logs":[],"depositNonce":"0x7","depositReceiptVersion":"0x1"}}}}"#;
+
+    const PINNED_INDEX3: &str = r#"{"payload_id":"0x0a0a0a0a0a0a0a0a","index":3,"diff":{"state_root":"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","receipts_root":"0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","logs_bloom":"0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000","gas_used":"0x11558","block_hash":"0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","transactions":["0x02ff"],"withdrawals":[],"withdrawals_root":"0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"},"metadata":{"block_number":100,"new_account_balances":{"0x0000000000000000000000000000000000000000":"0x0"},"receipts":{"0x9999999999999999999999999999999999999999999999999999999999999999":{"type":"0x2","status":"0x1","cumulativeGasUsed":"0x5208","logs":[{"address":"0x00000000000000000000000000000000000000aa","topics":["0x00000000000000000000000000000000000000000000000000000000000000a1"],"data":"0x0102"}]}}}}"#;
+
+    /// Same payload as [`PINNED_INDEX3`] but with the receipt in the legacy externally-tagged
+    /// form (`{"Eip1559": {...}}`) that older rollup-boost emitted; the custom deserializer in
+    /// op-alloy must keep accepting it.
+    const LEGACY_TAGGED_INDEX3: &str = r#"{"payload_id":"0x0a0a0a0a0a0a0a0a","index":3,"diff":{"state_root":"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","receipts_root":"0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","logs_bloom":"0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000","gas_used":"0x11558","block_hash":"0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","transactions":["0x02ff"],"withdrawals":[],"withdrawals_root":"0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"},"metadata":{"block_number":100,"new_account_balances":{"0x0000000000000000000000000000000000000000":"0x0"},"receipts":{"0x9999999999999999999999999999999999999999999999999999999999999999":{"Eip1559":{"status":"0x1","cumulativeGasUsed":"0x5208","logs":[{"address":"0x00000000000000000000000000000000000000aa","topics":["0x00000000000000000000000000000000000000000000000000000000000000a1"],"data":"0x0102"}]}}}}}"#;
+
+    #[test]
+    fn index0_wire_format_is_pinned() {
+        let payload = payload_index0();
+        assert_eq!(
+            serde_json::to_string(&payload).unwrap(),
+            PINNED_INDEX0,
+            "serialized flashblock JSON drifted from the pinned wire format"
+        );
+        let decoded: OpFlashblockPayload = serde_json::from_str(PINNED_INDEX0).unwrap();
+        assert_eq!(
+            decoded, payload,
+            "pinned wire JSON no longer decodes to the same payload"
+        );
+    }
+
+    #[test]
+    fn index3_wire_format_is_pinned() {
+        let payload = payload_index3();
+        assert_eq!(
+            serde_json::to_string(&payload).unwrap(),
+            PINNED_INDEX3,
+            "serialized flashblock JSON drifted from the pinned wire format"
+        );
+        let decoded: OpFlashblockPayload = serde_json::from_str(PINNED_INDEX3).unwrap();
+        assert_eq!(
+            decoded, payload,
+            "pinned wire JSON no longer decodes to the same payload"
+        );
+    }
+
+    #[test]
+    fn legacy_externally_tagged_receipts_still_deserialize() {
+        let decoded: OpFlashblockPayload = serde_json::from_str(LEGACY_TAGGED_INDEX3).unwrap();
+        assert_eq!(decoded, payload_index3());
+    }
+}
