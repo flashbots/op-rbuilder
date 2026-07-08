@@ -1,5 +1,6 @@
 use alloy_primitives::B256;
 use futures_util::{Future, FutureExt};
+use parking_lot::Mutex;
 use reth::providers::{BlockReaderIdExt, StateProviderFactory};
 use reth_basic_payload_builder::{HeaderForPayload, PayloadConfig, PrecachedState};
 use reth_node_api::{NodePrimitives, PayloadKind};
@@ -14,7 +15,7 @@ use reth_revm::cached::CachedReads;
 use reth_tasks::Runtime;
 use std::{
     pin::Pin,
-    sync::{Arc, Mutex},
+    sync::Arc,
     task::{Context, Poll},
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -67,7 +68,7 @@ pub(super) struct BlockPayloadJobGenerator<Client, Builder> {
     /// See [PayloadBuilder]
     builder: Builder,
     /// The last payload's cancellation.
-    /// `cancel_new_fcu()` is called when a new FCU arrives
+    /// `cancel_new_fcu()` is called when a new FCU arrives.
     last_payload_cancel: Arc<Mutex<PayloadJobCancellation>>,
     /// The extra block deadline in seconds
     extra_block_deadline: Duration,
@@ -161,7 +162,7 @@ where
 
         let cancel = {
             // Cancel existing payload via new_fcu
-            let mut last_cancel = self.last_payload_cancel.lock().unwrap();
+            let mut last_cancel = self.last_payload_cancel.lock();
             last_cancel.cancel_new_fcu();
 
             // Create new PayloadJobCancellation and store it
