@@ -106,7 +106,7 @@ pub(crate) mod test_hooks {
 
     pub(super) fn should_force_take_miss() -> bool {
         FORCE_TAKE_MISS_COUNT
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |count| {
                 count.checked_sub(1)
             })
             .is_ok()
