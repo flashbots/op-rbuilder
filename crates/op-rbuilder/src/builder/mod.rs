@@ -113,24 +113,8 @@ pub struct BuilderConfig {
 
 impl Default for BuilderConfig {
     fn default() -> Self {
-        Self {
-            builder_signer: None,
-            revert_protection: false,
-            flashtestations_config: FlashtestationsArgs::default(),
-            block_time: Duration::from_secs(2),
-            block_time_leeway: Duration::from_millis(500),
-            da_config: OpDAConfig::default(),
-            gas_limit_config: OpGasLimitConfig::default(),
-            sampling_ratio: 100,
-            max_gas_per_txn: None,
-            max_uncompressed_block_size: None,
-            gas_limiter_config: GasLimiterArgs::default(),
-            compute_limiter_config: ComputeLimiterArgs::default(),
-            backrun_bundle_args: BackrunBundleArgs::default(),
-            flashblocks_config: FlashblocksConfig::default(),
-            exclude_reverts_between_flashblocks: false,
-            enable_tx_tracking_debug_logs: false,
-        }
+        Self::try_from(OpRbuilderArgs::default())
+            .expect("CLI defaults must produce a valid BuilderConfig")
     }
 }
 

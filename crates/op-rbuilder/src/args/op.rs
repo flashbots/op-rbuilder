@@ -49,8 +49,10 @@ pub struct OpRbuilderArgs {
     pub log_pool_transactions: bool,
 
     /// How much time extra to wait for the block building job to complete and not get garbage collected
+    /// Also referred to as block time leeway
     #[arg(long = "builder.extra-block-deadline-secs", default_value = "20")]
     pub extra_block_deadline_secs: u64,
+
     /// Whether to enable revert protection by default
     #[arg(long = "builder.enable-revert-protection", default_value = "false")]
     pub enable_revert_protection: bool,

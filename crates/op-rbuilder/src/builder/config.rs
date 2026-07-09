@@ -1,10 +1,7 @@
 use alloy_primitives::Address;
 
 use crate::args::OpRbuilderArgs;
-use core::{
-    net::{Ipv4Addr, SocketAddr},
-    time::Duration,
-};
+use core::{net::SocketAddr, time::Duration};
 use tracing::warn;
 
 /// Configuration values that are specific to the flashblocks builder.
@@ -67,23 +64,8 @@ pub struct FlashblocksConfig {
 
 impl Default for FlashblocksConfig {
     fn default() -> Self {
-        Self {
-            ws_addr: SocketAddr::new(Ipv4Addr::UNSPECIFIED.into(), 1111),
-            interval: Duration::from_millis(250),
-            disable_state_root: false,
-            enable_incremental_state_root: false,
-            number_contract_address: None,
-            number_contract_use_permit: false,
-            send_offset_ms: 0,
-            end_buffer_ms: 0,
-            p2p_enabled: false,
-            p2p_port: 9009,
-            p2p_private_key_file: None,
-            p2p_known_peers: None,
-            p2p_max_peer_count: 50,
-            ws_subscriber_limit: None,
-            continuous_build: false,
-        }
+        Self::try_from(OpRbuilderArgs::default())
+            .expect("CLI defaults must produce a valid FlashblocksConfig")
     }
 }
 
