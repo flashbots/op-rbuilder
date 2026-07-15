@@ -11,6 +11,7 @@ on:
 permissions:
   pull-requests: write
   contents: write
+  actions: write
 
 jobs:
   release-plz:
@@ -30,8 +31,24 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Create tags on release PR merge
+        id: release-plz
         uses: release-plz/action@v0.5
         with:
           command: release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  
+      - name: Trigger release workflow
+        if: steps.release-plz.outputs.releases_created == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASES: ${{ steps.release-plz.outputs.releases }}
+        run: |
+          jq -r '.[].tag' <<< "$RELEASES" | while read -r tag; do
+            echo "Dispatching release workflow for ${tag}"
+            gh workflow run op_rbuilder_release.yaml \
+              --ref "${tag}" \
+              -f build-binary=true \
+              -f build-docker=true \
+              -f draft-release=true
+          done

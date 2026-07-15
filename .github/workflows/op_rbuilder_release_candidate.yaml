@@ -14,6 +14,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      actions: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -45,6 +46,7 @@ jobs:
           git tag -a "$TAG" -m "op-rbuilder v${VERSION}-rc.${NEXT_RC}"
 
           echo "Created tag: $TAG"
+          echo "TAG=${TAG}" >> "$GITHUB_ENV"
 
       - name: Push tag
         run: |
@@ -52,3 +54,14 @@ jobs:
           git push origin --tags
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Trigger release workflow
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "Dispatching release workflow for ${TAG}"
+          gh workflow run op_rbuilder_release.yaml \
+            --ref "${TAG}" \
+            -f build-binary=true \
+            -f build-docker=true \
+            -f draft-release=true
