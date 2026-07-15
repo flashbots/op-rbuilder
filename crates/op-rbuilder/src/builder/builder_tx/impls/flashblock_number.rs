@@ -14,8 +14,8 @@ use tracing::warn;
 
 use crate::{
     builder::builder_tx::{
-        BuilderTxEnv, BuilderTxError, BuilderTxProducer, SimulatedBuilderTx, SimulationState,
-        SimulationSuccessResult, get_nonce, sign_tx, simulate_call,
+        BuilderTxEnv, BuilderTxError, BuilderTxProducer, ClaimBuilderTx, SimulatedBuilderTx,
+        SimulationState, SimulationSuccessResult, get_nonce, sign_tx, simulate_call,
     },
     primitives::reth::ExecutionInfo,
     tx_signer::Signer,
@@ -184,33 +184,42 @@ impl FlashblockNumberBuilderTx {
 impl BuilderTxProducer for FlashblockNumberBuilderTx {
     fn simulate_builder_txs(
         &self,
-        _state_provider: Arc<dyn StateProvider + Send>,
-        _info: &ExecutionInfo,
+        state_provider: Arc<dyn StateProvider + Send>,
+        info: &ExecutionInfo,
         env: &BuilderTxEnv<'_>,
         sim_state: &mut SimulationState,
     ) -> Result<Vec<SimulatedBuilderTx>, BuilderTxError> {
-        let mut evm = env.evm_factory.evm(&mut *sim_state);
-        evm.modify_cfg(|cfg| {
-            cfg.disable_balance_check = true;
-            cfg.disable_block_gas_limit = true;
-        });
+        let flashblock_number_tx = {
+            let mut evm = env.evm_factory.evm(&mut *sim_state);
+            evm.modify_cfg(|cfg| {
+                cfg.disable_balance_check = true;
+                cfg.disable_block_gas_limit = true;
+            });
 
-        let num_tx = if let Some(tee_signer) = &self.tee_signer
-            && self.use_permit
-        {
-            self.signed_increment_flashblocks_permit_tx(tee_signer, env, &mut evm)
-        } else {
-            self.signed_increment_flashblocks_tx(env, &mut evm)
+            if let Some(tee_signer) = &self.tee_signer
+                && self.use_permit
+            {
+                self.signed_increment_flashblocks_permit_tx(tee_signer, env, &mut evm)
+            } else {
+                self.signed_increment_flashblocks_tx(env, &mut evm)
+            }
         };
 
-        let tx = num_tx.inspect_err(|e| {
-            warn!(
-                target: "builder_tx",
-                error = %e,
-                "flashblocks number contract tx simulation failed"
-            )
-        })?;
-
-        Ok(vec![tx])
+        match flashblock_number_tx {
+            Ok(tx) => Ok(vec![tx]),
+            Err(e) => {
+                warn!(
+                    target: "builder_tx",
+                    error = %e,
+                    "flashblocks number contract tx simulation failed, falling back to claim tx"
+                );
+                ClaimBuilderTx::new(Some(self.signer)).simulate_builder_txs(
+                    state_provider,
+                    info,
+                    env,
+                    sim_state,
+                )
+            }
+        }
     }
 }

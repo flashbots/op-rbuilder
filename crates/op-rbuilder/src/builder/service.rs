@@ -242,6 +242,11 @@ impl FlashblocksServiceBuilder {
                 )),
                 BuilderTxPosition::TopOfFlashblock,
             ));
+        } else {
+            scheduled.push(ScheduledBuilderTx::new(
+                Arc::new(ClaimBuilderTx::new(Some(signer))),
+                BuilderTxPosition::BottomOfBlock,
+            ));
         }
 
         // Flashtestations runs at bottom-of-block on the last flashblock, after all other txs.
