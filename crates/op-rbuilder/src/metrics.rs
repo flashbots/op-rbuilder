@@ -211,13 +211,15 @@ pub struct OpRBuilderMetrics {
     pub payload_job_cancellation_complete: Counter,
     /// Payload job ended due to a build error
     pub payload_job_cancellation_error: Counter,
-    /// Built flashblock payload dropped because the channel to `PayloadHandler`'s
-    /// p2p fan-out was full or closed. Nonzero means peers missed a flashblock.
-    pub built_fb_payload_send_failed: Counter,
-    /// Built payload dropped because the channel to `PayloadHandler`'s engine-tree
-    /// feedback was full or closed. Nonzero means the engine tree missed a
-    /// pre-cached payload and had to re-validate our own block the expensive way.
-    pub built_payload_send_failed: Counter,
+    /// Flashblock events skipped by the WebSocket subscriber after it lagged.
+    pub ws_publish_lagged: Counter,
+    /// Flashblock events skipped by the p2p subscriber after it lagged.
+    pub p2p_forward_lagged: Counter,
+    /// Flashblock events skipped by the engine feedback subscriber after it lagged.
+    pub engine_feedback_lagged: Counter,
+    /// Flashblock bus sends with no active receivers.
+    ///  Nonzero means total fanout loss.
+    pub fanout_no_subscribers: Counter,
 }
 
 impl OpRBuilderMetrics {

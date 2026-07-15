@@ -199,6 +199,12 @@ pub struct FlashblocksTaskMetrics {
     pub payload_handler: MonitoredTask,
     /// Monitor for the websocket listener task
     pub websocket_publisher: MonitoredTask,
+    /// Monitor for the websocket publication subscriber
+    pub websocket_subscriber: MonitoredTask,
+    /// Monitor for the p2p forwarding subscriber
+    pub p2p_subscriber: MonitoredTask,
+    /// Monitor for the engine feedback subscriber
+    pub engine_feedback_subscriber: MonitoredTask,
     /// Global runtime metrics recorder
     runtime_recorder: TokioRuntimeMetricsRecorder,
 }
@@ -216,6 +222,9 @@ impl FlashblocksTaskMetrics {
             payload_builder_service: MonitoredTask::new("payload_builder_service"),
             payload_handler: MonitoredTask::new("payload_handler"),
             websocket_publisher: MonitoredTask::new("websocket_publisher"),
+            websocket_subscriber: MonitoredTask::new("websocket_subscriber"),
+            p2p_subscriber: MonitoredTask::new("p2p_subscriber"),
+            engine_feedback_subscriber: MonitoredTask::new("engine_feedback_subscriber"),
             runtime_recorder: TokioRuntimeMetricsRecorder::default(),
         }
     }
@@ -237,6 +246,11 @@ impl FlashblocksTaskMetrics {
             let mut payload_builder_intervals = metrics.payload_builder_service.monitor.intervals();
             let mut payload_handler_intervals = metrics.payload_handler.monitor.intervals();
             let mut websocket_publisher_intervals = metrics.websocket_publisher.monitor.intervals();
+            let mut websocket_subscriber_intervals =
+                metrics.websocket_subscriber.monitor.intervals();
+            let mut p2p_subscriber_intervals = metrics.p2p_subscriber.monitor.intervals();
+            let mut engine_feedback_subscriber_intervals =
+                metrics.engine_feedback_subscriber.monitor.intervals();
 
             loop {
                 timer.tick().await;
@@ -261,6 +275,17 @@ impl FlashblocksTaskMetrics {
                 if let Some(task_metrics) = websocket_publisher_intervals.next() {
                     metrics.websocket_publisher.record_metrics(&task_metrics);
                 }
+                if let Some(task_metrics) = websocket_subscriber_intervals.next() {
+                    metrics.websocket_subscriber.record_metrics(&task_metrics);
+                }
+                if let Some(task_metrics) = p2p_subscriber_intervals.next() {
+                    metrics.p2p_subscriber.record_metrics(&task_metrics);
+                }
+                if let Some(task_metrics) = engine_feedback_subscriber_intervals.next() {
+                    metrics
+                        .engine_feedback_subscriber
+                        .record_metrics(&task_metrics);
+                }
             }
         });
     }
@@ -276,6 +301,15 @@ impl fmt::Debug for FlashblocksTaskMetrics {
             )
             .field("payload_handler", &self.payload_handler.task_name())
             .field("websocket_publisher", &self.websocket_publisher.task_name())
+            .field(
+                "websocket_subscriber",
+                &self.websocket_subscriber.task_name(),
+            )
+            .field("p2p_subscriber", &self.p2p_subscriber.task_name())
+            .field(
+                "engine_feedback_subscriber",
+                &self.engine_feedback_subscriber.task_name(),
+            )
             .field("runtime_monitor", &"enabled")
             .finish()
     }

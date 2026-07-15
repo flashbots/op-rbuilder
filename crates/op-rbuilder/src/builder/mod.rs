@@ -17,6 +17,7 @@ mod candidate;
 mod config;
 mod context;
 mod continuous;
+mod fanout;
 mod flashblocks_builder_tx;
 mod generator;
 mod p2p;
