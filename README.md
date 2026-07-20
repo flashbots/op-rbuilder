@@ -109,7 +109,7 @@ This runs both unit tests and integration tests.
 
 ## Local Devnet
 
-Local development environment setup and configuration files can be found in [`local-testing/README.md`](./local-testing/README.md).
+Local devnet setup — via [decker](https://github.com/flashbots/decker) (`decker.ts`), with builder-playground kept as a deprecated fallback — is documented in [`local-testing/README.md`](./local-testing/README.md).
 
 ## Running GitHub actions locally
 
