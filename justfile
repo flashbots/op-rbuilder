@@ -1,5 +1,5 @@
-# Build the profiling op-rbuilder binary and start the decker local devnet
-# (see local-testing/README.md; requires the `decker` CLI on PATH)
+# Build profiling op-rbuilder binary and start the decker local devnet
+# (see local-testing/README.md; requires `decker` CLI on PATH)
 devnet:
     make op-rbuilder-profiling FEATURES=telemetry,loki
     decker start
