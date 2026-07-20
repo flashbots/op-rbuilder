@@ -15,7 +15,10 @@ use anyhow::{Result, anyhow};
 use clap::Parser;
 use reth_optimism_cli::commands::Commands;
 use reth_optimism_node::args::RollupArgs;
-use std::{num::NonZeroUsize, path::PathBuf};
+use std::{
+    num::NonZeroUsize,
+    path::{Path, PathBuf},
+};
 
 /// Parameters for rollup configuration
 #[derive(Debug, Clone, PartialEq, Eq, clap::Args)]
@@ -94,7 +97,7 @@ pub struct OpRbuilderArgs {
     #[arg(
         long = "builder.playground",
         num_args = 0..=1,
-        default_missing_value = "$HOME/.local/state/builder-playground/devnet",
+        default_missing_value = PLAYGROUND_AUTO,
         value_parser = expand_path,
         env = "PLAYGROUND_DIR",
     )]
@@ -123,7 +126,38 @@ impl Default for OpRbuilderArgs {
     }
 }
 
+/// `default_missing_value` for `--builder.playground`
+const PLAYGROUND_AUTO: &str = "";
+
+/// Decker devnet state lives per-project
+const DECKER_DEFAULT_DIR: &str = ".decker/runtime/artifacts";
+const LEGACY_DEFAULT_DIR: &str = "$HOME/.local/state/builder-playground/devnet";
+
 fn expand_path(s: &str) -> Result<PathBuf> {
+    if s == PLAYGROUND_AUTO {
+        return resolve_playground_auto_dir();
+    }
+    expand_shell(s)
+}
+
+/// Resolution order for raw `--builder.playground`:  decker devnet
+/// artifacts dir for this project if it exists, else legacy
+/// builder-playground default.
+fn resolve_playground_auto_dir() -> Result<PathBuf> {
+    let cwd =
+        std::env::current_dir().map_err(|e| anyhow!("failed to read current directory: {e}"))?;
+    resolve_playground_auto_dir_from(&cwd)
+}
+
+fn resolve_playground_auto_dir_from(cwd: &Path) -> Result<PathBuf> {
+    let decker_default = cwd.join(DECKER_DEFAULT_DIR);
+    if decker_default.exists() {
+        return Ok(decker_default);
+    }
+    expand_shell(LEGACY_DEFAULT_DIR)
+}
+
+fn expand_shell(s: &str) -> Result<PathBuf> {
     shellexpand::full(s)
         .map_err(|e| anyhow!("expansion error for `{s}`: {e}"))?
         .into_owned()

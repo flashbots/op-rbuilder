@@ -1,30 +1,43 @@
-//! Automatic builder playground configuration.
+//! Automatic devnet configuration for `--builder.playground`.
 //!
-//! This module is used mostly for testing purposes. It allows op-rbuilder to
-//! automatically configure itself to run against a running op-builder playground.
+//! This module is used mostly for testing purposes. It lets op-rbuilder
+//! automatically configure itself to run against a local OP stack devnet,
+//! detecting which of two artifact layouts the target directory holds
+//! (see `detect_layout`):
 //!
-//! To setup the playground, checkout this repository:
+//! - decker (primary): the artifacts directory decker's opstack recipe
+//!   generates for an external, host-run op-rbuilder, e.g. via
 //!
-//!   https://github.com/flashbots/builder-playground
+//!     decker up opstack --opt externalBuilder=op-rbuilder --opt builderBinary=true
 //!
-//! Then run the following command:
+//!   See https://github.com/flashbots/decker. Ports and the sequencer EL's
+//!   p2p identity are fixed decker contract constants (see below) rather
+//!   than being read from the directory.
 //!
-//!   go run main.go cook opstack --external-builder http://host.docker.internal:4444
+//! - builder-playground (legacy, still supported): the directory produced by
 //!
-//! Wait until the playground is up and running, then run the following command to build
-//! op-rbuilder with flashblocks support:
+//!     go run main.go cook opstack --external-builder http://host.docker.internal:4444
+//!
+//!   from https://github.com/flashbots/builder-playground. Unlike decker,
+//!   ports/keys aren't exposed anywhere else, so this layout also parses the
+//!   generated docker-compose.yaml to recover them.
+//!
+//! Once the devnet is up, build op-rbuilder with flashblocks support:
 //!
 //!   cargo build --bin op-rbuilder -p op-rbuilder
 //!
-//! then run the following command to start op-rbuilder against the playground:
+//! then run the following command to start op-rbuilder against it:
 //!
 //!   target/debug/op-rbuilder node --builder.playground
 //!
-//! This will automatically try to detect the playground configuration and apply
-//! it to the op-rbuilder startup settings.
+//! This will automatically try to detect the devnet configuration and apply
+//! it to the op-rbuilder startup settings. With no directory given, the bare
+//! flag resolves to the first of `./.decker/runtime/artifacts` or
+//! `$HOME/.local/state/builder-playground/devnet` that exists (see
+//! `args::op::expand_path`).
 //!
 //! Optionally you can specify the `--builder.playground` flag with a different
-//! directory to use. This is useful for testing against different playground
+//! directory to use. This is useful for testing against different devnet
 //! configurations.
 
 use alloy_primitives::hex;
@@ -36,7 +49,7 @@ use core::{
 };
 use eyre::{Result, eyre};
 use reth_cli::chainspec::ChainSpecParser;
-use reth_network_peers::TrustedPeer;
+use reth_network_peers::{PeerId, TrustedPeer};
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_cli::{chainspec::OpChainSpecParser, commands::Commands};
 use secp256k1::SecretKey;
@@ -49,6 +62,34 @@ use std::{
 use url::{Host, Url};
 
 use super::Cli;
+
+const DECKER_BUILDER_AUTHRPC_PORT: u16 = 9651;
+const DECKER_SEQUENCER_EL_P2P_PORT: u16 = 30303;
+const DECKER_SEQUENCER_EL_PEER_ID: &str = "c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee51ae168fea63dc339a3c58419466ceaeef7f632653266d0e1236431a950cfe52a";
+
+/// Which artifact generator produced the playground directory.
+enum Layout {
+    /// builder-playground's `go run main.go cook opstack` output: ports/keys
+    /// are recovered by parsing its generated docker-compose.yaml.
+    Legacy,
+    /// decker's devnet artifacts directory: ports/peer-id are fixed decker
+    /// contract constants.
+    Decker,
+}
+
+fn detect_layout(path: &Path) -> Result<Layout> {
+    if path.join("docker-compose.yaml").exists() {
+        Ok(Layout::Legacy)
+    } else if path.join("l2-genesis.json").exists() {
+        Ok(Layout::Decker)
+    } else {
+        Err(eyre!(
+            "{} matches neither the legacy builder-playground layout (docker-compose.yaml) \
+             nor the decker devnet artifacts layout (l2-genesis.json)",
+            path.display()
+        ))
+    }
+}
 
 pub(super) struct PlaygroundOptions {
     /// Sets node.chain in NodeCommand
@@ -85,6 +126,7 @@ impl PlaygroundOptions {
                 path.display()
             ));
         }
+        let layout = detect_layout(path)?;
 
         let chain = OpChainSpecParser::parse(&existing_path(path, "l2-genesis.json")?)?;
 
@@ -93,12 +135,30 @@ impl PlaygroundOptions {
         let authrpc_jwtsecret = existing_path(path, "jwtsecret")?.into();
         let port = pick_preferred_port(30333, 30000..65535);
         let chain_block_time = extract_chain_block_time(path)?;
-        let authrpc_port = extract_authrpc_port(path)?;
-        let trusted_peer = TrustedPeer::from_secret_key(
-            Host::Ipv4(Ipv4Addr::LOCALHOST),
-            extract_trusted_peer_port(path)?,
-            &extract_deterministic_p2p_key(path)?,
-        );
+
+        let (authrpc_port, trusted_peer) = match layout {
+            Layout::Legacy => (
+                extract_authrpc_port(path)?,
+                TrustedPeer::from_secret_key(
+                    Host::Ipv4(Ipv4Addr::LOCALHOST),
+                    extract_trusted_peer_port(path)?,
+                    &extract_deterministic_p2p_key(path)?,
+                ),
+            ),
+            Layout::Decker => {
+                let id = DECKER_SEQUENCER_EL_PEER_ID
+                    .parse::<PeerId>()
+                    .map_err(|e| eyre!("invalid decker sequencer EL peer id: {e}"))?;
+                (
+                    DECKER_BUILDER_AUTHRPC_PORT,
+                    TrustedPeer::new(
+                        Host::Ipv4(Ipv4Addr::LOCALHOST),
+                        DECKER_SEQUENCER_EL_P2P_PORT,
+                        id,
+                    ),
+                )
+            }
+        };
 
         Ok(Self {
             chain,
@@ -337,5 +397,126 @@ trait IsDefaultSource {
 impl IsDefaultSource for Option<ValueSource> {
     fn is_default(&self) -> bool {
         matches!(self, Some(ValueSource::DefaultValue)) || self.is_none()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    const GENESIS_JSON: &str = include_str!("../tests/framework/artifacts/genesis.json.tmpl");
+
+    /// secp256k1 secret key `1`'s uncompressed pubkey
+    const SECP256K1_GENERATOR_POINT_ID: &str = "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798483ada7726a3c4655da4fbfc0e1108a8fd17b448a68554199c47d08ffb10d4b8";
+
+    /// Writes the files shared by both layouts (chain spec, jwt, block time).
+    fn write_common_artifacts(dir: &Path, block_time_secs: u64) {
+        fs::write(dir.join("l2-genesis.json"), GENESIS_JSON).unwrap();
+        fs::write(dir.join("jwtsecret"), "test-jwt-secret").unwrap();
+        fs::write(
+            dir.join("rollup.json"),
+            format!(r#"{{"block_time": {block_time_secs}}}"#),
+        )
+        .unwrap();
+    }
+
+    /// Adds the legacy-only markers on top of the shared artifacts: a
+    /// docker-compose.yaml (rollup-boost's `--builder-url` and op-geth's
+    /// `--port`/ports mapping) and the trusted-peer secret key file.
+    fn write_legacy_artifacts(dir: &Path, block_time_secs: u64) {
+        write_common_artifacts(dir, block_time_secs);
+        fs::write(
+            dir.join("enode-key-1.txt"),
+            "0000000000000000000000000000000000000000000000000000000000000001",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("docker-compose.yaml"),
+            r#"
+services:
+  op-geth:
+    command:
+      - /bin/sh
+      - "-c geth --port 30303 --networkid 901"
+    ports:
+      - "127.0.0.1:30304:30303"
+  rollup-boost:
+    command:
+      - rollup-boost
+      - --builder-url
+      - http://host.docker.internal:4444
+"#,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn test_detect_layout_is_legacy_when_docker_compose_present() {
+        let dir = tempfile::tempdir().unwrap();
+        write_legacy_artifacts(dir.path(), 2);
+        assert!(matches!(detect_layout(dir.path()).unwrap(), Layout::Legacy));
+    }
+
+    #[test]
+    fn test_detect_layout_is_decker_when_only_l2_genesis_present() {
+        let dir = tempfile::tempdir().unwrap();
+        write_common_artifacts(dir.path(), 2);
+        assert!(matches!(detect_layout(dir.path()).unwrap(), Layout::Decker));
+    }
+
+    #[test]
+    fn test_detect_layout_errors_when_neither_marker_present() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(detect_layout(dir.path()).is_err());
+    }
+
+    #[test]
+    fn test_decker_layout_uses_fixed_authrpc_port_and_trusted_peer() {
+        let dir = tempfile::tempdir().unwrap();
+        write_common_artifacts(dir.path(), 7);
+
+        let options = PlaygroundOptions::new(dir.path()).expect("decker layout should parse");
+
+        assert_eq!(options.authrpc_port, DECKER_BUILDER_AUTHRPC_PORT);
+        assert_eq!(options.chain_block_time, Duration::from_secs(7));
+        assert_eq!(
+            options.trusted_peer.host,
+            Host::<String>::Ipv4(Ipv4Addr::LOCALHOST)
+        );
+        assert_eq!(options.trusted_peer.tcp_port, DECKER_SEQUENCER_EL_P2P_PORT);
+        assert_eq!(
+            options.trusted_peer.id,
+            DECKER_SEQUENCER_EL_PEER_ID.parse::<PeerId>().unwrap()
+        );
+    }
+
+    #[test]
+    fn test_legacy_layout_still_parses_docker_compose() {
+        let dir = tempfile::tempdir().unwrap();
+        write_legacy_artifacts(dir.path(), 3);
+
+        let options = PlaygroundOptions::new(dir.path()).expect("legacy layout should parse");
+
+        assert_eq!(options.authrpc_port, 4444);
+        assert_eq!(options.chain_block_time, Duration::from_secs(3));
+        assert_eq!(
+            options.trusted_peer.host,
+            Host::<String>::Ipv4(Ipv4Addr::LOCALHOST)
+        );
+        assert_eq!(options.trusted_peer.tcp_port, 30304);
+        assert_eq!(
+            options.trusted_peer.id,
+            SECP256K1_GENERATOR_POINT_ID.parse::<PeerId>().unwrap()
+        );
+    }
+
+    #[test]
+    fn test_new_errors_on_missing_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().to_path_buf();
+        drop(dir); // removes the directory, guaranteeing `path` doesn't exist
+
+        assert!(PlaygroundOptions::new(&path).is_err());
     }
 }
