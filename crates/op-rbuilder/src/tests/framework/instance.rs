@@ -336,6 +336,31 @@ fn chain_spec() -> Arc<OpChainSpec> {
     CHAIN_SPEC.clone()
 }
 
+/// Same genesis as [`chain_spec`], with Karst active at genesis.
+/// Use via [`karst_node_config`] to get a [`LocalInstance`] running under Karst.
+/// TODO: make it the default in [`LocalInstance`]
+fn karst_chain_spec() -> Arc<OpChainSpec> {
+    static CHAIN_SPEC: LazyLock<Arc<OpChainSpec>> = LazyLock::new(|| {
+        let genesis = include_str!("./artifacts/genesis.json.tmpl");
+        let mut genesis: serde_json::Value =
+            serde_json::from_str(genesis).expect("invalid genesis JSON");
+        genesis["config"]["karstTime"] = 0.into();
+        let genesis = serde_json::from_value(genesis).expect("invalid genesis JSON");
+        Arc::new(OpChainSpec::from_genesis(genesis))
+    });
+
+    CHAIN_SPEC.clone()
+}
+
+/// Node config for a chain with Karst active at genesis.
+/// Can be used in `#[rb_test]`: `#[rb_test(config = karst_node_config())]`
+pub fn karst_node_config() -> NodeConfig<OpChainSpec> {
+    NodeConfig::<OpChainSpec> {
+        chain: karst_chain_spec(),
+        ..default_node_config()
+    }
+}
+
 fn task_runtime() -> TaskRuntime {
     TaskRuntime::test()
 }
