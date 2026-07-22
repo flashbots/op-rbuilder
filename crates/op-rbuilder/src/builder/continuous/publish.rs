@@ -7,7 +7,6 @@ use super::{
 };
 use crate::{
     builder::{
-        builder_tx::BuilderTransactions,
         cancellation::FlashblockJobCancellation,
         context::OpPayloadJobCtx,
         payload::{
@@ -95,11 +94,10 @@ impl CandidateLogEvent {
     }
 }
 
-impl<Pool, Client, BuilderTx> OpPayloadBuilder<Pool, Client, BuilderTx>
+impl<Pool, Client> OpPayloadBuilder<Pool, Client>
 where
     Pool: PoolBounds + 'static,
     Client: ClientBounds + 'static,
-    BuilderTx: BuilderTransactions + Send + Sync + 'static,
 {
     /// Publish a candidate flashblock immediately. The context is only used for
     /// publish timing metadata, so this can run before awaiting the build task.

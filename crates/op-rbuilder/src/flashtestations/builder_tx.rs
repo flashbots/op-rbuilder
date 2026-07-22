@@ -16,8 +16,8 @@ use tracing::{debug, info, warn};
 
 use crate::{
     builder::{
-        BuilderTransactionCtx, BuilderTransactionError, BuilderTransactions, BuilderTxEnv,
-        SimulationSuccessResult, get_nonce,
+        BuilderTxEnv, BuilderTxError, BuilderTxProducer, SimulatedBuilderTx, SimulationState,
+        SimulationSuccessResult, get_nonce, sign_tx, simulate_call,
     },
     flashtestations::{
         BlockData,
@@ -116,14 +116,14 @@ impl FlashtestationsBuilderTx {
 
     fn set_registered(
         &self,
-        state_provider: impl StateProvider + Clone,
-        ctx: &BuilderTxEnv<'_>,
-    ) -> Result<(), BuilderTransactionError> {
+        state_provider: Arc<dyn StateProvider + Send>,
+        env: &BuilderTxEnv<'_>,
+    ) -> Result<(), BuilderTxError> {
         let mut simulation_state = State::builder()
             .with_database(StateProviderDatabase::new(state_provider))
             .with_bundle_update()
             .build();
-        let mut evm = ctx.evm_factory.evm(&mut simulation_state);
+        let mut evm = env.evm_factory.evm(&mut simulation_state);
         evm.modify_cfg(|cfg| {
             cfg.disable_balance_check = true;
             cfg.disable_nonce_check = true;
@@ -132,7 +132,7 @@ impl FlashtestationsBuilderTx {
             teeAddress: self.tee_service_signer.address,
         };
         let SimulationSuccessResult { output, .. } =
-            self.flashtestations_contract_read(self.registry_address, calldata, ctx, &mut evm)?;
+            self.flashtestations_contract_read(self.registry_address, calldata, env, &mut evm)?;
         if output.isValid {
             self.registered
                 .store(true, std::sync::atomic::Ordering::SeqCst);
@@ -143,33 +143,33 @@ impl FlashtestationsBuilderTx {
     fn get_permit_nonce(
         &self,
         contract_address: Address,
-        ctx: &BuilderTxEnv<'_>,
+        env: &BuilderTxEnv<'_>,
         evm: &mut OpEvm<impl Database + DatabaseRef, NoOpInspector, PrecompilesMap>,
-    ) -> Result<U256, BuilderTransactionError> {
+    ) -> Result<U256, BuilderTxError> {
         let calldata = IERC20Permit::noncesCall {
             owner: self.tee_service_signer.address,
         };
         let SimulationSuccessResult { output, .. } =
-            self.flashtestations_contract_read(contract_address, calldata, ctx, evm)?;
+            self.flashtestations_contract_read(contract_address, calldata, env, evm)?;
         Ok(output)
     }
 
     fn registration_permit_signature(
         &self,
         permit_nonce: U256,
-        ctx: &BuilderTxEnv<'_>,
+        env: &BuilderTxEnv<'_>,
         evm: &mut OpEvm<impl Database + DatabaseRef, NoOpInspector, PrecompilesMap>,
-    ) -> Result<Signature, BuilderTransactionError> {
+    ) -> Result<Signature, BuilderTxError> {
         let struct_hash_calldata = IFlashtestationRegistry::computeStructHashCall {
             rawQuote: self.attestation.clone().into(),
             extendedRegistrationData: self.extra_registration_data.clone(),
             nonce: permit_nonce,
-            deadline: U256::from(ctx.hardforks.timestamp),
+            deadline: U256::from(env.hardforks.timestamp),
         };
         let SimulationSuccessResult { output, .. } = self.flashtestations_contract_read(
             self.registry_address,
             struct_hash_calldata,
-            ctx,
+            env,
             evm,
         )?;
         let typed_data_hash_calldata =
@@ -177,7 +177,7 @@ impl FlashtestationsBuilderTx {
         let SimulationSuccessResult { output, .. } = self.flashtestations_contract_read(
             self.registry_address,
             typed_data_hash_calldata,
-            ctx,
+            env,
             evm,
         )?;
         let signature = self.tee_service_signer.sign_message(output)?;
@@ -186,16 +186,16 @@ impl FlashtestationsBuilderTx {
 
     fn signed_registration_permit_tx(
         &self,
-        ctx: &BuilderTxEnv<'_>,
+        env: &BuilderTxEnv<'_>,
         evm: &mut OpEvm<&mut State<impl Database + DatabaseRef>, NoOpInspector, PrecompilesMap>,
-    ) -> Result<BuilderTransactionCtx, BuilderTransactionError> {
-        let permit_nonce = self.get_permit_nonce(self.registry_address, ctx, evm)?;
-        let signature = self.registration_permit_signature(permit_nonce, ctx, evm)?;
+    ) -> Result<SimulatedBuilderTx, BuilderTxError> {
+        let permit_nonce = self.get_permit_nonce(self.registry_address, env, evm)?;
+        let signature = self.registration_permit_signature(permit_nonce, env, evm)?;
         let calldata = IFlashtestationRegistry::permitRegisterTEEServiceCall {
             rawQuote: self.attestation.clone().into(),
             extendedRegistrationData: self.extra_registration_data.clone(),
             nonce: permit_nonce,
-            deadline: U256::from(ctx.hardforks.timestamp),
+            deadline: U256::from(env.hardforks.timestamp),
             signature: signature.as_bytes().into(),
         };
         let SimulationSuccessResult {
@@ -206,26 +206,25 @@ impl FlashtestationsBuilderTx {
             self.registry_address,
             calldata.clone(),
             vec![TEEServiceRegistered::SIGNATURE_HASH],
-            ctx,
+            env,
             evm,
         )?;
-        let signed_tx = self.sign_tx(
+        let signed_tx = sign_tx(
             self.registry_address,
             self.builder_signer,
             gas_used,
             calldata.abi_encode().into(),
-            ctx,
+            env,
             evm.db(),
         )?;
         let da_size =
             op_alloy_flz::tx_estimated_size_fjord_bytes(signed_tx.encoded_2718().as_slice());
         // commit the register transaction state so the block proof transaction can succeed
         evm.db_mut().commit(state_changes);
-        Ok(BuilderTransactionCtx {
+        Ok(SimulatedBuilderTx {
             gas_used,
             da_size,
             signed_tx,
-            is_top_of_block: false,
         })
     }
 
@@ -233,9 +232,9 @@ impl FlashtestationsBuilderTx {
         &self,
         permit_nonce: U256,
         block_content_hash: B256,
-        ctx: &BuilderTxEnv<'_>,
+        env: &BuilderTxEnv<'_>,
         evm: &mut OpEvm<impl Database + DatabaseRef, NoOpInspector, PrecompilesMap>,
-    ) -> Result<Signature, BuilderTransactionError> {
+    ) -> Result<Signature, BuilderTxError> {
         let struct_hash_calldata = IBlockBuilderPolicy::computeStructHashCall {
             version: self.builder_proof_version,
             blockContentHash: block_content_hash,
@@ -244,7 +243,7 @@ impl FlashtestationsBuilderTx {
         let SimulationSuccessResult { output, .. } = self.flashtestations_contract_read(
             self.builder_policy_address,
             struct_hash_calldata,
-            ctx,
+            env,
             evm,
         )?;
         let typed_data_hash_calldata =
@@ -252,7 +251,7 @@ impl FlashtestationsBuilderTx {
         let SimulationSuccessResult { output, .. } = self.flashtestations_contract_read(
             self.builder_policy_address,
             typed_data_hash_calldata,
-            ctx,
+            env,
             evm,
         )?;
         let signature = self.tee_service_signer.sign_message(output)?;
@@ -262,18 +261,18 @@ impl FlashtestationsBuilderTx {
     fn signed_block_proof_permit_tx(
         &self,
         transactions: &[OpTransactionSigned],
-        ctx: &BuilderTxEnv<'_>,
+        env: &BuilderTxEnv<'_>,
         evm: &mut OpEvm<impl Database + DatabaseRef, NoOpInspector, PrecompilesMap>,
-    ) -> Result<BuilderTransactionCtx, BuilderTransactionError> {
-        let permit_nonce = self.get_permit_nonce(self.builder_policy_address, ctx, evm)?;
+    ) -> Result<SimulatedBuilderTx, BuilderTxError> {
+        let permit_nonce = self.get_permit_nonce(self.builder_policy_address, env, evm)?;
         let block_content_hash = Self::compute_block_content_hash(
             transactions,
-            ctx.parent_hash,
-            ctx.block_number,
-            ctx.hardforks.timestamp,
+            env.parent_hash,
+            env.block_number,
+            env.hardforks.timestamp,
         );
         let signature =
-            self.block_proof_permit_signature(permit_nonce, block_content_hash, ctx, evm)?;
+            self.block_proof_permit_signature(permit_nonce, block_content_hash, env, evm)?;
         let calldata = IBlockBuilderPolicy::permitVerifyBlockBuilderProofCall {
             blockContentHash: block_content_hash,
             nonce: permit_nonce,
@@ -284,24 +283,23 @@ impl FlashtestationsBuilderTx {
             self.builder_policy_address,
             calldata.clone(),
             vec![BlockBuilderProofVerified::SIGNATURE_HASH],
-            ctx,
+            env,
             evm,
         )?;
-        let signed_tx = self.sign_tx(
+        let signed_tx = sign_tx(
             self.builder_policy_address,
             self.builder_signer,
             gas_used,
             calldata.abi_encode().into(),
-            ctx,
+            env,
             evm.db(),
         )?;
         let da_size =
             op_alloy_flz::tx_estimated_size_fjord_bytes(signed_tx.encoded_2718().as_slice());
-        Ok(BuilderTransactionCtx {
+        Ok(SimulatedBuilderTx {
             gas_used,
             da_size,
             signed_tx,
-            is_top_of_block: false,
         })
     }
 
@@ -309,10 +307,10 @@ impl FlashtestationsBuilderTx {
         &self,
         contract_address: Address,
         calldata: T,
-        ctx: &BuilderTxEnv<'_>,
+        env: &BuilderTxEnv<'_>,
         evm: &mut OpEvm<impl Database + DatabaseRef, NoOpInspector, PrecompilesMap>,
-    ) -> Result<SimulationSuccessResult<T>, BuilderTransactionError> {
-        self.flashtestations_call(contract_address, calldata, vec![], ctx, evm)
+    ) -> Result<SimulationSuccessResult<T>, BuilderTxError> {
+        self.flashtestations_call(contract_address, calldata, vec![], env, evm)
     }
 
     fn flashtestations_call<T: SolCall>(
@@ -320,74 +318,71 @@ impl FlashtestationsBuilderTx {
         contract_address: Address,
         calldata: T,
         expected_topics: Vec<B256>,
-        ctx: &BuilderTxEnv<'_>,
+        env: &BuilderTxEnv<'_>,
         evm: &mut OpEvm<impl Database + DatabaseRef, NoOpInspector, PrecompilesMap>,
-    ) -> Result<SimulationSuccessResult<T>, BuilderTransactionError> {
-        let simulation_gas_limit = ctx.block_gas_limit.min(evm.cfg_env().tx_gas_limit_cap());
+    ) -> Result<SimulationSuccessResult<T>, BuilderTxError> {
+        let simulation_gas_limit = env.block_gas_limit.min(evm.cfg_env().tx_gas_limit_cap());
         let tx_req = OpTransactionRequest::default()
             .gas_limit(simulation_gas_limit)
-            .max_fee_per_gas(ctx.base_fee.into())
+            .max_fee_per_gas(env.base_fee.into())
             .to(contract_address)
             .from(self.builder_signer.address)
             .nonce(get_nonce(evm.db(), self.builder_signer.address)?)
             .input(TransactionInput::new(calldata.abi_encode().into()));
         if contract_address == self.registry_address {
-            self.simulate_call::<T, IFlashtestationRegistry::IFlashtestationRegistryErrors>(
+            simulate_call::<T, IFlashtestationRegistry::IFlashtestationRegistryErrors>(
                 tx_req,
                 expected_topics,
                 evm,
             )
         } else if contract_address == self.builder_policy_address {
-            self.simulate_call::<T, IBlockBuilderPolicy::IBlockBuilderPolicyErrors>(
+            simulate_call::<T, IBlockBuilderPolicy::IBlockBuilderPolicyErrors>(
                 tx_req,
                 expected_topics,
                 evm,
             )
         } else {
-            Err(BuilderTransactionError::msg(
+            Err(BuilderTxError::msg(
                 "invalid contract address for flashtestations",
             ))
         }
     }
 }
 
-impl BuilderTransactions for FlashtestationsBuilderTx {
+impl BuilderTxProducer for FlashtestationsBuilderTx {
     fn simulate_builder_txs(
         &self,
-        state_provider: impl StateProvider + Clone,
-        info: &mut ExecutionInfo,
-        ctx: &BuilderTxEnv<'_>,
-        db: &mut State<impl Database + DatabaseRef>,
-        _top_of_block: bool,
-        _is_first_flashblock: bool,
-        _is_last_flashblock: bool,
-    ) -> Result<Vec<BuilderTransactionCtx>, BuilderTransactionError> {
+        state_provider: Arc<dyn StateProvider + Send>,
+        info: &ExecutionInfo,
+        env: &BuilderTxEnv<'_>,
+        sim_state: &mut SimulationState,
+    ) -> Result<Vec<SimulatedBuilderTx>, BuilderTxError> {
         // set registered by simulating against the committed state
         if !self.registered.load(std::sync::atomic::Ordering::SeqCst) {
-            self.set_registered(state_provider, ctx)?;
+            self.set_registered(state_provider, env)?;
         }
 
-        let mut evm = ctx.evm_factory.evm(&mut *db);
+        let mut evm = env.evm_factory.evm(&mut *sim_state);
         evm.modify_cfg(|cfg| {
             cfg.disable_balance_check = true;
             cfg.disable_block_gas_limit = true;
         });
 
-        let mut builder_txs = Vec::<BuilderTransactionCtx>::new();
+        let mut builder_txs = Vec::<SimulatedBuilderTx>::new();
 
         if !self.registered.load(std::sync::atomic::Ordering::SeqCst) {
             info!(
                 target: "flashtestations",
                 "tee service not registered yet, attempting to register"
             );
-            let register_tx = self.signed_registration_permit_tx(ctx, &mut evm)?;
+            let register_tx = self.signed_registration_permit_tx(env, &mut evm)?;
             builder_txs.push(register_tx);
         }
 
         // don't return on error for block proof as previous txs in builder_txs will not be returned
         if self.enable_block_proofs {
             debug!(target: "flashtestations", "adding permit verify block proof tx");
-            match self.signed_block_proof_permit_tx(&info.executed_transactions, ctx, &mut evm) {
+            match self.signed_block_proof_permit_tx(&info.executed_transactions, env, &mut evm) {
                 Ok(block_proof_tx) => builder_txs.push(block_proof_tx),
                 Err(e) => {
                     warn!(

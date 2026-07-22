@@ -4,7 +4,6 @@ use super::{
 };
 use crate::{
     builder::{
-        builder_tx::BuilderTransactions,
         cancellation::{FlashblockJobCancellation, PayloadJobCancellation},
         payload::{BuildProgress, BuildState, JobDeps, OpPayloadBuilder, PayloadBuildStats},
     },
@@ -12,8 +11,9 @@ use crate::{
 };
 use alloy_primitives::B256;
 use reth_node_api::PayloadBuilderError;
+use reth_provider::StateProvider;
 use reth_revm::{State, database::StateProviderDatabase};
-use std::{ops::ControlFlow, time::Instant};
+use std::{ops::ControlFlow, sync::Arc, time::Instant};
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, field, metadata::Level, span};
 
@@ -23,11 +23,10 @@ use tracing::{debug, field, metadata::Level, span};
 // trigger channel. On each trigger it advances one interval; on cancel
 // or end-of-block it returns `Ok(())`.
 
-impl<Pool, Client, BuilderTx> OpPayloadBuilder<Pool, Client, BuilderTx>
+impl<Pool, Client> OpPayloadBuilder<Pool, Client>
 where
     Pool: PoolBounds + 'static,
     Client: ClientBounds + 'static,
-    BuilderTx: BuilderTransactions + Send + Sync + 'static,
 {
     /// Entrypoint to build a single payload in continuous mode, it should be called soon after FCU.
     /// It handles the top-level loop: sets up state then iterates flashblock intervals.
@@ -162,9 +161,10 @@ where
                     let _enter = fb_span.enter();
                     let base_state = base_state;
 
-                    let state_provider = builder.client().state_by_block_hash(parent_hash)?;
+                    let state_provider: Arc<dyn StateProvider + Send> =
+                        Arc::from(builder.client().state_by_block_hash(parent_hash)?);
                     let mut state_db = State::builder()
-                        .with_database(StateProviderDatabase::new(&state_provider))
+                        .with_database(StateProviderDatabase::new(state_provider.clone()))
                         .with_cached_prestate(base_state.cache)
                         .with_bundle_update()
                         .build();
@@ -181,7 +181,7 @@ where
                             &mut fb_state,
                             &mut info,
                             &mut state_db,
-                            &state_provider,
+                            state_provider.clone(),
                             &mut tx_tracker,
                             &mut state_root_calc,
                             &block_cancel,
