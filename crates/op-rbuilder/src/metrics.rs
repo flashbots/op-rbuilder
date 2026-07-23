@@ -200,6 +200,9 @@ pub struct OpRBuilderMetrics {
     pub continuous_fee_improvement: Histogram,
     /// Builds completed but not published due to resolved gate
     pub flashblock_publish_suppressed_total: Counter,
+    /// Flashblock scheduler task ended abnormally (panicked) instead of
+    /// completing or being cancelled normally
+    pub flashblock_scheduler_death: Counter,
     /// TODO: Use labels for these
     /// Payload job ended because getPayload resolved
     pub payload_job_cancellation_resolved: Counter,
