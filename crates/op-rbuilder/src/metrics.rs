@@ -211,9 +211,9 @@ pub struct OpRBuilderMetrics {
     pub payload_job_cancellation_complete: Counter,
     /// Payload job ended due to a build error
     pub payload_job_cancellation_error: Counter,
-    /// Flashblock events skipped by the WebSocket subscriber after it lagged.
+    /// Built-payload fanout events skipped by the WebSocket subscriber after it lagged.
     pub ws_publish_lagged: Counter,
-    /// Flashblock events skipped by the p2p subscriber after it lagged.
+    /// Built-payload fanout events skipped by the p2p subscriber after it lagged.
     pub p2p_forward_lagged: Counter,
     /// Flashblock events skipped by the engine feedback subscriber after it lagged.
     pub engine_feedback_lagged: Counter,

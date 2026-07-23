@@ -183,8 +183,8 @@ mod tests {
     use super::*;
     use alloy_consensus::{BlockBody, Header};
     use alloy_primitives::{B256, Bloom, U256};
-    use metrics::Counter;
     use op_alloy_rpc_types_engine::{OpFlashblockPayloadDelta, OpFlashblockPayloadMetadata};
+    use reth_metrics::metrics::Counter;
     use reth_optimism_primitives::OpBlock;
     use reth_payload_builder::PayloadId;
     use reth_primitives_traits::Block as _;

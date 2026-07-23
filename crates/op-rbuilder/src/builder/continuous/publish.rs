@@ -121,7 +121,7 @@ where
             self.flashblock_tx(),
             self.metrics(),
             FlashblockEvent {
-                fb_payload: Arc::new(fb_payload_delta.clone()),
+                fb_payload: Arc::clone(fb_payload_delta),
                 built: Arc::new(new_payload.clone()),
                 attributes_timestamp_secs: ctx.attributes().timestamp(),
                 ws_eligible: true,
