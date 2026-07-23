@@ -10,22 +10,21 @@ use crate::{
         builder_tx::BuilderTransactions,
         cancellation::FlashblockJobCancellation,
         context::OpPayloadJobCtx,
+        fanout::{self, FlashblockEvent},
         payload::{
             BuildProgress, BuildState, FlashblocksState, JobDeps, OpPayloadBuilder,
             PayloadBuildStats,
         },
-        timing::compute_slot_offset_ms,
     },
-    metrics::record_flashblock_publish_timing,
     primitives::reth::ExecutionInfo,
     traits::{ClientBounds, PoolBounds},
 };
 use alloy_primitives::B256;
 use reth_node_api::PayloadBuilderError;
 use reth_optimism_node::OpBuiltPayload;
-use std::{ops::ControlFlow, time::Instant};
+use std::{ops::ControlFlow, sync::Arc, time::Instant};
 use tokio::sync::watch;
-use tracing::{debug, info, metadata::Level, span};
+use tracing::{info, metadata::Level, span};
 
 // === Per-interval publishing and advancement =================
 //
@@ -101,17 +100,14 @@ where
     Client: ClientBounds + 'static,
     BuilderTx: BuilderTransactions + Send + Sync + 'static,
 {
-    /// Publish a candidate flashblock immediately. The context is only used for
-    /// publish timing metadata, so this can run before awaiting the build task.
-    /// Returns `(byte_size, slot_offset_ms)` so the caller can include
-    /// slot_offset_ms in the fb_published tx_trace log.
+    /// Publish a candidate flashblock immediately, before awaiting the build task.
     fn publish_candidate(
         &self,
         candidate: &BestCandidate,
         best_payload_tx: &watch::Sender<Option<OpBuiltPayload>>,
         fb_span: &tracing::Span,
         ctx: &OpPayloadJobCtx,
-    ) -> Result<(usize, f64), PayloadBuilderError> {
+    ) {
         let _publish_span = if fb_span.is_none() {
             tracing::Span::none()
         } else {
@@ -120,16 +116,18 @@ where
         .entered();
 
         let (_, ref new_payload, ref fb_payload_delta) = candidate.result;
-        let flashblock_byte_size = self
-            .ws_pub()
-            .publish(fb_payload_delta)
-            .map_err(PayloadBuilderError::other)?;
         best_payload_tx.send_replace(Some(new_payload.clone()));
-        self.notify_built_payload(new_payload.clone());
-        let slot_offset_ms =
-            compute_slot_offset_ms(ctx.attributes().timestamp(), self.config().block_time);
-        record_flashblock_publish_timing(candidate.fb_state.flashblock_index(), slot_offset_ms);
-        Ok((flashblock_byte_size, slot_offset_ms))
+        fanout::emit(
+            self.flashblock_tx(),
+            self.metrics(),
+            FlashblockEvent {
+                fb_payload: Arc::clone(fb_payload_delta),
+                built: Arc::new(new_payload.clone()),
+                attributes_timestamp_secs: ctx.attributes().timestamp(),
+                ws_eligible: true,
+                tx_trace_total_txs: candidate.info.executed_transactions.len(),
+            },
+        );
     }
 
     pub(super) async fn publish_and_spawn_next(
@@ -285,12 +283,7 @@ where
     ) -> Result<ControlFlow<PayloadBuildStats, FlashblockInterval>, PayloadBuilderError> {
         match outcome {
             TriggerOutcome::PublishAndAdvance | TriggerOutcome::PublishAndStop => {
-                let (byte_size, slot_offset_ms) = self.publish_candidate(
-                    &candidate,
-                    deps.best_payload_tx,
-                    fb_span,
-                    &candidate_ctx,
-                )?;
+                self.publish_candidate(&candidate, deps.best_payload_tx, fb_span, &candidate_ctx);
                 self.record_continuous_candidate_metrics(
                     fb_span,
                     candidates_evaluated,
@@ -303,8 +296,6 @@ where
                     fb_span,
                     candidate_ctx,
                     candidate,
-                    byte_size,
-                    slot_offset_ms,
                     candidates_evaluated,
                     candidates_improved,
                     new_fb_cancel,
@@ -375,8 +366,6 @@ where
         fb_span: &tracing::Span,
         ctx: OpPayloadJobCtx,
         candidate: BestCandidate,
-        byte_size: usize,
-        slot_offset_ms: f64,
         candidates_evaluated: u64,
         candidates_improved: u64,
         new_fb_cancel: FlashblockJobCancellation,
@@ -413,24 +402,6 @@ where
             .address_limiter()
             .restore_pending(&limiter_snapshot);
 
-        if self.config().enable_tx_tracking_debug_logs {
-            debug!(
-                target: "tx_trace",
-                payload_id = %base_state.ctx.payload_id(),
-                block_number = base_state.ctx.block_number(),
-                flashblock_index = base_state.fb_state.flashblock_index(),
-                byte_size,
-                total_txs = base_state.info.executed_transactions.len(),
-                slot_offset_ms,
-                stage = "fb_published"
-            );
-        }
-
-        base_state
-            .ctx
-            .metrics
-            .flashblock_byte_size_histogram
-            .record(byte_size as f64);
         base_state
             .ctx
             .metrics

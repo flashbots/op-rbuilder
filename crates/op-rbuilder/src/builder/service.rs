@@ -3,6 +3,7 @@ use crate::{
     builder::{
         BuilderConfig,
         builder_tx::BuilderTransactions,
+        fanout,
         flashblocks_builder_tx::{FlashblocksBuilderTx, FlashblocksNumberBuilderTx},
         generator::BlockPayloadJobGenerator,
         p2p::{AGENT_VERSION, FLASHBLOCKS_STREAM_PROTOCOL, Message},
@@ -116,6 +117,8 @@ impl FlashblocksServiceBuilder {
         let metrics = Arc::new(OpRBuilderMetrics::default());
         let task_metrics = Arc::new(FlashblocksTaskMetrics::new());
         let pool_change_epoch = Arc::new(AtomicU64::new(0));
+        let block_time = self.0.block_time;
+        let tx_tracking_logs = self.0.enable_tx_tracking_debug_logs;
 
         if flashblocks_config.continuous_build {
             let mut pending_txs =
@@ -129,9 +132,9 @@ impl FlashblocksServiceBuilder {
             });
         }
 
-        // Channels for built flashblock payloads
-        let (built_fb_payload_tx, built_fb_payload_rx) = tokio::sync::mpsc::channel(16);
-        let (built_payload_tx, built_payload_rx) = tokio::sync::mpsc::channel(16);
+        let (flashblock_tx, ws_receiver) = fanout::channel();
+        let p2p_receiver = flashblock_tx.subscribe();
+        let engine_feedback_receiver = flashblock_tx.subscribe();
 
         let ws_pub = WebSocketPublisher::new(
             flashblocks_config.ws_addr,
@@ -146,9 +149,7 @@ impl FlashblocksServiceBuilder {
             ctx.provider().clone(),
             self.0.clone(),
             builder_tx,
-            built_fb_payload_tx,
-            built_payload_tx,
-            ws_pub,
+            flashblock_tx,
             metrics.clone(),
             task_metrics.clone(),
             pool_change_epoch,
@@ -170,16 +171,47 @@ impl FlashblocksServiceBuilder {
             OpPayloadSyncerConfig::new(self.0, OpEvmConfig::optimism(ctx.chain_spec()))
                 .wrap_err("failed to create flashblocks payload builder context")?;
 
+        let payload_events_handle = payload_service.payload_events_handle();
         let payload_handler = PayloadHandler::new(
-            built_fb_payload_rx,
-            built_payload_rx,
             incoming_message_rx,
-            outgoing_message_tx,
-            payload_service.payload_events_handle(),
+            payload_events_handle.clone(),
             syncer_config,
             ctx.provider().clone(),
             ctx.task_executor().clone(),
-            metrics,
+            metrics.clone(),
+        );
+
+        ctx.task_executor().spawn_critical_task(
+            "flashblocks websocket subscriber",
+            task_metrics
+                .websocket_subscriber
+                .instrument(fanout::websocket_subscriber(
+                    ws_receiver,
+                    ws_pub,
+                    metrics.clone(),
+                    block_time,
+                    tx_tracking_logs,
+                )),
+        );
+        ctx.task_executor().spawn_critical_task(
+            "flashblocks p2p subscriber",
+            task_metrics
+                .p2p_subscriber
+                .instrument(fanout::p2p_subscriber(
+                    p2p_receiver,
+                    outgoing_message_tx,
+                    metrics.clone(),
+                )),
+        );
+        ctx.task_executor().spawn_critical_task(
+            "flashblocks engine feedback subscriber",
+            task_metrics
+                .engine_feedback_subscriber
+                .instrument(fanout::engine_feedback_subscriber(
+                    engine_feedback_receiver,
+                    payload_events_handle,
+                    metrics,
+                )),
         );
 
         ctx.task_executor().spawn_critical_task(

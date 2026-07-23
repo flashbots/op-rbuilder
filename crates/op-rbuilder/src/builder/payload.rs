@@ -1,4 +1,7 @@
-use super::{state_root::StateRootCalculator, wspub::WebSocketPublisher};
+use super::{
+    fanout::{self, FlashblockEvent},
+    state_root::StateRootCalculator,
+};
 use crate::{
     builder::{
         BuilderConfig,
@@ -11,12 +14,12 @@ use crate::{
         },
         context::{OpPayloadBuilderCtx, OpPayloadJobCtx},
         generator::{BuildArguments, PayloadBuilder},
-        timing::{FlashblockScheduler, compute_slot_offset_ms},
+        timing::FlashblockScheduler,
     },
     evm::OpBlockEvmFactory,
     hardforks::ActiveHardforks,
     limiter::AddressLimiter,
-    metrics::{OpRBuilderMetrics, record_flashblock_publish_timing},
+    metrics::OpRBuilderMetrics,
     primitives::reth::ExecutionInfo,
     runtime_ext::RuntimeExt,
     tokio_metrics::FlashblocksTaskMetrics,
@@ -44,7 +47,7 @@ use std::{
     sync::{Arc, atomic::AtomicU64},
     time::{Duration, Instant},
 };
-use tokio::sync::{mpsc, watch};
+use tokio::sync::{broadcast, mpsc, watch};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, info_span, metadata::Level, span, warn};
 
@@ -363,15 +366,8 @@ pub(crate) struct OpPayloadBuilderInner<Pool, Client, BuilderTx> {
     pool: Pool,
     /// Node client
     client: Client,
-    /// Sender for sending built flashblock payloads to [`PayloadHandler`],
-    /// which broadcasts outgoing flashblock payloads via p2p.
-    built_fb_payload_tx: mpsc::Sender<OpBuiltPayload>,
-    /// Sender for sending built full block payloads to [`PayloadHandler`],
-    /// which updates the engine tree state.
-    built_payload_tx: mpsc::Sender<OpBuiltPayload>,
-    /// WebSocket publisher for broadcasting flashblocks
-    /// to all connected subscribers.
-    ws_pub: WebSocketPublisher,
+    /// Non-blocking publication bus for locally built flashblocks.
+    flashblock_tx: broadcast::Sender<FlashblockEvent>,
     /// System configuration for the builder
     config: BuilderConfig,
     /// The end of builder transaction type
@@ -393,12 +389,8 @@ impl<Pool, Client, BuilderTx> OpPayloadBuilderInner<Pool, Client, BuilderTx> {
         &self.client
     }
 
-    pub(crate) fn ws_pub(&self) -> &WebSocketPublisher {
-        &self.ws_pub
-    }
-
-    pub(crate) fn config(&self) -> &BuilderConfig {
-        &self.config
+    pub(crate) fn flashblock_tx(&self) -> &broadcast::Sender<FlashblockEvent> {
+        &self.flashblock_tx
     }
 
     pub(crate) fn metrics(&self) -> &OpRBuilderMetrics {
@@ -445,9 +437,7 @@ where
         client: Client,
         config: BuilderConfig,
         builder_tx: BuilderTx,
-        built_fb_payload_tx: mpsc::Sender<OpBuiltPayload>,
-        built_payload_tx: mpsc::Sender<OpBuiltPayload>,
-        ws_pub: WebSocketPublisher,
+        flashblock_tx: broadcast::Sender<FlashblockEvent>,
         metrics: Arc<OpRBuilderMetrics>,
         task_metrics: Arc<FlashblocksTaskMetrics>,
         pool_change_epoch: Arc<AtomicU64>,
@@ -477,9 +467,7 @@ where
                 builder_ctx,
                 pool,
                 client,
-                built_fb_payload_tx,
-                built_payload_tx,
-                ws_pub,
+                flashblock_tx,
                 config,
                 builder_tx,
                 task_metrics,
@@ -675,42 +663,25 @@ where
             ));
         }
 
+        let payload_id = fb_payload.payload_id;
         best_payload_tx.send_replace(Some(payload.clone()));
-        self.notify_built_payload(payload);
+        fanout::emit(
+            &self.flashblock_tx,
+            self.metrics(),
+            FlashblockEvent {
+                fb_payload: Arc::new(fb_payload),
+                built: Arc::new(payload),
+                attributes_timestamp_secs: config.attributes.timestamp(),
+                ws_eligible: !ctx.attributes().no_tx_pool,
+                tx_trace_total_txs: info.executed_transactions.len(),
+            },
+        );
 
         info!(
             target: "payload_builder",
-            id = %fb_payload.payload_id,
+            id = %payload_id,
             "Fallback block built"
         );
-
-        // not emitting flashblock if no_tx_pool in FCU, it's just syncing
-        if !ctx.attributes().no_tx_pool {
-            let flashblock_byte_size = self
-                .ws_pub
-                .publish(&fb_payload)
-                .map_err(PayloadBuilderError::other)?;
-
-            let slot_offset_ms =
-                compute_slot_offset_ms(config.attributes.timestamp(), self.config.block_time);
-            record_flashblock_publish_timing(fb_payload.index, slot_offset_ms);
-
-            if self.config.enable_tx_tracking_debug_logs {
-                debug!(
-                    target: "tx_trace",
-                    payload_id = %ctx.payload_id(),
-                    block_number = ctx.block_number(),
-                    flashblock_index = fb_payload.index,
-                    byte_size = flashblock_byte_size,
-                    total_txs = info.executed_transactions.len(),
-                    slot_offset_ms,
-                    stage = "fb_published"
-                );
-            }
-            ctx.metrics
-                .flashblock_byte_size_histogram
-                .record(flashblock_byte_size as f64);
-        }
 
         if ctx.attributes().no_tx_pool {
             info!(
@@ -739,7 +710,7 @@ where
         let target_flashblocks = flashblock_scheduler.target_flashblocks();
         info!(
             target: "payload_builder",
-            id = %fb_payload.payload_id,
+            id = %payload_id,
             target_flashblocks,
             schedule = ?flashblock_scheduler,
             "Computed flashblock timing schedule"
@@ -806,7 +777,7 @@ where
                     tx,
                     payload_cancel.clone(),
                     fb_cancel,
-                    fb_payload.payload_id,
+                    payload_id,
                 )),
         );
 
@@ -980,7 +951,6 @@ where
             .publish_flashblock_payload(
                 &state.ctx,
                 deps.best_payload_tx,
-                &state.fb_state,
                 deps.payload_cancel,
                 built_flashblock,
             )
@@ -1086,37 +1056,10 @@ where
         })
     }
 
-    pub(crate) fn notify_built_payload(&self, payload: OpBuiltPayload) {
-        if let Err(e) = self.built_fb_payload_tx.try_send(payload.clone()) {
-            self.builder_ctx
-                .metrics
-                .built_fb_payload_send_failed
-                .increment(1);
-            warn!(
-                target: "payload_builder",
-                error = %e,
-                "Failed to send built flashblock payload to handler"
-            );
-        }
-
-        if let Err(e) = self.built_payload_tx.try_send(payload) {
-            self.builder_ctx
-                .metrics
-                .built_payload_send_failed
-                .increment(1);
-            warn!(
-                target: "payload_builder",
-                error = %e,
-                "Failed to send updated payload"
-            );
-        }
-    }
-
     fn publish_flashblock_payload(
         &self,
         ctx: &OpPayloadJobCtx,
         best_payload_tx: &watch::Sender<Option<OpBuiltPayload>>,
-        fb_state: &FlashblocksState,
         payload_cancel: &PayloadJobCancellation,
         built_flashblock: BuiltFlashblockOutput,
     ) -> eyre::Result<Option<FlashblocksState>> {
@@ -1134,38 +1077,25 @@ where
             return Ok(None);
         }
 
-        // After this point, all side effects are synchronous. If cancellation wins the race after
-        // this check, still publish the local payload so getPayload can include this flashblock.
-        let flashblock_byte_size = self
-            .ws_pub
-            .publish(&fb_payload)
-            .wrap_err("failed to publish flashblock via websocket")?;
+        // The publish decision (watch update + bus enqueue) is synchronous after this gate: no
+        // await can suppress a gated-in event or enqueue a gated-out one. Delivery is async and
+        // ordered per subscriber; cancellation after enqueue is indistinguishable from latency.
         let flashblock_tx_count = fb_payload.raw_transactions().len();
 
         best_payload_tx.send_replace(Some(new_payload.clone()));
-        self.notify_built_payload(new_payload);
-
-        let slot_offset_ms =
-            compute_slot_offset_ms(ctx.attributes().timestamp(), self.config.block_time);
-        record_flashblock_publish_timing(fb_state.flashblock_index(), slot_offset_ms);
-
-        if self.config.enable_tx_tracking_debug_logs {
-            debug!(
-                target: "tx_trace",
-                payload_id = %ctx.payload_id(),
-                block_number = ctx.block_number(),
-                flashblock_index = fb_state.flashblock_index(),
-                byte_size = flashblock_byte_size,
-                total_txs = flashblock_tx_count,
-                slot_offset_ms,
-                stage = "fb_published"
-            );
-        }
+        fanout::emit(
+            &self.flashblock_tx,
+            self.metrics(),
+            FlashblockEvent {
+                fb_payload: Arc::new(fb_payload),
+                built: Arc::new(new_payload),
+                attributes_timestamp_secs: ctx.attributes().timestamp(),
+                ws_eligible: true,
+                tx_trace_total_txs: flashblock_tx_count,
+            },
+        );
 
         ctx.metrics.flashblock_build_duration.record(build_duration);
-        ctx.metrics
-            .flashblock_byte_size_histogram
-            .record(flashblock_byte_size as f64);
         ctx.metrics
             .flashblock_num_tx_histogram
             .record(flashblock_tx_count as f64);

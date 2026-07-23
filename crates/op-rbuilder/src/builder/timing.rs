@@ -255,7 +255,8 @@ impl std::fmt::Debug for FlashblockScheduler {
 /// Compute the elapsed time in ms since the start of the slot.
 /// Slot start defined as `payload_timestamp - block_time`.
 pub(super) fn compute_slot_offset_ms(payload_timestamp: u64, block_time: Duration) -> f64 {
-    let slot_start = SystemTime::UNIX_EPOCH + Duration::from_secs(payload_timestamp) - block_time;
+    let slot_start =
+        SystemTime::UNIX_EPOCH + Duration::from_secs(payload_timestamp).saturating_sub(block_time);
     SystemTime::now()
         .duration_since(slot_start)
         .unwrap_or_default()
@@ -266,6 +267,22 @@ pub(super) fn compute_slot_offset_ms(payload_timestamp: u64, block_time: Duratio
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn slot_offset_saturates_before_unix_epoch() {
+        let before = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_secs_f64()
+            * 1000.0;
+        let offset_ms = compute_slot_offset_ms(1, Duration::from_secs(2));
+        let after = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_secs_f64()
+            * 1000.0;
+        assert!((before..=after).contains(&offset_ms));
+    }
 
     struct ComputeSendTimesTestCase {
         first_flashblock_offset_ms: u64,

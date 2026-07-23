@@ -20,7 +20,10 @@ use reth_provider::{
 };
 use reth_revm::State;
 use revm::Database;
-use std::{sync::atomic::Ordering, time::Duration};
+use std::{
+    sync::{Arc, atomic::Ordering},
+    time::Duration,
+};
 use tokio_util::sync::CancellationToken;
 use tracing::{field, info, metadata::Level, span, warn};
 
@@ -133,7 +136,7 @@ where
                     info: carried.info,
                     fb_state: carried.fb_state,
                     tx_tracker: carried.tx_tracker,
-                    result: (next_fb_state, new_payload, fb_payload),
+                    result: (next_fb_state, new_payload, Arc::new(fb_payload)),
                     build_duration: timings.total,
                     // no pool fetch
                     transaction_pool_fetch_duration: None,
@@ -247,7 +250,7 @@ where
                             build_duration: candidate_build_start.elapsed(),
                             transaction_pool_fetch_duration: timings.pool_fetch,
                             total_block_built_duration: Some(timings.assemble),
-                            result: (next_fb_state, new_payload, fb_payload),
+                            result: (next_fb_state, new_payload, Arc::new(fb_payload)),
                             limiter_snapshot: ctx.address_limiter().snapshot_pending(),
                             candidates_evaluated,
                             candidates_improved: candidates_improved + 1,

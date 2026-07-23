@@ -14,7 +14,10 @@ use op_alloy_rpc_types_engine::OpFlashblockPayload;
 use reth_node_api::PayloadBuilderError;
 use reth_optimism_node::OpBuiltPayload;
 use reth_revm::db::{CacheState, TransitionState};
-use std::time::{Duration, Instant};
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
 use tokio::sync::oneshot;
 
 /// Result of a continuous candidate loop within a single flashblock interval.
@@ -40,7 +43,7 @@ pub(super) type BuildReceiver = oneshot::Receiver<Result<BuildOutput, PayloadBui
 #[derive(Clone)]
 pub(super) struct BestCandidate {
     /// The flashblock state + sealed payload + flashblock delta for next flashblock
-    pub(super) result: (FlashblocksState, OpBuiltPayload, OpFlashblockPayload),
+    pub(super) result: (FlashblocksState, OpBuiltPayload, Arc<OpFlashblockPayload>),
     /// Total priority fees accumulated by this candidate (comparison key).
     pub(super) total_fees: U256,
     /// EVM cache.
