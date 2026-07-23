@@ -13,6 +13,7 @@ mod assembly;
 mod best_txs;
 mod builder_tx;
 pub(crate) mod cancellation;
+mod candidate;
 mod config;
 mod context;
 mod continuous;

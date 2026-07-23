@@ -2,9 +2,13 @@ use super::{state_root::StateRootCalculator, wspub::WebSocketPublisher};
 use crate::{
     builder::{
         BuilderConfig,
-        best_txs::{FlashblockPoolTxCursor, FlashblockTxTracker},
-        builder_tx::{BuilderTransactions, reserve_builder_tx_budget},
+        best_txs::FlashblockTxTracker,
+        builder_tx::BuilderTransactions,
         cancellation::{CancellationReason, FlashblockJobCancellation, PayloadJobCancellation},
+        candidate::{
+            CandidateKind, CandidateOutcome, CandidateSealFailure, CandidateTimings,
+            CarriedCandidate, InterruptPolicy,
+        },
         context::{OpPayloadBuilderCtx, OpPayloadJobCtx},
         generator::{BuildArguments, PayloadBuilder},
         timing::{FlashblockScheduler, compute_slot_offset_ms},
@@ -28,7 +32,6 @@ use reth_optimism_node::{OpBuiltPayload, OpPayloadBuilderAttributes};
 use reth_optimism_payload_builder::OpPayloadAttrs;
 use reth_optimism_primitives::{OpReceipt, OpTransactionSigned};
 use reth_payload_builder::PayloadId;
-use reth_payload_util::BestPayloadTransactions;
 use reth_revm::{
     State,
     cached::CachedReads,
@@ -37,7 +40,6 @@ use reth_revm::{
 };
 use reth_tasks::Runtime;
 use std::{
-    mem,
     ops::Deref,
     sync::{Arc, atomic::AtomicU64},
     time::{Duration, Instant},
@@ -150,6 +152,7 @@ struct FallbackBuildOutput<Cache, Transition> {
 struct FlashblockBuildOutput {
     state: BuildState,
     build_result: eyre::Result<Option<BuiltFlashblockOutput>>,
+    timings: CandidateTimings,
 }
 
 /// Result of building one flashblock in the naive loop: either carry the
@@ -183,7 +186,7 @@ pub(crate) struct PayloadBuildStats {
 }
 
 impl FlashblocksState {
-    fn new(target_flashblock_count: u64) -> Self {
+    pub(crate) fn new(target_flashblock_count: u64) -> Self {
         Self {
             target_flashblock_count,
             ..Default::default()
@@ -249,7 +252,7 @@ impl FlashblocksState {
         )
     }
 
-    fn with_batch_limits(
+    pub(crate) fn with_batch_limits(
         mut self,
         gas_per_batch: u64,
         da_per_batch: Option<u64>,
@@ -904,6 +907,7 @@ where
         let Some(FlashblockBuildOutput {
             state: new_state,
             build_result,
+            timings,
         }) = self
             .run_blocking_flashblock_build(deps.payload_cancel, state, parent_hash, fb_span.clone())
             .await?
@@ -911,6 +915,27 @@ where
             return Ok(FlashblockOutcome::Stop(pre_build_progress));
         };
         state = new_state;
+
+        if let Some(duration) = timings.pool_fetch {
+            state
+                .ctx
+                .metrics
+                .transaction_pool_fetch_duration
+                .record(duration);
+            state.ctx.metrics.transaction_pool_fetch_gauge.set(duration);
+        }
+        if let Some(duration) = timings.execution {
+            state
+                .ctx
+                .metrics
+                .payload_transaction_simulation_duration
+                .record(duration);
+            state
+                .ctx
+                .metrics
+                .payload_transaction_simulation_gauge
+                .set(duration);
+        }
 
         // Record span attributes now that we have results
         fb_span.record("tx_count", state.info.executed_transactions.len() as u64);
@@ -1156,12 +1181,12 @@ where
     ) -> eyre::Result<FlashblockBuildOutput> {
         let BuildState {
             ctx,
-            mut fb_state,
+            fb_state,
             mut info,
             cache,
             transition,
-            mut tx_tracker,
-            mut state_root_calc,
+            tx_tracker,
+            state_root_calc,
         } = build_state;
 
         let state_provider = self.client.state_by_block_hash(parent_hash)?;
@@ -1173,176 +1198,71 @@ where
         evm_state.transition_state = transition;
 
         let flashblock_index = fb_state.flashblock_index();
-        let mut target_gas_for_batch = fb_state.target_gas_for_batch();
-        let mut target_da_for_batch = fb_state.target_da_for_batch();
-        let mut target_da_footprint_for_batch = fb_state.target_da_footprint_for_batch();
-
         info!(
             target: "payload_builder",
             block_number = ctx.block_number(),
             flashblock_index,
-            target_gas = target_gas_for_batch,
+            target_gas = fb_state.target_gas_for_batch(),
             gas_used = info.cumulative_gas_used,
-            target_da = target_da_for_batch,
+            target_da = fb_state.target_da_for_batch(),
             da_used = info.cumulative_da_bytes_used,
             block_gas_used = ctx.block_gas_limit(),
-            target_da_footprint = target_da_footprint_for_batch,
+            target_da_footprint = fb_state.target_da_footprint_for_batch(),
             "Building flashblock",
         );
-        let flashblock_build_start_time = Instant::now();
-
-        let flashblock = fb_state.meta();
-        let builder_txs = self
-            .builder_tx
-            .add_builder_txs(
-                &state_provider,
-                &mut info,
-                &ctx.builder_tx_env(),
-                &mut evm_state,
-                true,
-                flashblock.is_first(),
-                flashblock.is_last(),
-            )
-            .inspect_err(
-                |e| error!(target: "payload_builder", error = %e, "Error simulating builder txs"),
-            )
-            .unwrap_or_default();
-
-        // only reserve builder tx gas / da size that has not been committed yet
-        // committed builder txs would have counted towards the gas / da used
-        let max_uncompressed_block_size = reserve_builder_tx_budget(
-            &builder_txs,
-            &mut target_gas_for_batch,
-            &mut target_da_for_batch,
-            &mut target_da_footprint_for_batch,
-            info.da_footprint_scalar,
-            ctx.max_uncompressed_block_size,
-            info.cumulative_uncompressed_bytes,
-        );
-
-        let best_txs_start_time = Instant::now();
-        let mut best_txs = FlashblockPoolTxCursor::new(&mut tx_tracker);
-        best_txs.refresh_iterator(
-            BestPayloadTransactions::new(
-                self.pool
-                    .best_transactions_with_attributes(ctx.best_transaction_attributes()),
-            ),
-            flashblock_index,
-        );
-        let transaction_pool_fetch_time = best_txs_start_time.elapsed();
-        ctx.metrics
-            .transaction_pool_fetch_duration
-            .record(transaction_pool_fetch_time);
-        ctx.metrics
-            .transaction_pool_fetch_gauge
-            .set(transaction_pool_fetch_time);
-
-        let tx_execution_start_time = Instant::now();
-        ctx.execute_best_transactions(
-            &mut info,
-            &mut evm_state,
-            &mut best_txs,
-            target_gas_for_batch.min(ctx.block_gas_limit()),
-            target_da_for_batch,
-            target_da_footprint_for_batch,
-            max_uncompressed_block_size,
-            fb_state.flashblock_index,
-        )
-        .wrap_err("failed to execute best transactions")?;
-        // Extract last transactions
-        let new_transactions: Vec<_> = fb_state
-            .slice_new_transactions(&info.executed_transactions)
-            .iter()
-            .map(|tx| tx.tx_hash())
-            .collect::<Vec<_>>();
-        best_txs.mark_committed(new_transactions);
-
-        // Remove reverted bundle txs from the pool so they aren't re-simulated in future blocks
-        if !info.reverted_bundle_tx_hashes.is_empty() {
-            let hashes = mem::take(&mut info.reverted_bundle_tx_hashes);
-            self.pool.remove_transactions(hashes);
-        }
-
-        // Block cancelled (new FCU, getPayload resolved, or deadline). Skip publishing.
-        if block_cancel.is_cancelled() {
-            let cache = std::mem::take(&mut evm_state.cache);
-            let transition = evm_state.transition_state.take();
-            return Ok(FlashblockBuildOutput {
-                state: BuildState {
-                    ctx,
-                    info,
-                    cache,
-                    transition,
-                    tx_tracker,
-                    fb_state,
-                    state_root_calc,
-                },
-                build_result: Ok(None),
-            });
-        }
-
-        let payload_transaction_simulation_time = tx_execution_start_time.elapsed();
-        ctx.metrics
-            .payload_transaction_simulation_duration
-            .record(payload_transaction_simulation_time);
-        ctx.metrics
-            .payload_transaction_simulation_gauge
-            .set(payload_transaction_simulation_time);
-
-        let flashblock = fb_state.meta();
-        if let Err(e) = self.builder_tx.add_builder_txs(
+        let flashblock_build_start = Instant::now();
+        let budget_targets = self.prepare_candidate_budget(
+            &ctx,
             &state_provider,
-            &mut info,
-            &ctx.builder_tx_env(),
             &mut evm_state,
-            false,
-            flashblock.is_first(),
-            flashblock.is_last(),
-        ) {
-            error!(target: "payload_builder", error = %e, "Error simulating builder txs");
-        }
+            &mut info,
+            &fb_state,
+        );
+        let outcome = self.build_candidate(
+            CandidateKind::PoolBacked,
+            budget_targets,
+            &ctx,
+            &state_provider,
+            &mut evm_state,
+            info,
+            fb_state,
+            tx_tracker,
+            state_root_calc,
+            block_cancel,
+            InterruptPolicy::JobOnly,
+        )?;
 
-        let (new_payload, mut fb_payload) = ctx
-            .block_assembly_input()?
-            .assemble(
-                &mut evm_state,
-                Some(&mut fb_state),
-                &mut info,
-                &mut state_root_calc,
-                ctx.metrics.clone(),
-                ctx.enable_tx_tracking_debug_logs,
-            )
-            .inspect_err(|_| ctx.metrics.invalid_built_blocks_count.increment(1))
-            .context("failed to build payload")?;
+        let (carried, build_result, timings) = match outcome {
+            CandidateOutcome::Built(built) => {
+                let next_flashblock_state = built.next_fb_state;
+                let new_payload = built.new_payload;
+                let fb_payload = built.fb_payload;
+                let timings = built.timings;
+                let build_result =
+                    (!block_cancel.is_cancelled()).then_some(BuiltFlashblockOutput {
+                        next_flashblock_state,
+                        new_payload,
+                        fb_payload,
+                        build_duration: flashblock_build_start.elapsed(),
+                    });
+                (built.carried, build_result, timings)
+            }
+            CandidateOutcome::Cancelled(cancelled) => (cancelled.carried, None, cancelled.timings),
+            CandidateOutcome::SealFailed(CandidateSealFailure::Input(err)) => return Err(err),
+            CandidateOutcome::SealFailed(CandidateSealFailure::Assemble(err)) => {
+                ctx.metrics.invalid_built_blocks_count.increment(1);
+                return Err(err.wrap_err("failed to build payload"));
+            }
+        };
+        let CarriedCandidate {
+            cache,
+            transition,
+            info,
+            fb_state,
+            tx_tracker,
+            state_root_calc,
+        } = carried;
 
-        fb_payload.index = flashblock_index;
-        fb_payload.base = None;
-
-        // Block canceled (new FCU, getPayload resolved, or deadline). The async outer
-        // loop owns publishing and re-checks cancellation before every side effect.
-        if block_cancel.is_cancelled() {
-            let cache = std::mem::take(&mut evm_state.cache);
-            let transition = evm_state.transition_state.take();
-            return Ok(FlashblockBuildOutput {
-                state: BuildState {
-                    ctx,
-                    info,
-                    cache,
-                    transition,
-                    tx_tracker,
-                    fb_state,
-                    state_root_calc,
-                },
-                build_result: Ok(None),
-            });
-        }
-
-        // Advance batch budgets for the next flashblock.
-        let next_flashblock_state =
-            fb_state.next_after_seal(target_da_for_batch, target_da_footprint_for_batch);
-
-        let cache = std::mem::take(&mut evm_state.cache);
-        let transition = evm_state.transition_state.take();
         Ok(FlashblockBuildOutput {
             state: BuildState {
                 ctx,
@@ -1353,12 +1273,8 @@ where
                 fb_state,
                 state_root_calc,
             },
-            build_result: Ok(Some(BuiltFlashblockOutput {
-                next_flashblock_state,
-                new_payload,
-                fb_payload,
-                build_duration: flashblock_build_start_time.elapsed(),
-            })),
+            build_result: Ok(build_result),
+            timings,
         })
     }
 
