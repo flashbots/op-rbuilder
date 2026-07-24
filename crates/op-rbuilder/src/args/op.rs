@@ -93,7 +93,7 @@ pub struct OpRbuilderArgs {
     #[arg(skip = std::env::var("ENABLE_TX_TRACKING_DEBUG_LOGS").is_ok_and(|v| v.eq_ignore_ascii_case("true")))]
     pub enable_tx_tracking_debug_logs: bool,
 
-    /// Path to builder playgorund to automatically start up the node connected to it
+    /// Path to builder playground to automatically start up the node connected to it
     #[arg(
         long = "builder.playground",
         num_args = 0..=1,
@@ -151,10 +151,20 @@ fn resolve_playground_auto_dir() -> Result<PathBuf> {
 
 fn resolve_playground_auto_dir_from(cwd: &Path) -> Result<PathBuf> {
     let decker_default = cwd.join(DECKER_DEFAULT_DIR);
-    if decker_default.exists() {
+    if decker_default.is_dir() {
         return Ok(decker_default);
     }
-    expand_shell(LEGACY_DEFAULT_DIR)
+
+    let legacy_default = expand_shell(LEGACY_DEFAULT_DIR)?;
+    if legacy_default.is_dir() {
+        return Ok(legacy_default);
+    }
+
+    Err(anyhow!(
+        "no devnet artifacts directory found (tried `{}` and `{}`)",
+        decker_default.display(),
+        legacy_default.display()
+    ))
 }
 
 fn expand_shell(s: &str) -> Result<PathBuf> {
