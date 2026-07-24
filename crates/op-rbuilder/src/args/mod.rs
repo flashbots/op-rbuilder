@@ -30,13 +30,12 @@ pub type Cli = reth_optimism_cli::Cli<OpChainSpecParser, OpRbuilderArgs>;
 impl CliExt for Cli {
     /// Checks if the node is started with the `--builder.playground` flag,
     /// and if so, populates the default values for the CLI arguments from the
-    /// playground configuration.
+    /// detected devnet directory layout: decker's devnet artifacts or
+    /// legacy builder-playground output (see `args::playground`).
     ///
-    /// The `--builder.playground` flag is used to populate the CLI arguments with
-    /// default values for running the builder against the playground environment.
-    ///
-    /// The values are populated from the default directory of the playground
-    /// configuration, which is `$HOME/.playground/devnet/` by default.
+    /// With a bare flag (no directory given), the default directory is the
+    /// first of `./.decker/runtime/artifacts` or
+    /// `$HOME/.local/state/builder-playground/devnet` that exists.
     ///
     /// Any manually specified CLI arguments by the user will override the defaults.
     fn populate_defaults(self) -> Self {
