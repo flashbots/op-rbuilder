@@ -1,7 +1,10 @@
 use std::{borrow::Cow, sync::Arc};
 
 use alloy_consensus::BlobTransactionValidationError;
-use alloy_eips::{Typed2718, eip7594::BlobTransactionSidecarVariant, eip7702::SignedAuthorization};
+use alloy_eips::{
+    Typed2718, eip2718::WithEncoded, eip7594::BlobTransactionSidecarVariant,
+    eip7702::SignedAuthorization,
+};
 use alloy_primitives::{Address, B256, Bytes, TxHash, TxKind, U256};
 use alloy_rpc_types_eth::{AccessList, erc4337::TransactionConditional};
 use reth_optimism_txpool::{
@@ -109,6 +112,10 @@ where
 
     fn into_consensus(self) -> Recovered<Self::Consensus> {
         self.inner.into_consensus()
+    }
+
+    fn into_consensus_with2718(self) -> WithEncoded<Recovered<Self::Consensus>> {
+        self.inner.into_consensus_with2718()
     }
 
     fn from_pooled(tx: Recovered<Self::Pooled>) -> Self {
