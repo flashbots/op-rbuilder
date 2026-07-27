@@ -15,9 +15,7 @@ use crate::{
     traits::{ClientBounds, PoolBounds},
 };
 use alloy_primitives::U256;
-use reth_provider::{
-    HashedPostStateProvider, ProviderError, StateRootProvider, StorageRootProvider,
-};
+use reth_provider::{ProviderError, StateProvider};
 use reth_revm::State;
 use revm::Database;
 use std::{
@@ -42,7 +40,7 @@ where
     #[expect(clippy::too_many_arguments)]
     pub(super) fn build_continuous_flashblock<
         DB: Database<Error = ProviderError> + std::fmt::Debug + AsRef<P>,
-        P: StateRootProvider + HashedPostStateProvider + StorageRootProvider,
+        P: StateProvider,
     >(
         &self,
         ctx: &OpPayloadJobCtx,

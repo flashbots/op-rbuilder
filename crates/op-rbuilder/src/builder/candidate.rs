@@ -13,9 +13,7 @@ use eyre::WrapErr as _;
 use op_alloy_rpc_types_engine::OpFlashblockPayload;
 use reth_optimism_node::OpBuiltPayload;
 use reth_payload_util::BestPayloadTransactions;
-use reth_provider::{
-    HashedPostStateProvider, ProviderError, StateRootProvider, StorageRootProvider,
-};
+use reth_provider::{ProviderError, StateProvider};
 use reth_revm::{
     State,
     db::{CacheState, TransitionState},
@@ -144,7 +142,7 @@ where
 {
     pub(crate) fn prepare_candidate_budget<
         DB: Database<Error = ProviderError> + std::fmt::Debug + AsRef<P>,
-        P: StateRootProvider + HashedPostStateProvider + StorageRootProvider,
+        P: StateProvider,
     >(
         &self,
         ctx: &OpPayloadJobCtx,
@@ -186,7 +184,7 @@ where
     #[expect(clippy::too_many_arguments)]
     pub(crate) fn build_candidate<
         DB: Database<Error = ProviderError> + std::fmt::Debug + AsRef<P>,
-        P: StateRootProvider + HashedPostStateProvider + StorageRootProvider,
+        P: StateProvider,
     >(
         &self,
         kind: CandidateKind,
