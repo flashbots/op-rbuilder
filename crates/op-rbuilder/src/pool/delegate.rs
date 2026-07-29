@@ -13,7 +13,8 @@ use reth_transaction_pool::{
     BestTransactionsAttributes, BlockInfo, GetPooledTransactionLimit, NewBlobSidecar,
     NewTransactionEvent, PoolResult, PoolSize, PoolTransaction, PropagatedTransactions,
     TransactionEvents, TransactionListenerKind, TransactionOrigin, TransactionPool,
-    ValidPoolTransaction, blobstore::BlobStoreError,
+    ValidPoolTransaction,
+    blobstore::{BlobStore, BlobStoreError},
 };
 use tokio::sync::mpsc::Receiver;
 
@@ -124,6 +125,9 @@ impl<P: TransactionPool<Transaction = FBPooledTransaction> + 'static> Transactio
             fn retain_unknown<A>(&self, announcement: &mut A)
             where
                 A: HandleMempoolData;
+            fn retain_contains<A>(&self, announcement: &mut A)
+            where
+                A: HandleMempoolData;
             fn get(
                 &self,
                 tx_hash: &TxHash,
@@ -201,6 +205,7 @@ impl<P: TransactionPool<Transaction = FBPooledTransaction> + 'static> Transactio
                 versioned_hashes: &[B256],
                 indices_bitarray: B128,
             ) -> Result<Vec<Option<BlobCellsAndProofsV1>>, BlobStoreError>;
+            fn blob_store(&self) -> Box<dyn BlobStore>;
         }
     }
 }
