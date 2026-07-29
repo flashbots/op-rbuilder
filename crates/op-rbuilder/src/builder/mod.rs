@@ -10,6 +10,9 @@ use crate::{
 };
 
 mod assembly;
+#[cfg(feature = "bench-internals")]
+#[doc(hidden)]
+pub mod bench;
 mod best_txs;
 mod builder_tx;
 pub(crate) mod cancellation;
