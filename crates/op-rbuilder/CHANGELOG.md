@@ -1,6 +1,37 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [0.4.11] - 2026-07-29
+
+### Bug Fixes
+
+- [`b91f3f6`](https://github.com/flashbots/op-rbuilder/commit/b91f3f6596ef9c73574c21fe6ae4813590fc5959) Missed flashblocks at end metric ([#548](https://github.com/flashbots/op-rbuilder/pull/548))
+- [`f7afad7`](https://github.com/flashbots/op-rbuilder/commit/f7afad7dfae78725d63882280bdced8d26991aef) Poison-tolerant lock for last_payload_cancel on the FCU path ([#551](https://github.com/flashbots/op-rbuilder/pull/551))
+- [`39d7fa0`](https://github.com/flashbots/op-rbuilder/commit/39d7fa0fb26102ae4920b943e713a574f393f94c) Derive config Defaults from cli defaults ([#554](https://github.com/flashbots/op-rbuilder/pull/554))
+- [`91f1913`](https://github.com/flashbots/op-rbuilder/commit/91f1913c38d475a72dbf1426881658dd3b0004db) Cancel p2p token when its node task ends ([#553](https://github.com/flashbots/op-rbuilder/pull/553))
+
+### Features
+
+- [`916647e`](https://github.com/flashbots/op-rbuilder/commit/916647eaf1e9d2e285c09ef92070b90a148a55c6) Count dropped built-payload channel sends ([#555](https://github.com/flashbots/op-rbuilder/pull/555))
+- [`858e0eb`](https://github.com/flashbots/op-rbuilder/commit/858e0eb41c77e43229d223ef09648cb90ee9c627) Support decker devnet artifacts ([#562](https://github.com/flashbots/op-rbuilder/pull/562))
+
+### Miscellaneous
+
+- [`02c2bea`](https://github.com/flashbots/op-rbuilder/commit/02c2bea079902a389becfb82b8ebc738c426373b) Replace deprecated fetch_update with try_update in test hooks ([#552](https://github.com/flashbots/op-rbuilder/pull/552))
+- [`83e1ed7`](https://github.com/flashbots/op-rbuilder/commit/83e1ed7ae69542ac503149a99573d661812b5439) Trigger binary and docker builds in release flow ([#558](https://github.com/flashbots/op-rbuilder/pull/558))
+- [`1817a58`](https://github.com/flashbots/op-rbuilder/commit/1817a581d309d41900e895ab6057115224ca27f5) Bump Cargo version to 0.4.11
+
+### Refactor
+
+- [`f3078be`](https://github.com/flashbots/op-rbuilder/commit/f3078bed27a0ea4f24c07ff6150f640515c3c5b1) Naive flashblock building ([#546](https://github.com/flashbots/op-rbuilder/pull/546))
+- [`23ed02f`](https://github.com/flashbots/op-rbuilder/commit/23ed02ffd4e4067ec0277c6ed88fe09862a53b06) Extract flashblock candidate build ([#560](https://github.com/flashbots/op-rbuilder/pull/560))
+- [`e24e7cc`](https://github.com/flashbots/op-rbuilder/commit/e24e7cc9b27d688a44afddf5b9ba433b9f46f02d) Fan out flashblock publication ([#559](https://github.com/flashbots/op-rbuilder/pull/559))
+
+### Testing
+
+- [`890de2b`](https://github.com/flashbots/op-rbuilder/commit/890de2bfcc7e59c2fbbde23d4b4259b6fc48cc48) Pin flashblock JSON wire format with golden regression tests ([#550](https://github.com/flashbots/op-rbuilder/pull/550))
+- [`17482c0`](https://github.com/flashbots/op-rbuilder/commit/17482c0b31698e3618dd08b871088a8f6d4cca8d) Add karst-fork coverage to in-process integration harness ([#561](https://github.com/flashbots/op-rbuilder/pull/561))
+
 ## [0.4.10] - 2026-06-24
 
 ### Miscellaneous
