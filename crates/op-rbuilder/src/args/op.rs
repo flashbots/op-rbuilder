@@ -45,7 +45,7 @@ pub struct OpRbuilderArgs {
 
     /// Maximum cumulative uncompressed (EIP-2718 encoded) block size in bytes
     // Explicit `id` avoids a clap argument-name collision: as of op-reth
-    // v2.3.2-rc.2, the flattened `RollupArgs` also defines a field named
+    // v2.4.0, the flattened `RollupArgs` also defines a field named
     // `max_uncompressed_block_size` (`--rollup.max-uncompressed-block-size`),
     // and clap derives an argument's id from the field name.
     #[arg(
