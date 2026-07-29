@@ -298,17 +298,17 @@ mod tests {
     use alloy_signer_local::PrivateKeySigner;
     use op_alloy_consensus::OpTxEnvelope;
     use op_revm::OpSpecId;
-    use reth_optimism_chainspec::BASE_MAINNET;
+    use reth_optimism_chainspec::UNICHAIN_MAINNET;
     use reth_optimism_evm::OpEvmConfig;
     use reth_primitives_traits::Account;
     use reth_revm::test_utils::StateProviderTest;
     use revm::context::CfgEnv;
 
     const ONE_ETH: U256 = U256::from_limbs([1_000_000_000_000_000_000, 0, 0, 0]);
-    const CHAIN_ID: u64 = 8453; // Base mainnet
+    const CHAIN_ID: u64 = 130; // Unichain mainnet
 
     fn test_evm_config() -> OpEvmConfig {
-        OpEvmConfig::optimism(BASE_MAINNET.clone())
+        OpEvmConfig::optimism(UNICHAIN_MAINNET.clone())
     }
 
     /// Create a TipState with a properly configured EVM env and the given state provider.
@@ -337,7 +337,7 @@ mod tests {
         sign_test_tx(
             signer,
             TxEip1559 {
-                chain_id: BASE_MAINNET.chain().id(),
+                chain_id: UNICHAIN_MAINNET.chain().id(),
                 nonce,
                 gas_limit: 21_000,
                 max_fee_per_gas: 20_000_000_000,
@@ -351,7 +351,7 @@ mod tests {
         sign_test_tx(
             signer,
             TxEip1559 {
-                chain_id: BASE_MAINNET.chain().id(),
+                chain_id: UNICHAIN_MAINNET.chain().id(),
                 nonce,
                 gas_limit: 100_000,
                 max_fee_per_gas: 20_000_000_000,

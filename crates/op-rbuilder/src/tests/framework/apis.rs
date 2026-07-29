@@ -5,7 +5,10 @@ use alloy_primitives::B256;
 use alloy_rpc_types_engine::{ForkchoiceUpdated, PayloadStatus};
 use core::{future::Future, marker::PhantomData};
 use jsonrpsee::{
-    core::{RpcResult, client::SubscriptionClientT},
+    core::{
+        RpcResult,
+        client::{Error as ClientError, SubscriptionClientT},
+    },
     proc_macros::rpc,
 };
 use op_alloy_rpc_types_engine::OpExecutionPayloadV4;
@@ -17,6 +20,8 @@ use reth_payload_builder::PayloadId;
 use reth_rpc_layer::{AuthClientLayer, JwtSecret};
 use serde_json::Value;
 use tracing::debug;
+
+const UNSUPPORTED_FORK_CODE: i32 = -38005;
 
 #[derive(Clone, Debug)]
 pub enum Address {
@@ -147,10 +152,19 @@ impl<P: Protocol> EngineApi<P> {
         payload_id: PayloadId,
     ) -> eyre::Result<<OpEngineTypes as EngineTypes>::ExecutionPayloadEnvelopeV4> {
         debug!(payload_id = %payload_id, time = %chrono::Utc::now(), "Fetching payload");
-        Ok(
-            OpEngineApiClient::<OpEngineTypes>::get_payload_v4(&self.client().await, payload_id)
-                .await?,
-        )
+        let client = self.client().await;
+        // Since op-reth v2.4.0 the engine API enforces version/fork pairing:
+        // Karst payloads are served only via getPayloadV5, older forks only via
+        // getPayloadV4, and mismatches fail with -38005 Unsupported fork. Try
+        // V5 and fall back so tests mirror a fork-aware CL without threading
+        // chainspec knowledge in here.
+        match OpEngineApiClient::<OpEngineTypes>::get_payload_v5(&client, payload_id).await {
+            Ok(payload) => Ok(payload),
+            Err(ClientError::Call(err)) if err.code() == UNSUPPORTED_FORK_CODE => {
+                Ok(OpEngineApiClient::<OpEngineTypes>::get_payload_v4(&client, payload_id).await?)
+            }
+            Err(err) => Err(err.into()),
+        }
     }
 
     pub async fn new_payload(
