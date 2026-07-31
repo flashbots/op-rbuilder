@@ -442,6 +442,7 @@ impl BlockAssemblyInput {
             execution_output: Arc::new(execution_output),
             trie_updates,
             hashed_state: Arc::new(hashed_state),
+            changed_paths: None,
         };
         debug!(
             target: "payload_builder",
@@ -529,6 +530,8 @@ impl BlockAssemblyInput {
                 withdrawals: self.withdrawals.clone().unwrap_or_default().to_vec(),
                 withdrawals_root: derived_block_artifacts.withdrawals_root.unwrap_or_default(),
                 blob_gas_used,
+                // This builder does not produce SDM post-exec transactions
+                post_exec_tx: None,
             },
             metadata,
         };

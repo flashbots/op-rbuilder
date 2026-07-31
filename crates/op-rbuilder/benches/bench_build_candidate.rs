@@ -31,7 +31,7 @@ use op_rbuilder::{
 };
 use rand::{Rng, SeedableRng, rngs::StdRng};
 use reth_basic_payload_builder::PayloadConfig;
-use reth_chainspec::MAINNET;
+use reth_chainspec::{EthChainSpec, MAINNET};
 use reth_db::{tables, transaction::DbTxMut};
 use reth_optimism_chainspec::OpChainSpecBuilder;
 use reth_optimism_node::OpPayloadBuilderAttributes;
@@ -54,7 +54,6 @@ use reth_transaction_pool::PoolTransaction;
 use reth_trie::HashedPostState;
 
 const SEED: u64 = 0x5eed_f1a5_b10c;
-const CHAIN_ID: u64 = 8453;
 const BASE_FEE: u64 = 1_000_000_000;
 const BLOCK_GAS_LIMIT: u64 = 30_000_000;
 const MAX_TXS: usize = 200;
@@ -107,13 +106,14 @@ struct BenchFixture {
 impl BenchFixture {
     fn new() -> Self {
         let chain_spec = Arc::new(
-            OpChainSpecBuilder::base_mainnet()
+            OpChainSpecBuilder::optimism_mainnet()
                 .jovian_activated()
                 .build(),
         );
-        let (mut signers, mut transactions) = generate_transactions(SEED);
+        let chain_id = chain_spec.chain_id();
+        let (mut signers, mut transactions) = generate_transactions(SEED, chain_id);
         let (warm_signers, mut warm_transactions) =
-            generate_transactions(SEED ^ 0xa11c_e5e5_cac4_ebad);
+            generate_transactions(SEED ^ 0xa11c_e5e5_cac4_ebad, chain_id);
         signers.extend(warm_signers);
         // Priority fee descends with generation index, so pool ordering preserves the scenario
         // layout that the disposition/nonce assertions below rely on.
@@ -380,7 +380,7 @@ fn transaction_disposition(index: usize) -> TransactionDisposition {
     }
 }
 
-fn generate_transactions(seed: u64) -> (Vec<Signer>, Vec<FBPooledTransaction>) {
+fn generate_transactions(seed: u64, chain_id: u64) -> (Vec<Signer>, Vec<FBPooledTransaction>) {
     let mut rng = StdRng::seed_from_u64(seed);
     let mut signers = Vec::with_capacity(MAX_TXS);
     let mut signer_nonces = Vec::with_capacity(MAX_TXS);
@@ -443,7 +443,7 @@ fn generate_transactions(seed: u64) -> (Vec<Signer>, Vec<FBPooledTransaction>) {
             )
         };
         let tx = TxEip1559 {
-            chain_id: CHAIN_ID,
+            chain_id,
             nonce,
             gas_limit,
             max_fee_per_gas: BASE_FEE as u128 + priority_fee,

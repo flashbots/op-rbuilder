@@ -401,6 +401,7 @@ mod golden_wire {
                     "8888888888888888888888888888888888888888888888888888888888888888"
                 ),
                 blob_gas_used: Some(0),
+                post_exec_tx: None,
             },
             metadata: OpFlashblockPayloadMetadata {
                 block_number: 100,
@@ -443,6 +444,7 @@ mod golden_wire {
                     "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
                 ),
                 blob_gas_used: None,
+                post_exec_tx: None,
             },
             metadata: OpFlashblockPayloadMetadata {
                 block_number: 100,
