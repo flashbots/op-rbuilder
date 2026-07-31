@@ -205,6 +205,10 @@ impl<P: TransactionPool<Transaction = FBPooledTransaction> + 'static> Transactio
                 versioned_hashes: &[B256],
                 indices_bitarray: B128,
             ) -> Result<Vec<Option<BlobCellsAndProofsV1>>, BlobStoreError>;
+            fn has_blobs_for_versioned_hashes(
+                &self,
+                versioned_hashes: &[B256],
+            ) -> Result<Vec<bool>, BlobStoreError>;
             fn blob_store(&self) -> Box<dyn BlobStore>;
         }
     }

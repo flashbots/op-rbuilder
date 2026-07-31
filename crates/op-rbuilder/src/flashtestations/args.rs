@@ -18,7 +18,10 @@ pub struct FlashtestationsArgs {
     pub flashtestations_enabled: bool,
 
     /// Whether to use the debug HTTP service for quotes
+    // Explicit `id` avoids clap argument-name collision: as of reth v2.4.x,
+    // the flattened `JitArgs` also defines a field named `debug` (`--jit.debug`)
     #[arg(
+        id = "flashtestations_debug",
         long = "flashtestations.debug",
         default_value = "false",
         env = "FLASHTESTATIONS_DEBUG"

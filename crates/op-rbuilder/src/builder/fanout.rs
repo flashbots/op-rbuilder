@@ -210,6 +210,7 @@ mod tests {
                     withdrawals: Vec::new(),
                     withdrawals_root: B256::ZERO,
                     blob_gas_used: None,
+                    post_exec_tx: None,
                 },
                 metadata: OpFlashblockPayloadMetadata {
                     block_number: index,
