@@ -8,6 +8,7 @@ All notable changes to this project will be documented in this file.
 - [`42c4d1b`](https://github.com/flashbots/op-rbuilder/commit/42c4d1bed5de8df9192f7070ace69cfaee64970d) Add flashblock candidate execution bench gate ([#564](https://github.com/flashbots/op-rbuilder/pull/564))
 - [`e1a6c32`](https://github.com/flashbots/op-rbuilder/commit/e1a6c32d15ee0ae700f6d739b6e9e93d0d383fe0) Karst getpayloadv5 + op-reth v2.4.0 ([#567](https://github.com/flashbots/op-rbuilder/pull/567))
 - [`7e786ef`](https://github.com/flashbots/op-rbuilder/commit/7e786ef5a32393002c86fa24f89dd77736e11676) Bump Cargo version to 0.4.12
+- [`0093de0`](https://github.com/flashbots/op-rbuilder/commit/0093de0d680273e55b16c618c1537e1130fc2abf) Reth v2.4.1 and op-reth v2.4.1 ([#569](https://github.com/flashbots/op-rbuilder/pull/569))
 
 ## [0.4.11] - 2026-07-29
 
