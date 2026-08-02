@@ -198,6 +198,14 @@ pub struct OpRBuilderMetrics {
     /// candidate loop: best-candidate fees minus first-candidate fees.
     /// Recorded once per flashblock interval; 0 if no improvement.
     pub continuous_fee_improvement: Histogram,
+    /// Current value of the continuous-build pool-change epoch counter.
+    /// A flatlined gauge on a dashboard means the pool listener died, not
+    /// that the pool is idle.
+    pub pool_change_epoch: Gauge,
+    /// Pool-change epoch listener task exited (pending-tx channel closed or
+    /// panicked); continuous candidate gating is frozen and degrades to its
+    /// idle-backoff ceiling until restart.
+    pub pool_epoch_listener_exit: Counter,
     /// Builds completed but not published due to resolved gate
     pub flashblock_publish_suppressed_total: Counter,
     /// TODO: Use labels for these
