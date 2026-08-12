@@ -1,6 +1,13 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [0.4.13] - 2026-08-12
+
+### Miscellaneous
+
+- [`82d1781`](https://github.com/flashbots/op-rbuilder/commit/82d178119bc42c3abb1f5624719b03b485f4a014) Bump reth and op-reth pins ([#570](https://github.com/flashbots/op-rbuilder/pull/570))
+- [`69f191c`](https://github.com/flashbots/op-rbuilder/commit/69f191c410718f9659d9d8d1db002bc0d406a8a4) Bump Cargo version to 0.4.13
+
 ## [0.4.12] - 2026-07-29
 
 ### Miscellaneous
