@@ -214,8 +214,8 @@ vergen-git2 = "9.0.4"
 opentelemetry = { version = "0.31", features = ["trace"] }
 tracing-loki = "0.2.6"
 
-# tdx attestation
-tdx = { git = "https://github.com/automata-network/tdx-attestation-sdk.git", features = ["configfs"], rev = "43bfd5a9" }
+# tdx-attestation-sdk v1.2.0
+tdx = { git = "https://github.com/automata-network/tdx-attestation-sdk.git", features = ["configfs"], rev = "d4480d20" }
 
 # Unify op-alloy/alloy-op crates so crates.io transitive deps resolve to the same
 # git versions used by the ethereum-optimism/optimism repo.
