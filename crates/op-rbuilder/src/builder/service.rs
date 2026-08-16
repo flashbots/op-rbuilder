@@ -17,6 +17,7 @@ use crate::{
     traits::{NodeBounds, PoolBounds},
 };
 use eyre::WrapErr as _;
+use futures::FutureExt;
 use reth_node_api::NodeTypes;
 use reth_node_builder::{BuilderContext, components::PayloadServiceBuilder};
 use reth_optimism_evm::OpEvmConfig;
@@ -124,11 +125,22 @@ impl FlashblocksServiceBuilder {
             let mut pending_txs =
                 pool.pending_transactions_listener_for(TransactionListenerKind::All);
             let pool_change_epoch = pool_change_epoch.clone();
+            let listener_metrics = metrics.clone();
             ctx.task_executor().spawn_task(async move {
-                // Every new pending tx may improve current candidate
-                while pending_txs.recv().await.is_some() {
-                    pool_change_epoch.fetch_add(1, Ordering::Relaxed);
-                }
+                let listen = async {
+                    // Every new pending tx may improve current candidate
+                    while pending_txs.recv().await.is_some() {
+                        let epoch = pool_change_epoch.fetch_add(1, Ordering::Relaxed) + 1;
+                        listener_metrics.pool_change_epoch.set(epoch as f64);
+                    }
+                };
+                let _ = std::panic::AssertUnwindSafe(listen).catch_unwind().await;
+                listener_metrics.pool_epoch_listener_exit.increment(1);
+                warn!(
+                    target: "payload_builder",
+                    "Pool epoch listener exited (channel closed or task panicked); \
+                     continuous candidate gating is now frozen and will degrade to idle-backoff"
+                );
             });
         }
 
