@@ -2308,8 +2308,8 @@ checksum = "f2032f911046de80f0a198e0901378627c33f59ea0ac00e363d481118bd70a53"
 
 [[package]]
 name = "automata-dcap-evm-bindings"
-version = "1.1.1"
-source = "git+https://github.com/automata-network/automata-dcap-attestation?rev=b996b1b#b996b1be21f574694e4c28c533e8cbab6b83ab26"
+version = "1.2.0"
+source = "git+https://github.com/automata-network/automata-dcap-attestation?rev=v1.2.0#f71d6521cc30806da369c7ee609af47c02b73448"
 dependencies = [
  "alloy",
  "serde",
@@ -2317,37 +2317,29 @@ dependencies = [
 
 [[package]]
 name = "automata-dcap-network-registry"
-version = "1.1.1"
-source = "git+https://github.com/automata-network/automata-dcap-attestation?rev=b996b1b#b996b1be21f574694e4c28c533e8cbab6b83ab26"
+version = "1.2.0"
+source = "git+https://github.com/automata-network/automata-dcap-attestation?rev=v1.2.0#f71d6521cc30806da369c7ee609af47c02b73448"
 dependencies = [
  "alloy",
  "anyhow",
  "automata-dcap-evm-bindings",
  "automata-dcap-utils",
- "flate2",
- "hex",
  "include_dir",
- "reqwest 0.12.28",
  "serde",
  "serde_json",
- "sha2",
- "tar",
  "toml 0.8.23",
 ]
 
 [[package]]
 name = "automata-dcap-utils"
-version = "1.1.1"
-source = "git+https://github.com/automata-network/automata-dcap-attestation?rev=b996b1b#b996b1be21f574694e4c28c533e8cbab6b83ab26"
+version = "1.2.0"
+source = "git+https://github.com/automata-network/automata-dcap-attestation?rev=v1.2.0#f71d6521cc30806da369c7ee609af47c02b73448"
 dependencies = [
  "alloy",
  "anyhow",
  "dcap-rs",
  "hex",
- "proc-macro2",
- "quote",
  "serde",
- "toml 0.8.23",
 ]
 
 [[package]]
@@ -3946,8 +3938,8 @@ dependencies = [
 
 [[package]]
 name = "dcap-rs"
-version = "1.1.1"
-source = "git+https://github.com/automata-network/automata-dcap-attestation?rev=b996b1b#b996b1be21f574694e4c28c533e8cbab6b83ab26"
+version = "1.2.0"
+source = "git+https://github.com/automata-network/automata-dcap-attestation?rev=v1.2.0#f71d6521cc30806da369c7ee609af47c02b73448"
 dependencies = [
  "alloy-sol-types",
  "anyhow",
@@ -8507,8 +8499,8 @@ dependencies = [
 
 [[package]]
 name = "pccs-reader-rs"
-version = "1.1.1"
-source = "git+https://github.com/automata-network/automata-dcap-attestation?rev=b996b1b#b996b1be21f574694e4c28c533e8cbab6b83ab26"
+version = "1.2.0"
+source = "git+https://github.com/automata-network/automata-dcap-attestation?rev=v1.2.0#f71d6521cc30806da369c7ee609af47c02b73448"
 dependencies = [
  "alloy",
  "anyhow",
@@ -9564,9 +9556,7 @@ dependencies = [
  "base64 0.22.1",
  "bytes",
  "encoding_rs",
- "futures-channel",
  "futures-core",
- "futures-util",
  "h2",
  "http",
  "http-body",
@@ -14298,7 +14288,7 @@ checksum = "61c41af27dd6d1e27b1b16b489db798443478cef1f06a660c96db617ba5de3b1"
 [[package]]
 name = "tdx"
 version = "0.2.0"
-source = "git+https://github.com/automata-network/tdx-attestation-sdk.git?rev=43bfd5a9#43bfd5a99090bdeefb53b994a4b9717f93bd7d86"
+source = "git+https://github.com/automata-network/tdx-attestation-sdk.git?rev=d4480d20#d4480d2007f7dc7cf2cd56e359b16fcb728bf020"
 dependencies = [
  "alloy",
  "anyhow",
