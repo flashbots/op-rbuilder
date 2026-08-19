@@ -51,7 +51,6 @@ incremental = false
 unreachable_pub = "deny"
 
 [workspace.lints.clippy]
-double_must_use = "allow"
 redundant_clone = "warn"
 redundant_field_names = "allow"
 unused_async = "warn"
@@ -148,7 +147,7 @@ op-alloy-rpc-types = { version = "2.0.0", default-features = false }
 op-alloy-rpc-types-engine = { version = "2.0.0", default-features = false, features = ["serde"] }
 
 anyhow = "1.0"
-async-trait = { version = "0.1.83" }
+async-trait = { version = "0.1.92" }
 axum = "0.8.1"
 chrono = "0.4"
 clap = { version = "4.4.3", features = ["derive", "env", "string"] }
