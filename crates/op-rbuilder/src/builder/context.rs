@@ -1,10 +1,16 @@
 use alloy_consensus::{Transaction, conditional::BlockConditionalAttributes};
-use alloy_eips::{Encodable2718, Typed2718};
-use alloy_evm::Database;
+use alloy_eips::{Encodable2718, Typed2718, eip2718::WithEncoded};
+use alloy_evm::{
+    Database, Evm,
+    block::{BlockExecutor as AlloyBlockExecutor, CommitChanges, TxResult},
+};
 use alloy_primitives::{B256, BlockHash, U256};
 use op_revm::L1BlockInfo;
 use reth_basic_payload_builder::PayloadConfig;
-use reth_evm::{ConfigureEvm, Evm, EvmError, InvalidTxError, execute::BlockBuilder};
+use reth_evm::{
+    ConfigureEvm,
+    execute::{BlockBuilder, BlockExecutionError, BlockValidationError},
+};
 use reth_node_api::PayloadBuilderError;
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
@@ -22,7 +28,7 @@ use reth_primitives_traits::{InMemorySize, SealedHeader, SignedTransaction};
 use reth_provider::ProviderError;
 use reth_revm::{State, context::Block};
 use reth_transaction_pool::{BestTransactionsAttributes, PoolTransaction};
-use revm::{Database as _, context::result::ResultAndState, interpreter::as_u64_saturated};
+use revm::{Database as _, interpreter::as_u64_saturated};
 use std::{sync::Arc, time::Instant};
 use tracing::{debug, info, trace};
 
@@ -221,8 +227,11 @@ impl OpPayloadJobCtx {
         db: &mut State<impl Database>,
     ) -> Result<ExecutionInfo, PayloadBuilderError> {
         let mut info = ExecutionInfo::with_capacity(self.attributes().transactions.len());
-
-        let mut evm = self.evm_factory.evm(&mut *db);
+        let mut builder = self
+            .evm_factory
+            .evm_config()
+            .builder_for_next_block(db, self.parent(), self.block_env_attributes.clone())
+            .map_err(PayloadBuilderError::other)?;
 
         for sequencer_tx in &self.attributes().transactions {
             // A sequencer's block should never contain blob transactions.
@@ -236,70 +245,58 @@ impl OpPayloadJobCtx {
             // purely for the purposes of utilizing the `evm_config.tx_env`` function.
             // Deposit transactions do not have signatures, so if the tx is a deposit, this
             // will just pull in its `from` address.
-            let sequencer_tx = sequencer_tx
+            let recovered_tx = sequencer_tx
                 .value()
                 .try_clone_into_recovered()
                 .map_err(|_| {
                     PayloadBuilderError::other(OpPayloadBuilderError::TransactionEcRecoverFailed)
                 })?;
+            let sequencer_tx = WithEncoded::new(sequencer_tx.encoded_bytes().clone(), recovered_tx);
 
-            // Cache the depositor account prior to the state transition for the deposit nonce.
-            //
-            // Note that this *only* needs to be done post-regolith hardfork, as deposit nonces
-            // were not introduced in Bedrock. In addition, regular transactions don't have deposit
-            // nonces, so we don't need to touch the DB for those.
-            let depositor_nonce = (self.hardforks.is_regolith_active()
-                && sequencer_tx.is_deposit())
-            .then(|| {
-                evm.db_mut()
-                    .load_cache_account(sequencer_tx.signer())
-                    .map(|acc| acc.account_info().unwrap_or_default().nonce)
-            })
-            .transpose()
-            .map_err(|_| {
-                PayloadBuilderError::other(OpPayloadBuilderError::AccountLoadFailed(
-                    sequencer_tx.signer(),
-                ))
-            })?;
-
-            let ResultAndState { result, state } = match evm.transact(&sequencer_tx) {
-                Ok(res) => res,
+            // Bypasses the unused builder transaction vec.
+            // Note: For BAL must bump bal_index explicitly on executor-level transaction paths.
+            let gas_used = match builder.executor_mut().execute_transaction(&sequencer_tx) {
+                Ok(gas_used) => gas_used,
+                Err(BlockExecutionError::Validation(BlockValidationError::InvalidTx {
+                    error,
+                    ..
+                })) => {
+                    trace!(
+                        target: "payload_builder",
+                        error = %error,
+                        ?sequencer_tx,
+                        "Error in sequencer transaction, skipping."
+                    );
+                    continue;
+                }
                 Err(err) => {
-                    if err.is_invalid_tx_err() {
-                        trace!(
-                            target: "payload_builder",
-                            error = %err,
-                            ?sequencer_tx,
-                            "Error in sequencer transaction, skipping."
-                        );
-                        continue;
-                    }
                     // this is an error that we should treat as fatal for this attempt
                     return Err(PayloadBuilderError::EvmExecutionError(Box::new(err)));
                 }
             };
 
-            let tx_da_size = if !sequencer_tx.is_deposit() {
-                op_alloy_flz::tx_estimated_size_fjord_bytes(sequencer_tx.encoded_2718().as_slice())
+            let tx_da_size = if !sequencer_tx.value().is_deposit() {
+                op_alloy_flz::tx_estimated_size_fjord_bytes(sequencer_tx.encoded_bytes())
             } else {
                 0
             };
 
-            info.commit_tx(
-                &sequencer_tx,
-                result,
-                state,
+            info.commit_executed_tx(
+                sequencer_tx.value(),
+                gas_used.tx_gas_used(),
                 tx_da_size,
                 None,
-                depositor_nonce,
-                &self.evm_factory,
-                &self.hardforks,
-                &mut evm,
+                builder
+                    .executor()
+                    .receipts()
+                    .last()
+                    .cloned()
+                    .ok_or_else(missing_committed_receipt)?,
             );
         }
 
         let da_footprint_gas_scalar = self.hardforks.is_jovian_active().then(|| {
-            L1BlockInfo::fetch_da_footprint_gas_scalar(evm.db_mut())
+            L1BlockInfo::fetch_da_footprint_gas_scalar(builder.evm_mut().db_mut())
                 .expect("DA footprint should always be available from the database post jovian")
         });
 
@@ -362,10 +359,20 @@ impl OpPayloadJobCtx {
         let mut num_backruns_considered = 0usize;
         let mut num_backruns_successful = 0usize;
         let mut backrun_processing_time = std::time::Duration::ZERO;
-        let base_fee = self.base_fee();
-
         let tx_da_limit = self.da_config.max_da_tx_size();
-        let mut evm = self.evm_factory.evm(&mut *db);
+        let mut builder = self
+            .evm_factory
+            .evm_config()
+            .builder_for_next_block(db, self.parent(), self.block_env_attributes.clone())
+            .map_err(PayloadBuilderError::other)?;
+        let (base_fee, block_number, coinbase) = {
+            let block = builder.evm().block();
+            (
+                block.basefee(),
+                as_u64_saturated!(block.number()),
+                block.beneficiary(),
+            )
+        };
 
         debug!(
             target: "payload_builder",
@@ -378,7 +385,7 @@ impl OpPayloadJobCtx {
         );
 
         let block_attr = BlockConditionalAttributes {
-            number: self.block_number(),
+            number: block_number,
             timestamp: self.attributes().timestamp(),
         };
 
@@ -389,7 +396,8 @@ impl OpPayloadJobCtx {
             let is_bundle_tx = tx.is_bundle();
             let exclude_reverting_txs = tx.revert_protected();
 
-            let tx = tx.into_consensus();
+            let encoded_tx = tx.into_consensus_with2718();
+            let tx = encoded_tx.value();
             let tx_hash = tx.tx_hash();
             let tx_uncompressed_size = tx.encode_2718_len() as u64;
 
@@ -397,7 +405,7 @@ impl OpPayloadJobCtx {
                 debug!(
                     target: "tx_trace",
                     tx_hash = %tx_hash,
-                    block_number = self.block_number(),
+                    block_number,
                     flashblock_index,
                     stage = "builder_popped"
                 );
@@ -467,68 +475,86 @@ impl OpPayloadJobCtx {
             }
 
             let tx_simulation_start_time = Instant::now();
-            let ResultAndState { result, state } = match evm.transact(&tx) {
-                Ok(res) => res,
-                Err(err) => {
-                    if let Some(err) = err.as_invalid_tx_err() {
-                        if err.is_nonce_too_low() {
-                            // if the nonce is too low, we can skip this transaction
-                            log_txn(TxnExecutionResult::NonceTooLow);
-                            trace!(
-                                target: "payload_builder",
-                                error = %err,
-                                ?tx,
-                                "skipping nonce too low transaction"
-                            );
-                        } else {
-                            // if the transaction is invalid, we can skip it and all of its
-                            // descendants
-                            log_txn(TxnExecutionResult::InternalError(err.to_string()));
-                            trace!(
-                                target: "payload_builder",
-                                error = %err,
-                                ?tx,
-                                "skipping invalid transaction and its descendants"
-                            );
-                            best_txs.mark_invalid(tx.signer(), tx.nonce());
-                        }
+            let mut gas_used = 0;
+            let mut tx_succeeded = false;
+            let mut gas_limit_exceeded = false;
+            let committed = match builder
+                .executor_mut()
+                .execute_transaction_with_commit_condition(&encoded_tx, |result| {
+                    gas_used = result.result().result.tx_gas_used();
+                    tx_succeeded = result.result().result.is_success();
+                    gas_limit_exceeded = self
+                        .max_gas_per_txn
+                        .is_some_and(|max_gas_per_txn| gas_used > max_gas_per_txn);
 
-                        continue;
+                    let simulation_duration = tx_simulation_start_time.elapsed();
+                    self.metrics
+                        .tx_simulation_duration
+                        .record(simulation_duration);
+                    self.metrics.tx_byte_size.record(tx.inner().size() as f64);
+                    if self.enable_tx_tracking_debug_logs {
+                        debug!(
+                            target: "tx_trace",
+                            tx_hash = %tx_hash,
+                            block_number,
+                            flashblock_index,
+                            gas_used,
+                            success = tx_succeeded,
+                            evm_duration_us = simulation_duration.as_micros() as u64,
+                            stage = "evm_executed"
+                        );
                     }
+
+                    // Declined simulations still consume sender budget to meter expensive spam.
+                    self.address_limiter.consume_gas(tx.signer(), gas_used);
+                    self.address_limiter
+                        .consume_compute(tx.signer(), simulation_duration);
+
+                    if gas_limit_exceeded || (!tx_succeeded && exclude_reverting_txs) {
+                        CommitChanges::No
+                    } else {
+                        CommitChanges::Yes
+                    }
+                }) {
+                Ok(committed) => committed,
+                Err(BlockExecutionError::Validation(BlockValidationError::InvalidTx {
+                    error,
+                    ..
+                })) => {
+                    if error.is_nonce_too_low() {
+                        // if the nonce is too low, we can skip this transaction
+                        log_txn(TxnExecutionResult::NonceTooLow);
+                        trace!(
+                            target: "payload_builder",
+                            error = %error,
+                            ?tx,
+                            "skipping nonce too low transaction"
+                        );
+                    } else {
+                        // if the transaction is invalid, we can skip it and all of its
+                        // descendants
+                        log_txn(TxnExecutionResult::InternalError(error.to_string()));
+                        trace!(
+                            target: "payload_builder",
+                            error = %error,
+                            ?tx,
+                            "skipping invalid transaction and its descendants"
+                        );
+                        best_txs.mark_invalid(tx.signer(), tx.nonce());
+                    }
+
+                    continue;
+                }
+                Err(err) => {
                     // this is an error that we should treat as fatal for this attempt
                     log_txn(TxnExecutionResult::EvmError);
                     return Err(PayloadBuilderError::evm(err));
                 }
             };
 
-            self.metrics
-                .tx_simulation_duration
-                .record(tx_simulation_start_time.elapsed());
-            self.metrics.tx_byte_size.record(tx.inner().size() as f64);
             num_txs_simulated += 1;
 
-            // Run the per-address gas limiting before checking if the tx has
-            // reverted or not, as this is a check against maliciously searchers
-            // sending txs that are expensive to compute but always revert.
-            let gas_used = result.tx_gas_used();
-            if self.enable_tx_tracking_debug_logs {
-                debug!(
-                    target: "tx_trace",
-                    tx_hash = %tx_hash,
-                    block_number = self.block_number(),
-                    flashblock_index,
-                    gas_used,
-                    success = result.is_success(),
-                    evm_duration_us = tx_simulation_start_time.elapsed().as_micros() as u64,
-                    stage = "evm_executed"
-                );
-            }
-
-            self.address_limiter.consume_gas(tx.signer(), gas_used);
-            self.address_limiter
-                .consume_compute(tx.signer(), tx_simulation_start_time.elapsed());
-
-            if result.is_success() {
+            if tx_succeeded {
                 log_txn(TxnExecutionResult::Success);
                 num_txs_simulated_success += 1;
                 self.metrics.successful_tx_gas_used.record(gas_used as f64);
@@ -559,32 +585,32 @@ impl OpPayloadJobCtx {
                 }
             }
 
-            // add gas used by the transaction to cumulative gas used, before creating the
-            // receipt
-            if let Some(max_gas_per_txn) = self.max_gas_per_txn
-                && gas_used > max_gas_per_txn
-            {
+            if gas_limit_exceeded {
                 log_txn(TxnExecutionResult::MaxGasUsageExceeded);
                 best_txs.mark_invalid(tx.signer(), tx.nonce());
                 continue;
             }
 
-            let tx_succeeded = result.is_success();
+            // Future closure declines must not leak into commit bookkeeping.
+            if committed.is_none() {
+                continue;
+            }
 
             let miner_fee = tx
                 .effective_tip_per_gas(base_fee)
                 .expect("fee is always valid; execution succeeded");
 
-            info.commit_tx(
-                &tx,
-                result,
-                state,
+            info.commit_executed_tx(
+                tx,
+                gas_used,
                 tx_da_size,
                 Some(miner_fee),
-                None,
-                &self.evm_factory,
-                &self.hardforks,
-                &mut evm,
+                builder
+                    .executor()
+                    .receipts()
+                    .last()
+                    .cloned()
+                    .ok_or_else(missing_committed_receipt)?,
             );
 
             let target_hash = B256::new(*tx_hash);
@@ -593,7 +619,7 @@ impl OpPayloadJobCtx {
                 debug!(
                     target: "tx_trace",
                     tx_hash = %target_hash,
-                    block_number = self.block_number(),
+                    block_number,
                     flashblock_index,
                     cumulative_gas = info.cumulative_gas_used,
                     stage = "builder_committed"
@@ -614,7 +640,7 @@ impl OpPayloadJobCtx {
                 let gas_left = block_gas_limit.saturating_sub(info.cumulative_gas_used);
                 let backruns = backrun_pool.get_backruns(
                     &target_hash,
-                    |addr| evm.db_mut().basic(addr).ok().flatten(),
+                    |addr| builder.evm_mut().db_mut().basic(addr).ok().flatten(),
                     base_fee,
                     gas_left,
                     self.backrun_bundle_args
@@ -742,8 +768,8 @@ impl OpPayloadJobCtx {
                         return Ok(Some(()));
                     }
 
-                    let coinbase = self.evm_factory.evm_env().block_env.beneficiary;
-                    let coinbase_balance_before = evm
+                    let coinbase_balance_before = builder
+                        .evm_mut()
                         .db_mut()
                         .basic(coinbase)
                         .ok()
@@ -752,36 +778,71 @@ impl OpPayloadJobCtx {
                         .unwrap_or(U256::ZERO);
 
                     let br_simulation_start = Instant::now();
-                    let ResultAndState {
-                        result: br_result,
-                        state: br_state,
-                    } = match evm.transact(&*bundle.backrun_tx) {
-                        Ok(res) => res,
-                        Err(err) => {
-                            if let Some(err) = err.as_invalid_tx_err() {
-                                log_br_txn(TxnExecutionResult::InternalError(err.to_string()));
-                            } else {
-                                log_br_txn(TxnExecutionResult::EvmError);
+                    let mut br_gas_used = 0;
+                    let mut br_succeeded = false;
+                    let mut br_gas_limit_exceeded = false;
+                    let mut coinbase_profit_too_low = false;
+                    let committed = match builder
+                        .executor_mut()
+                        .execute_transaction_with_commit_condition(&*bundle.backrun_tx, |result| {
+                            let result = result.result();
+                            br_gas_used = result.result.tx_gas_used();
+                            br_succeeded = result.result.is_success();
+                            br_gas_limit_exceeded = self
+                                .max_gas_per_txn
+                                .is_some_and(|max_gas_per_txn| br_gas_used > max_gas_per_txn);
+
+                            let simulation_duration = br_simulation_start.elapsed();
+                            self.metrics
+                                .tx_simulation_duration
+                                .record(simulation_duration);
+                            self.metrics
+                                .tx_byte_size
+                                .record(bundle.backrun_tx.inner().size() as f64);
+                            self.address_limiter
+                                .consume_gas(bundle.backrun_tx.signer(), br_gas_used);
+                            self.address_limiter
+                                .consume_compute(bundle.backrun_tx.signer(), simulation_duration);
+
+                            if br_succeeded
+                                && !br_gas_limit_exceeded
+                                && self
+                                    .backrun_bundle_args
+                                    .enforce_strict_priority_fee_ordering
+                            {
+                                let stated = bundle.coinbase_profit.unwrap_or_default();
+                                let coinbase_balance_after = result
+                                    .state
+                                    .get(&coinbase)
+                                    .map(|a| a.info.balance)
+                                    .unwrap_or_default();
+                                let actual =
+                                    coinbase_balance_after.saturating_sub(coinbase_balance_before);
+                                coinbase_profit_too_low = actual < stated;
                             }
+
+                            if !br_succeeded || br_gas_limit_exceeded || coinbase_profit_too_low {
+                                CommitChanges::No
+                            } else {
+                                CommitChanges::Yes
+                            }
+                        }) {
+                        Ok(committed) => committed,
+                        Err(BlockExecutionError::Validation(BlockValidationError::InvalidTx {
+                            error,
+                            ..
+                        })) => {
+                            log_br_txn(TxnExecutionResult::InternalError(error.to_string()));
+                            continue;
+                        }
+                        Err(_) => {
+                            log_br_txn(TxnExecutionResult::EvmError);
                             continue;
                         }
                     };
-                    self.metrics
-                        .tx_simulation_duration
-                        .record(br_simulation_start.elapsed());
-                    self.metrics
-                        .tx_byte_size
-                        .record(bundle.backrun_tx.inner().size() as f64);
                     num_txs_simulated += 1;
 
-                    let br_gas_used = br_result.tx_gas_used();
-
-                    self.address_limiter
-                        .consume_gas(bundle.backrun_tx.signer(), br_gas_used);
-                    self.address_limiter
-                        .consume_compute(bundle.backrun_tx.signer(), br_simulation_start.elapsed());
-
-                    if !br_result.is_success() {
+                    if !br_succeeded {
                         num_txs_simulated_fail += 1;
                         num_bundles_reverted += 1;
                         reverted_gas_used += br_gas_used;
@@ -790,27 +851,19 @@ impl OpPayloadJobCtx {
                         continue;
                     }
 
-                    if let Some(max_gas_per_txn) = self.max_gas_per_txn
-                        && br_gas_used > max_gas_per_txn
-                    {
+                    if br_gas_limit_exceeded {
                         log_br_txn(TxnExecutionResult::MaxGasUsageExceeded);
                         continue;
                     }
 
-                    if self
-                        .backrun_bundle_args
-                        .enforce_strict_priority_fee_ordering
-                    {
-                        let stated = bundle.coinbase_profit.unwrap_or_default();
-                        let coinbase_balance_after = br_state
-                            .get(&coinbase)
-                            .map(|a| a.info.balance)
-                            .unwrap_or_default();
-                        let actual = coinbase_balance_after.saturating_sub(coinbase_balance_before);
-                        if actual < stated {
-                            log_br_txn(TxnExecutionResult::CoinbaseProfitTooLow);
-                            continue;
-                        }
+                    if coinbase_profit_too_low {
+                        log_br_txn(TxnExecutionResult::CoinbaseProfitTooLow);
+                        continue;
+                    }
+
+                    // Future closure declines must not leak into commit bookkeeping.
+                    if committed.is_none() {
+                        continue;
                     }
 
                     num_txs_simulated_success += 1;
@@ -820,16 +873,17 @@ impl OpPayloadJobCtx {
                         .record(br_gas_used as f64);
                     log_br_txn(TxnExecutionResult::Success);
 
-                    info.commit_tx(
+                    info.commit_executed_tx(
                         &bundle.backrun_tx,
-                        br_result,
-                        br_state,
+                        br_gas_used,
                         br_tx_da_size,
                         Some(backrun_priority_fee),
-                        None,
-                        &self.evm_factory,
-                        &self.hardforks,
-                        &mut evm,
+                        builder
+                            .executor()
+                            .receipts()
+                            .last()
+                            .cloned()
+                            .ok_or_else(missing_committed_receipt)?,
                     );
 
                     tx_backruns_landed += 1;
@@ -865,4 +919,10 @@ impl OpPayloadJobCtx {
         );
         Ok(None)
     }
+}
+
+fn missing_committed_receipt() -> PayloadBuilderError {
+    PayloadBuilderError::Other(
+        eyre::eyre!("executor recorded no receipt for a committed transaction").into(),
+    )
 }

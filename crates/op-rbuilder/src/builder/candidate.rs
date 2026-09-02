@@ -229,7 +229,9 @@ where
                     &mut best_txs,
                     target_gas_for_batch.min(ctx.block_gas_limit()),
                     target_da_for_batch,
-                    target_da_footprint_for_batch,
+                    // The executor's Jovian footprint check is bounded by block gas, so never
+                    // expose it to a caller budget above that consensus limit.
+                    target_da_footprint_for_batch.map(|target| target.min(ctx.block_gas_limit())),
                     budget_targets.max_uncompressed_block_size,
                     flashblock_index,
                 )

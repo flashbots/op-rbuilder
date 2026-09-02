@@ -1,3 +1,9 @@
+// libp2p's `NetworkBehaviour` derive generates an event conversion for every field, including
+// `connection_limits`, whose `ToSwarm` is `Infallible`; that call is unreachable and nightly
+// rejects it under `-D warnings`. The attribute has to sit at module scope because an `allow` on
+// the struct does not reach derive-generated items. Drop this once the derive silences it upstream.
+#![allow(unreachable_code)]
+
 use eyre::WrapErr as _;
 use libp2p::{
     Swarm, autonat,
