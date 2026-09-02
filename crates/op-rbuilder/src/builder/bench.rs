@@ -11,9 +11,7 @@ use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
 use reth_optimism_node::{OpBuiltPayload, OpPayloadBuilderAttributes};
 use reth_optimism_payload_builder::config::{OpDAConfig, OpGasLimitConfig};
 use reth_optimism_primitives::OpTransactionSigned;
-use reth_provider::{
-    HashedPostStateProvider, ProviderError, StateRootProvider, StorageRootProvider,
-};
+use reth_provider::{ProviderError, StateProvider};
 use reth_revm::State;
 
 use super::{
@@ -168,7 +166,7 @@ impl CandidateBenchContext {
     ) -> Result<(OpBuiltPayload, OpFlashblockPayload), PayloadBuilderError>
     where
         DB: Database<Error = ProviderError> + AsRef<P>,
-        P: StateRootProvider + HashedPostStateProvider + StorageRootProvider,
+        P: StateProvider,
     {
         let mut fb_state = FlashblocksState::new(10);
         for _ in 0..flashblock_index {
