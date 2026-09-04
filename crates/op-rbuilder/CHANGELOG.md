@@ -1,6 +1,21 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [0.4.14] - 2026-09-04
+
+### Miscellaneous
+
+- [`b0c0765`](https://github.com/flashbots/op-rbuilder/commit/b0c0765a1c3575830474706403621642114eb3a6) Update tdx-attestation-sdk ([#572](https://github.com/flashbots/op-rbuilder/pull/572))
+- [`31bb282`](https://github.com/flashbots/op-rbuilder/commit/31bb282025fa471cc22a47b0c1549e00248fc639) Update crate and remove clippy allow ([#573](https://github.com/flashbots/op-rbuilder/pull/573))
+- [`5ec1f0a`](https://github.com/flashbots/op-rbuilder/commit/5ec1f0ad1f294c02f412cfc97bb4a542ecfd5068) Decker recipe with observability + docs ([#563](https://github.com/flashbots/op-rbuilder/pull/563))
+- [`dee0a7b`](https://github.com/flashbots/op-rbuilder/commit/dee0a7b4e34d8f06920b6a89568eedd16b221635) Bump op-reth pin ([#577](https://github.com/flashbots/op-rbuilder/pull/577))
+- [`d29fb00`](https://github.com/flashbots/op-rbuilder/commit/d29fb0073e22c2e4ebb60ff7b5b665b837df876f) Bump Cargo version to 0.4.14
+
+### Refactor
+
+- [`08305fe`](https://github.com/flashbots/op-rbuilder/commit/08305fe1915018b398ca957926546c393fa56508) Use reth BlockBuilder for execution paths ([#574](https://github.com/flashbots/op-rbuilder/pull/574))
+- [`998fb56`](https://github.com/flashbots/op-rbuilder/commit/998fb5676f34690f6632cd2522d9ae4aadebb06a) Assemble flashblock headers via upstream OpBlockAssembler ([#575](https://github.com/flashbots/op-rbuilder/pull/575))
+
 ## [0.4.13] - 2026-08-12
 
 ### Miscellaneous
