@@ -184,25 +184,44 @@ impl TipState {
         let mut evm = self.evm_factory.evm(&mut state);
 
         match evm.transact(tx) {
+            // The EVM executed the transaction: keep it only if it didn't revert.
             Ok(ResultAndState { result, .. }) => result.is_success(),
             Err(err) => {
-                if err.as_invalid_tx_err().is_some_and(|err| {
-                    err.as_invalid_tx_err().is_some_and(|err| {
-                        matches!(
-                            err,
-                            InvalidTransaction::NonceTooLow { .. }
-                                | InvalidTransaction::NonceTooHigh { .. }
-                        )
-                    })
-                }) {
-                    // Nonce gap — tx may depend on pending state, let the pool handle it
-                    true
-                } else {
-                    false
+                if !err.is_invalid_tx_err() {
+                    // The simulation failed for a reason unrelated to the
+                    // transaction itself (e.g. a state-provider/database read
+                    // error). Make the failure visible; the tx is kept rather
+                    // than evicted (see `keep_tx_on_simulation_error`).
+                    warn!(error = %err, "pre-simulation failed with a non-transaction error; keeping tx");
                 }
+                keep_tx_on_simulation_error(&err)
             }
         }
     }
+}
+
+/// Decide whether a transaction whose pre-simulation returned an error should
+/// remain in the pool.
+///
+/// `Evm::transact` returns an error either because the transaction is invalid
+/// (`EvmError::InvalidTransaction`) or because of an infrastructure failure such
+/// as a state-provider/database read error. Only the former says anything about
+/// the transaction, so we evict *only* on a genuine validity error and otherwise
+/// keep the tx (fail open). A transient state-read failure (e.g. the pinned tip
+/// state being reorged out or pruned) must never silently drop a transaction the
+/// user paid to revert-protect.
+fn keep_tx_on_simulation_error<E: EvmError>(err: &E) -> bool {
+    let Some(invalid_tx) = err.as_invalid_tx_err() else {
+        // Not a transaction-validity error: keep the tx.
+        return true;
+    };
+    // A nonce gap usually means the tx depends on not-yet-applied pending state,
+    // so let the pool resolve ordering. Any other validity error means the tx
+    // can never be included, so drop it.
+    matches!(
+        invalid_tx.as_invalid_tx_err(),
+        Some(InvalidTransaction::NonceTooLow { .. } | InvalidTransaction::NonceTooHigh { .. })
+    )
 }
 
 pub(crate) async fn maintain_tip_state<N, St, Provider>(
@@ -512,5 +531,47 @@ mod tests {
         let simulator = TopOfBlockSimulator::new_for_test();
 
         assert!(simulator.acquire_permit().await.unwrap().is_unlimited());
+    }
+
+    #[test]
+    fn non_transaction_errors_keep_tx() {
+        use revm::context_interface::result::EVMError;
+
+        // A state-provider/database read failure during simulation says nothing
+        // about the transaction's validity, so the tx must be kept, not evicted.
+        // Regression: previously every non-nonce error (infrastructure errors
+        // included) was treated as a revert and evicted the tx.
+        let db_err = EVMError::<std::io::Error, InvalidTransaction>::Database(
+            std::io::Error::other("simulated state read failure"),
+        );
+        assert!(keep_tx_on_simulation_error(&db_err));
+
+        let custom_err =
+            EVMError::<std::io::Error, InvalidTransaction>::Custom("evm misconfiguration".into());
+        assert!(keep_tx_on_simulation_error(&custom_err));
+    }
+
+    #[test]
+    fn nonce_gaps_kept_other_validity_errors_evicted() {
+        use revm::context_interface::result::EVMError;
+
+        // Nonce gaps are kept — the pool resolves ordering against pending state.
+        let too_low = EVMError::<std::io::Error, InvalidTransaction>::Transaction(
+            InvalidTransaction::NonceTooLow { tx: 1, state: 5 },
+        );
+        let too_high = EVMError::<std::io::Error, InvalidTransaction>::Transaction(
+            InvalidTransaction::NonceTooHigh { tx: 9, state: 5 },
+        );
+        assert!(keep_tx_on_simulation_error(&too_low));
+        assert!(keep_tx_on_simulation_error(&too_high));
+
+        // A genuine validity error (can never be included) is evicted.
+        let no_funds = EVMError::<std::io::Error, InvalidTransaction>::Transaction(
+            InvalidTransaction::LackOfFundForMaxFee {
+                fee: Box::new(U256::from(1u64)),
+                balance: Box::new(U256::ZERO),
+            },
+        );
+        assert!(!keep_tx_on_simulation_error(&no_funds));
     }
 }
