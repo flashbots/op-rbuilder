@@ -286,7 +286,6 @@ where
     execute_transactions(
         &evm_factory,
         &hardforks,
-        syncer_config.max_gas_per_txn,
         syncer_config.max_uncompressed_block_size,
         &mut info,
         &mut state,
@@ -332,11 +331,9 @@ where
     Ok((built_payload, fb_payload))
 }
 
-#[allow(clippy::too_many_arguments)]
 fn execute_transactions(
     evm_factory: &OpBlockEvmFactory,
     hardforks: &ActiveHardforks,
-    max_gas_per_txn: Option<u64>,
     max_uncompressed_block_size: Option<u64>,
     info: &mut ExecutionInfo,
     state: &mut State<impl alloy_evm::Database>,
@@ -370,18 +367,9 @@ fn execute_transactions(
             .transact(&tx_recovered)
             .wrap_err("failed to execute transaction")?;
 
-        let tx_gas_used = result.tx_gas_used();
-        if let Some(max_gas_per_txn) = max_gas_per_txn
-            && tx_gas_used > max_gas_per_txn
-        {
-            return Err(eyre::eyre!(
-                "transaction exceeded max gas per txn limit in flashblock"
-            ));
-        }
-
         let new_cumulative_gas = info
             .cumulative_gas_used
-            .checked_add(tx_gas_used)
+            .checked_add(result.tx_gas_used())
             .ok_or_else(|| {
                 eyre::eyre!("total gas used overflowed when executing flashblock transactions")
             })?;
