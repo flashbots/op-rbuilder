@@ -137,6 +137,8 @@ pub struct OpRBuilderMetrics {
     pub successful_tx_gas_used: Histogram,
     /// Histogram of gas used by reverted transactions
     pub reverted_tx_gas_used: Histogram,
+    /// Cumulative count of reverted transactions observed during payload building.
+    pub reverted_tx_count: Counter,
     /// Gas used by reverted transactions in the latest block
     pub payload_reverted_tx_gas_used: Gauge,
     /// Histogram of tx simulation duration
