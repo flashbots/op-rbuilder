@@ -66,7 +66,7 @@ impl FlashblockScheduler {
         self,
         tx: mpsc::Sender<FlashblockJobCancellation>,
         block_cancel: PayloadJobCancellation,
-        fb_cancel: FlashblockJobCancellation,
+        mut fb_cancel: FlashblockJobCancellation,
         payload_id: PayloadId,
     ) {
         let start = tokio::time::Instant::now();
@@ -78,7 +78,7 @@ impl FlashblockScheduler {
                     fb_cancel.cancel_current_flashblock();
 
                     // Trigger next flashblock building job
-                    let fb_cancel = block_cancel.flashblock_child();
+                    fb_cancel = block_cancel.flashblock_child();
 
                     let elapsed = start.elapsed();
                     debug!(
@@ -91,7 +91,7 @@ impl FlashblockScheduler {
                         "Sending flashblock trigger"
                     );
 
-                    if tx.send(fb_cancel).await.is_err() {
+                    if tx.send(fb_cancel.clone()).await.is_err() {
                         // receiver channel was dropped, return. this will only
                         // happen if the `build_payload` function returns, due
                         // to payload building error or the main cancellation
@@ -282,6 +282,32 @@ mod tests {
             .as_secs_f64()
             * 1000.0;
         assert!((before..=after).contains(&offset_ms));
+    }
+
+    #[tokio::test]
+    async fn test_run_cancels_previous_flashblock_token() {
+        let now = tokio::time::Instant::now();
+        let scheduler = FlashblockScheduler {
+            reference_system: SystemTime::now(),
+            reference_instant: now,
+            send_times: vec![now, now, now],
+        };
+        let block_cancel = PayloadJobCancellation::new();
+        let initial = block_cancel.flashblock_child();
+        let (tx, mut rx) = mpsc::channel(3);
+
+        scheduler
+            .run(tx, block_cancel, initial.clone(), PayloadId::default())
+            .await;
+
+        assert!(initial.is_cancelled());
+        let first = rx.recv().await.unwrap();
+        let second = rx.recv().await.unwrap();
+        let third = rx.recv().await.unwrap();
+        // Each trigger cancels the token sent by the previous trigger
+        assert!(first.is_cancelled());
+        assert!(second.is_cancelled());
+        assert!(!third.is_cancelled());
     }
 
     struct ComputeSendTimesTestCase {
